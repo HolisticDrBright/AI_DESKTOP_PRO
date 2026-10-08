@@ -9,7 +9,22 @@ import {careRegisteredDeploymentFixture} from './test-fixtures/care-registered-d
 import {verifyCareRegisteredReconciledDeployment} from './care-registered-deployment.mjs';
 import {acquireRegisteredUploadReconciliationGuard} from './reconcile-synthetic-care-registered-upload.mjs';
 import {registeredReleaseReconciliationArguments,verifyInterruptedRegisteredReleaseCustody,
- runRegisteredReleaseReconciliation,archiveReconciledReleaseLock,readRegisteredReleaseEvidence} from './reconcile-synthetic-care-registered-release.mjs';
+ runRegisteredReleaseReconciliation,archiveReconciledReleaseLock,readRegisteredReleaseEvidence,
+ registeredReconciliationAwsDiagnostic} from './reconcile-synthetic-care-registered-release.mjs';
+test('reconciliation AWS diagnostics name finite phases and reasons without retaining provider content',()=>{
+ for(const [args,phase] of [[['lambda','get-policy'],'retained_policy'],[['lambda','get-function-configuration'],'retained_configuration'],
+  [['apigatewayv2','get-deployment'],'api_deployment'],[['cloudformation','list-change-sets'],'proposal_listing'],
+  [['cloudformation','get-template'],'proposal_template'],[['cloudformation','describe-change-set'],'proposal_projection'],[[],'unknown']]){
+  const result=registeredReconciliationAwsDiagnostic(args,{code:'ETIMEDOUT',stderr:'Bearer private-token email@example.test'});
+  assert.equal(result,'release_reconciliation_aws_'+phase+'_timeout_unconfirmed');
+  assert.doesNotMatch(result,/Bearer|private-token|email@/);
+ }
+ for(const [error,reason] of [[{code:'ENOBUFS'},'output_limit'],[{code:'ENOBUFS',signal:'SIGTERM'},'output_limit'],
+  [{signal:'SIGTERM'},'terminated'],[{name:'SyntaxError'},'json'],
+  [{stderr:'aws: [ERROR]: An error occurred (AccessDeniedException) when calling the GetPolicy operation: private'},'access_denied'],
+  [{stderr:'ResourceNotFoundException private'},'unknown'],[{stderr:'x'.repeat(65537)},'unknown'],[{},'unknown']])
+  assert.equal(registeredReconciliationAwsDiagnostic(['lambda','get-policy'],error),'release_reconciliation_aws_retained_policy_'+reason+'_unconfirmed');
+});
 function fixture(){
  const f=careRegisteredDeploymentFixture();f.operator=structuredClone(f.current);f.operator.desktop.commit='1'.repeat(40);f.operator.desktop.sha256='2'.repeat(64);
  f.now=f.completed+600000;f.before2=structuredClone(f.before);

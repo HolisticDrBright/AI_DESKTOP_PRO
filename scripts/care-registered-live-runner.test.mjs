@@ -24,7 +24,7 @@ test('release purpose holds unknown execution under the same exclusive operator 
 });
 test('live sequence uses its own service observations, archives before admission, executes once and requires actual recovery',()=>{
  const text=readFileSync(new URL('./release-synthetic-care-registered.mjs',import.meta.url),'utf8');
- assert.match(text,/proposeCareRegisteredLive\(root,c\)/);assert.match(text,/observeCareRegisteredPreflight\(root,mobileRoot,directory\)/);
+ assert.match(text,/proposeCareRegisteredLive\(root,c,mobileRoot,directory\)/);assert.match(text,/observeCareRegisteredPreflight\(root,mobileRoot,directory\)/);
  assert.match(text,/database=buildCareRegisteredDatabaseObserver/);assert.match(text,/inspectRegisteredUploadObject\(candidate/);
  assert.match(text,/save\(file,admission\);await c\.admit/);assert.match(text,/before:savedBefore/);
  assert.match(text,/runCareRegisteredLiveRecovery\(root,mobileRoot/);assert.match(text,/verifyCareRegisteredDeployment\(witness/);

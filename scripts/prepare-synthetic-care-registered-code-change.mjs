@@ -7,10 +7,10 @@ import {pathToFileURL} from 'node:url';
 import {CARE_RELEASE as P,normalizedText,sha256} from './synthetic-care-release.mjs';
 import {refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {canonical} from './care-recovery-routing.mjs';
-import {verifyCareRegisteredPredecessorControl} from './care-registered-preflight.mjs';
+import {verifyCareRegisteredPredecessorControl,verifyCareRegisteredDatabase} from './care-registered-preflight.mjs';
 import {observeIntentControlRaw} from './care-intent-live.mjs';
 import {uploadCareRegisteredRelease,verifyRegisteredUploadPreflight} from './upload-synthetic-care-registered-release.mjs';
-import {registeredPreflightFailureCode} from './prepare-synthetic-care-registered-release.mjs';
+import {registeredPreflightFailureCode,observeCareRegisteredPreflight} from './prepare-synthetic-care-registered-release.mjs';
 import {observeSyntheticMemberIdentity,assertSyntheticMemberIdentity,SYNTHETIC_MEMBER_PROFILE as profile} from './synthetic-aws-principal.mjs';
 import {collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
 import {careRegisteredCodeChangeInputs,careRegisteredChangeSetBinding,verifyCareRegisteredProposalViews} from './care-registered-code-change.mjs';
@@ -26,12 +26,29 @@ export async function runCareRegisteredProposal(candidate,current,sourceText,pre
  const source=JSON.parse(sourceText),input=careRegisteredCodeChangeInputs(sourceText,candidate,current,preparation,artifact,port.now()),
   fixed=careRegisteredChangeSetBinding(input,current,artifact);
  const first=await port.identity();assertSyntheticMemberIdentity(first);
- const guard=async()=>{
+ let activePreparation=preparation,renewals=0;
+ const unchangedPrincipal=async()=>{
   await port.unchanged();const caller=await port.identity();assertSyntheticMemberIdentity(caller);
   check(canonical(caller)===canonical(first),'principal_changed');
-  verifyRegisteredUploadPreflight(preparation,candidate,current,port.now());
-  const raw=await port.control();check(canonical(verifyCareRegisteredPredecessorControl(raw,source))===canonical(preparation.control),'control_changed');
-  await port.unchanged();verifyRegisteredUploadPreflight(preparation,candidate,current,port.now());return raw;
+ };
+ const guard=async(allowRenewal=true)=>{
+  await unchangedPrincipal();
+  // Renew only elapsed time, never a caught validation failure. The public
+  // constructor performs a complete new read-only preflight, not a timestamp
+  // edit, stored report or replay of an admitted create.
+  const time=Date.parse(activePreparation.observedAt),now=port.now();
+  if(Number.isFinite(time)&&Number.isFinite(now)&&now-time>120000){
+   check(allowRenewal&&typeof port.refreshPreflight==='function'&&renewals<4,'preflight_renewal_required');
+   const started=port.now(),fresh=await port.refreshPreflight();
+   await unchangedPrincipal();verifyRegisteredUploadPreflight(fresh,candidate,current,port.now());
+   check(Date.parse(fresh.observedAt)>=started&&canonical(fresh.control)===canonical(preparation.control),'preflight_renewal_changed');
+   verifyCareRegisteredDatabase(fresh.databaseBefore,current,started,port.now());
+   verifyCareRegisteredDatabase(fresh.databaseAfter,current,started,port.now());
+   activePreparation=fresh;renewals++;
+  }
+  verifyRegisteredUploadPreflight(activePreparation,candidate,current,port.now());
+  const raw=await port.control();check(canonical(verifyCareRegisteredPredecessorControl(raw,source))===canonical(activePreparation.control),'control_changed');
+  await unchangedPrincipal();verifyRegisteredUploadPreflight(activePreparation,candidate,current,port.now());return raw;
  };
  await guard();
  const listing=await port.list(fixed);
@@ -54,13 +71,14 @@ export async function runCareRegisteredProposal(candidate,current,sourceText,pre
  }
  const summary=await port.describe(binding,false),actualTemplate=await port.template(binding),raw=await guard();
  const projection=verifyCareRegisteredProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,
-  preparation,current,candidate,artifact,port.now());
+  activePreparation,current,candidate,artifact,port.now());
  const report={contract:'synthetic-care-registered-code-change/1',observedAt:new Date(port.now()).toISOString(),
   execution:'synthetic-staging',account:P.account,region:P.region,current,artifact,projection,
   stackId:fixed.stackId,changeSetId:id,changeSetName:fixed.name,changeSetCreated:found.length===0,reused:found.length===1,
+  preflightObservedAt:activePreparation.observedAt,preflightSha256:sha256(canonical(activePreparation)),preflightRenewals:renewals,
   changeSetExecutionStatus:detailed.ExecutionStatus,executionAdmissible:false,deployed:false,schemaChanged:false,
   recoveryRehearsed:false,hostedAcceptance:false,releaseAccepted:false,phiAllowed:false,paidMobileBuildStarted:false};
- await port.saveReport(fixed,report);await guard();port.record({stage:'registered_change_set_verified_unexecuted',
+ await port.saveReport(fixed,report);await guard(false);port.record({stage:'registered_change_set_verified_unexecuted',
   id,summarySha256:projection.summarySha256,propertyValuesSha256:projection.propertyValuesSha256});return report;
 }
 function aws(args){
@@ -80,10 +98,10 @@ function durable(file,value){
 }
 export async function prepareCareRegisteredCodeChange(root,mobileRoot,directory){
  check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
- return uploadCareRegisteredRelease(root,mobileRoot,directory,c=>proposeCareRegisteredLive(root,c));
+ return uploadCareRegisteredRelease(root,mobileRoot,directory,c=>proposeCareRegisteredLive(root,c,mobileRoot,directory));
 }
 /** Internal live composition, never a caller-supplied proposal report. */
-export async function proposeCareRegisteredLive(root,c){
+export async function proposeCareRegisteredLive(root,c,mobileRoot,directory){
   const sourceText=normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json');let out;
   const folder=fixed=>{
    const name=resolve(c.operationsDirectory,'proposal-'+fixed.digest);
@@ -92,6 +110,7 @@ export async function proposeCareRegisteredLive(root,c){
   };
   const proposed=await runCareRegisteredProposal(c.candidate,c.current,sourceText,c.preparation,c.artifact,{
    now:Date.now,identity:async()=>observeSyntheticMemberIdentity(),unchanged:c.unchanged,
+   refreshPreflight:()=>observeCareRegisteredPreflight(root,mobileRoot,directory),
    control:async()=>observeIntentControlRaw(),record:c.record,admit:c.admit,
    list:async fixed=>collectCancellationInventory(aws,['cloudformation','list-change-sets','--stack-name',fixed.stackId],'Summaries','NextToken'),
    writeInput:async(fixed,input)=>{durable(resolve(folder(fixed),'template.json'),input.template);durable(resolve(folder(fixed),'parameters.json'),input.parameters);},

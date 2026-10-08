@@ -640,3 +640,45 @@ used an unavailable `yaml` module; the rerun with installed `js-yaml` passed.
 No full Desktop database-suite rerun, AWS mutation or paid mobile build occurred
 in this source verification. CI for the prior a3e0c62 source completed successfully
 in runs37805926406 and37805917604; that is not CI evidence for this new increment.
+
+### October 8 actual freshness failure and guarded renewal
+
+The d3a0f05/38ea48c source pair passed Desktop CI37813544467 and37813553611.
+Its exact ZIP0c422a0ffe160082a64dff2300e06e5c10f67c63680c0dd6a317e0298da19d10
+was uploaded and independently checked. Fresh combined run
+435bf370a054c342c2ffe8952fce8504 nevertheless failed at17:28:15.057Z with
+upload_preflight after creating and observing an unexecuted proposal. The
+proposal care-registered-3b2a5ec168ac212b5bf318aa3bacfbab was independently
+observed CREATE_COMPLETE/AVAILABLE; Lambda remained predecessor revision
+f0bb13e8-e726-4ea8-86d3-459e19106df0. No execute admission, code update,
+recovery switch or schema/fixture/mobile/PHI mutation occurred. That failed
+result and its custody must not be changed into a pass.
+
+Repeated control observations consumed the same120-second preparation window.
+Two new positive regression tests fail against the old source. The repaired
+proposal constructor may renew elapsed observations only through its own full
+read-only current preflight. It rechecks principal/source, exact original
+control binding and both fresh canonical database observations. The120-second
+limit is unchanged, a slow control read still refuses, and stale/future/partial
+or changed renewal never authorizes creation. Initial stale input still refuses;
+no caller-supplied report, timestamp rewrite or create retry is introduced.
+Renewal is bounded; its timestamp/hash/count are recorded in the proposal report.
+Both the proposal-only and combined-release constructors pass their actual
+paired source/artifact paths to that observer.
+
+Two stopped-release read-only observations returned aws_unconfirmed and did not
+retire custody. New diagnostics report only a finite command phase/reason;
+provider stderr, credentials, URLs and stacks are never output. A later read-only
+observation still requires independently clean frozen application/current
+operator sources and exact unchanged archives. It cannot execute the proposal,
+retry a write or certify functional recovery. Source tests are not a hosted
+renewal or reconciliation result. Full nine mutating erasure journeys, all six
+scopes, store/provider/device acceptance and policy/PHI reviews remain open.
+
+Local evidence for this repair: the broad412 care-script tests pass,0 failures
+or skips (69.253 seconds); final focused38 tests pass after refining diagnostic
+reason priority,0 failures/skips (8.531 seconds). Typecheck and focused lint
+with0 warnings pass. Two renewal positives failed before the source fix. No
+full Desktop database-suite rerun. This is source evidence, not successful
+hosted renewal, reconciliation, deployment or erasure acceptance; new CI must
+be observed separately. V2 source and all PHI/build/clinical holds are unchanged.

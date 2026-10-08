@@ -170,6 +170,64 @@ function executionFixture(){
  return {f,events,saved,caller,port,creates:()=>creates};
 }
 const propose=x=>runCareRegisteredProposal(x.f.candidate,x.f.current,x.f.sourceText,x.f.preflight,x.f.artifact,x.port);
+
+function renewalPort(x){
+ let renewals=0;
+ x.port.refreshPreflight=async()=>{
+  renewals++;
+  const r=structuredClone(x.f.preflight),db=structuredClone(JSON.parse(readFileSync(
+   new URL('../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection);
+  r.observedAt=new Date(x.f.now).toISOString();
+  db.observedAt=r.observedAt;db.operatorSource={sourceCommit:x.f.current.desktop.commit,clean:true};
+  r.databaseBefore=structuredClone(db);r.databaseAfter=structuredClone(db);return r;
+ };
+ return ()=>renewals;
+}
+test('renewal re-observes the full bound preflight after slow create without replaying create or widening the TTL',async()=>{
+ const x=executionFixture(),count=renewalPort(x),create=x.port.create;
+ x.port.control=async()=>{x.f.now+=50000;return structuredClone(x.f.raw);};
+ x.port.create=async fixed=>{const result=await create(fixed);x.f.now+=55000;return result;};
+ const original=x.f.preflight.observedAt,report=await propose(x);
+ assert.equal(count(),1);assert.equal(x.creates(),1);assert.equal(report.deployed,false);
+ assert.equal(x.f.preflight.observedAt,original);assert.equal(x.saved.length,1);
+});
+test('renewal admits a delayed local preparation only after a new complete preflight',async()=>{
+ const x=executionFixture(),count=renewalPort(x);
+ x.port.writeInput=async()=>{x.f.now+=120001;};
+ await propose(x);assert.equal(count(),1);assert.equal(x.creates(),1);
+});
+test('renewal refuses stale/future/changed/partial observations before create admission',async()=>{
+ for(const kind of ['stale','future','control','source','phi','missing_database','wrong_database','identity','unknown']){
+  const x=executionFixture();renewalPort(x);const refresh=x.port.refreshPreflight;
+  x.port.writeInput=async()=>{x.f.now+=120001;};
+  x.port.refreshPreflight=async()=>{
+   if(kind==='unknown')throw Error('unconfirmed read');
+   const r=await refresh();
+   if(kind==='stale')r.observedAt=new Date(x.f.now-120001).toISOString();
+   if(kind==='future')r.observedAt=new Date(x.f.now+1).toISOString();
+   if(kind==='control')r.control.revision+='changed';
+   if(kind==='source')r.current.desktop.sha256='0'.repeat(64);
+   if(kind==='phi')r.phiAllowed=true;
+   if(kind==='missing_database')delete r.databaseAfter;
+   if(kind==='wrong_database')r.databaseAfter.historicalInspection.completeDataSha256='0'.repeat(64);
+   if(kind==='identity')x.caller.Arn+='different';return r;
+  };
+  await assert.rejects(propose(x),undefined,kind);assert.equal(x.creates(),0,kind);
+  assert.equal(x.events.some(e=>e.stage==='registered_change_set_create_admitted'),false,kind);
+ }
+});
+test('renewal never hides a slow control read, failed post-create renewal or source drift',async()=>{
+ for(const kind of ['slow_control','post_create_failed','source','late_save']){
+  const x=executionFixture();renewalPort(x);const create=x.port.create;
+  if(kind==='slow_control')x.port.control=async()=>{x.f.now+=120001;return structuredClone(x.f.raw);};
+  if(kind==='post_create_failed')x.port.create=async fixed=>{const r=await create(fixed);x.f.now+=120001;
+   x.port.refreshPreflight=async()=>{throw Error('unconfirmed read');};return r;};
+  if(kind==='source')x.port.writeInput=async()=>{x.f.now+=120001;x.f.current.desktop.sha256='0'.repeat(64);};
+  if(kind==='late_save'){const save=x.port.saveReport;x.port.saveReport=async(...args)=>{await save(...args);x.f.now+=120001;};}
+  await assert.rejects(propose(x));assert.equal(x.creates(),['post_create_failed','late_save'].includes(kind)?1:0);
+  assert.equal(x.events.some(e=>e.stage==='registered_change_set_verified_unexecuted'),false);
+ }
+});
 test('proposal runner admits exactly once before create, observes both views and repeated complete controls; never executes',async()=>{
  const x=executionFixture(),report=await propose(x);
  assert.equal(x.creates(),1);assert.equal(report.changeSetCreated,true);assert.equal(report.deployed,false);

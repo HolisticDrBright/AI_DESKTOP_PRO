@@ -298,12 +298,26 @@ export function archiveReconciledReleaseLock(c,report){
  save(archive,c.lockBytes);save(receipt,Buffer.from(JSON.stringify(report,null,2)+'\n'));unchanged();unlinkSync(c.lock);
  return {archive,receipt,operatorCustodySettled:true};
 }
+/** Finite diagnostics only: never provider stderr, tokens, URLs or stacks. */
+export function registeredReconciliationAwsDiagnostic(args,error){
+ const phases={'lambda/get-policy':'retained_policy','lambda/get-function-configuration':'retained_configuration',
+  'apigatewayv2/get-deployment':'api_deployment','cloudformation/list-change-sets':'proposal_listing',
+  'cloudformation/get-template':'proposal_template','cloudformation/describe-change-set':'proposal_projection'};
+ const phase=phases[Array.isArray(args)?args.slice(0,2).join('/'):'']??'unknown';
+ const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):error?.stderr;
+ const denied=typeof stderr==='string'&&stderr.length<=65536
+  &&/^(?:aws: \[ERROR\]: )?An error occurred \((?:AccessDenied|AccessDeniedException|UnauthorizedOperation)\) when calling the [A-Za-z]+ operation:/.test(stderr.trim());
+ const reason=error?.code==='ENOBUFS'?'output_limit':error?.code==='ETIMEDOUT'?'timeout'
+  :error?.signal==='SIGTERM'?'terminated':error?.name==='SyntaxError'?'json'
+   :denied?'access_denied':'unknown';
+ return 'release_reconciliation_aws_'+phase+'_'+reason+'_unconfirmed';
+}
 function aws(args,missingPolicyVersion){
  check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
  try{const text=execFileSync('aws',[...args,'--profile',profile,'--region',P.region,'--output','json','--no-cli-pager'],
   {encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe'],
    env:{...process.env,AWS_MAX_ATTEMPTS:'1',AWS_RETRY_MODE:'standard',AWS_PAGER:''}});return text.trim()?JSON.parse(text):{};
- }catch(e){if(intentPolicyAbsent(args,missingPolicyVersion,e))return null;refuseRegistered('release_reconciliation_aws_unconfirmed');}
+ }catch(e){if(intentPolicyAbsent(args,missingPolicyVersion,e))return null;refuseRegistered(registeredReconciliationAwsDiagnostic(args,e));}
 }
 /** Shared actual read-only observers for the separate compensating operator.
  * Source roots are independently bound; no transport or report can be supplied

@@ -53,7 +53,7 @@ export async function releaseCareRegisteredLive(root,mobileRoot,directory){
  const uploaded=await uploadCareRegisteredRelease(root,mobileRoot,directory,async c=>{
   const {candidate,current,artifact}=c,sourceText=normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json'),
    input=careRegisteredCodeTemplateInputs(sourceText,candidate,current,artifact),database=buildCareRegisteredDatabaseObserver(root,current);
-  const proposal=await proposeCareRegisteredLive(root,c),fixed=careRegisteredChangeSetBinding(input,current,artifact),
+  const proposal=await proposeCareRegisteredLive(root,c,mobileRoot,directory),fixed=careRegisteredChangeSetBinding(input,current,artifact),
    binding={...fixed,id:proposal.changeSetId};
   const client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1,requestHandler:REGISTERED_UPLOAD_TRANSPORT});
   let savedBefore,executionAdmittedAt,admission;
