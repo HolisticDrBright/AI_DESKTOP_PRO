@@ -220,11 +220,6 @@
       "version": "20261006040000",
       "file": "20261006040000_synthetic_care_erasure_recovery.sql",
       "production_transform": false
-    },
-    {
-      "version": "20261007010000",
-      "file": "20261007010000_synthetic_care_erasure_intents.sql",
-      "production_transform": false
     }
   ]
 }

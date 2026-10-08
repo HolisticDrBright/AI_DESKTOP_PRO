@@ -27,14 +27,14 @@ function dependencies(successor=false){
  const events:string[]=[],d:CareErasureIntentCommandDependencies={
   observeCaller:vi.fn(()=>{events.push('caller');return structuredClone(caller);}),
   observeFoundation:vi.fn(()=>{events.push('foundation');return {Stacks:[structuredClone(stack)]};}),
-  loadMigrations:loadClinicalCoreMigrations,loadReference:loadGovernedCatalogMigrations,loadOverlay:overlay,
+  loadMigrations:()=>loadClinicalCoreMigrations().slice(0,46),loadReference:loadGovernedCatalogMigrations,loadOverlay:overlay,
   createDatabase:vi.fn(()=>{events.push('client');return {transaction:async()=>{throw Error('unexpected');}};}),
   run:vi.fn(async(_db,_m,_ref,_overlay,_c,command)=>{events.push(command);return result(command,successor);}),
  };return {d,events};
 }
 describe('fixed intent inspection and rollback executable, fictional transports only',()=>{
  it('embeds exact artifacts and refuses lasting upgrade or overrides before AWS is invoked',()=>{
-  execFileSync(process.execPath,['scripts/build-care-erasure-intent-operator.mjs'],{encoding:'utf8',timeout:30000});
+  execFileSync(process.execPath,['scripts/build-care-erasure-intent-operator.mjs','--historical-source-only'],{encoding:'utf8',timeout:30000});
   const dir='dist/aws-clinical-core/care-erasure-intent-operator/',bytes=readFileSync(dir+'index.cjs');
   const manifest=JSON.parse(readFileSync(dir+'artifact-manifest.json','utf8'));
   expect(manifest).toMatchObject({embeddedMigrations:true,embeddedReferenceMigrations:true,embeddedOverlay:true,targetOverrides:false,
@@ -80,7 +80,7 @@ describe('fixed intent inspection and rollback executable, fictional transports 
  it('refuses changed parent, reference or overlay artifacts before database creation',async()=>{
   for(const kind of ['parent','reference','overlay']){
    const {d}=dependencies();
-   if(kind==='parent')d.loadMigrations=()=>loadClinicalCoreMigrations().slice(0,-1);
+   if(kind==='parent')d.loadMigrations=()=>loadClinicalCoreMigrations().slice(0,45);
    if(kind==='reference')d.loadReference=()=>loadGovernedCatalogMigrations().slice(0,-1);
    if(kind==='overlay')d.loadOverlay=()=>({...overlay(),sql:overlay().sql+'-- drift\n'});
    await expect(executeCareErasureIntentCommand(['inspect'],build,d)).rejects.toThrow('artifact_refused');expect(d.createDatabase).not.toHaveBeenCalled();

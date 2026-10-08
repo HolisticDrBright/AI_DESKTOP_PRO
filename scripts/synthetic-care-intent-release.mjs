@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {CARE_RELEASE as P,careMigrationBinding,careMobileBinding,careSourceSnapshot,
  normalizedText,sha256,careReleaseZip,buildCareIdentityBundle} from './synthetic-care-release.mjs';
+import {readHistoricalCareParentMigrations} from './care-canonical-migrations.mjs';
 import {sourceMapping} from './build-care-erasure-recovery-source.mjs';
 import {DEPLOYED_CARE} from './verify-deployed-synthetic-care.mjs';
 
@@ -12,9 +13,9 @@ export const INTENT_RELEASE=Object.freeze({contract:'synthetic-care-intent-relea
  liveAfter:'447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50'});
 export const refuseIntent=reason=>{throw new Error('synthetic_care_intent_release_refused:'+reason);};
 const canonical=value=>JSON.stringify(value);
-export function careIntentMigrationBinding(root){
- const parent=careMigrationBinding(root),dir='infra/aws-clinical-core/migrations/';
- const rows=JSON.parse(normalizedText(root,dir+'manifest.json')).migrations.map(m=>{
+export function careIntentMigrationBinding(root,historicalSourceOnly=false){
+ const parent=careMigrationBinding(root,historicalSourceOnly),dir='infra/aws-clinical-core/migrations/';
+ const rows=historicalSourceOnly?readHistoricalCareParentMigrations(root):JSON.parse(normalizedText(root,dir+'manifest.json')).migrations.map(m=>{
   const sql=normalizedText(root,dir+m.file);
   return {version:m.version,name:m.file.slice(15,-4),sql,sha256:sha256(sql)};
  });

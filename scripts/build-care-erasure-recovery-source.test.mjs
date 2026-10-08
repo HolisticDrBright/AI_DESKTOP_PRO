@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {digest,normalized,sourceMapping,CARE_ERASURE_RECOVERY_PARENT} from './build-care-erasure-recovery-source.mjs';
 const directory='infra/aws-clinical-core/migrations/';
-const canonical=JSON.parse(readFileSync(directory+'manifest.json','utf8')).migrations.map(m=>{
+const canonical=JSON.parse(readFileSync(directory+'historical-care-parent-46.json','utf8')).migrations.map(m=>{
  const sql=normalized(readFileSync(directory+m.file,'utf8'));
  return {version:m.version,name:m.file.slice(15,-4),sql,sha256:digest(sql)};
 });

@@ -5,8 +5,9 @@ import {splitPostgresStatements,type ClinicalCoreMigration} from './migrations';
 import {assertCareErasureUpgrade,CARE_ERASURE_UPGRADE,careErasurePreservation as base,
  type CareErasureUpgradeConfiguration} from './care-erasure-schema-upgrade';
 
-/** Separate blocked release identity. Do not append it to the canonical ledger
- * until the matched API recovery/release review is complete. The separate CLI
+/** Historical overlay transition identity. The exact SQL is now registered in
+ * the current synthetic source manifest; this parent-view operator remains a
+ * historical witness, not current release or PHI approval. Its separate CLI
  * permits only inspection and rollback rehearsal, never lasting upgrade. */
 export const CARE_ERASURE_INTENT_UPGRADE=Object.freeze({version:'20261007010000',name:'synthetic_care_erasure_intents',
  sqlSha256:'4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec'});

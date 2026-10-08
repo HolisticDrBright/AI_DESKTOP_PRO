@@ -9,8 +9,10 @@ source47/live48, 89 tables, with all 23,985 original rows unchanged. The runner
 then stopped at postinspection because it compared fingerprints of different
 table inventories. Subsequent actual read-only reconciliation qualified the
 committed successor, and a separate archival run preserved exact custody before
-retiring its temporary locks. The failed release stays failed; canonical
-registration and full erasure journeys are still open. This is not a completed
+retiring its temporary locks. The failed release stays failed. The source
+manifest now registers the exact already-applied migration, with a separate
+read-only current inspector; its clean-source hosted check and full erasure
+journeys remain open. This is not a completed
 erasure feature, an installed mobile release, or permission to use PHI.
 
 ## Application and operator source qualification
@@ -512,9 +514,9 @@ is substituted. The original parent-schema resume command is not reusable.
    routes, four absent source routes, roles and logs. The new read-only profile
    is qualified for the now-archived interruption, not a generic future release.
    Never recreate or reuse the original parent-schema resume path.
-2. Deliberately register the exact already-applied migration canonically,
-   preserving ordered live receipts and the historical alias; keep the public
-   intent CLI's direct `upgrade` refusal. No schema replay or ledger rewrite.
+2. Verify the registered current source against the already-applied live
+   successor using the new read-only inspector below. Keep the public intent
+   CLI's direct `upgrade` refusal. No schema replay or ledger rewrite.
 3. Execute isolated fictional prepared/erased/cancelled, lost-reply,
    second-session discovery, concurrency, replay and cross-owner journeys.
    Cancelled receipts alone do not prove erased outcomes or native recovery.
@@ -526,3 +528,63 @@ remain partial, including owned delivery, full privacy and retained-clinic
 disposition, eligible clinical releases, Core $19.99 store/provider acceptance,
 matched releases and physical devices. Security, retention and executed
 agreement coverage require actual review before separate PHI activation.
+
+## Current canonical registration
+
+The current synthetic manifest contains **47** ordered source migrations. Its
+terminal file `20261007010000_synthetic_care_erasure_intents.sql` is byte-identical
+after LF normalization to the previously applied overlay: SHA256
+`4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec`.
+All 46 parent identities are unchanged. The current source ledger hash is
+`02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7`;
+the 48-row live mapping preserves the historical alias and remains
+`447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50`.
+The migration has `production_transform:false`: it is not added to the
+106-migration production ledger or treated as PHI approval. The SQL's original
+candidate comment stays unchanged because changing it would rewrite identity.
+
+`historical-care-parent-46.json` preserves the explicit parent source view for
+regression tests. Historical helpers validate that exact prefix against the
+current canonical history. Old live builders and `careIntentCurrent` still
+read the current manifest by default and refuse this retired generation; no
+fallback silently trims it to46. Historical operator builds require
+`--historical-source-only`, embed `clean:false`, and cannot execute lasting
+writes. Existing immutable application artifacts, custody archives, journals,
+database receipts and failed-run classifications remain unchanged.
+
+The current inspector embeds all47 source migrations and both reference rows,
+rejects a dirty executable build, pins the assumed-role synthetic account,
+foundation, cluster, secret and database, and reads the already-applied
+successor twice using repeatable-read read-only transactions. The inspected
+function bodies, grants, immutable trigger, table contracts, entire ordered
+ledger and original/full fingerprints must match. It has no apply, rehearsal,
+upgrade, target override or saved-report path. Its historical inspection witness
+retains `canonicalRegistered:false`; the separate current result describes the
+registered source rather than changing that old witness into an approval.
+
+```powershell
+npm run build:care-intent-canonical-inspector
+node dist/aws-clinical-core/care-intent-canonical-inspector/index.cjs inspect
+```
+
+Local evidence: 107 migration/upgrade/registration tests, 73 current domain
+lifecycle/dispute/retention tests, and 249 care-script tests pass. The full
+Desktop run passes **342 files/4,314 tests/11 existing skips**, in **265.12
+seconds**, using the repository's Pacific-time test command. The initial run's
+missing timezone and new log-statement boundary failures are not passes; the
+statement was repaired without weakening the logging guard. Final reference-SQL
+digest hardening and logging checks pass **8 targeted tests** afterward;
+typecheck, full lint and schema coverage checks pass. Altered reference SQL is
+refused before a transaction, even if its supplied digest field is unchanged.
+The historical overlay operator's comment now names its historical scope; SQL
+bytes and receipts remain unchanged. Graph refresh runs only after the full
+embedded-database run. Hosted inspection belongs in its separate terminal
+receipt; these source results do not certify AWS, erased outcomes, installed
+recovery or a matched release. Prior Desktop9e5604d and V2 5b7738a CI are green,
+not evidence for the new source.
+
+Next is a current registered-release artifact and actual isolated fictional
+prepared/erased/cancelled, lost-reply/discovery, second-session, concurrency,
+replay and foreign-owner acceptance. The old parent release/resumer cannot be
+reused. All original commercial scopes, clinical holds and source-verification
+requirements remain; PHI is off and paid mobile builds remain held.

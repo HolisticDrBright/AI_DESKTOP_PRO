@@ -101,7 +101,7 @@ test('embedded port has no standalone CLI/report/target override; historical upg
  assert.doesNotMatch(code,/process\.env|process\.argv|readFileSync|--approve|--report/);
  assert.match(readFileSync(new URL('../src/server/clinical-core/care-erasure-intent-command.ts',import.meta.url),'utf8'),
   /command==='upgrade'\)refuse\('api_recovery_required'\)/);
- execFileSync(process.execPath,['scripts/build-care-erasure-intent-release.mjs'],{encoding:'utf8',timeout:30000});
+ execFileSync(process.execPath,['scripts/build-care-erasure-intent-release.mjs','--historical-source-only'],{encoding:'utf8',timeout:30000});
  const m=JSON.parse(readFileSync('dist/aws-clinical-core/care-erasure-intent-release/artifact-manifest.json','utf8'));
  const bytes=readFileSync('dist/aws-clinical-core/care-erasure-intent-release/index.cjs');assert.equal(m.sha256,sha256(bytes));
  assert.equal(m.standaloneUpgradeAvailable,false);assert.equal(m.migrationPerformed,false);

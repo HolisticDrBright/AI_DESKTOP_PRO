@@ -5,6 +5,7 @@ import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
+import {readHistoricalCareParentMigrations,readCanonicalCareMigrations} from './care-canonical-migrations.mjs';
 
 export const CARE_ERASURE_RECOVERY_PARENT=Object.freeze({
  count:46,historySha256:'52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017',
@@ -59,19 +60,13 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
 }
 export async function buildSource(){
  if(process.argv.length!==2)throw new Error('care_erasure_recovery_arguments_refused');
- const directory='infra/aws-clinical-core/migrations/';
- const manifest=JSON.parse(readFileSync(directory+'manifest.json','utf8'));
- if(manifest.contract_version!=='clinical-core-migrations/1')throw new Error('care_erasure_recovery_manifest_refused');
- const migrations=manifest.migrations.map(m=>{
-  if(!/^\d{14}_[a-z0-9_]+\.sql$/.test(m.file)||!m.file.startsWith(m.version+'_'))throw new Error('care_erasure_recovery_manifest_refused');
-  const sql=normalized(readFileSync(directory+m.file,'utf8'));
-  return {version:m.version,name:m.file.slice(15,-4),sql,sha256:digest(sql)};
- });
  const sql=normalized(readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8'));
  const sourceCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
  const sourceDirty=!!execFileSync('git',['status','--porcelain','--untracked-files=all','--',
   'src','scripts','infra','package.json','package-lock.json','.gitattributes','.github'],{encoding:'utf8'}).trim();
- const mapping=sourceMapping(migrations,sql,sourceCommit,sourceDirty);
+ const current=readCanonicalCareMigrations(process.cwd());
+ const mapping=sourceMapping(readHistoricalCareParentMigrations(process.cwd()),sql,sourceCommit,sourceDirty);
+ mapping.historicalSourceOnly=true;mapping.currentCanonicalMapping=current.mapping;
  const out=resolve('dist/aws-clinical-core/care-erasure-recovery-source');mkdirSync(out,{recursive:true});
  const libraries=[];
  for(const [file,entry] of [['preserving-operator-library.cjs','src/server/clinical-core/care-erasure-intent-upgrade.ts'],

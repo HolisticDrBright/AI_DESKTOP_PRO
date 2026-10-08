@@ -23,7 +23,7 @@ function dependencies() {
   const d: CareErasureUpgradeDependencies = {
     observeCaller: vi.fn(() => { events.push('caller'); return structuredClone(caller); }),
     observeFoundation: vi.fn(() => { events.push('foundation'); return { Stacks: [structuredClone(stack)] }; }),
-    loadMigrations: loadClinicalCoreMigrations, loadReferenceMigrations: loadGovernedCatalogMigrations,
+    loadMigrations: () => loadClinicalCoreMigrations().slice(0,46), loadReferenceMigrations: loadGovernedCatalogMigrations,
     createDatabase: vi.fn(() => { events.push('client'); return { transaction: async () => { throw Error('unexpected'); } }; }),
     run: vi.fn(async (_db, _m, _ref, _c, command) => { events.push(command); return result(command); }),
   };
@@ -31,7 +31,7 @@ function dependencies() {
 }
 describe('fixed synthetic erasure upgrade command, fictional transports only', () => {
   it('builds a self-contained exact-source operator with embedded histories and refuses overrides without AWS calls', () => {
-    execFileSync(process.execPath, ['scripts/build-care-erasure-schema-upgrade.mjs'], { encoding: 'utf8', timeout: 30000 });
+    execFileSync(process.execPath, ['scripts/build-care-erasure-schema-upgrade.mjs','--historical-source-only'], { encoding: 'utf8', timeout: 30000 });
     const dir = 'dist/aws-clinical-core/care-erasure-schema-upgrade/', emitted = readFileSync(dir + 'index.cjs');
     const manifest = JSON.parse(readFileSync(dir + 'artifact-manifest.json', 'utf8'));
     expect(manifest).toMatchObject({ embeddedMigrations: true, embeddedReferenceMigrations: true, targetOverrides: false,

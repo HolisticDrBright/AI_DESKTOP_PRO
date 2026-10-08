@@ -11,7 +11,7 @@ const clone = structuredClone;
 function candidate() {
   const snapshot = {commit: 'a'.repeat(40), clean: true, files: 2, sha256: 'b'.repeat(64)};
   const current = {desktop: snapshot, mobile: {source: {...snapshot, commit: 'c'.repeat(40)}, built: false, deviceVerified: false},
-    migrations: careMigrationBinding(process.cwd()), templateSha256: sha256(JSON.stringify(source))};
+    migrations: careMigrationBinding(process.cwd(),true), templateSha256: sha256(JSON.stringify(source))};
   const bundle = Buffer.from('exports.handler = async () => ({statusCode:403});\n');
   const release = {contract: P.contract, execution: 'synthetic-staging', phiAllowed: false, ...current,
     bundleSha256: sha256(bundle), erasureProtocol: 'request-id-receipt-settlement/1', legacyErasureAdmission: false,

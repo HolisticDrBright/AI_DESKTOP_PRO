@@ -10,7 +10,7 @@ export function careIntentContinuationFixture(){
  const snapshot={commit:'a'.repeat(40),clean:true,sha256:hash,files:10};
  const current={desktop:snapshot,mobile:{source:{...snapshot,commit:'c'.repeat(40)},
   ...flags(['contractSha256','requestJournalSha256','transportSha256','easSha256','recoveryContractSha256','recoveryUiSha256'],hash),
-  built:false,deviceVerified:false},migrations:careIntentMigrationBinding(process.cwd()),templateSha256:hash};
+  built:false,deviceVerified:false},migrations:careIntentMigrationBinding(process.cwd(),true),templateSha256:hash};
  const candidate=createCareIntentCandidate(current,Buffer.from('exports.handler=async()=>({statusCode:503});'));
  const b=careIntentDependencyFixture(),newCode={...b.before.Properties.Code,S3Key:candidate.manifest.key,S3ObjectVersion:'fictional-version'};
  b.input.parameters.find(p=>p.ParameterKey==='LambdaCodeKey').ParameterValue=candidate.manifest.key;

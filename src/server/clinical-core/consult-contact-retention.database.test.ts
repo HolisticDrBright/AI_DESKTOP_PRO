@@ -85,6 +85,7 @@ afterAll(async()=>{await db?.close();});
 
 beforeEach(async()=>{
  await db.exec("set session_replication_role = 'replica'");
+ await db.query('delete from clinical_core.care_data_erasure_intents');
  for(const table of ['consult_request_audit','consult_requests','consult_retention_settings',
   'patient_connections','patient_records'])
   await db.exec(`delete from clinical_core.${table}`);
@@ -163,6 +164,8 @@ describe('what a purge removes and what it keeps',()=>{
    await tx.exec('set local role clinical_core_api');
    await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
     [consumer,org,'consumer','subject-'+consumer,'consent_management','synthetic-staging','synthetic_only']);
+   await tx.query('select clinical_core.care_data_prepare_erasure($1::jsonb)',
+    [JSON.stringify({action:'prepare_erasure',scope:'account_closure',requestId:'b0000000-0000-4000-8000-000000000099'})]);
    await tx.query('select clinical_core.care_data_erasure_request($1::jsonb)',
     [JSON.stringify({action:'erase_request',scope:'account_closure',requestId:'b0000000-0000-4000-8000-000000000099'})]);
   });

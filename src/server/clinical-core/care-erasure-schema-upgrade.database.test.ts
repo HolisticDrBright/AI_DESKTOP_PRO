@@ -33,7 +33,8 @@ const predecessor = async () => {
   expect((await pg.query<{ absent: boolean }>("select to_regclass('clinical_core.care_data_erasure_requests') is null absent")).rows[0]?.absent).toBe(true);
 };
 beforeAll(async () => {
-  migrations = loadClinicalCoreMigrations(); reference = loadGovernedCatalogMigrations();
+  // Historical upgrade fixture, not current release authority.
+  migrations = loadClinicalCoreMigrations().slice(0,46); reference = loadGovernedCatalogMigrations();
   pg = new PGlite({ extensions: { pgcrypto } });
   await applyClinicalCoreMigrations(database(), migrations.slice(0, 45));
   const alias = migrations.find(x => x.version === '20260821049700')!;

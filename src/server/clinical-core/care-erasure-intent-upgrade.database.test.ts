@@ -34,7 +34,9 @@ async function predecessor(){
  expect((await pg.query<{absent:boolean}>("select to_regclass('clinical_core.care_data_erasure_intents') is null absent")).rows[0]?.absent).toBe(true);
 }
 beforeAll(async()=>{
- pg=new PGlite({extensions:{pgcrypto}});m=loadClinicalCoreMigrations();reference=loadGovernedCatalogMigrations();
+ pg=new PGlite({extensions:{pgcrypto}});
+ // Explicit historical predecessor; the operator verifies its full digest.
+ m=loadClinicalCoreMigrations().slice(0,46);reference=loadGovernedCatalogMigrations();
  const sql=readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8').replace(/\r\n?/g,'\n');
  overlay={version:CARE_ERASURE_INTENT_UPGRADE.version,name:CARE_ERASURE_INTENT_UPGRADE.name,sql,sha256:sha(sql)};
  await applyClinicalCoreMigrations(database(),m);await applyGovernedCatalogMigrations(database(),reference);
@@ -55,7 +57,7 @@ describe('blocked preserving intent successor operator library',()=>{
   expect(p.before).toHaveLength(47);expect(p.after).toHaveLength(48);
   expect(p.after.filter(v=>v.version==='20260902230000')).toEqual(p.before.filter(v=>v.version==='20260902230000'));
   expect(p.after.at(-1)).toEqual({version:overlay.version,name:overlay.name,sha256:overlay.sha256});
-  expect(loadClinicalCoreMigrations()).toHaveLength(46);
+  expect(m).toHaveLength(46);expect(loadClinicalCoreMigrations()).toHaveLength(47);
  });
  it('refuses boundary and artifact drift before opening a database transaction',async()=>{
   let opened=false;const never:ClinicalCoreDatabase={transaction:async()=>{opened=true;throw Error('unexpected');}};

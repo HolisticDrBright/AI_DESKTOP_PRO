@@ -13,7 +13,7 @@ function current(){
  const snapshot={commit:'a'.repeat(40),clean:true,files:3,sha256:'b'.repeat(64)};
  return {desktop:snapshot,mobile:{source:{...snapshot,commit:'c'.repeat(40)},
   ...Object.fromEntries(['contractSha256','requestJournalSha256','transportSha256','easSha256','recoveryContractSha256','recoveryUiSha256'].map(k=>[k,'d'.repeat(64)])),
-  built:false,deviceVerified:false},migrations:careIntentMigrationBinding(process.cwd()),templateSha256:'e'.repeat(64)};
+  built:false,deviceVerified:false},migrations:careIntentMigrationBinding(process.cwd(),true),templateSha256:'e'.repeat(64)};
 }
 function candidate(){const c=current(),bundle=Buffer.from('exports.handler=async()=>({statusCode:503});');
  return {...createCareIntentCandidate(c,bundle),current:c};}

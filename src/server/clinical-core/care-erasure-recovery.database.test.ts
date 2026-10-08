@@ -38,8 +38,7 @@ beforeAll(async()=>{
  db=new PGlite({extensions:{pgcrypto}});
  const manifest=JSON.parse(readFileSync('infra/aws-clinical-core/migrations/manifest.json','utf8')) as {migrations:{file:string}[]};
  for(const {file} of manifest.migrations)await db.exec(readFileSync('infra/aws-clinical-core/migrations/'+file,'utf8'));
- // Candidate only, applied atomically to this disposable fictional database.
- await db.transaction(async tx=>tx.exec(readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8')));
+ // The registered terminal migration is included exactly once above.
  await db.query("insert into clinical_core.organizations(id,synthetic_label) values($1,'Fictional recovery clinic')",[org]);
  for(const [person,pool] of [[owner,'consumer'],[other,'consumer'],[clinician,'workforce']]){
   await db.query('insert into clinical_core.persons(id,synthetic_subject_key) values($1,$2)',[person,'syn_'+person.replaceAll('-','')]);
@@ -61,7 +60,7 @@ beforeEach(async()=>{
  await db.query("insert into clinical_core.care_messages(thread_id,sender_id,sender_pool,request_id,request_hash,acknowledgement,body) values($1,$2,'consumer',$3,'fictional-hash','care-messages/1','Fictional recoverable message')",[thread,owner,id(8)]);
 });
 
-describe('blocked source candidate: durable owner erasure intents',()=>{
+describe('canonical synthetic history: durable owner erasure intents',()=>{
  it('registers without deleting, and idempotently returns the same immutable intent',async()=>{
   const first=await prepare();expect(first).toMatchObject({action:'prepare_erasure',requestId:id(100),scope:'domain',outcome:'prepared',receipt:null});
   const original=(await discover());expect(await prepare()).toEqual(first);expect(await discover()).toEqual(original);
@@ -193,10 +192,13 @@ describe('blocked source candidate: durable owner erasure intents',()=>{
   try{await expect(prepare()).rejects.toMatchObject({category:'identity_refused'});expect(await messages()).toBe(1);}
   finally{await db.query("update clinical_core.identities set status='active' where person_id=$1",[owner]);}
  });
- it('never silently upgrades canonical history; routing exists only in source',()=>{
+ it('records the exact synthetic-only canonical successor without production transformation',()=>{
   const manifest=readFileSync('infra/aws-clinical-core/migrations/manifest.json','utf8');
-  expect(JSON.parse(manifest).migrations).toHaveLength(46);
-  expect(manifest).not.toContain('care-erasure-intents');
+  expect(JSON.parse(manifest).migrations).toHaveLength(47);
+  expect(JSON.parse(manifest).migrations.at(-1)).toEqual({version:'20261007010000',
+   file:'20261007010000_synthetic_care_erasure_intents.sql',production_transform:false});
+  expect(readFileSync('infra/aws-clinical-core/migrations/20261007010000_synthetic_care_erasure_intents.sql','utf8').replace(/\r\n?/g,'\n'))
+   .toBe(readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8').replace(/\r\n?/g,'\n'));
   const handler=readFileSync('src/server/clinical-core/aws-identity-api.ts','utf8');
   expect(handler).toContain('createCareErasureRecovery');
   expect(handler).toContain("body.action==='prepare_erasure'||body.action==='discover_erasure_requests'");

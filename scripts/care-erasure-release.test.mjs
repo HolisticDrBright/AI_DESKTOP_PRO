@@ -92,7 +92,7 @@ test('recovery result is snapshotted; a dependency cannot mutate the captured wi
  await assert.rejects(releaseCareErasure(f.recovery,f.d),/restored_transport_drift/);assert.equal(f.calls.includes('upgrade'),false);
 });
 test('fresh self-contained database artifact embeds the exact histories and refuses a dirty/stale port',()=>{
- execFileSync(process.execPath,['scripts/build-care-erasure-release.mjs'],{encoding:'utf8',timeout:30000});
+ execFileSync(process.execPath,['scripts/build-care-erasure-release.mjs','--historical-source-only'],{encoding:'utf8',timeout:30000});
  const dir='dist/aws-clinical-core/care-erasure-release/',bytes=readFileSync(dir+'index.cjs'),manifest=JSON.parse(readFileSync(dir+'artifact-manifest.json','utf8'));
  assert.equal(manifest.sha256,sha256(bytes));assert.equal(manifest.mandatoryFreshRoutingRecovery,true);assert.match(bytes.toString(),/3890daeb708511a0f651abd95456906048fb9f4a7bc1ef754b731e9d673dab91/);
  const fictional={...manifest,sourceCommit:source.commit,clean:true};verifyCareErasureReleaseArtifact(fictional,bytes,source);

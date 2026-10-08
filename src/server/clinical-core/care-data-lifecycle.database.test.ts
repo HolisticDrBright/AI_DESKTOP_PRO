@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {CARE_DATA_LIFECYCLE_ACK,type CareDataRequest} from '../../contracts/careDataLifecycle';
 import {createCareDataLifecycle} from './care-data-lifecycle';
+import {createCareErasureRecovery} from './care-erasure-recovery';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
 import type {SyntheticRequestContext} from './aws-identity-consent';
 
@@ -31,8 +32,10 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
  }});
 })};
 const call=async(input:CareDataRequest,actor=owner,pool:'consumer'|'workforce'='consumer')=>{
- const result=await createCareDataLifecycle(database)(context(actor,pool),input.action==='erase'
-  ?{action:'erase_request',scope:input.scope,requestId:randomUUID()}:input);
+ const request=input.action==='erase'?{action:'erase_request' as const,scope:input.scope,requestId:randomUUID()}:input;
+ if(request.action==='erase_request')await createCareErasureRecovery(database)(context(actor,pool),
+  {action:'prepare_erasure',requestId:request.requestId,scope:request.scope});
+ const result=await createCareDataLifecycle(database)(context(actor,pool),request);
  if(result.action==='erase_request'&&result.receipt)return result.receipt;
  return result;
 };
@@ -63,6 +66,7 @@ async function seed(over:{linkState?:string;clinicReply?:boolean}={}){
  // between cases is harness plumbing, so the triggers are stood down only for the reset
  // and are back in force for every assertion below.
  await db.exec(`set session_replication_role = 'replica';
+  delete from clinical_core.care_data_erasure_intents;
   delete from clinical_core.care_data_erasure_requests;
   delete from clinical_core.care_data_erasures;
   delete from clinical_core.program_phase_authorizations; delete from clinical_core.program_assignment_completions;
@@ -274,8 +278,10 @@ describe('owner erasure',()=>{
 });
 
 describe('correlated owner erasure recovery',()=>{
- const execute=(action:'erase_request'|'erase_receipt'|'settle_erasure',requestId=id(91),actor=owner,scope:'domain'|'account_closure'='domain')=>
-  createCareDataLifecycle(database)(context(actor),{action,scope,requestId});
+ const execute=async(action:'erase_request'|'erase_receipt'|'settle_erasure',requestId=id(91),actor=owner,scope:'domain'|'account_closure'='domain')=>{
+  if(action==='erase_request')await createCareErasureRecovery(database)(context(actor),{action:'prepare_erasure',scope,requestId});
+  return createCareDataLifecycle(database)(context(actor),{action,scope,requestId});
+ };
  it('replays the exact receipt without deleting records added after the first request',async()=>{
   const first=await execute('erase_request');
   await db.query("insert into clinical_core.care_message_threads(id,connection_id,subject) values($1,$2,'New fictional message')",[id(80),connection]);
@@ -395,8 +401,11 @@ describe('the narrowed append-only refusal',()=>{
    await tx.exec('set local role clinical_core_api');
    await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
     [owner,org,'consumer','subject-'+owner,'consent_management','synthetic-staging','synthetic_only']);
+   const requestId=randomUUID();
+   await tx.query('select clinical_core.care_data_prepare_erasure($1::jsonb)',
+    [JSON.stringify({action:'prepare_erasure',scope:'domain',requestId})]);
    await tx.query('select clinical_core.care_data_erasure_request($1::jsonb) as data',
-    [JSON.stringify({action:'erase_request',scope:'domain',requestId:randomUUID()})]);
+    [JSON.stringify({action:'erase_request',scope:'domain',requestId})]);
    const flag=await tx.query<{value:string}>("select coalesce(current_setting('clinical_private.care_erasure',true),'') as value");
    expect(flag.rows[0]!.value).toBe('');
   });

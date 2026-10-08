@@ -24,7 +24,10 @@ type Json={[key:string]:unknown};
 const purposeFor=(fn:string)=>fn.startsWith('care_data')?'consent_management':'clinical_data';
 async function rpc(fn:string,request:unknown,actor=owner,pool:'workforce'|'consumer'='consumer'){
  const erased=fn==='care_data_erase';
- if(erased){fn='care_data_erasure_request';request={...(request as Record<string,unknown>),action:'erase_request',requestId:randomUUID()};}
+ if(erased){fn='care_data_erasure_request';request={...(request as Record<string,unknown>),action:'erase_request',requestId:randomUUID()};
+  const {requestId,scope}=request as Record<string,unknown>;
+  await rpc('care_data_prepare_erasure',{action:'prepare_erasure',requestId,scope},actor,pool);
+ }
  return db.transaction(async tx=>{
   await tx.exec('set local role clinical_core_api');
   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
@@ -80,6 +83,8 @@ afterAll(async()=>{await db?.close();});
 
 beforeEach(async()=>{
  await db.exec("set session_replication_role = 'replica'");
+ await db.query('delete from clinical_core.care_data_erasure_intents');
+ await db.query('delete from clinical_core.care_data_erasure_requests');
  for(const table of ['clinical_dispute_statements','clinical_disputes','content_revision_notices',
   'program_assignment_completions','program_phase_authorizations','program_assignments','care_data_erasures']){
   await db.query('delete from clinical_core.'+table);

@@ -126,6 +126,9 @@ test('symlinks and gitlinks are never admitted as historical application files',
 async function pairedFixture(t){
  const d=fixture(t),v=fixture(t),infra='infra/aws-clinical-core/';
  for(const folder of ['migrations','catalog-migrations'])cpSync(resolve(infra,folder),resolve(d.root,infra,folder),{recursive:true});
+ // These regressions exercise the archived parent-schema resumption profile.
+ // The real current manifest remains47 and refuses that retired profile.
+ d.put(infra+'migrations/manifest.json',readFileSync(infra+'migrations/historical-care-parent-46.json'));
  for(const path of ['source-candidates/care-erasure-intents.sql','identity-api-extension.json'])
   d.put(infra+path,readFileSync(infra+path));
  for(const name of ['careDataLifecycle','careErasureRecovery']){
