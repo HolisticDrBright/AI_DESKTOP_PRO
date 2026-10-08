@@ -110,17 +110,18 @@ export function verifyCareRegisteredProposalViews(summary,detailed,actualTemplat
  check(equal(after,expectedAfter),'non_code_context');
  const base=structuredClone(lambda.ResourceChange);delete base.Details;
  const without=structuredClone(change);delete without.Details;delete without.BeforeContext;delete without.AfterContext;
- check(equal(without,base)&&Array.isArray(change.Details)&&change.Details.length===2,'property_delta');
- const seen=new Set();
- for(const detail of change.Details){
-  const target=detail.Target,key=target?.Path==='/Properties/Code/S3Key'?'S3Key'
-   :target?.Path==='/Properties/Code/S3ObjectVersion'?'S3ObjectVersion':undefined;
-  check(key&&!seen.has(key),'property_delta');seen.add(key);
-  const direct={Evaluation:'Static',ChangeSource:'DirectModification',Target:{Attribute:'Properties',Name:'Code',RequiresRecreation:'Never',
-   Path:'/Properties/Code/'+key,BeforeValue:properties.Code[key],AfterValue:expectedAfter.Properties.Code[key],AttributeChangeType:'Modify'}};
-  const parameter={...direct,ChangeSource:'ParameterReference',CausingEntity:'LambdaCodeKey'};
-  check(equal(detail,direct)||key==='S3Key'&&equal(detail,parameter),'property_delta');
- }
+ check(equal(without,base)&&Array.isArray(change.Details)&&[2,3].includes(change.Details.length),'property_delta');
+ const direct=key=>({Evaluation:'Static',ChangeSource:'DirectModification',Target:{Attribute:'Properties',Name:'Code',RequiresRecreation:'Never',
+   Path:'/Properties/Code/'+key,BeforeValue:properties.Code[key],AfterValue:expectedAfter.Properties.Code[key],AttributeChangeType:'Modify'}});
+ const version=direct('S3ObjectVersion'),key=direct('S3Key'),parameter={...key,ChangeSource:'ParameterReference',CausingEntity:'LambdaCodeKey'};
+ // Actual AWS reports the Ref-valued key twice: dynamic direct evaluation
+ // and static parameter evaluation. These are explanations, not two writes.
+ // Accept only this exact complete projection (or the two fully evaluated
+ // shapes), never arbitrary duplicate paths. Full before/after contexts above
+ // independently establish that key and version are the only property changes.
+ const inventory=details=>details.map(canonical).sort();
+ check([[version,key],[version,parameter],[{...key,Evaluation:'Dynamic'},version,parameter]]
+  .some(expected=>equal(inventory(change.Details),inventory(expected))),'property_delta');
  return {contract:'synthetic-care-registered-proposal-projection/1',current:structuredClone(current),
   stackId:binding.stackId,changeSetId:binding.id,changeSetName:binding.name,summarySha256:sha256(canonical(summary)),
   propertyValuesSha256:sha256(canonical(detailed)),summaryResourceCount:2,propertyValuesResourceCount:1,

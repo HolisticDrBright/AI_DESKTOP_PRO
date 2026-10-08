@@ -225,10 +225,31 @@ purpose: do not delete that lock, retry creation or substitute a saved report.
 A compatible proposal reconciliation/execution operator is still required.
 An unexecuted proposal reports `executionAdmissible:false`, not release approval.
 
-The new thirteen proposal tests use fictional transports, including lost create
+The fourteen proposal tests use fictional transports, including lost create
 responses, both projection inventories, post-create drift, stale preparation,
 idempotent existing-proposal inspection and false-positive context parsing.
-No new actual CloudFormation proposal or execution is implied by those tests.
+Tests alone imply no actual CloudFormation proposal or execution.
+
+### October 8 actual proposal finding and source repair
+
+Actual Desktop4a29/V2 38ea run `57f235c2062e501cf676997ea36942cc` uploaded
+the exact encrypted1,827,487-byte artifact `e5d8b5a42b9d38e4150e1d09c4dd61cd43e3e54275096d447a2cdfc531145068`
+at version `Rnf4tZvXuCB_vNbrz_NcM3jiKURx252d`. It created the unexecuted
+`care-registered-e5580f11742e2c0096ed873858f7d0b5` proposal, then exited1
+at05:46:34.982Z with `proposal_property_delta`. The failure is preserved.
+Its combined-operation custody remains held; the upload-only reconciler cannot
+retire it. Do not delete the lock, retry creation or execute the proposal.
+
+A later read-only AWS observation showed three detail records: dynamic direct
+evaluation of S3Key, static direct S3ObjectVersion, and static LambdaCodeKey
+parameter evaluation of the same S3Key. The former two-detail-only verifier
+incorrectly refused that shape. A regression failed before the source repair.
+It now compares the entire unordered detail inventory with this exact triple
+(or the two previously supported fully evaluated shapes). Full before/after
+contexts still permit only key/version changes; arbitrary duplicate paths,
+extra fields, wrong values and non-code changes remain refused. Six orderings
+and eleven invalid mutations are tested. This source repair does not qualify
+the historical live run or settle its custody, and no execution occurred.
 
 The next operator must use its own observations, never supplied report flags:
 

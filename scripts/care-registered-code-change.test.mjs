@@ -115,6 +115,33 @@ test('two leaf deltas must exactly match contexts and explain key and version on
   const f=fixture();mutate(f);assert.throws(()=>verify(f));
  }
 });
+test('actual AWS dual evaluation of a parameter key admits only the complete exact three-detail projection',()=>{
+ const observed=()=>{
+  const f=fixture(),details=f.detailed.Changes[0].ResourceChange.Details,
+   version=structuredClone(details[0]),key=structuredClone(details[1]);
+  key.Evaluation='Dynamic';
+  const parameter={...structuredClone(key),Evaluation:'Static',ChangeSource:'ParameterReference',CausingEntity:'LambdaCodeKey'};
+  f.detailed.Changes[0].ResourceChange.Details=[key,version,parameter];return f;
+ };
+ for(const order of [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]]){
+  const f=observed(),details=f.detailed.Changes[0].ResourceChange.Details;
+  f.detailed.Changes[0].ResourceChange.Details=order.map(i=>details[i]);
+  const result=verify(f);assert.equal(result.executionAdmissible,false);assert.equal(result.deployed,false);
+ }
+ for(const mutate of [f=>f.detailed.Changes[0].ResourceChange.Details.pop(),
+  f=>f.detailed.Changes[0].ResourceChange.Details.push(structuredClone(f.detailed.Changes[0].ResourceChange.Details[0])),
+  f=>f.detailed.Changes[0].ResourceChange.Details[2]=structuredClone(f.detailed.Changes[0].ResourceChange.Details[0]),
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.AfterValue='different-key',
+  f=>f.detailed.Changes[0].ResourceChange.Details[2].Target.BeforeValue='different-predecessor',
+  f=>f.detailed.Changes[0].ResourceChange.Details[2].CausingEntity='OtherKey',
+  f=>f.detailed.Changes[0].ResourceChange.Details[2].Evaluation='Dynamic',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.Path='/Properties/Role',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].HiddenMutation=true,
+  f=>f.detailed.Changes[0].ResourceChange.Details[1].Evaluation='Dynamic',
+  f=>{f.after.Properties.Timeout='30';context(f);}]){
+  const f=observed();mutate(f);assert.throws(()=>verify(f));
+ }
+});
 test('bounded context parser detects duplicate decoded keys at any depth without rejecting whitespace or escapes',()=>{
  assert.deepEqual(parseRegisteredPropertyContext(' { "a": [1, true, null, "x,}:\\\""], "b":{} } '),{a:[1,true,null,'x,}:"'],b:{}});
  for(const text of ['{"a":1,"a":2}','{"a":1,"\\u0061":1}','{"Properties":{"Code":{},"Code":{}}}',
