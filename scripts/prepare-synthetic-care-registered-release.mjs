@@ -42,13 +42,41 @@ export function readCareRegisteredPredecessor(root){
   &&manifest.key===`clinical-core/authenticated-api/care-intent-release/${C.predecessorDesktop}/${C.predecessorZip}.zip`,'predecessor_artifact');
  return {manifest,release,bundle,zip};
 }
-function child(root,args,timeout=180000){
+const inspectorCodes=new Set(['care_canonical_registration_boundary_refused','care_canonical_registration_observation_changed',
+ 'care_canonical_registration_failed','artifact_refused','history_refused','boundary_refused','inventory_refused',
+ 'verification_failed','upgrade_failed']);
+const inspectorPhases=new Set(['begin','statement','commit','rollback','unknown']);
+const inspectorReasons=new Set(['database_resuming','database_unavailable','access_denied','token_expired','credentials_unavailable',
+ 'timeout','aborted','transaction_missing','statement_timeout','service_unavailable','transport_type_error','connection_reset','unknown']);
+/** Process output is not trusted as a message. Only the inspector's finite
+ * machine vocabulary is retained; stdout, stack, SQL and arbitrary stderr are
+ * never rendered. A timeout/output bound takes precedence over partial output.
+ * This diagnostic is not evidence that the failed inspection completed. */
+export function careRegisteredInspectorDiagnostic(error,phase){
+ check(phase==='build'||phase==='inspect','inspector_phase');
+ const e=error&&typeof error==='object'?error:{};
+ if(e.code==='ETIMEDOUT')return 'timeout';
+ if(e.code==='ENOBUFS')return 'output_limit';
+ if(e.signal)return 'terminated';
+ if(phase!=='inspect'||!Number.isInteger(e.status)||e.status<1||e.status>255)return 'unknown';
+ const bytes=typeof e.stderr==='string'?Buffer.from(e.stderr):Buffer.isBuffer(e.stderr)?e.stderr:undefined;
+ if(!bytes||bytes.length===0||bytes.length>256)return 'unknown';
+ const text=bytes.toString('utf8').replace(/\r?\n$/,'');
+ const [code,transport,...extra]=text.split(':');
+ if(extra.length||!inspectorCodes.has(code))return 'unknown';
+ if(transport===undefined)return code;
+ const transportPhase=[...inspectorPhases].find(p=>transport.startsWith(p+'_'));
+ if(!transportPhase||!inspectorReasons.has(transport.slice(transportPhase.length+1)))return 'unknown';
+ return code+'_'+transport;
+}
+export function runCareRegisteredInspectorChild(root,args,phase='inspect',timeout=180000){
+ check((phase==='build'||phase==='inspect')&&Number.isInteger(timeout)&&timeout>=10&&timeout<=180000,'inspector_arguments');
  try{return execFileSync(process.execPath,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:2*1024*1024,
   windowsHide:true,stdio:['ignore','pipe','pipe']});}
- catch{refuseRegistered('preflight_inspector_failed');}
+ catch(error){refuseRegistered('preflight_inspector_'+phase+'_failed_'+careRegisteredInspectorDiagnostic(error,phase));}
 }
 export function buildCareRegisteredDatabaseObserver(root,current){
- const build=JSON.parse(child(root,[resolve(root,'scripts/build-care-intent-canonical-inspector.mjs')]));
+ const build=JSON.parse(runCareRegisteredInspectorChild(root,[resolve(root,'scripts/build-care-intent-canonical-inspector.mjs')],'build'));
  const directory=resolve(root,'dist/aws-clinical-core/care-intent-canonical-inspector'),file=resolve(directory,'index.cjs');
  const verify=()=>{
   const saved=JSON.parse(bounded(resolve(directory,'artifact-manifest.json'),256*1024).toString('utf8'));
@@ -57,7 +85,7 @@ export function buildCareRegisteredDatabaseObserver(root,current){
    &&build.inspectionOnly===true&&build.schemaReplayAvailable===false&&build.ledgerRewriteAvailable===false
    &&build.releaseAccepted===false&&build.phiAllowed===false&&sha256(bounded(file,10*1024*1024))===build.sha256,'inspector_build');
  };verify();
- return async()=>{verify();const r=JSON.parse(child(root,[file,'inspect']));verify();return r;};
+ return async()=>{verify();const r=JSON.parse(runCareRegisteredInspectorChild(root,[file,'inspect']));verify();return r;};
 }
 export async function observeCareRegisteredPreflight(root,mobileRoot,directory){
  const current=careRegisteredCurrent(root,mobileRoot),candidate=readCareRegisteredCandidate(directory),

@@ -8,7 +8,8 @@ import {CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
 import {careControlSource,careControlObservation} from './test-fixtures/care-control.mjs';
 import {CARE_REGISTERED_PREDECESSOR,careRegisteredPredecessorTemplate,verifyCareRegisteredFunction,
  verifyCareRegisteredPredecessorControl,verifyCareRegisteredDatabase,runCareRegisteredPreflight} from './care-registered-preflight.mjs';
-import {careRegisteredPreflightArguments,registeredPreflightFailureCode} from './prepare-synthetic-care-registered-release.mjs';
+import {careRegisteredPreflightArguments,registeredPreflightFailureCode,runCareRegisteredInspectorChild,
+ careRegisteredInspectorDiagnostic} from './prepare-synthetic-care-registered-release.mjs';
 const clone=structuredClone;
 function fixture(){
  const sourceText=readFileSync(new URL('../infra/aws-clinical-core/identity-api-extension.json',import.meta.url),'utf8').replace(/\r\n?/g,'\n');
@@ -55,6 +56,57 @@ function fixture(){
  return {source,current,candidate,raw,db,local,caller,downloads,retained,port,calls,now:time,advance:ms=>{clock+=ms;}};
 }
 const run=f=>runCareRegisteredPreflight(f.candidate,f.current,f.source,f.port);
+
+test('actual inspector child keeps the static failed phase and transport diagnostic instead of discarding the cause',()=>{
+ const code='upgrade_failed:begin_database_resuming';
+ assert.throws(()=>runCareRegisteredInspectorChild(process.cwd(),['-e',
+  `process.stderr.write(${JSON.stringify(code+'\n')});process.exitCode=1;`]),
+  {message:'synthetic_care_registered_release_refused:preflight_inspector_inspect_failed_upgrade_failed_begin_database_resuming'});
+});
+
+test('finite inspector vocabulary preserves only static codes and rejects arbitrary stderr and incomplete process outcomes',()=>{
+ const categories=['care_canonical_registration_boundary_refused','care_canonical_registration_observation_changed',
+  'care_canonical_registration_failed','artifact_refused','history_refused','boundary_refused','inventory_refused',
+  'verification_failed','upgrade_failed'];
+ const reasons=['database_resuming','database_unavailable','access_denied','token_expired','credentials_unavailable','timeout',
+  'aborted','transaction_missing','statement_timeout','service_unavailable','transport_type_error','connection_reset','unknown'];
+ for(const category of categories){
+  assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:category+'\r\n'},'inspect'),category);
+  for(const phase of ['begin','statement','commit','rollback','unknown'])for(const reason of reasons){
+   const text=category+':'+phase+'_'+reason;
+   assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:Buffer.from(text+'\n')},'inspect'),text.replace(':','_'));
+  }
+ }
+ for(const stderr of ['upgrade_failed:begin_credential_secret','care_canonical_registration_sk_secret',
+  'upgrade_failed:begin_database_resuming\nSQL=secret','upgrade_failed:begin_database_resuming:secret',
+  'upgrade_failed\n\n',' upgrade_failed','upgrade_failed\0','upgrade_failed:sql_database_resuming','x'.repeat(257),
+  'Bearer abc https://secret?token=abc patient=private',undefined,{},Buffer.from([255])]){
+  assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr},'inspect'),'unknown');
+ }
+ for(const status of [0,null,undefined,256,-1,1.5])assert.equal(careRegisteredInspectorDiagnostic({status,stderr:'upgrade_failed'},'inspect'),'unknown');
+ assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:'upgrade_failed'},'build'),'unknown');
+ assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:'upgrade_failed',code:'ETIMEDOUT'},'inspect'),'timeout');
+ assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:'upgrade_failed',code:'ENOBUFS'},'inspect'),'output_limit');
+ assert.equal(careRegisteredInspectorDiagnostic({status:1,stderr:'upgrade_failed',signal:'SIGTERM'},'inspect'),'terminated');
+ assert.throws(()=>careRegisteredInspectorDiagnostic({},'deploy'));
+});
+
+test('actual child errors are sanitized, timeout is terminal and success output remains an observation not authorization',()=>{
+ const run=(script,phase='inspect',timeout=180000)=>runCareRegisteredInspectorChild(process.cwd(),['-e',script],phase,timeout);
+ for(const phase of ['build','inspect']){
+  assert.throws(()=>run("process.stderr.write('Bearer secret; patient=private');process.exitCode=1;",phase),
+   {message:'synthetic_care_registered_release_refused:preflight_inspector_'+phase+'_failed_unknown'});
+ }
+ assert.throws(()=>run("process.stderr.write('upgrade_failed\\n');process.exitCode=1;",'build'),
+  {message:'synthetic_care_registered_release_refused:preflight_inspector_build_failed_unknown'});
+ assert.throws(()=>run('setInterval(()=>{},1000);','inspect',150),
+  {message:'synthetic_care_registered_release_refused:preflight_inspector_inspect_failed_timeout'});
+ assert.throws(()=>run('process.stdout.write("x".repeat(3*1024*1024));'),
+  {message:'synthetic_care_registered_release_refused:preflight_inspector_inspect_failed_output_limit'});
+ assert.equal(run('process.stdout.write(JSON.stringify({inspectionOnly:true}));'),JSON.stringify({inspectionOnly:true}));
+ assert.throws(()=>runCareRegisteredInspectorChild(process.cwd(),[],'deploy'));
+ assert.throws(()=>runCareRegisteredInspectorChild(process.cwd(),[],'inspect',180001));
+});
 
 test('predecessor control compares the current exact template, complete resource identity and all JWT routes without old-code normalization',()=>{
  const f=fixture(),saved=clone(f.raw),r=verifyCareRegisteredPredecessorControl(f.raw,f.source);

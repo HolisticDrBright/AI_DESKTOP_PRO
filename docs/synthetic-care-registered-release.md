@@ -90,6 +90,13 @@ digests are checked separately; the historical witness remains historical.
 Source, principal, controls, database and retained configuration are rechecked.
 A missing page, wrong owner/environment, stale or changed observation refuses.
 
+Inspector child failures distinguish build from inspection and retain only a
+finite static error category and transport phase/reason. Arbitrary stderr,
+stdout on failure, credentials, SQL and stacks are never printed. Timeouts and
+output limits take precedence over partial output, stop the run and do not
+trigger an automatic retry. A later successful inspection cannot turn an
+earlier failed preflight into a pass.
+
 A preflight observation still reports `deployAuthorized:false`, no AWS or SQL
 mutation, no recovery rehearsal, no hosted journey acceptance and no PHI/device
 approval. It does not verify a new candidate's CloudFormation execution. The
