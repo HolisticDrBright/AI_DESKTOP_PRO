@@ -3,7 +3,8 @@
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {openSync,writeFileSync,fsyncSync,closeSync,readFileSync,mkdirSync,realpathSync,lstatSync} from 'node:fs';
-import {S3Client,PutObjectCommand} from '@aws-sdk/client-s3';
+import {S3Client,PutObjectCommand,HeadObjectCommand,GetObjectCommand,
+ GetBucketLocationCommand,GetBucketVersioningCommand,GetBucketEncryptionCommand} from '@aws-sdk/client-s3';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {CARE_RELEASE as P,normalizedText} from './synthetic-care-release.mjs';
 import {careRegisteredCurrent,readCareRegisteredCandidate,verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
@@ -15,6 +16,25 @@ import {createIntentUploadCustody} from './upload-synthetic-care-intent-release.
 import {uploadAndVerifyCareArtifact} from './upload-synthetic-care-release.mjs';
 import {observeSyntheticMemberIdentity,assertSyntheticMemberIdentity,SYNTHETIC_MEMBER_PROFILE as profile} from './synthetic-aws-principal.mjs';
 const check=(ok,code)=>{if(!ok)refuseRegistered('upload_'+code);};
+// Full control observations may leave an S3 socket idle for a minute. Never
+// reuse that socket for an admitted write or retry an ambiguous transport.
+export const REGISTERED_UPLOAD_TRANSPORT=Object.freeze({httpsAgent:Object.freeze({keepAlive:false,maxSockets:1}),
+ connectionTimeout:10000,requestTimeout:30000});
+/** No provider message, credential, body or stack enters the journal. Actual
+ * command identity survives bundling; constructor-name spoofing is inert. */
+export function registeredUploadTransportFailure(command,error){
+ const phase=command instanceof PutObjectCommand?'put':command instanceof HeadObjectCommand?'head'
+  :command instanceof GetObjectCommand?'get':command instanceof GetBucketLocationCommand?'bucket_location'
+   :command instanceof GetBucketVersioningCommand?'bucket_versioning':command instanceof GetBucketEncryptionCommand?'bucket_encryption':'unknown';
+ const reasons={TimeoutError:'timeout',AbortError:'aborted',CredentialsProviderError:'credentials_unavailable',
+  AccessDenied:'access_denied',ExpiredToken:'token_expired',InvalidRequest:'invalid_request',InvalidArgument:'invalid_argument',
+  NotImplemented:'unsupported',SignatureDoesNotMatch:'signature_refused',PreconditionFailed:'precondition_failed',
+  ConditionalRequestConflict:'conditional_conflict',TypeError:'transport_type_error'};
+ const value=error&&typeof error==='object'?error:{};
+ const reason=value.code==='ECONNRESET'?'connection_reset':value.code==='ETIMEDOUT'?'timeout'
+  :typeof value.name==='string'&&Object.hasOwn(reasons,value.name)?reasons[value.name]:'unknown';
+ return 'synthetic_care_registered_release_refused:upload_transport_'+phase+'_'+reason;
+}
 export function careRegisteredUploadArguments(a){
  check(a.length===5&&a[0]==='--v2-root'&&a[2]==='--artifact'&&a[4]==='--upload-fictional-registered-code-only'
   &&[a[1],a[3]].every(v=>typeof v==='string'&&v.trim()&&!v.startsWith('--')),'arguments');
@@ -89,7 +109,8 @@ export async function uploadCareRegisteredRelease(root,mobileRoot,directory){
  verifyCareRegisteredCandidate(candidate,current);observeSyntheticMemberIdentity();
  const out=registeredOperationDirectory(root,current,candidate);
  const custody=createIntentUploadCustody(root,out,current,'registered-artifact-upload');
- const client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1});
+ const client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1,requestHandler:REGISTERED_UPLOAD_TRANSPORT});
+ let transportFailure;
  try{
   custody.record({stage:'registered_upload_started',runId:custody.runId});
   const source=JSON.parse(normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json'));
@@ -101,12 +122,17 @@ export async function uploadCareRegisteredRelease(root,mobileRoot,directory){
    },preflight:()=>observeCareRegisteredPreflight(root,mobileRoot,directory),
    control:async()=>verifyCareRegisteredPredecessorControl(observeIntentControlRaw(),source),
    record:custody.record,admit:custody.admit,
-   send:(command,options={})=>client.send(command,{...options,abortSignal:options.abortSignal??AbortSignal.timeout(30000)}),
+   send:async(command,options={})=>{
+    try{const answer=await client.send(command,{...options,abortSignal:options.abortSignal??AbortSignal.timeout(30000)});
+     transportFailure=undefined;return answer;
+    }catch(error){transportFailure=registeredUploadTransportFailure(command,error);throw error;}
+   },
   });
   const receipt=resolve(out,custody.runId+'.json');durableReport(receipt,{runId:custody.runId,journal:custody.journal,...report});
   custody.record({stage:'registered_upload_completed',receipt});custody.settle();
   return {receipt,runId:custody.runId,journal:custody.journal,...report,operatorCustodySettled:true};
- }catch(error){custody.record({stage:'registered_upload_finding',code:registeredPreflightFailureCode(error),writeAdmitted:custody.admitted});throw error;}
+ }catch(error){const bounded=registeredPreflightFailureCode(error),code=bounded.endsWith(':preflight_failed')&&transportFailure?transportFailure:bounded;
+  custody.record({stage:'registered_upload_finding',code,writeAdmitted:custody.admitted});throw Error(code);}
  finally{client.destroy();custody.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

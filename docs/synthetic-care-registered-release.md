@@ -142,6 +142,47 @@ ordering, preflight/source/principal/control drift, slow-observation expiry,
 lost write replies, custody and path isolation; actual AWS receipts must be
 recorded separately for the exact committed pair.
 
+## Reconcile a stopped failed upload
+
+A failed admitted upload retains custody even when an initial lookup finds no
+object. Do not delete its lock or repeat its PUT. After the writer has stopped,
+use the reconciliation command against the original immutable artifact:
+
+```powershell
+npm run reconcile:synthetic-care-registered-upload -- --v2-root "<paired V2 checkout>" --artifact "<original artifact directory>" --reconcile-fictional-registered-upload-only
+```
+
+The command requires the exact compact lock and admission journal, one admitted
+PUT, a terminal failure, a missing writer process and a 60-second settlement
+interval. Active or reused process IDs, unknown process state, changed custody
+and unrelated source pairs refuse. A later clean operator may inspect the
+original application artifact only while its mobile contracts, template and
+registered migration mapping remain unchanged. This is not a rebuild or
+approval of that old application.
+
+AWS reconciliation is read-only. It verifies the complete predecessor control
+plane and repeats complete version listings and HEAD observations. A stored
+outcome requires one exact encrypted version and a bounded download matching
+the original bytes. An absent outcome requires an exact HEAD NotFound/404 and
+a complete listing with no exact versions or delete markers. Denial, pagination,
+multiple versions, wrong metadata, changed controls or disagreement refuses.
+
+An absent result says `absent_at_observation`, not that the original PUT failed,
+that a remote deletion occurred or that future late completion is impossible.
+The original outcome remains `unknown` in either result. Subsequent operators
+still require their own current-source preflight and create-only upload; this
+receipt cannot authorize a retry, proposal or deployment. No remote deletion,
+schema operation, provider activation or paid-build surface exists.
+
+After repeated observations and final custody/source checks, the exact local
+lock is copied into a recoverable archive and its receipt is fsynced and reread
+before removing the active lock. The original journal, artifact and remote
+storage are left untouched. Failed archive/readback keeps custody. The uploader
+now journals only finite command-bound transport categories and disables idle
+socket reuse for requests separated by long control observations, still with
+one SDK attempt and bounded requests. This does not establish the cause of an
+earlier error whose category was not recorded.
+
 ## Remaining live runner engineering
 
 The next operator must use its own observations, never supplied report flags:
