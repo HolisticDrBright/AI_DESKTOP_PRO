@@ -39,7 +39,7 @@ export function AppProgramAssignmentsPanel(){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const working=useRef(false),epoch=useRef(0),alive=useRef(true);
  function clear(){epoch.current++;working.current=false;setBusy(false);setStatus(null);setLinks(null);
-  setPrograms(null);setPreview(null);setNotice('');}
+  setPrograms(null);setPreview(null);setNotice('');setConnectionId('');setProgramVersionId('');}
  useEffect(()=>{
   alive.current=true;const lifecycleEpoch=epoch;
   const stop=onWorkforceSessionChange(()=>{clear();setError('Session changed. Refresh assignments.');});

@@ -1,43 +1,51 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import type { ProtocolCartResponse } from "@/contracts/protocolCarts";
+import type { ProtocolCartRequest } from "@/contracts/protocolCarts";
+import { createProtocolCartSession, emptyProtocolCartState } from "@/lib/protocolCartSession";
+import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 import { ProtocolCartView } from "./ProtocolCartView";
 
-type Manifest = Extract<ProtocolCartResponse, { action: "read" }>;
-type Compiled = Extract<ProtocolCartResponse, { action: "compile" }>;
-
 /** The supplement list for one published program version. */
 export function ProtocolCartPanel({ programVersionId }: { programVersionId: string }) {
-  const [manifest, setManifest] = useState<Manifest | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // A new selection gets an empty scope immediately, not one render later.
+  return <ProtocolCartScopedPanel key={programVersionId} programVersionId={programVersionId} />;
+}
 
-  const post = useCallback(async (request: unknown) => {
-    const response = await fetch("/api/live/protocol-carts", {
-      method: "POST", credentials: "same-origin", cache: "no-store",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(request), signal: AbortSignal.timeout(25000),
-    });
-    const payload = await response.json().catch(() => ({})) as { data?: unknown; error?: string };
-    if (!response.ok) throw new Error(payload.error ?? "service_unavailable");
-    return payload.data;
-  }, []);
+async function post(request: ProtocolCartRequest, lifetime: AbortSignal) {
+  const response = await fetch("/api/live/protocol-carts", {
+    method: "POST", credentials: "same-origin", cache: "no-store",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request), signal: AbortSignal.any([lifetime, AbortSignal.timeout(25000)]),
+  });
+  const payload = await response.json().catch(() => ({})) as { data?: unknown; error?: string };
+  if (!response.ok) throw new Error(payload.error ?? "service_unavailable");
+  return payload.data;
+}
 
-  const compile = useCallback(async () => {
-    setBusy(true); setError(null); setNotice(null);
-    try {
-      const compiled = await post({ action: "compile", programVersionId }) as Compiled;
-      setManifest(await post({ action: "read", manifestId: compiled.manifestId }) as Manifest);
-      // A replay is worth saying: it means this list already existed for this version.
-      if (compiled.replayed) setNotice("This list was already built for this version. Nothing was rebuilt.");
-    } catch {
-      setError("That list could not be built. The version may not be published, or it may name no supplements.");
-    } finally { setBusy(false); }
-  }, [post, programVersionId]);
-
-  return <ProtocolCartView state={{ manifest, busy, error, notice, onCompile: () => void compile() }} />;
+function ProtocolCartScopedPanel({ programVersionId }: { programVersionId: string }) {
+  const [state, setState] = useState(emptyProtocolCartState);
+  const session = useRef<ReturnType<typeof createProtocolCartSession> | null>(null);
+  useEffect(() => {
+    let active = createProtocolCartSession(programVersionId, post, setState);
+    session.current = active;
+    const invalidate = () => {
+      active.dispose();
+      active = createProtocolCartSession(programVersionId, post, setState);
+      session.current = active;
+      setState({ ...emptyProtocolCartState, error: "Access may have changed. Refresh this list to check current access." });
+    };
+    const stop = onWorkforceSessionChange(invalidate);
+    const hide = () => { if (document.hidden) invalidate(); };
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", hide);
+      active.dispose();
+      if (session.current === active) session.current = null;
+    };
+  }, [programVersionId]);
+  return <ProtocolCartView state={{ ...state, onCompile: () => void session.current?.compile() }} />;
 }
