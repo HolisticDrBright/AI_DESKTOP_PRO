@@ -181,6 +181,65 @@ file/test skipped; typecheck and lint passed. Its store gate remains
 `not_submittable` with eight blockers. Neither these source tests nor the
 classification report activate any commercial or PHI capability.
 
+## Connected live runner
+
+`release:synthetic-care-intent` now connects upload custody, the separately
+qualified two-resource proposal, actual stack execution and readback, compatible
+retained-code recovery, and the embedded database continuation. Its source and
+failure tests are implemented; this runner has not yet been hosted verified.
+
+After selecting and building a clean exact source pair, run from Desktop:
+
+```powershell
+npm run release:synthetic-care-intent -- --v2-root <V2-checkout> --candidate <exact-candidate-directory> --release-fictional-intent-with-fresh-recovery
+```
+
+The command has no target, qualifier, saved-report, approval, skip or PHI override.
+It pins account `588966314750`, the synthetic API and the unchanged parent
+database. The public inspection command still refuses direct `upgrade`.
+The embedded database port is hash-checked against the clean source before it
+loads; external service calls occur outside the preserving database transaction.
+
+The runner reads both fresh CloudFormation projections and actual predecessor
+state before one execution request. If that response is lost, it observes the
+same stack and change-set, not a second execution or a new proposal. A terminal
+successful stack is insufficient alone: actual Lambda code is downloaded from
+the pinned AWS-managed host and compared byte-for-byte, while the full template,
+physical resources, execution configuration, JWT routes, IAM and logs are checked.
+The original single-resource and historical-code verifiers remain unchanged.
+
+Recovery publishes or independently finds an exact-source compatible version
+other than historical version 1. Its immutable code and executable configuration
+must match the deployed candidate. The actual five fictional owners exercise 75
+existing consumer/terminal-receipt requests plus 20 pre-schema preparation and
+discovery refusals. The runner requires distinct Gateway identities, stable
+receipt contents, retained-version invocation metrics, three observed route
+deployments and verified permission removal. Source or unrelated control drift
+is a refusal, never a compensating overwrite of someone else's changes.
+
+Only then can the same custody enter the rollback rehearsal, admit a lasting
+schema transaction, and independently read back the successor. An unknown
+COMMIT transport outcome is inspected once; it is not retried or replaced with
+an invented commit receipt. Saved observation files omit downloaded code bytes
+and presigned URLs and explicitly cannot serve as admission authority.
+
+An observation deadline is not a declaration that AWS stopped. Any unresolved
+admitted write keeps the original operator lock and journal. Inspect that exact
+execution and reconcile its actual resources before further writes; never remove
+the lock or restart solely because a process or observation budget ended.
+
+Local verification of this connected implementation passed **77** expanded
+release/recovery tests and **42** focused database/operator tests. The full
+Desktop suite passed **341 files, 4,307 tests, 11 skips** in **278.64 seconds**;
+typecheck and lint passed without warnings. These are local source checks, not
+hosted release or physical-device acceptance.
+
+The release report keeps canonical registration, prepared/erased and lost-reply
+journeys, second-device acceptance, full commercial readiness, PHI and paid mobile
+builds false. Those require their own subsequent work and evidence. Existing
+unexecuted October 7 proposals and uploaded source pairs remain historical;
+they are not this new runner's deployed artifacts.
+
 ## Remaining release work
 
 1. Run and qualify exact-version upload and an explicitly scoped deployment proposal
@@ -192,10 +251,11 @@ classification report activate any commercial or PHI capability.
 3. Retain the compatible handler and run fresh actual recovery, including
    observed Gateway responses, retained-version invocation metrics, return
    deployment and removal of temporary invocation permission.
-4. Add the source-bound, in-lock preserving release continuation with real
-   rollback rehearsal, lasting application, independent readback and deliberate
-   canonical registration. Keep the public intent CLI's direct `upgrade`
-   refusal. A saved report or owner confirmation cannot replace fresh recovery.
+4. Hosted-verify the implemented source-bound, in-lock preserving continuation
+   with real rollback rehearsal, lasting application and independent readback,
+   then deliberately register the qualified migration canonically. Keep the
+   public intent CLI's direct `upgrade` refusal. A saved report or owner
+   confirmation cannot replace fresh recovery.
 5. Execute isolated fictional prepared/erased/cancelled, lost-reply,
    second-session discovery, concurrency, replay and cross-owner journeys.
    Cancelled receipts alone do not prove erased outcomes or native recovery.
