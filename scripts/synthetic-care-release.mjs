@@ -37,21 +37,25 @@ export async function buildCareIdentityBundle(root) {
 }
 const git = (root, args) => execFileSync('git', args, {cwd: root, encoding: 'utf8', windowsHide: true,
   timeout: 30000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe']});
-export function careSourceSnapshot(root, kind) {
-  const paths = kind === 'desktop' ? ['src', 'scripts', 'infra', '.github', 'package.json', 'package-lock.json', '.gitattributes']
+export function careSourcePaths(kind) {
+  return kind === 'desktop' ? ['src', 'scripts', 'infra', '.github', 'package.json', 'package-lock.json', '.gitattributes']
     : kind === 'v2' ? ['expo', 'scripts', 'data', '.github', 'package.json', 'package-lock.json', 'bun.lock', '.gitattributes']
       : refuseCareRelease('source_kind');
+}
+export function careSourceEntry(file, bytes) {
+  const data = /\.(?:[cm]?[jt]sx?|json|md|sql|ya?ml|ps1|css|html|txt)$/.test(file) || /(?:^|\/)(?:\.gitattributes|package-lock.json)$/.test(file)
+    ? bytes.toString('utf8').replace(/\r\n?/g, '\n') : bytes;
+  return {file, sha256: sha256(data)};
+}
+export function careSourceSnapshot(root, kind) {
+  const paths = careSourcePaths(kind);
   const commit = git(root, ['rev-parse', 'HEAD']).trim();
   if (!/^[a-f0-9]{40}$/.test(commit)
     || git(root, ['status', '--porcelain', '--untracked-files=all', '--', ...paths]).trim()) refuseCareRelease('source_dirty');
   const files = git(root, ['ls-files', '-z', '--', ...paths]).split('\0').filter(Boolean).sort();
   if (!files.length) refuseCareRelease('source_empty');
-  const entries = files.map(file => {
-    // Text is LF-normalized, binary assets are byte-exact. Hashes include the path.
-    const data = /\.(?:[cm]?[jt]sx?|json|md|sql|ya?ml|ps1|css|html|txt)$/.test(file) || /(?:^|\/)(?:\.gitattributes|package-lock.json)$/.test(file)
-      ? normalizedText(root, file) : readFileSync(resolve(root, file));
-    return {file, sha256: sha256(data)};
-  });
+  // Text is LF-normalized, binary assets are byte-exact. Hashes include the path.
+  const entries = files.map(file => careSourceEntry(file, readFileSync(resolve(root, file))));
   return {commit, clean: true, files: entries.length, sha256: sha256(JSON.stringify(entries))};
 }
 export function careMigrationBinding(root) {

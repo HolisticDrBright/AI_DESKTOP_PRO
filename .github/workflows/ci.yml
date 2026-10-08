@@ -132,6 +132,8 @@ jobs:
         run: npm run test:synthetic-care-intent-dependency
       - name: Live-runner failure matrix and compatible recovery gated intent continuation (no AWS execution)
         run: npm run test:synthetic-care-intent-continuation
+      - name: Distinguish immutable deployed application and repaired operator sources (no AWS execution)
+        run: node --test scripts/care-intent-resumption-source.test.mjs
       - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
         run: |
           npm run test:care-erasure-recovery-source

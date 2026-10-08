@@ -1,10 +1,39 @@
 # Synthetic care intent release
 
 The intent-aware API artifact binds V2 request preparation and discovery to
-the exact Desktop handler and preserving schema transition. It is a synthetic
-candidate, not a deployed feature or permission to erase records. The hosted
-API still runs the earlier request-ID handler until a separate code deployment
-is observed and accepted.
+the exact Desktop handler and preserving schema transition. Exact application
+source **0e38c130/1488a3bf** is deployed to the synthetic identity API, but its
+connected release stopped before recovery traffic or a schema commit. The
+database remains source46/live47 with 88 tables. This is not a completed
+erasure feature, an installed mobile release, or permission to use PHI.
+
+## Application and operator source qualification
+
+The interrupted application's immutable source must remain distinct from the
+repaired operator's current clean source. The source-only qualifier reconstructs
+both original snapshots from full ancestor commits and independently hashes
+size-framed Git blobs. Text retains the established LF normalization; binary
+assets are byte-exact. Missing, truncated, modified, duplicated, oversized,
+symlink or gitlink entries refuse. The existing candidate ZIP and complete
+release must match these original snapshots, and a fresh current handler build
+must equal the original bundled code byte-for-byte.
+
+Desktop runtime, infrastructure and dependency files must be unchanged. V2
+runtime, catalog, build scripts and dependency files must also be unchanged;
+only the specifically named readiness handoff is excluded from its runtime
+comparison. Clean current checkout snapshots are checked against their own
+Git trees before and after the build. An operator repair cannot reassign the
+application's commit, replace code, or claim a new installed V2 version.
+
+```powershell
+node scripts/qualify-synthetic-care-intent-resumption-source.mjs --v2-root "<V2 checkout>" --candidate "<original deployed build directory>" --qualify-interrupted-application-source-only
+```
+
+This command is read-only local qualification, not AWS release admission.
+It neither clears the interrupted lock nor repeats an upload, execution or
+publication. Fresh AWS observations, reconciled custody, compatible routing
+recovery, rollback rehearsal, guarded schema continuation and independent
+successor readback remain required before the release can finish.
 
 ## Build and read only preparation
 
