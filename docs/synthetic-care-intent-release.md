@@ -11,8 +11,8 @@ table inventories. Subsequent actual read-only reconciliation qualified the
 committed successor, and a separate archival run preserved exact custody before
 retiring its temporary locks. The failed release stays failed. The source
 manifest now registers the exact already-applied migration, with a separate
-read-only current inspector; its clean-source hosted check and full erasure
-journeys remain open. This is not a completed
+read-only current inspector. Its clean-source hosted inspection passes;
+full erasure journeys remain open. This is not a completed
 erasure feature, an installed mobile release, or permission to use PHI.
 
 ## Application and operator source qualification
@@ -588,3 +588,26 @@ prepared/erased/cancelled, lost-reply/discovery, second-session, concurrency,
 replay and foreign-owner acceptance. The old parent release/resumer cannot be
 reused. All original commercial scopes, clinical holds and source-verification
 requirements remain; PHI is off and paid mobile builds remain held.
+
+## Hosted current registration result
+
+The clean-source read-only inspector passed at **2026-10-08 03:12:17.984 UTC**,
+Desktop **3904899822a8833e63633fc58a0e3d2437ac6322**, executable SHA256
+`fde642cb6c1e7cffbd3ac9643e96af2f16df4e196f8d00b997723b5048955747`.
+The artifact was independently rehashed after execution. Two actual database
+snapshots and repeated AWS assumed-role/foundation observations matched. The
+registered source has47 rows; live history has48, preserving its alias. The
+89-table inventory has23,985 original/complete rows and zero intent rows.
+Original data, complete data and preserved-schema digests match the prior
+hosted successor-reconciliation receipt. No schema, ledger, API or record write
+occurred. Source registration is now hosted verified; historical witness flags
+remain unchanged. Receipt:
+`docs/evidence/2026-10-08-care-intent-canonical-registration.json`.
+
+The AST-only graph refresh completed at13,713 nodes/29,020 edges/931 communities;
+66 non-code sources were omitted, not semantically reviewed. CI for this source
+is running separately; prior green commits do not approve this new release.
+V2 handoff-only **b59820ade0181b153283962a734a9508cf9f76ac** is pushed; its runtime
+and installed binary did not change. The separate current release artifact,
+positive fictional full journeys, matched fleet, stores/providers and physical
+devices remain. PHI stays off and paid mobile builds held.
