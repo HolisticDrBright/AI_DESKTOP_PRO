@@ -134,6 +134,8 @@ jobs:
         run: npm run test:synthetic-care-intent-continuation
       - name: Distinguish immutable deployed application and repaired operator sources (no AWS execution)
         run: node --test scripts/care-intent-resumption-source.test.mjs
+      - name: Executed intent reconciliation and current-operator continuation (no AWS execution)
+        run: node --test scripts/care-intent-resumption-deployment.test.mjs scripts/care-intent-interruption.test.mjs scripts/care-intent-resumption-custody.test.mjs
       - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
         run: |
           npm run test:care-erasure-recovery-source

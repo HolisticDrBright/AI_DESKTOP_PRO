@@ -16,6 +16,7 @@ import {careIntentCurrent,refuseIntent} from './synthetic-care-intent-release.mj
 import {runCareIntentUpload,verifyIntentUploadPreparation,intentFailureCode} from './upload-synthetic-care-intent-release.mjs';
 import {proposeCareIntentDependencyCodeChange,careIntentCodeChangeInputs,verifyCareIntentDependencyViews} from './prepare-synthetic-care-intent-code-change.mjs';
 import {releaseCareIntent,verifyCareIntentDeployment} from './care-intent-release.mjs';
+import {verifyCareIntentResumptionBindings} from './care-intent-resumption-deployment.mjs';
 import {rehearseCareIntentRouting,intentRecoveryPermission} from './care-intent-routing.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration,verifyRecoveryStage,verifyRecoveryMetric,verifyRecoveryResponse} from './care-recovery-routing.mjs';
 import {intentAws as aws,observeIntentControlRaw,verifyIntentLiveControl,downloadIntentFunction,retainIntentFunction} from './care-intent-live.mjs';
@@ -40,7 +41,7 @@ export function verifyIntentReleasePort(manifest,bytes,current){
    .every(k=>manifest[k]===true)&&['targetOverrides','standaloneUpgradeAvailable','canonicalRegistered','migrationPerformed','hostedAcceptance'].every(k=>manifest[k]===false)
   &&canonical(manifest.releaseMapping)===canonical(current.migrations),'database_port');
 }
-function loadDatabasePort(root,current){
+export function loadCareIntentDatabasePort(root,current){
  try{execFileSync(process.execPath,[resolve(root,'scripts/build-care-erasure-intent-release.mjs')],
   {cwd:root,encoding:'utf8',timeout:30000,maxBuffer:1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']});}
  catch{refuseIntent('runner_database_build');}
@@ -80,8 +81,9 @@ function transportFrom(raw,version){
   latestPolicySha256:sha256(canonical(raw.latestPolicy)),
   policy:version?aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier',version],version):null};
 }
-async function runLiveRecovery(root,context,before,input,source,latest,schema,started){
+export async function runCareIntentLiveRecovery(root,context,before,input,source,latest,schema,started){
  const {candidate,current,preparation,unchanged,record}=context;
+ if(context.operatorCurrent)verifyCareIntentResumptionBindings(current,context.operatorCurrent);
  const credentials=fromIni({profile}),secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT}),
   cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT}),
   rds=new RDSDataClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT});
@@ -110,7 +112,10 @@ async function runLiveRecovery(root,context,before,input,source,latest,schema,st
   const secret=await secrets.send(new GetSecretValueCommand({SecretId:secretArn}),{abortSignal:AbortSignal.timeout(30000)});
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
-  const ports={now:Date.now,current:async()=>careIntentCurrent(root,context.mobileRoot),inspect:()=>schema('inspect'),record,admit:context.admit,
+  const ports={now:Date.now,current:async()=>{
+    unchanged();const fresh=careIntentCurrent(root,context.mobileRoot);
+    check(canonical(fresh)===canonical(context.operatorCurrent??current),'recovery_operator_source');return current;
+   },inspect:()=>schema('inspect'),record,admit:context.admit,
    retain:async()=>{
     const retained=await retainIntentFunction(latest,candidate,context);
     currentLatest=retained.latestConfiguration;return retained;
@@ -198,7 +203,7 @@ async function runLiveRecovery(root,context,before,input,source,latest,schema,st
   secrets.destroy();cognito.destroy();rds.destroy();}
 }
 export async function runCareIntentRelease(root,mobileRoot,directory){
- const started=Date.now(),current=careIntentCurrent(root,mobileRoot),schema=loadDatabasePort(root,current);
+ const started=Date.now(),current=careIntentCurrent(root,mobileRoot),schema=loadCareIntentDatabasePort(root,current);
  observeSyntheticMemberIdentity();
  const uploaded=await runCareIntentUpload(root,mobileRoot,directory,async supplied=>{
   const context={...supplied,mobileRoot};const {candidate,preparation,artifact,unchanged,record}=context;
@@ -236,7 +241,7 @@ export async function runCareIntentRelease(root,mobileRoot,directory){
    verifyCareIntentDeployment(witness,candidate,current,artifact,preparation,started,Date.now());return witness;
   };
   const deployed=await observeDeployment();record({stage:'intent_deployed_bytes_control_verified',revision:deployed.after.fn.RevisionId});
-  const {recovery,transport}=await runLiveRecovery(root,context,before,input,source,deployed.after.fn,schema,started);
+  const {recovery,transport}=await runCareIntentLiveRecovery(root,context,before,input,source,deployed.after.fn,schema,started);
   // The returned stage is a new observed deployment. Refresh the deployment
   // witness from services, never patch a saved pre-recovery report to match it.
   const deployment=await observeDeployment(recovery.retained.configuration.Version);

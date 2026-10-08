@@ -8,6 +8,7 @@ import {verifyCareIntentDependencyViews} from './prepare-synthetic-care-intent-c
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration,verifyRecoveryStage,
  verifyRecoveryPhase,verifyPostParentReceiptPhase,verifyRecoveryMetric} from './care-recovery-routing.mjs';
 import {PERSONA_EMAILS} from './verify-synthetic-care-consumer.mjs';
+import {verifyCareIntentResumedDeployment,verifyCareIntentResumptionBindings} from './care-intent-resumption-deployment.mjs';
 const check=(ok,code)=>{if(!ok)refuseIntent('continuation_'+code);};
 const hash=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const functionFields=['FunctionName','Runtime','Handler','MemorySize','Timeout','Role','Environment','Architectures',
@@ -166,10 +167,32 @@ export async function releaseCareIntent(supplied,d){
  const unchanged=async()=>check(canonical(await d.current())===canonical(current),'source_changed');
  await unchanged();const deployed=verifyCareIntentDeployment(deployment,candidate,current,artifact,preparation,d.started,d.now());
  const baseline=preparation.database;
+ return continueIntentSchema({candidate,current,operatorCurrent:current,deployed,baseline,recovery},d);
+}
+/** The resumed runner supplies freshly reconstructed source identities and
+ * actual executed deployment observations in-process. There is no report-load
+ * or operator override in the CLI. Historical application metadata remains
+ * immutable; the database port must identify the current clean operator. */
+export async function releaseResumedCareIntent(supplied,d){
+ check(Buffer.isBuffer(supplied?.candidate?.bundle)&&Buffer.isBuffer(supplied?.candidate?.zip)
+  &&Buffer.isBuffer(supplied?.deployment?.codeBytes)
+  &&Buffer.isBuffer(supplied?.deployment?.retained?.codeBytes)&&Buffer.isBuffer(supplied?.recovery?.retained?.codeBytes),'resumed_binary_observers');
+ const {candidate,current,operatorCurrent,deployment,baseline,recovery}=structuredClone(supplied);
+ for(const key of ['bundle','zip'])candidate[key]=Buffer.from(candidate[key]);
+ deployment.codeBytes=Buffer.from(deployment.codeBytes);
+ deployment.retained.codeBytes=Buffer.from(deployment.retained.codeBytes);recovery.retained.codeBytes=Buffer.from(recovery.retained.codeBytes);
+ verifyCareIntentResumptionBindings(current,operatorCurrent);
+ check(canonical(await d.current())===canonical(operatorCurrent),'source_changed');
+ const deployed=verifyCareIntentResumedDeployment(deployment,candidate,current,operatorCurrent,d.started,d.now());
+ return continueIntentSchema({candidate,current,operatorCurrent,deployed,baseline,recovery},d);
+}
+async function continueIntentSchema({candidate,current,operatorCurrent,deployed,baseline,recovery},d){
+ verifyCareIntentResumptionBindings(current,operatorCurrent);
+ const unchanged=async()=>check(canonical(await d.current())===canonical(operatorCurrent),'source_changed');
  const restored=verifyCareIntentRecovery(recovery,deployed,candidate,baseline,d.started,d.now());
  const guard=async()=>{await unchanged();verifyCareIntentRecovery(recovery,deployed,candidate,baseline,d.started,d.now());
   verifyRestoredTransport(await d.transport(),restored,deployed.latest);};
- const invoke=async(command)=>schemaResult(await d.schema(command==='postinspect'?'inspect':command),command,current,baseline);
+ const invoke=async(command)=>schemaResult(await d.schema(command==='postinspect'?'inspect':command),command,operatorCurrent,baseline);
  await guard();const before=await invoke('inspect');
  await d.record({stage:'intent_rollback_admitted'});const rehearsal=await invoke('rehearse');
  await guard();await d.admit({stage:'intent_schema_commit_admitted',liveBefore:current.migrations.liveBefore,liveAfter:current.migrations.liveAfter});
@@ -183,11 +206,11 @@ export async function releaseCareIntent(supplied,d){
   committed={status:'reconciled_without_commit_receipt',successorSnapshot:reconciled};commitResponseLost=true;
   await d.record({stage:'intent_schema_commit_reconciled',receiptVerified:false});
  }
- if(!commitResponseLost)committed=schemaResult(receipt,'upgrade',current,baseline);
+ if(!commitResponseLost)committed=schemaResult(receipt,'upgrade',operatorCurrent,baseline);
  await unchanged();const after=await invoke('postinspect');
  verifyRestoredTransport(await d.transport(),restored,deployed.latest);
  await d.record({stage:'intent_schema_independent_readback',liveAfter:current.migrations.liveAfter,commitResponseLost});
- return {contract:'synthetic-care-intent-schema-release/1',execution:'synthetic-staging',account:P.account,current,
+ return {contract:'synthetic-care-intent-schema-release/1',execution:'synthetic-staging',account:P.account,current,operatorCurrent,
   before,rehearsal,committed,after,commitResponseLost,compatibleRecoveryVerified:true,schemaChanged:true,
   preservationVerified:true,canonicalRegistered:false,preparedErasedJourneyVerified:false,
   lostReplyJourneyVerified:false,secondDeviceJourneyVerified:false,fullJourneyAcceptance:false,

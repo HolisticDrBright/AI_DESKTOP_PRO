@@ -25,9 +25,17 @@ export function careCodeChangeInputs(source, prepared, parameters, manifest, art
   return {template: expected, parameters: structuredClone(parameters)};
 }
 export function verifyCareCodeChangeSet(set, actualTemplate, input, binding) {
+  return verifyCareCodeChangeSetState(set, actualTemplate, input, binding, 'AVAILABLE');
+}
+/** Separate observation profile. It never admits execution and never relabels
+ * an executed service response as an available proposal. */
+export function verifyExecutedCareCodeChangeSet(set, actualTemplate, input, binding) {
+  return verifyCareCodeChangeSetState(set, actualTemplate, input, binding, 'EXECUTE_COMPLETE');
+}
+function verifyCareCodeChangeSetState(set, actualTemplate, input, binding, executionStatus) {
   if (set?.StackId !== binding.stackId || set.StackName !== P.stack || set.ChangeSetName !== binding.name
     || set.ChangeSetId !== binding.id || !binding.id?.startsWith(`arn:aws:cloudformation:${P.region}:${P.account}:changeSet/${binding.name}/`)
-    || set.Status !== 'CREATE_COMPLETE' || set.ExecutionStatus !== 'AVAILABLE' || set.ParentChangeSetId
+    || set.Status !== 'CREATE_COMPLETE' || set.ExecutionStatus !== executionStatus || set.ParentChangeSetId
     || set.IncludeNestedStacks === true || set.DeploymentMode || set.ImportExistingResources === true
     || canonical(set.Capabilities) !== canonical(['CAPABILITY_IAM']) || set.NextToken
     || canonical(actualTemplate) !== canonical(input.template)) fail('code_change_set');

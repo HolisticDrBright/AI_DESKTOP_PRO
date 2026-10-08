@@ -7,7 +7,7 @@ import {CARE_RELEASE as P,normalizedText,sha256} from './synthetic-care-release.
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {canonical} from './care-recovery-routing.mjs';
 import {CARE_RECOVERY_ROUTE as R,verifyRecoveryIntegration} from './care-recovery-routing.mjs';
-import {verifyCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
+import {verifyCareCodeChangeSet,verifyExecutedCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
 import {runCareIntentUpload,verifyIntentUploadPreparation,intentFailureCode} from './upload-synthetic-care-intent-release.mjs';
 import {collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
 import {refuseIntent} from './synthetic-care-intent-release.mjs';
@@ -33,9 +33,13 @@ export function careIntentCodeChangeInputs(source,preparation,manifest,artifact,
 /** Neither projection may hide another affected resource. Property contexts
  * must prove the exact code-key/version delta, not just a target named Code. */
 export function verifyCareIntentChangeSetViews(summary,detailed,actualTemplate,input,binding){
+ return verifyIntentChangeSetViewsState(summary,detailed,actualTemplate,input,binding,false);
+}
+function verifyIntentChangeSetViewsState(summary,detailed,actualTemplate,input,binding,executed){
  try{
-  verifyCareCodeChangeSet(summary,actualTemplate,input,binding);
-  verifyCareCodeChangeSet(detailed,actualTemplate,input,binding);
+  const verify=executed?verifyExecutedCareCodeChangeSet:verifyCareCodeChangeSet;
+  verify(summary,actualTemplate,input,binding);
+  verify(detailed,actualTemplate,input,binding);
  }catch{refuseIntent('proposal_projection_scope');}
  const change=detailed.Changes[0].ResourceChange;
  let before,after;
@@ -77,6 +81,16 @@ export function verifyCareIntentChangeSetViews(summary,detailed,actualTemplate,i
  * Raw views remain evidence, and live integration readback/recovery are still
  * mandatory after any separately admitted execution. */
 export function verifyCareIntentDependencyViews(summary,detailed,actualTemplate,input,binding,live){
+ return verifyIntentDependencyViewsState(summary,detailed,actualTemplate,input,binding,live,false);
+}
+/** Inspect the actual executed projections against an independently read
+ * immutable version-1 configuration. The reconstructed predecessor template
+ * is source history, not a claim that the old latest function still exists.
+ * This proves neither routing recovery nor schema admission. */
+export function verifyCareIntentExecutedDependencyViews(summary,detailed,actualTemplate,input,binding,history){
+ return verifyIntentDependencyViewsState(summary,detailed,actualTemplate,input,binding,history,true);
+}
+function verifyIntentDependencyViewsState(summary,detailed,actualTemplate,input,binding,live,executed){
  const expectedIntegration={Type:'AWS::ApiGatewayV2::Integration',Properties:{ApiId:{Ref:'ClinicalApiId'},
   IntegrationType:'AWS_PROXY',IntegrationUri:{'Fn::GetAtt':['IdentityApiFunction','Arn']},
   PayloadFormatVersion:'2.0',TimeoutInMillis:30000}};
@@ -85,10 +99,12 @@ export function verifyCareIntentDependencyViews(summary,detailed,actualTemplate,
   ||canonical(actualTemplate)!==canonical(input.template)
   ||canonical(input.template.Resources.IdentityApiIntegration)!==canonical(expectedIntegration)
   ||canonical(input.template.Resources.IdentityApiFunction.Properties.FunctionName)!==canonical({'Fn::Sub':'${ClinicalApiId}-synthetic-identity'})
-  ||live.fn?.FunctionArn!==R.latestArn||live.fn.FunctionName!==P.functionName
+  ||live.fn?.FunctionArn!==(executed?R.retainedArn:R.latestArn)||live.fn.FunctionName!==P.functionName
+  ||executed&&live.fn.Version!=='1'
   ||live.fn.CodeSha256!==Buffer.from(D.zip,'hex').toString('base64')
   ||typeof live.fn.RevisionId!=='string'||!live.fn.RevisionId
-  ||live.fn.State!=='Active'||live.fn.LastUpdateStatus!=='Successful')refuseIntent('dependency_live_binding');
+  ||live.fn.State!=='Active'||(executed?live.fn.LastUpdateStatus&&live.fn.LastUpdateStatus!=='Successful'
+   :live.fn.LastUpdateStatus!=='Successful'))refuseIntent('dependency_live_binding');
  try{verifyRecoveryIntegration(live.integration,R.latestArn);}catch{refuseIntent('dependency_live_integration');}
  const resources=live.resources?.StackResources;
  const fn=resources?.filter(r=>r.LogicalResourceId==='IdentityApiFunction'),integration=resources?.filter(r=>r.LogicalResourceId==='IdentityApiIntegration');
@@ -115,7 +131,7 @@ export function verifyCareIntentDependencyViews(summary,detailed,actualTemplate,
  // Lambda for the existing strict code/context validator. Never filter away
  // arbitrary resources, dependencies or pagination.
  const lambdaView={...summary,Changes:[summary.Changes[0]]};
- verifyCareIntentChangeSetViews(lambdaView,detailed,actualTemplate,input,binding);
+ verifyIntentChangeSetViewsState(lambdaView,detailed,actualTemplate,input,binding,executed);
  const properties=JSON.parse(detailed.Changes[0].ResourceChange.BeforeContext).Properties;
  const actualProperties={FunctionName:live.fn.FunctionName,Runtime:live.fn.Runtime,Architectures:live.fn.Architectures,
   Handler:live.fn.Handler,Role:live.fn.Role,MemorySize:String(live.fn.MemorySize),Timeout:String(live.fn.Timeout),
@@ -124,11 +140,13 @@ export function verifyCareIntentDependencyViews(summary,detailed,actualTemplate,
  if(actualProperties.Environment?.Variables?.CLINICAL_DATABASE_SECRET_ARN!==P.secret)refuseIntent('dependency_secret_binding');
  actualProperties.Environment.Variables.CLINICAL_DATABASE_SECRET_ARN='****';
  if(canonical(properties)!==canonical(actualProperties))refuseIntent('dependency_function_context');
- return {contract:'synthetic-care-intent-dependency-projection/1',
+ return {contract:executed?'synthetic-care-intent-executed-dependency-projection/1':'synthetic-care-intent-dependency-projection/1',
   summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(detailed)),
   summaryResourceCount:2,propertyValuesResourceCount:1,affectedResources:['IdentityApiFunction','IdentityApiIntegration'],
-  liveTemplateSha256:sha256(canonical(live.template)),liveIntegrationSha256:sha256(canonical(live.integration)),
-  liveFunctionRevision:live.fn.RevisionId,integrationArn:R.latestArn,integrationId:R.integrationId,
+  ...(executed?{historicalTemplateSha256:sha256(canonical(live.template)),immutablePredecessorRevision:live.fn.RevisionId,
+   immutablePredecessorVersion:'1',executionCompleteObserved:true}
+   :{liveTemplateSha256:sha256(canonical(live.template)),liveFunctionRevision:live.fn.RevisionId}),
+  liveIntegrationSha256:sha256(canonical(live.integration)),integrationArn:R.latestArn,integrationId:R.integrationId,
   integrationDependencyClassified:true,integrationNoOpProven:false,postExecutionReadbackRequired:true,
   freshCompatibleRecoveryRequired:true,executionAdmissible:false,deployed:false,phiAllowed:false};
 }

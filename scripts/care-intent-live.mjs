@@ -105,6 +105,11 @@ export async function downloadIntentFunction(configuration,candidate){
  }catch(error){body?.destroy();if(!body)await response.body?.cancel().catch(()=>{});throw error;}
 }
 export function intentVersionDescription(candidate){return `ALP synthetic intent ${candidate.manifest.desktop.commit} ${candidate.manifest.zipSha256} PHI=off`;}
+export function verifyIntentInterruptedVersionInventory(matching,expected){
+ check(typeof expected==='string'&&/^[1-9][0-9]{0,19}$/.test(expected)&&expected!=='1'
+  &&Array.isArray(matching)&&matching.length===1&&matching[0].Version===expected,'interrupted_retained_missing_or_changed');
+ return expected;
+}
 async function intentVersions(){
  const versions=[],markers=new Set();let marker;
  for(let n=0;n<10;n++){
@@ -122,6 +127,7 @@ export async function retainIntentFunction(latest,candidate,context){
  const description=intentVersionDescription(candidate);
  const matching=(await intentVersions()).filter(v=>v.Version!=='$LATEST'&&v.Description===description);
  check(matching.length<=1,'retained_ambiguous');let version=matching[0]?.Version;
+ if(context.interruptedRetainedVersion!==undefined)verifyIntentInterruptedVersionInventory(matching,context.interruptedRetainedVersion);
  if(!version){
   context.unchanged();observeSyntheticMemberIdentity();
   check(canonical(intentAws(['lambda','get-function-configuration','--function-name',P.functionName]))===canonical(latest),'publication_drift');
