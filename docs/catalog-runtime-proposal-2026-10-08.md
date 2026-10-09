@@ -129,3 +129,29 @@ The staging program acceptance path is not yet integrated with this production i
 ### Preserved hosted browser failure
 
 At predecessor `fcb8d9c`, main CI `37898435939` succeeded and browser CI `37898440713` failed. The old sync callback test passed, but `e2e/live-capture-resume.spec.ts:140` failed during setup's POST to `http://localhost:3114/api/live/emr/encounter` with `ECONNRESET` (90 passed, 19 skipped, one failed in that shard). This distinct failure remains unresolved; no retry or relaxed assertion replaces its evidence. The current candidate still requires independent hosted CI and acceptance.
+
+## Separate qualification inventory upgrade operator
+
+The distinct 106-to-107 inventory transition now has a bundled operator. It accepts only the fixed synthetic member account, Ohio region and completed qualification foundation. SQL is embedded in the bundle; command-line and environment target overrides, dirty-source writes, production activation and staging `clinical_core` are refused. The canonical 106-migration builder and historical qualification gates remain unchanged.
+
+An upgrade must first execute the actual migration in a rollback-only rehearsal, independently inspect the rolled-back database, and reobserve the same AWS principal and foundation. The committing transaction locks the entire registered table inventory and migration ledger, then compares the exact rehearsal data, schema and ledger state before DDL. A changed prestate refuses admission. The single successor adds three protected functions and one migration receipt; it must not change any application row, historical receipt, table, constraint, index, policy, internal foreign-key trigger, role, membership, default grant, type or existing function. The new functions require their exact bodies, owners, search paths and execution permissions, with no delegation grants or unexpected overloads.
+
+The operator does not automatically retry a write after an uncertain provider response. Such an outcome requires read-only inspection of the same target and further reconciliation; this source increment does not provide durable interrupted-write custody or certify that an interrupted run preserved its original prestate. An already-applied no-write replay is not retrospective evidence of an earlier interrupted execution.
+
+```powershell
+npm run build:adopted-plan-inventory-upgrade
+node dist/aws-clinical-core/adopted-plan-inventory-upgrade/index.cjs inspect
+node dist/aws-clinical-core/adopted-plan-inventory-upgrade/index.cjs rehearse --confirm-fictional-adopted-inventory-upgrade
+```
+
+Do not run the separate `upgrade` action until the new target manifest and candidate fleet support the 107-migration identity and its interruption/recovery procedure is qualified. Applying it now would invalidate historical 106-migration inspectors. This tool does not activate a candidate, approve ingredients or release program supplements.
+
+### Verification and observed database state
+
+Five focused suites passed 91 tests without skips, including actual PGlite DDL, rollback, no-write replay, concurrent-prestate refusal, function permission failures and the built command's target-override refusals. Negative testing found that the initial schema witness omitted internal foreign-key triggers; it now includes all triggers and tests their loss. The first artifact test also incorrectly prohibited file reads in bundled AWS credential code; the corrected assertion applies to the application migration loader, while the built CLI is physically tested from an unrelated directory with AWS unavailable. Typecheck passed.
+
+A read-only run of the dirty-source operator observed account `588966314750`, foundation `ai-clinical-core-qualification-foundation`, 106 migrations, 209 application tables and 46 rows. Data digest: `cbd17d4480be6ca45d6e20dfce06fdd49a374cb7bdcb27883d31cd110b4b14a4`; historical schema digest: `a9b0b647966fe76bbc6e9617cf56d895007f325b01714a65692598d1ed93ea73`. The result explicitly reports `clean:false`, `applied:false`, PHI disallowed and activation blocked. It is hosted read-only inspection, not a clean-source rehearsal, migration or feature-acceptance result.
+
+Desktop CI `37903644781` and `37903648961` at prior inventory source `4507677` completed successfully; V2 CI `37903652883` and `37903657240` at `4f9cff1` also completed successfully. Desktop's deployed-backend setup, build and test steps were skipped because secrets were absent, so that job supplies no hosted API acceptance. These are earlier-source results and do not qualify this new operator. The historical encounter-request failure remains unresolved.
+
+All six original readiness phases remain open. Same-target reviewed ingredients, program acceptance integration, the separate catalog reader, compatible recovery, Fullscript cart delivery, positive erasure and processing journeys, provider/store acceptance, matched releases and physical devices remain required. PHI stays off and paid mobile builds remain held.

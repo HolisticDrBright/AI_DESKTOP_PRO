@@ -94,6 +94,7 @@
     "check:aws-core-launch-scope": "node scripts/check-aws-core-launch-scope.mjs",
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
     "build:adopted-plan-inventory-candidate": "node scripts/build-adopted-plan-inventory-candidate.mjs",
+    "build:adopted-plan-inventory-upgrade": "node scripts/build-adopted-plan-inventory-upgrade.mjs",
     "build:care-messaging-source": "node scripts/build-care-messaging-source-candidate.mjs",
     "build:care-connections-source": "node scripts/build-care-connections-source-candidate.mjs",
     "build:care-claim-recovery-source": "node scripts/build-care-claim-recovery-source-candidate.mjs",
