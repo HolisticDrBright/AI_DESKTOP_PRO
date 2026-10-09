@@ -53,7 +53,25 @@ These are local package and fictional-runtime results. No provider call, actual 
 
 Engineering source `188b3e45981ebad22f183404b1de1f5f3f18564e` is pushed and independently matches the remote branch. The complete rebuild reports `sourceClean=true`, input digest `4b0af9855e62bb5723b2dab1f112821d03e2f66336573a16a6563b3dc5f9db9a`, and fleet-manifest digest `a176dd49a3a2cbe23f24edb8e8fcf1e883a8333b130ed8300d6d8f17b789228c`. All twelve rebuilt templates passed CloudFormation lint. Every candidate manifest, template and deployment ZIP digest is preserved in [the clean-build receipt](evidence/2026-10-09-inventory-qualification-fleet-clean-build.json). This receipt refers to the actual engineering source, not a later documentary commit.
 
-GitHub runs `37919658629` and `37919663623` at this source are observed in progress, not completed passes. Both prior care-only engineering runs at `e12c982` completed successfully. The prior documentary head's main run `37916909284` succeeded, while browser run `37916913957` remains in progress. Skipped deployed-backend steps still do not count as AWS acceptance, and the historical encounter-request failure is not retroactively resolved.
+GitHub runs `37919658629` and `37919663623` at this source, and `37920254589` and `37920261266` at documentary commit `b9809a4`, have completed successfully. These checks were independently re-read on October 9. Skipped deployed-backend steps still do not count as AWS acceptance, and the historical encounter-request failure is not retroactively resolved.
+
+### Distinct configuration and ledger checks
+
+The new outer contract is `inventory-qualification-target/1`. Historical target loaders reject it. It requires all twelve candidates, every template parameter, actual manifest/template/package digests, thirteen individually version-pinned code objects under the source-specific prefix, separate consumer and workforce identity pools, the designated subjects, organization and the isolated synthetic account/database. Independent template rules still govern optional recovery, export and retention settings. A review digest binds an input; it is not proof of an actual human review.
+
+The artifact reader checks the generated templates against the preserved parent transformations and recomputes each ZIP from its actual root module bytes. It bounds file reads even if a file grows during inspection and refuses links, traversal, changed metadata, missing modules, reordered/mismatched packages and source identity disagreement. This is local artifact verification, not live AWS resource observation.
+
+```powershell
+npm run test:inventory-qualification-target
+npm run build:inventory-qualification-target
+node dist/aws-clinical-core/inventory-qualification-target/index.cjs --check-configuration --target=<reviewed-target.json>
+```
+
+The CLI independently requires clean source and freshly rebuilds the fleet. It accepts no deploy, activation or provider operation. Its successful report explicitly keeps `liveTargetVerified`, `reviewVerified`, `acceptance`, `deploymentPerformed` and `phiAllowed` false. Fictional identities, review values and object versions in unit tests are never copied into deployment configuration.
+
+The separate 107-ledger adapter verifies every ordered row against the complete immutable successor and its exact 106 parent. Its SDK transaction is repeatable-read and read-only, with statement and lock deadlines, one attempt per request and a mandatory rollback. It has no commit, DDL, DML, caller-supplied SQL or automatic write retry. A matching ledger alone does not prove schema definitions, data preservation, resource configuration or hosted acceptance. Historical 106 ledger checks remain unchanged. The complete live resource observer and real interrupted-write custody qualification are still required before the permanent upgrade.
+
+The initial completed local run passed 79 focused tests without skips. Typecheck, full lint, the four historical ledger tests and the canonical 106-migration zero-seeded-row gate also passed. Earlier failed runs remain failures: incomplete fictional release/scope/export/range inputs, the file-tamper test's default timeout, incorrect temporary-directory cleanup in tests, and the SDK union-command type error were repaired. Each configuration negative now first proves its baseline is admitted; an invalid fixture cannot manufacture a passing refusal test. The next clean-commit run also covers the added billing-origin binding. Successful configuration, SDK transport tests and CI are not full resource observation or hosted acceptance.
 
 ### Remaining sequence
 

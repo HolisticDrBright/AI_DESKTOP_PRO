@@ -86,6 +86,10 @@ jobs:
           npx vitest run src/server/clinical-core/inventory-qualification-envelope.test.ts
           npm run test:inventory-qualification-fleet
           npm run build:inventory-qualification-fleet
+      - name: Exact configuration and artifact byte checks (no AWS observation or activation)
+        run: |
+          npm run test:inventory-qualification-target
+          npm run build:inventory-qualification-target
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
