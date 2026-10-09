@@ -95,6 +95,8 @@
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
     "build:adopted-plan-inventory-candidate": "node scripts/build-adopted-plan-inventory-candidate.mjs",
     "build:adopted-plan-inventory-upgrade": "node scripts/build-adopted-plan-inventory-upgrade.mjs",
+    "build:inventory-care-qualification": "node scripts/build-inventory-care-qualification.mjs",
+    "test:inventory-care-qualification-artifact": "node --test scripts/inventory-care-qualification-template.test.mjs",
     "build:care-messaging-source": "node scripts/build-care-messaging-source-candidate.mjs",
     "build:care-connections-source": "node scripts/build-care-connections-source-candidate.mjs",
     "build:care-claim-recovery-source": "node scripts/build-care-claim-recovery-source-candidate.mjs",
