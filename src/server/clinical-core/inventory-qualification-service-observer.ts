@@ -71,7 +71,13 @@ export function inventoryServiceReader(execute: typeof execFileSync = execFileSy
     catch (error) {
       const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim().replace(/^aws: \[ERROR\]: /, '') : '';
       const codes = absent[key] ?? [], providerOperation = awsOperationNames[operation];
-      if (codes.some(code => stderr.startsWith(`An error occurred (${code}) when calling the ${providerOperation} operation: `))) return null;
+      // With AWS_MAX_ATTEMPTS=1, CLI v2 can annotate even the first and only
+      // completed service error. Admit only that exact zero-retry annotation;
+      // killed/timed-out processes and exhausted multi-attempt reads refuse.
+      const completed = error && typeof error === 'object' && 'status' in error && error.status === 254
+        && (!('signal' in error) || error.signal === null);
+      if (completed && codes.some(code => ['', ' (reached max retries: 0)'].some(suffix =>
+        stderr.startsWith(`An error occurred (${code}) when calling the ${providerOperation} operation${suffix}: `)))) return null;
       return inventoryRefuse('service_aws_read_failed');
     }
   };

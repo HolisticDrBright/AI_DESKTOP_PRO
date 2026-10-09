@@ -38,12 +38,18 @@ describe('exact optional absence, not authorization failure', () => {
   ] as const;
   for (const [s, o, provider, code, p] of cases) it(o, async () => {
     const message = `An error occurred (${code}) when calling the ${provider} operation: fictional absent optional configuration`;
-    for (const prefix of ['', 'aws: [ERROR]: ']) {
-      const execute = (() => { throw Object.assign(Error('private error'), { stderr: prefix + message }); }) as typeof execFileSync;
+    for (const prefix of ['', 'aws: [ERROR]: ']) for (const suffix of ['', ' (reached max retries: 0)']) {
+      const execute = (() => { throw Object.assign(Error('private error'), { status: 254, signal: null,
+        stderr: prefix + message.replace(' operation:', ` operation${suffix}:`) }); }) as typeof execFileSync;
       await expect(inventoryServiceReader(execute)(s, o, p)).resolves.toBeNull();
     }
-    for (const stderr of ['AccessDenied', 'timeout', message.replace(provider, 'DifferentOperation'), message.replace(code, 'ResourceMissing')]) {
-      const execute = (() => { throw Object.assign(Error('private error'), { stderr }); }) as typeof execFileSync;
+    for (const stderr of ['AccessDenied', 'timeout', message.replace(provider, 'DifferentOperation'), message.replace(code, 'ResourceMissing'),
+      message.replace(' operation:', ' operation (reached max retries: 1):'), message.replace(' operation:', ' operation (reached max retries: unknown):')]) {
+      const execute = (() => { throw Object.assign(Error('private error'), { status: 254, signal: null, stderr }); }) as typeof execFileSync;
+      await expect(inventoryServiceReader(execute)(s, o, p)).rejects.toThrow('service_aws_read_failed');
+    }
+    for (const state of [{ status: null, signal: 'SIGTERM' }, { status: 1, signal: null }, { status: 254, signal: 'SIGTERM' }, {}]) {
+      const execute = (() => { throw Object.assign(Error('incomplete error'), { stderr: message, ...state }); }) as typeof execFileSync;
       await expect(inventoryServiceReader(execute)(s, o, p)).rejects.toThrow('service_aws_read_failed');
     }
   });
