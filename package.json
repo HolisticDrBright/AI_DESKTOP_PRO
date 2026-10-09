@@ -19,6 +19,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:lint-root-matcher": "node --test scripts/lint-root-matcher.test.mjs",
+    "test:fixture-transport": "node --test scripts/fixture-json-response.test.mjs",
     "typecheck": "tsc --noEmit",
     "build:lab-range-tools": "node scripts/build-lab-range-tools.mjs",
     "test:e2e": "playwright test",

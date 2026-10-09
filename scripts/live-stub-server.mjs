@@ -23,6 +23,7 @@
  */
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
+import { fixtureJsonResponse as json } from "./fixture-json-response.mjs";
 
 const PORT = Number(process.env.STUB_PORT ?? 3999);
 
@@ -2891,10 +2892,6 @@ captureFixtureSnapshots();
 
 /* --------------------------------------------------------------- wire utils */
 
-const json = (res, status, value) => {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(value));
-};
 const trpcOk = (res, value) => json(res, 200, { result: { data: { json: value } } });
 const trpcErr = (res, status, code, message) =>
   json(res, status, { error: { json: { message, data: { code, httpStatus: status } } } });

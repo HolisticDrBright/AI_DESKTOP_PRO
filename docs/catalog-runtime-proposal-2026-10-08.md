@@ -1,6 +1,6 @@
 # Synthetic catalog runtime deployment proposal
 
-The catalog runtime artifact is uploaded, but the running identity API has not changed. The proposal operator admits only a CloudFormation UPDATE that changes the Lambda code key and immutable S3 version. It never executes the change set. Deployment, compatible recovery, same-target catalog acceptance and authoritative owner-adopted plan inventory remain separate engineering and verification work.
+The original catalog runtime artifact has been deployed to the identity API; the completed execution evidence is recorded below. The proposal operator admits only a CloudFormation UPDATE that changes the Lambda code key and immutable S3 version. It never executes the change set itself: execution uses the separate fixed operator. Compatible recovery, the separate catalog endpoint deployment and acceptance, and authoritative owner-adopted plan inventory remain separate engineering and verification work.
 
 ## Exact source and target
 
@@ -98,3 +98,10 @@ The original execution receipt is preserved byte-identically as `docs/evidence/2
 This is identity API deployment evidence, not catalog endpoint acceptance. The separate `wxv734oi12-synthetic-staging-catalog` function has not received the updated reader in this execution. Compatible recovery, current catalog deployment and acceptance, complete same-target ingredients, authoritative owner-adopted inventory, and the remaining six-phase requirements are still open.
 
 Hosted main CI `37895353974` completed successfully at operator commit `31c5fda84c361f36faf70b7ee6cd26dbd4b06722`. Browser CI `37895362162` failed: `e2e/live-sync.spec.ts:199` lost the socket during its first delivery callback; 77 tests passed, one failed and 13 did not run. The failure is under investigation and is not reclassified as a pass or dismissed by a rerun.
+## Fixture connection repair and unchanged browser journey
+
+The preserved failed CI trace shows a completed navigation and a valid event ID before the first delivery callback disconnected in about six milliseconds. The fixture continued serving later tests. It does not identify the original socket at server level, so stale reuse is a supported mechanism, not a retrospectively proven cause of that exact request.
+
+`scripts/fixture-json-response.test.mjs` reproduces the unknown-write failure with a real HTTP server on a separate thread: an actual server-close signal arrives while the client is paused, and the next pooled POST fails with `ECONNRESET` on a reused socket. `fixture-json-response.mjs` closes JSON response connections explicitly; the actual fixture imports that helper. Positive tests prove no pooled socket remains, the next callback uses a new connection exactly once, and HTTP 503 stays a refusal without replay. Browser retries remain zero and all existing sync assertions are unchanged. The production clinical API is untouched.
+
+Four transport tests and the combined 46-test deployment/custody/transport regression passed without skips. Full typecheck, lint and diff checks passed. The unchanged local `e2e/live-sync.spec.ts` passed all 21 tests in 2.4 minutes, including delivery acknowledgment after reload, duplicate protection, scope withdrawal, cross-tenant denial and console/off-origin checks. This is local synthetic contract-fixture evidence, not hosted AWS acceptance, a physical-device result or a replacement for the failed historical CI run. New hosted CI must independently run the repaired source.

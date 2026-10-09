@@ -67,6 +67,8 @@ jobs:
           node --test scripts/qualification-consent-ledger.test.mjs
           npm run test:care-messaging-qualification-observer
           npm run test:care-connections-qualification-observer
+      - name: Synthetic fixture connection lifecycle and no replay
+        run: npm run test:fixture-transport
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
