@@ -38,7 +38,7 @@ export function intentFailureCode(error){
  * the remote request; an unknown outcome deliberately retains its lock. */
 export function createIntentUploadCustody(root,out,current,purpose='intent-artifact-upload-proposal'){
  if(!['intent-artifact-upload-proposal','registered-artifact-upload','registered-artifact-upload-proposal','registered-artifact-upload-release',
-  'catalog-runtime-artifact-upload','catalog-runtime-artifact-proposal'].includes(purpose))refuseIntent('custody_purpose');
+  'catalog-runtime-artifact-upload','catalog-runtime-artifact-proposal','catalog-runtime-artifact-execution'].includes(purpose))refuseIntent('custody_purpose');
  const directory=resolve(root,'dist/synthetic-care-routing');
  mkdirSync(directory,{recursive:true});mkdirSync(out,{recursive:true});
  const runId=randomBytes(16).toString('hex'),lock=resolve(directory,'operator.lock'),journal=resolve(out,runId+'.events.jsonl');

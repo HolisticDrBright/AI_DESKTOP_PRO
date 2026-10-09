@@ -157,6 +157,8 @@ jobs:
         run: npm run test:synthetic-catalog-runtime-proposal
       - name: Fixed catalog-runtime execution and exact deployment observation primitives
         run: npm run test:synthetic-catalog-runtime-deployment
+      - name: Fixed catalog-runtime live operator and stopped execution custody
+        run: npm run test:synthetic-catalog-runtime-execution
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - name: Preserve pinned Next lint rules with the bounded root matcher
