@@ -109,6 +109,7 @@ import type {
 } from "./live-types";
 import type { CreatePatientInput, CreatePatientResult } from "./types";
 import type {
+  TelehealthConsentArtifact,
   TelehealthConsentInput,
   TelehealthDay,
   TelehealthDayVisit,
@@ -118,6 +119,7 @@ import type {
   TelehealthStartInput,
   TelehealthStartResult,
   TelehealthVisit,
+  TelehealthWithdrawInput,
 } from "./telehealth.types";
 
 interface Envelope<T> {
@@ -181,23 +183,27 @@ export const liveClient = {
   scheduleCalendar: (fromIso: string, toIso: string) =>
     liveFetch<LiveCalendar>("schedule/calendar", { method: "POST", body: { fromIso, toIso } }),
 
-  telehealthDay: (date: string) =>
-    liveFetch<TelehealthDay>(`telehealth/day?date=${encodeURIComponent(date)}`, { method: "GET" }),
-  telehealthVisit: (appointmentId: string, date: string) =>
+  telehealthDay: (date: string, timeZone: string) =>
+    liveFetch<TelehealthDay>(`telehealth/day?date=${encodeURIComponent(date)}&timeZone=${encodeURIComponent(timeZone)}`, { method: "GET" }),
+  telehealthVisit: (appointmentId: string, date: string, timeZone: string) =>
     liveFetch<TelehealthDayVisit>(
-      `telehealth/visit?appointmentId=${encodeURIComponent(appointmentId)}&date=${encodeURIComponent(date)}`,
+      `telehealth/visit?appointmentId=${encodeURIComponent(appointmentId)}&date=${encodeURIComponent(date)}&timeZone=${encodeURIComponent(timeZone)}`,
       { method: "GET" },
     ),
+  telehealthConsentArtifact: () =>
+    liveFetch<TelehealthConsentArtifact>("telehealth/consent-artifact", { method: "GET" }),
   telehealthRecordConsent: (input: TelehealthConsentInput) =>
     liveFetch<TelehealthVisit>("telehealth/consent", { method: "POST", body: input }),
+  telehealthWithdrawConsent: (input: TelehealthWithdrawInput) =>
+    liveFetch<TelehealthVisit>("telehealth/consent/withdraw", { method: "POST", body: input }),
   telehealthStart: (input: TelehealthStartInput) =>
     liveFetch<TelehealthStartResult>("telehealth/start", { method: "POST", body: input }),
   telehealthEnd: (input: TelehealthEndInput) =>
     liveFetch<TelehealthVisit>("telehealth/end", { method: "POST", body: input }),
   telehealthNote: (appointmentId: string) =>
     liveFetch<TelehealthVisit>(`telehealth/note?appointmentId=${encodeURIComponent(appointmentId)}`, { method: "GET" }),
-  telehealthImportNote: (appointmentId: string) =>
-    liveFetch<TelehealthImportResult>("telehealth/note/import", { method: "POST", body: { appointmentId } }),
+  telehealthImportNote: (appointmentId: string, date: string, timeZone: string) =>
+    liveFetch<TelehealthImportResult>("telehealth/note/import", { method: "POST", body: { appointmentId, date, timeZone } }),
   telehealthSignNote: (input: TelehealthSignInput) =>
     liveFetch<TelehealthVisit>("telehealth/note/sign", { method: "POST", body: input }),
 

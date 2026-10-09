@@ -76,14 +76,22 @@ test("the server refuses to start a visit without a signed consent", async ({ pa
   await expect(page.getByRole("button", { name: "Start visit" })).toHaveCount(0);
   // The control is the route, not the UI: a direct start is refused with the consent reason.
   const res = await page.request.post("/api/live/telehealth/start", {
-    data: {
-      appointmentId: APPOINTMENT, start: "2026-10-11T18:00:00.000Z", end: "2026-10-11T18:30:00.000Z",
-      timeZone: "America/Los_Angeles", hostDisplayName: "Demo Practitioner",
-    },
+    data: { appointmentId: APPOINTMENT, date: DATE, timeZone: "America/Los_Angeles", hostDisplayName: "Demo Practitioner" },
   });
   expect(res.status()).toBe(409);
   const body = (await res.json()) as { error?: { message?: string } };
-  expect(body.error?.message).toMatch(/no signed telehealth consent/i);
+  expect(body.error?.message).toMatch(/no current telehealth consent/i);
+  // An appointment the practitioner's calendar does not return is refused before the boundary is asked.
+  const unknown = await page.request.post("/api/live/telehealth/start", {
+    data: { appointmentId: "99999999-9999-4999-8999-999999999999", date: DATE, timeZone: "America/Los_Angeles" },
+  });
+  expect(unknown.status()).toBe(404);
+  // A consent that does not name the current approved artifact is refused by the boundary.
+  const stale = await page.request.post("/api/live/telehealth/consent", {
+    data: { appointmentId: APPOINTMENT, date: DATE, timeZone: "America/Los_Angeles", artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", artifactVersion: "never-reviewed", contentSha256: "b".repeat(64), signerName: "Fixture Patient", agreed: true },
+  });
+  expect(stale.status()).toBe(409);
+  expect(((await stale.json()) as { error?: { message?: string } }).error?.message).toMatch(/current approved telehealth consent/i);
 });
 
 test("recording consent unlocks the visit; ending it stores quick notes and opens the note", async ({ page }) => {
@@ -92,6 +100,8 @@ test("recording consent unlocks the visit; ending it stores quick notes and open
   const dialog = page.getByRole("dialog", { name: "Record telehealth consent" });
   await expect(dialog).toBeVisible();
   // Refused until both the typed name and the attestation are present.
+  // The dialog shows the practice's CURRENT approved consent before anything can be attested.
+  await expect(dialog.getByTestId("consent-artifact")).toContainText("version telehealth-recording/1");
   await dialog.getByRole("button", { name: "Record consent" }).click();
   await expect(dialog.getByRole("alert")).toContainText("confirm they agreed");
   await dialog.getByLabel("Patient's full name (as they stated it)").fill("Fixture Patient");
@@ -109,6 +119,7 @@ test("recording consent unlocks the visit; ending it stores quick notes and open
   // The visit is open on the server (timer runs, End visit is offered) even
   // though the aborted SDK download means no meeting UI — and the screen says so.
   await expect(page.getByTestId("visit-refusal")).toContainText("Zoom Meeting SDK could not be loaded");
+  await expect(page.getByTestId("zoom-stage")).toHaveAttribute("data-zoom-state", "failed");
   await expect(page.getByRole("button", { name: "End visit" })).toBeEnabled();
   await page.getByLabel("Quick notes").fill("Patient reports better afternoons.");
   await page.getByRole("button", { name: "Flag this moment" }).click();
@@ -116,8 +127,10 @@ test("recording consent unlocks the visit; ending it stores quick notes and open
 
   await page.getByRole("button", { name: "End visit" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "End visit" }).click();
+  // The note opens only because the fixture provider CONFIRMED the shutdown; the Lambda keeps `ending` otherwise.
   await page.waitForURL(`**/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
   await expect(page.getByText("Visit ended · note pending")).toBeVisible();
+  await expect(page.getByText("Telehealth visit record.")).toBeVisible();
 
   // Persisted on the visit record, not in this tab: a fresh load still carries them.
   await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
@@ -131,6 +144,8 @@ test("AI Companion notes import as not reviewed and one signature freezes the no
   await page.getByRole("button", { name: "Import AI Companion notes" }).click();
   await expect(page.getByText("Not reviewed", { exact: true })).toBeVisible();
   await expect(page.getByLabel("What the patient reported")).toHaveValue(/Afternoon fatigue has eased/);
+  // Zoom's unified summary document lands whole under Summary as unreviewed text, not split by a model.
+  await expect(page.getByLabel("Summary")).toHaveValue(/## Follow-up on fatigue and iron status/);
   await expect(page.getByText("Repeat ferritin in 8 weeks", { exact: true })).toBeVisible();
   // Nothing signed yet: the day view agrees.
   await page.goto(`/telehealth?date=${DATE}`);
@@ -143,7 +158,7 @@ test("AI Companion notes import as not reviewed and one signature freezes the no
   await page.getByRole("listitem").filter({ hasText: "sleep log" }).getByRole("button", { name: "Dismiss" }).click();
   await page.getByRole("button", { name: "Sign note" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Sign note" }).click();
-  await expect(page.getByTestId("note-signed")).toContainText("This note is frozen");
+  await expect(page.getByTestId("note-signed")).toContainText("This telehealth visit note is frozen");
   await expect(page.getByTestId("signed-practitioner-notes")).toHaveText("Agree with the summary. Continue protocol.");
   await expect(page.getByText("Edited summary.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign note" })).toHaveCount(0);
@@ -151,6 +166,8 @@ test("AI Companion notes import as not reviewed and one signature freezes the no
   // Reload: the signed state comes from the record, not from this tab.
   await page.reload();
   await expect(page.getByTestId("note-signed")).toBeVisible();
+  await expect(page.getByText("Prior revisions", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Revision 1 · not reviewed/)).toBeVisible();
   await expect(page.getByRole("listitem").filter({ hasText: "Repeat ferritin" })).toContainText("approved");
   await expect(page.getByRole("listitem").filter({ hasText: "sleep log" })).toContainText("dismissed");
   await page.goto(`/telehealth?date=${DATE}`);

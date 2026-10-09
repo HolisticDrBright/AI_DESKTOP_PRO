@@ -131,6 +131,27 @@ jobs:
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
           npm run test:e2e -- live-
+      # Positive Zoom Meeting SDK bootstrap against the REAL pinned CDN build.
+      # The live battery above aborts every source.zoom.us request and proves
+      # the honest failure state; this step proves the opposite half — the
+      # pinned embedded SDK plus its documented vendor scripts load under the
+      # visit route's headers, register, and initialize a client. Its own
+      # step, so a CDN outage is identifiable and never read as a product bug.
+      - name: Zoom Meeting SDK bootstraps (real pinned CDN build)
+        run: |
+          curl -fsS -X POST http://127.0.0.1:3999/__control/reset-all
+          E2E_LIVE=1 \
+          E2E_ZOOM_SDK=1 \
+          E2E_DEV_SERVER=1 \
+          APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- zoom-sdk-bootstrap
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server

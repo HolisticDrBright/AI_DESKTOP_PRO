@@ -1,13 +1,18 @@
 "use client";
 
 /**
- * Post-visit note.
+ * Post-visit note — the TELEHEALTH visit record.
  *
  * The AI sections are Zoom AI Companion's summary, imported verbatim and
  * stored as NOT reviewed. The practitioner's own notes sit above them, every
  * AI section is editable, and action items are suggestions the practitioner
  * approves or dismisses. One signature stores all of it together and freezes
- * the note. Until then nothing here is final or patient-facing.
+ * the note; the prior revision is kept. Until then nothing here is final or
+ * patient-facing.
+ *
+ * This record is signed on the telehealth boundary. It is NOT the chart's
+ * signed clinical note and does not appear in the chart timeline; posting it
+ * through the chart's note path is a separate, unbuilt step (docs/telehealth.md).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,6 +24,7 @@ import type {
   TelehealthActionItem,
   TelehealthDayVisit,
   TelehealthNoteSectionKey,
+  TelehealthVisitNote,
 } from "@/adapters/telehealth.types";
 import { VISIT_NOTE_SECTIONS } from "@/adapters/telehealth.types";
 import { Btn, BtnLink } from "@/components/ui/Btn";
@@ -29,7 +35,18 @@ import { TextArea } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Pill } from "@/components/ui/Pill";
 import { useFeedback } from "@/lib/feedback";
-import { PhaseChip, fmtClock, fmtDateTime, fmtTime, patientLabel, visitHref, visitPhase } from "./parts";
+import {
+  PhaseChip,
+  fmtClock,
+  fmtDateTime,
+  fmtTime,
+  isFullNote,
+  loadVisitRow,
+  patientLabel,
+  viewerTimeZone,
+  visitHref,
+  visitPhase,
+} from "./parts";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -59,18 +76,21 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
+  const adoptNote = (note: TelehealthVisitNote | null) => {
+    setPractitionerNotes(note?.practitionerNotes ?? "");
+    setSections(note?.aiSections ?? EMPTY_SECTIONS);
+    setActionItems(note?.actionItems ?? []);
+  };
+
   useEffect(() => {
     let cancelled = false;
     setState("loading");
-    api.telehealth
-      .visit(appointmentId, date)
+    loadVisitRow(appointmentId, date)
       .then((result) => {
         if (cancelled) return;
         setRow(result);
         const note = result.visit?.note ?? null;
-        setPractitionerNotes(note?.practitionerNotes ?? "");
-        setSections(note?.aiSections ?? EMPTY_SECTIONS);
-        setActionItems(note?.actionItems ?? []);
+        adoptNote(isFullNote(note) ? note : null);
         setState("ready");
       })
       .catch((e: unknown) => {
@@ -92,15 +112,16 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     setImportMessage(null);
     setActionError(null);
     try {
-      const result = await api.telehealth.importNote(row.appointmentId);
+      const result = await api.telehealth.importNote(row.appointmentId, date, viewerTimeZone());
       setRow({ ...row, visit: result.visit });
-      if (result.summaryReady && result.visit.note) {
-        setSections(result.visit.note.aiSections);
-        setActionItems(result.visit.note.actionItems);
-        if (!practitionerNotes) setPractitionerNotes(result.visit.note.practitionerNotes);
+      const note = result.visit.note;
+      if (result.summaryReady && isFullNote(note)) {
+        setSections(note.aiSections);
+        setActionItems(note.actionItems);
+        if (!practitionerNotes) setPractitionerNotes(note.practitionerNotes);
         announce("AI Companion notes imported. Review before signing.");
       } else {
-        setImportMessage("Zoom has not produced the AI Companion summary yet. It usually appears a few minutes after the meeting ends — try again shortly.");
+        setImportMessage("Zoom has not produced a usable AI Companion summary yet. It usually appears a few minutes after the meeting ends — try again shortly. Nothing was written.");
       }
     } catch (e) {
       setActionError(isAdapterError(e) ? e.message : "The AI notes could not be imported.");
@@ -116,6 +137,8 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     try {
       const visit = await api.telehealth.signNote({
         appointmentId: row.appointmentId,
+        date,
+        timeZone: viewerTimeZone(),
         expectedVersion: row.visit.version,
         practitionerNotes,
         aiSections: sections,
@@ -123,7 +146,7 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
       });
       setRow({ ...row, visit });
       setConfirmSign(false);
-      announce("Visit note signed and saved to the record.");
+      announce("Telehealth visit note signed and saved to the visit record.");
       router.refresh();
     } catch (e) {
       setActionError(isAdapterError(e) ? e.message : "The note could not be signed.");
@@ -161,9 +184,11 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
   }
 
   const visit = row.visit;
-  const note = visit?.note ?? null;
+  const note = isFullNote(visit?.note ?? null) ? (visit?.note as TelehealthVisitNote) : null;
   const signed = note?.status === "signed";
   const phase = visitPhase(row, true);
+  const meetingClosed = visit?.status === "ended";
+  const shutdownPending = visit?.status === "ending";
 
   return (
     <section data-screen-label="Telehealth visit note" className="mx-auto max-w-[1000px] px-[22px] pt-[18px] pb-6">
@@ -178,7 +203,7 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
         actions={
           <div className="flex items-center gap-2">
             <BtnLink href="/telehealth">Back to day</BtnLink>
-            {!signed && visit?.status !== "ended" && <BtnLink href={visitHref(row)}>Back to visit</BtnLink>}
+            {!signed && (visit?.status === "in_visit" || shutdownPending) && <BtnLink href={visitHref(row)}>Back to visit</BtnLink>}
             {!signed && note && (
               <Btn variant="primary" onClick={() => setConfirmSign(true)} disabled={signing}>
                 <PenLine size={13} strokeWidth={2} aria-hidden /> Sign note
@@ -187,6 +212,19 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
           </div>
         }
       />
+
+      <ClinicalNote className="mb-3">
+        <strong>Telehealth visit record.</strong> What is signed here is stored on the telehealth visit, with its
+        prior revisions. It is not the chart&apos;s signed clinical note and does not appear in the chart timeline;
+        carry anything chart-worthy into an encounter note.
+      </ClinicalNote>
+
+      {shutdownPending && (
+        <div role="alert" data-testid="note-shutdown-pending" className="mb-3 rounded-[10px] border border-[rgba(214,84,74,0.4)] bg-critical-tint px-[13px] py-[10px] text-[12px] leading-[1.55] text-critical">
+          <strong>Zoom has not confirmed the meeting stopped.</strong> You can write here, but the AI Companion summary
+          cannot be imported and the visit is not ended until the shutdown is confirmed from the visit screen.
+        </div>
+      )}
 
       {!visit && (
         <ClinicalNote className="mb-3">
@@ -200,13 +238,14 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
           <CardTitle>AI Companion notes</CardTitle>
           <p className="mt-1 mb-3 text-[12.5px] leading-[1.5] text-body">
             Zoom&apos;s AI Companion writes the first draft of this note. Import it once the meeting has ended;
-            it is stored as not reviewed and nothing in it is final until you sign.
+            it is stored as not reviewed and nothing in it is final until you sign. Importing re-checks the
+            patient&apos;s consent to recording and AI notes.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <Btn variant="primary" onClick={() => void importSummary()} disabled={importing || visit.status !== "ended"}>
+            <Btn variant="primary" onClick={() => void importSummary()} disabled={importing || !meetingClosed}>
               <Download size={13} strokeWidth={2} aria-hidden /> {importing ? "Importing…" : "Import AI Companion notes"}
             </Btn>
-            {visit.status !== "ended" && <span className="text-[12px] text-subtle">Available after the visit ends.</span>}
+            {!meetingClosed && <span className="text-[12px] text-subtle">Available once Zoom confirms the visit ended.</span>}
           </div>
           {importMessage && (
             <p role="status" className="mt-3 mb-0 rounded-lg border border-hairline-2 bg-surface px-3 py-2 text-[12px] text-subtle">
@@ -259,7 +298,9 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
                   </div>
                 </div>
                 <p className="mt-1 mb-3 text-[11.5px] text-subtle">
-                  Imported {fmtDateTime(note.importedAt)}. Zoom&apos;s original text is kept alongside your edits.
+                  Imported {fmtDateTime(note.importedAt)}. Zoom&apos;s original text is kept alongside your edits. Zoom&apos;s
+                  current summary arrives as one document and is shown whole under Summary as plain text; it is not
+                  split into the sections below by any model.
                 </p>
                 <div className="flex flex-col gap-3">
                   {VISIT_NOTE_SECTIONS.map(({ key, label }) => (
@@ -272,6 +313,7 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
                       ) : (
                         <TextArea
                           aria-label={label}
+                          className={key === "summary" ? "min-h-[160px]" : undefined}
                           value={sections[key]}
                           onChange={(e) => setSections((current) => ({ ...current, [key]: e.target.value }))}
                           placeholder="Nothing recorded for this section."
@@ -347,10 +389,25 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
             )}
           </Card>
 
+          {visit.noteHistory.length > 0 && (
+            <Card className="p-4">
+              <CardTitle>Prior revisions</CardTitle>
+              <ul className="m-0 mt-2 list-none p-0 text-[12px] leading-[1.5] text-body">
+                {visit.noteHistory.map((revision) => (
+                  <li key={`${revision.revision}-${revision.importedAt}`}>
+                    Revision {revision.revision} · {revision.status === "signed" ? "signed" : "not reviewed"} · imported{" "}
+                    {fmtDateTime(revision.importedAt)}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {signed && note && (
             <div data-testid="note-signed">
               <ClinicalNote>
-                Signed {fmtDateTime(note.signedAt)}. This note is frozen; corrections are recorded as a new visit note.
+                Signed {fmtDateTime(note.signedAt)}. This telehealth visit note is frozen; corrections are recorded as a
+                new revision on this visit.
               </ClinicalNote>
             </div>
           )}
@@ -359,8 +416,8 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
 
       <ConfirmDialog
         open={confirmSign}
-        title="Sign this visit note?"
-        body="Your practitioner notes, the reviewed AI sections and your action-item decisions are stored together and the note is frozen. Approved action items are decisions only — tasks, orders and appointments are created separately."
+        title="Sign this telehealth visit note?"
+        body="Your practitioner notes, the reviewed AI sections and your action-item decisions are stored together on the telehealth visit and the note is frozen; the previous revision is kept. This is not a chart note. Approved action items are decisions only — tasks, orders and appointments are created separately."
         confirmLabel={signing ? "Signing…" : "Sign note"}
         onConfirm={() => void sign()}
         onCancel={() => setConfirmSign(false)}

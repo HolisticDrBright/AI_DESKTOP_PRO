@@ -41,6 +41,7 @@ import type {
   TelehealthEndInput,
   TelehealthSignInput,
   TelehealthStartInput,
+  TelehealthWithdrawInput,
 } from "./telehealth.types";
 import type {
   LiveAppointmentStatus,
@@ -140,18 +141,22 @@ export const api = {
   telehealth: {
     /**
      * LIVE: the day's telehealth appointments from the Desktop-owned calendar
-     * RPC, merged with the AWS telehealth boundary (patient-app requests,
-     * consent, the Zoom meeting, the post-visit note). Visits start only when
-     * the server finds a signed consent; the embedded-meeting session is
-     * signed server-side and returned once, never stored in the browser.
+     * RPC (in the viewer's time zone), merged with the AWS telehealth boundary
+     * (patient-app requests, consent receipts against the governed consent
+     * authority, the Zoom meeting, provider shutdown state, the post-visit
+     * note). Every action resolves its appointment through the calendar first;
+     * the boundary refuses starts without current consent authority; the
+     * embedded-meeting session is signed server-side and returned once.
      */
-    day: async (date: string) => liveClient.telehealthDay(date),
-    visit: async (appointmentId: string, date: string) => liveClient.telehealthVisit(appointmentId, date),
+    day: async (date: string, timeZone: string) => liveClient.telehealthDay(date, timeZone),
+    visit: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthVisit(appointmentId, date, timeZone),
+    consentArtifact: async () => liveClient.telehealthConsentArtifact(),
     recordConsent: async (input: TelehealthConsentInput) => liveClient.telehealthRecordConsent(input),
+    withdrawConsent: async (input: TelehealthWithdrawInput) => liveClient.telehealthWithdrawConsent(input),
     start: async (input: TelehealthStartInput) => liveClient.telehealthStart(input),
     end: async (input: TelehealthEndInput) => liveClient.telehealthEnd(input),
     note: async (appointmentId: string) => liveClient.telehealthNote(appointmentId),
-    importNote: async (appointmentId: string) => liveClient.telehealthImportNote(appointmentId),
+    importNote: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthImportNote(appointmentId, date, timeZone),
     signNote: async (input: TelehealthSignInput) => liveClient.telehealthSignNote(input),
   },
   schedule: {

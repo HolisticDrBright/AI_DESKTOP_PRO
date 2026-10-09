@@ -132,6 +132,11 @@
       "version": "20260904090000",
       "file": "20260904090000_independent_consumer_chat_context.sql",
       "production_transform": false
+    },
+    {
+      "version": "20261009100000",
+      "file": "20261009100000_telehealth_recording_consent.sql",
+      "production_transform": false
     }
   ]
 }

@@ -33,7 +33,9 @@ const STRIPE_WEBHOOK = "POST /clinical-core/webhooks/stripe/appointments";
 // the combined telehealth + recording/AI-notes consent, the Zoom meeting the
 // practitioner joins from inside Desktop Pro, and the post-visit note.
 const WORKFORCE_VISIT_LIST = "GET /clinical-core/workforce/appointments/visits";
+const WORKFORCE_VISIT_CONSENT_ARTIFACT = "GET /clinical-core/workforce/appointments/visits/consent-artifact";
 const WORKFORCE_VISIT_CONSENT = "POST /clinical-core/workforce/appointments/visits/consent";
+const WORKFORCE_VISIT_CONSENT_WITHDRAW = "POST /clinical-core/workforce/appointments/visits/consent/withdraw";
 const WORKFORCE_VISIT_START = "POST /clinical-core/workforce/appointments/visits/start";
 const WORKFORCE_VISIT_END = "POST /clinical-core/workforce/appointments/visits/end";
 const WORKFORCE_VISIT_NOTE = "GET /clinical-core/workforce/appointments/visits/notes";
@@ -50,6 +52,8 @@ export type TelehealthConfiguration = {
   runtimeMode: "synthetic" | "production"; phiAllowed: boolean; zoomEnabled: boolean; zoomBaaVerified: boolean; zoomSecretArn: string;
   remindersEnabled: boolean; reminderSender: string; reminderConfigurationSet: string; reminderScheduleGroup: string; reminderSchedulerRoleArn: string; reminderTargetArn: string;
   stripeTestEnabled: boolean; stripeSecretArn: string; stripeSuccessUrl: string; stripeCancelUrl: string;
+  /** The clinical API's own origin: the governed consent authority (identity extension) is read through it with the caller's JWT. */
+  identityApiOrigin: string;
 };
 
 type AppointmentItem = {
@@ -69,9 +73,17 @@ type AppointmentItem = {
 };
 
 export type VisitConsent = {
-  consentId: string; consentType: typeof TELEHEALTH_CONSENT_TYPE; consentVersion: string; signerName: string;
-  method: "patient_app" | "staff_attested"; signedAt: string; recordedBy: string; patientLocation: string | null;
+  consentId: string; consentType: typeof TELEHEALTH_CONSENT_TYPE; scope: "telehealth_recording";
+  /** The approved artifact the signer saw: id, version and content hash from the governed consent authority. */
+  artifactId: string; artifactVersion: string; contentSha256: string; signerName: string;
+  method: "patient_app" | "staff_attested"; representativeAuthority: "self" | "guardian" | "healthcare_proxy" | "legal_representative";
+  signedAt: string; recordedBy: string; patientLocation: string | null;
+  /** The identity-authority grant this receipt stands on, when the patient has an app connection. */
+  grantId: string | null; connectionId: string | null;
+  status: "granted" | "withdrawn"; withdrawnAt: string | null; withdrawnBy: string | null; withdrawalReason: string | null;
 };
+type MeetingLease = { leaseId: string; acquiredAt: string };
+type ProviderShutdown = { status: "not_started" | "pending" | "ended" | "failed"; attemptedAt: string | null; confirmedAt: string | null; detail: string | null };
 export type VisitNoteSectionKey = typeof VISIT_NOTE_SECTION_KEYS[number];
 export type VisitActionItem = { id: string; text: string; status: "suggested" | "approved" | "dismissed" };
 export type VisitNote = {
@@ -81,11 +93,12 @@ export type VisitNote = {
 };
 type VisitFlag = { atSeconds: number; label: string };
 type VisitItem = {
-  pk: string; sk: string; appointmentId: string; organizationId: string; requestId: string | null;
-  status: "scheduled" | "in_visit" | "ended"; consents: VisitConsent[];
+  pk: string; sk: string; appointmentId: string; organizationId: string; requestId: string | null; consumerPersonId: string | null;
+  scheduledStart: string | null; scheduledEnd: string | null; timeZone: string | null;
+  status: "scheduled" | "in_visit" | "ending" | "ended" | "cancelled"; consents: VisitConsent[]; meetingLease: MeetingLease | null;
   providerMeetingId: string | null; joinUrl: string | null; passcode: string | null;
-  startedAt: string | null; endedAt: string | null; flags: VisitFlag[]; quickNotes: string;
-  note: VisitNote | null; version: number; createdAt: string; updatedAt: string;
+  startedAt: string | null; endedAt: string | null; providerShutdown: ProviderShutdown; flags: VisitFlag[]; quickNotes: string;
+  note: VisitNote | null; noteHistory: VisitNote[]; version: number; createdAt: string; updatedAt: string;
 };
 
 type PaymentProfile = { pk: string; sk: string; organizationId: string; consumerPersonId: string; stripeCustomerId: string; stripePaymentMethodId: string | null; status: "setup_pending" | "active" | "disabled"; updatedAt: string };
@@ -125,7 +138,9 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
       if (route === WORKFORCE_PAYMENT) return response(200, { data: await workforcePayment(config, actor, body(event)) });
       if (route === WORKFORCE_VISIT_LIST) return response(200, { data: await listVisits(config, actor) });
+      if (route === WORKFORCE_VISIT_CONSENT_ARTIFACT) return response(200, { data: await readConsentArtifact(config, actor) });
       if (route === WORKFORCE_VISIT_CONSENT) return response(200, { data: await recordVisitConsent(config, actor, body(event)) });
+      if (route === WORKFORCE_VISIT_CONSENT_WITHDRAW) return response(200, { data: await withdrawVisitConsent(config, actor, body(event)) });
       if (route === WORKFORCE_VISIT_START) return response(200, { data: await startVisit(config, actor, body(event)) });
       if (route === WORKFORCE_VISIT_END) return response(200, { data: await endVisit(config, actor, body(event)) });
       if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
@@ -136,7 +151,8 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       console.warn(JSON.stringify({ event: "telehealth_request_refused", route, errorName: error instanceof Error ? error.name : "UnknownError",
         errorMessage: error instanceof Error ? error.message.replace(/[\r\n]/g, " ").slice(0, 300) : "unknown" }));
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
-      const status = category === "identity_refused" ? 403 : category === "not_found" ? 404 : category === "conflict" || category === "consent_required" ? 409
+      const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
+        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable"].includes(category) ? 409
         : category === "provider_unavailable" || category === "service_unavailable" ? 503 : 400;
       return response(status, { error: category });
     }
@@ -151,7 +167,7 @@ async function createRequest(config: TelehealthConfiguration, actor: Actor, valu
   // The combined telehealth + recording/AI-notes consent is the last step of
   // "Request a virtual visit" in the patient app. It is optional on the wire
   // (older app builds), but a visit cannot START without it — see startVisit.
-  const consent = value.consent === undefined || value.consent === null ? null : consentFromPatientApp(value.consent, actor);
+  const consent = value.consent === undefined || value.consent === null ? null : consentFromPatientApp(value.consent, actor, await currentArtifact(config, actor));
   const slot = await findSlot(config, actor.organizationId, String(value.slotId));
   const nowEpoch = Math.floor(Date.now() / 1000);
   if (slot.status !== "held" || slot.heldBy !== actor.personId || slot.holdId !== value.holdId || !slot.holdExpiresAt || slot.holdExpiresAt <= nowEpoch
@@ -287,6 +303,7 @@ async function cancelRequest(config: TelehealthConfiguration, item: AppointmentI
     ExpressionAttributeNames: { "#status": "status" }, ExpressionAttributeValues: { ":cancelled": "cancelled", ":fee": cancellationFeeDueMinor, ":updated": updatedAt } } });
   try { await document.send(new TransactWriteCommand({ TransactItems: actions })); }
   catch (error) { if ((error as { name?: string }).name === "TransactionCanceledException" || (error as { name?: string }).name === "ConditionalCheckFailedException") throw new TelehealthError("conflict"); throw error; }
+  await reconcileVisitForCancelledRequest(config, item);
   return publicItem(next, by);
 }
 
@@ -367,7 +384,9 @@ async function scheduleRequest(config: TelehealthConfiguration, item: Appointmen
   // record that already exists (e.g. a reschedule) is left untouched.
   if (item.consent) {
     try {
-      await document.send(new PutCommand({ TableName: config.tableName, Item: newVisitItem(item.organizationId, appointmentId, item.requestId, [item.consent]), ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" }));
+      await document.send(new PutCommand({ TableName: config.tableName, Item: newVisitItem(item.organizationId, appointmentId,
+        { requestId: item.requestId, consumerPersonId: item.consumerPersonId, scheduledStart: values.scheduledStart ?? null, scheduledEnd: values.scheduledEnd ?? null, timeZone: values.timeZone ?? null, providerMeetingId: values.providerMeetingId ?? null, joinUrl: values.joinUrl ?? null },
+        [item.consent]), ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" }));
     } catch (error) {
       if ((error as { name?: string }).name !== "ConditionalCheckFailedException") throw error;
     }
@@ -419,11 +438,21 @@ async function deleteZoomMeeting(config: TelehealthConfiguration, meetingId: str
 
 /* ---------------------------------------------------------------- visits */
 
+const CONSENT_SCOPE = "telehealth_recording";
+/** A meeting-creation lease older than this is treated as abandoned (the creator died mid-call). */
+const MEETING_LEASE_TTL_MS = 2 * 60_000;
+const MAX_SUMMARY_BYTES = 256 * 1024;
+const MAX_LIST_PAGES = 20;
+const MAX_NOTE_HISTORY = 20;
+
 function visitKey(organizationId: string, appointmentId: string) { return { pk: `ORG#${organizationId}`, sk: `VISIT#${appointmentId}` }; }
-function newVisitItem(organizationId: string, appointmentId: string, requestId: string | null, consents: VisitConsent[]): VisitItem {
+function newVisitItem(organizationId: string, appointmentId: string, binding: VisitBinding, consents: VisitConsent[]): VisitItem {
   const now = new Date().toISOString();
-  return { ...visitKey(organizationId, appointmentId), appointmentId, organizationId, requestId, status: "scheduled", consents,
-    providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null, flags: [], quickNotes: "", note: null, version: 1, createdAt: now, updatedAt: now };
+  return { ...visitKey(organizationId, appointmentId), appointmentId, organizationId, requestId: binding.requestId,
+    consumerPersonId: binding.consumerPersonId, scheduledStart: binding.scheduledStart, scheduledEnd: binding.scheduledEnd, timeZone: binding.timeZone,
+    status: "scheduled", consents, meetingLease: null, providerMeetingId: null, joinUrl: null, passcode: null,
+    startedAt: null, endedAt: null, providerShutdown: { status: "not_started", attemptedAt: null, confirmedAt: null, detail: null },
+    flags: [], quickNotes: "", note: null, noteHistory: [], version: 1, createdAt: now, updatedAt: now };
 }
 async function findVisit(config: TelehealthConfiguration, organizationId: string, appointmentId: string): Promise<VisitItem | null> {
   if (!UUID.test(appointmentId)) throw new TelehealthError("request_invalid");
@@ -449,81 +478,268 @@ async function saveVisit(config: TelehealthConfiguration, visit: VisitItem, expe
   }
   return next;
 }
+function activeConsents(visit: VisitItem) { return visit.consents.filter((consent) => consent.status === "granted"); }
 /** The passcode is a join credential: it leaves the Lambda only inside a start-visit session, never in a list. */
 function publicVisit(visit: VisitItem) {
   const result: Partial<VisitItem> = { ...visit };
-  delete result.pk; delete result.sk; delete result.passcode;
-  return { ...result, consentSigned: visit.consents.length > 0 };
+  delete result.pk; delete result.sk; delete result.passcode; delete result.meetingLease;
+  return { ...result, consentSigned: activeConsents(visit).length > 0 };
 }
-function consentFromPatientApp(value: unknown, actor: Actor): VisitConsent {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TelehealthError("request_invalid");
-  const record = value as Record<string, unknown>;
-  exact(record, ["consentVersion", "signerName", "patientLocation", "agreed"], ["consentVersion", "signerName", "agreed"]);
-  return buildConsent(record, "patient_app", actor.personId);
-}
-function buildConsent(record: Record<string, unknown>, method: VisitConsent["method"], recordedBy: string): VisitConsent {
-  const consentVersion = String(record.consentVersion ?? ""); const signerName = String(record.signerName ?? "").trim();
-  const location = record.patientLocation;
-  if (record.agreed !== true || !/^[A-Za-z0-9._-]{1,64}$/.test(consentVersion) || signerName.length < 2 || signerName.length > 200
-    || !(location === undefined || location === null || (typeof location === "string" && location.trim().length <= 120))) throw new TelehealthError("request_invalid");
-  return { consentId: randomUUID(), consentType: TELEHEALTH_CONSENT_TYPE, consentVersion, signerName, method, signedAt: new Date().toISOString(), recordedBy,
-    patientLocation: typeof location === "string" && location.trim() ? location.trim() : null };
+/** Day-list projection: state only, no note bodies or AI text (bounded page size, nothing to leak in a list). */
+function publicVisitSummary(visit: VisitItem) {
+  const { note, flags: _flags, quickNotes: _quickNotes, noteHistory: _history, ...rest } = publicVisit(visit);
+  return { ...rest, flags: [], quickNotes: "", noteHistory: [],
+    note: note ? { status: note.status, source: note.source, zoomSummaryId: note.zoomSummaryId, revision: note.revision, importedAt: note.importedAt, signedAt: note.signedAt, signedBy: note.signedBy } : null };
 }
 
-async function listVisits(config: TelehealthConfiguration, actor: Actor) {
-  const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk = :org AND begins_with(sk, :visit)", ExpressionAttributeValues: { ":org": `ORG#${actor.organizationId}`, ":visit": "VISIT#" }, Limit: 500 }));
-  return (result.Items ?? []).map((item) => publicVisit(item as VisitItem));
+/* ---- the governed consent authority (identity API, caller's workforce JWT forwarded) ---- */
+
+async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, path: string, init?: { method: "POST"; body: Record<string, unknown> }): Promise<T> {
+  if (!/^https:\/\//.test(config.identityApiOrigin)) throw new TelehealthError("service_unavailable");
+  let response: Response;
+  try {
+    response = await fetch(`${config.identityApiOrigin}${path}`, { method: init?.method ?? "GET", redirect: "manual", signal: AbortSignal.timeout(10_000),
+      headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}) },
+      ...(init ? { body: JSON.stringify(init.body) } : {}) });
+  } catch { throw new TelehealthError("service_unavailable"); }
+  let payload: unknown; try { payload = await response.json(); } catch { throw new TelehealthError("service_unavailable"); }
+  if (!response.ok || !payload || typeof payload !== "object" || !("data" in payload)) {
+    if (response.status === 403) throw new TelehealthError("identity_refused");
+    if (response.status === 404 || response.status === 409) throw new TelehealthError("consent_artifact_unavailable");
+    throw new TelehealthError("service_unavailable");
+  }
+  return (payload as { data: T }).data;
+}
+type ArtifactRecord = { artifactId: string; scope: string; artifactVersion: string; contentSha256: string; jurisdiction: string; approvedAt: string };
+type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null };
+const currentArtifact = (config: TelehealthConfiguration, actor: Actor) =>
+  identityApi<ArtifactRecord>(config, actor, `/clinical-core/workforce/consent-artifact?scope=${CONSENT_SCOPE}`);
+const currentGrant = (config: TelehealthConfiguration, actor: Actor, consumerPersonId: string) =>
+  identityApi<CurrentConsentRecord>(config, actor, `/clinical-core/workforce/consents/current?scope=${CONSENT_SCOPE}&consumerPersonId=${encodeURIComponent(consumerPersonId)}`);
+
+/**
+ * Is there CURRENT authority to run (or read the AI summary of) this visit?
+ *   1. a granted, un-withdrawn receipt on the visit;
+ *   2. whose artifact is still the organization's approved artifact (a
+ *      retired/superseded release is no authority, whatever was signed);
+ *   3. and, when the patient has an app connection, a current `granted`
+ *      grant for the scope in the identity authority (withdrawal there
+ *      revokes the visit too).
+ * Refusals name their reason; nothing (no secret, no provider call) runs first.
+ */
+async function requireConsentAuthority(config: TelehealthConfiguration, actor: Actor, visit: VisitItem): Promise<VisitConsent> {
+  const receipts = activeConsents(visit);
+  if (receipts.length === 0) throw new TelehealthError("consent_required");
+  const receipt = receipts[receipts.length - 1];
+  const artifact = await currentArtifact(config, actor);
+  if (artifact.artifactId !== receipt.artifactId || artifact.contentSha256 !== receipt.contentSha256) throw new TelehealthError("consent_superseded");
+  if (visit.consumerPersonId) {
+    const grant = await currentGrant(config, actor, visit.consumerPersonId);
+    if (grant.connectionId && (grant.status !== "granted" || grant.artifactId !== artifact.artifactId || grant.artifactStatus !== "approved")) {
+      throw new TelehealthError(grant.status === "revoked" ? "consent_withdrawn" : "consent_required");
+    }
+  }
+  return receipt;
+}
+
+/* ---- appointment binding ---- */
+
+type VisitBinding = { requestId: string | null; consumerPersonId: string | null; scheduledStart: string | null; scheduledEnd: string | null; timeZone: string | null; providerMeetingId: string | null; joinUrl: string | null };
+/**
+ * A patient-app visit is bound to its request: the request must exist in the
+ * caller's organization, name this exact appointment, and not be cancelled.
+ * Its stored times and meeting are authoritative; caller-supplied times are
+ * ignored. A desktop-booked visit (no request) carries the times the desktop
+ * server resolved from the clinical calendar under the practitioner's own
+ * session — this Lambda cannot see that calendar, which is documented.
+ */
+async function resolveBinding(config: TelehealthConfiguration, actor: Actor, appointmentId: string, requestId: string | null, supplied: { start?: unknown; end?: unknown; timeZone?: unknown }): Promise<VisitBinding> {
+  if (requestId !== null) {
+    const request = await find(config, actor.organizationId, requestId);
+    if (request.status === "cancelled") throw new TelehealthError("appointment_cancelled");
+    if (request.appointmentId !== appointmentId || !request.scheduledStart || !request.scheduledEnd) throw new TelehealthError("request_invalid");
+    return { requestId, consumerPersonId: request.consumerPersonId, scheduledStart: request.scheduledStart, scheduledEnd: request.scheduledEnd, timeZone: request.timeZone,
+      providerMeetingId: request.providerMeetingId, joinUrl: request.joinUrl };
+  }
+  const start = supplied.start === undefined ? null : String(supplied.start); const end = supplied.end === undefined ? null : String(supplied.end);
+  if ((start !== null && !date(start)) || (end !== null && !date(end)) || (start !== null && end !== null && new Date(end) <= new Date(start))) throw new TelehealthError("request_invalid");
+  return { requestId: null, consumerPersonId: null, scheduledStart: start, scheduledEnd: end, timeZone: supplied.timeZone === undefined ? null : zone(supplied.timeZone), providerMeetingId: null, joinUrl: null };
+}
+function requestIdOf(value: Record<string, unknown>, existing: VisitItem | null): string | null {
+  if (existing?.requestId) {
+    if (value.requestId !== undefined && value.requestId !== null && value.requestId !== existing.requestId) throw new TelehealthError("request_invalid");
+    return existing.requestId;
+  }
+  if (value.requestId === undefined || value.requestId === null) return null;
+  if (!UUID.test(String(value.requestId))) throw new TelehealthError("request_invalid");
+  return String(value.requestId);
+}
+
+/* ---- consent receipts ---- */
+
+function buildReceipt(record: Record<string, unknown>, artifact: ArtifactRecord, method: VisitConsent["method"], recordedBy: string, grant: { grantId: string | null; connectionId: string | null }): VisitConsent {
+  const signerName = String(record.signerName ?? "").trim(); const location = record.patientLocation;
+  const authority = record.representativeAuthority === undefined ? "self" : String(record.representativeAuthority);
+  if (record.agreed !== true || signerName.length < 2 || signerName.length > 200
+    || !["self", "guardian", "healthcare_proxy", "legal_representative"].includes(authority)
+    || !(location === undefined || location === null || (typeof location === "string" && location.trim().length <= 120))) throw new TelehealthError("request_invalid");
+  return { consentId: randomUUID(), consentType: TELEHEALTH_CONSENT_TYPE, scope: CONSENT_SCOPE, artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion,
+    contentSha256: artifact.contentSha256, signerName, method, representativeAuthority: authority as VisitConsent["representativeAuthority"], signedAt: new Date().toISOString(), recordedBy,
+    patientLocation: typeof location === "string" && location.trim() ? location.trim() : null, grantId: grant.grantId, connectionId: grant.connectionId, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null };
+}
+/** The patient app's consent at booking: it must name the exact approved artifact it displayed. */
+function consentFromPatientApp(value: unknown, actor: Actor, artifact: ArtifactRecord): VisitConsent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TelehealthError("request_invalid");
+  const record = value as Record<string, unknown>;
+  exact(record, ["artifactId", "artifactVersion", "contentSha256", "signerName", "patientLocation", "representativeAuthority", "agreed"], ["artifactId", "artifactVersion", "contentSha256", "signerName", "agreed"]);
+  if (record.artifactId !== artifact.artifactId || record.artifactVersion !== artifact.artifactVersion || record.contentSha256 !== artifact.contentSha256) throw new TelehealthError("consent_version_refused");
+  return buildReceipt(record, artifact, "patient_app", actor.personId, { grantId: null, connectionId: null });
+}
+
+async function readConsentArtifact(config: TelehealthConfiguration, actor: Actor) {
+  const artifact = await currentArtifact(config, actor);
+  return { artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion, contentSha256: artifact.contentSha256, jurisdiction: artifact.jurisdiction, approvedAt: artifact.approvedAt, scope: CONSENT_SCOPE };
 }
 
 /**
- * Staff-recorded consent for a visit booked outside the patient app (phone,
- * front desk). The staff member attests the patient agreed to the combined
- * consent; the record is append-only — a later consent is added, never
- * overwrites an earlier one.
+ * Staff-attested consent for a visit. The receipt must name the organization's
+ * CURRENT approved artifact (id, version, hash) — an unknown, retired or
+ * superseded release is refused before anything is written. When the patient
+ * has an app connection the grant is recorded in the governed authority
+ * through the identity API (method `in_person`), so a later withdrawal there
+ * revokes this visit too; the receipt stores the grant id. Append-only.
  */
 async function recordVisitConsent(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
-  exact(value, ["appointmentId", "requestId", "consentVersion", "signerName", "patientLocation", "agreed"], ["appointmentId", "consentVersion", "signerName", "agreed"]);
+  exact(value, ["appointmentId", "requestId", "artifactId", "artifactVersion", "contentSha256", "signerName", "patientLocation", "representativeAuthority", "agreed", "start", "end", "timeZone"],
+    ["appointmentId", "artifactId", "artifactVersion", "contentSha256", "signerName", "agreed"]);
   const appointmentId = String(value.appointmentId ?? "");
-  const consent = buildConsent(value, "staff_attested", actor.personId);
+  if (!UUID.test(appointmentId) || value.agreed !== true) throw new TelehealthError("request_invalid");
   const existing = await findVisit(config, actor.organizationId, appointmentId);
-  const requestId = value.requestId === undefined || value.requestId === null ? null : String(value.requestId);
-  if (requestId !== null && !UUID.test(requestId)) throw new TelehealthError("request_invalid");
-  const visit = existing ?? newVisitItem(actor.organizationId, appointmentId, requestId, []);
-  const saved = await saveVisit(config, { ...visit, consents: [...visit.consents, consent] }, existing ? existing.version : null);
+  if (existing?.status === "cancelled") throw new TelehealthError("appointment_cancelled");
+  const binding = await resolveBinding(config, actor, appointmentId, requestIdOf(value, existing), value);
+  const artifact = await currentArtifact(config, actor);
+  if (value.artifactId !== artifact.artifactId || value.artifactVersion !== artifact.artifactVersion || value.contentSha256 !== artifact.contentSha256) throw new TelehealthError("consent_version_refused");
+  let grant: { grantId: string | null; connectionId: string | null } = { grantId: null, connectionId: null };
+  if (binding.consumerPersonId) {
+    const current = await currentGrant(config, actor, binding.consumerPersonId);
+    if (current.connectionId) {
+      if (current.status === "granted" && current.artifactId === artifact.artifactId && current.artifactStatus === "approved") {
+        grant = { grantId: current.consentId, connectionId: current.connectionId };
+      } else {
+        const recorded = await identityApi<{ consentId: string; connectionId: string; status: string }>(config, actor, "/clinical-core/workforce/consents/grant", { method: "POST",
+          body: { connectionId: current.connectionId, artifactId: artifact.artifactId, scope: CONSENT_SCOPE, method: "in_person", representativeAuthority: value.representativeAuthority ?? "self" } });
+        grant = { grantId: recorded.consentId, connectionId: recorded.connectionId };
+      }
+    }
+  }
+  const receipt = buildReceipt(value, artifact, "staff_attested", actor.personId, grant);
+  const visit = existing ?? newVisitItem(actor.organizationId, appointmentId, binding, []);
+  const saved = await saveVisit(config, { ...visit, consumerPersonId: visit.consumerPersonId ?? binding.consumerPersonId,
+    scheduledStart: visit.scheduledStart ?? binding.scheduledStart, scheduledEnd: visit.scheduledEnd ?? binding.scheduledEnd, timeZone: visit.timeZone ?? binding.timeZone,
+    consents: [...visit.consents, receipt] }, existing ? existing.version : null);
   return publicVisit(saved);
 }
 
+/** Withdrawal is append-only too: receipts are marked, never removed, and a governed grant is revoked through the identity API. */
+async function withdrawVisitConsent(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["appointmentId", "expectedVersion", "reason"], ["appointmentId", "expectedVersion"]);
+  const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
+  if (!Number.isInteger(value.expectedVersion)) throw new TelehealthError("request_invalid");
+  const reason = value.reason === undefined || value.reason === null ? "patient_request" : String(value.reason);
+  if (!/^[a-z_]{1,64}$/.test(reason)) throw new TelehealthError("request_invalid");
+  const at = new Date().toISOString();
+  const withGrant = activeConsents(visit).find((consent) => consent.grantId && consent.connectionId);
+  if (withGrant?.connectionId) {
+    await identityApi(config, actor, "/clinical-core/workforce/consents/revoke", { method: "POST", body: { connectionId: withGrant.connectionId, scope: CONSENT_SCOPE, reasonCode: "patient_request" } });
+  }
+  const consents = visit.consents.map((consent) => consent.status === "granted" ? { ...consent, status: "withdrawn" as const, withdrawnAt: at, withdrawnBy: actor.personId, withdrawalReason: reason } : consent);
+  const saved = await saveVisit(config, { ...visit, consents }, Number(value.expectedVersion));
+  return publicVisit(saved);
+}
+
+/* ---- the meeting: one admitted creation per visit, reconciled against the provider ---- */
+
+function leaseExpired(lease: MeetingLease | null) { return !lease || Date.now() - Date.parse(lease.acquiredAt) > MEETING_LEASE_TTL_MS; }
+/** Durable creating-intent: exactly one caller may be creating the provider meeting for a visit at a time. */
+async function acquireMeetingLease(config: TelehealthConfiguration, visit: VisitItem): Promise<{ visit: VisitItem; lease: MeetingLease }> {
+  if (!leaseExpired(visit.meetingLease)) throw new TelehealthError("conflict");
+  const lease: MeetingLease = { leaseId: randomUUID(), acquiredAt: new Date().toISOString() };
+  const next = await saveVisit(config, { ...visit, meetingLease: lease }, visit.version);
+  return { visit: next, lease };
+}
+/** Provider meetings carry a marker so a lost create response can be reconciled instead of repeated. */
+function meetingMarker(appointmentId: string) { return `alp-visit:${appointmentId}`; }
+async function findZoomMeetingForVisit(config: TelehealthConfiguration, appointmentId: string): Promise<{ providerMeetingId: string; joinUrl: string } | null> {
+  const { accessToken, userId } = await zoomAccess(config);
+  const marker = meetingMarker(appointmentId);
+  let nextPageToken = "";
+  for (let page = 0; page < 5; page += 1) {
+    const result = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/meetings?type=upcoming&page_size=300${nextPageToken ? `&next_page_token=${encodeURIComponent(nextPageToken)}` : ""}`,
+      { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
+    if (!result.ok) throw new TelehealthError("provider_unavailable");
+    const payload = await result.json() as { meetings?: Array<Record<string, unknown>>; next_page_token?: string };
+    const found = (payload.meetings ?? []).find((meeting) => typeof meeting.agenda === "string" && meeting.agenda.includes(marker));
+    if (found && typeof found.join_url === "string" && found.id !== undefined) return { providerMeetingId: String(found.id), joinUrl: found.join_url };
+    nextPageToken = typeof payload.next_page_token === "string" ? payload.next_page_token : "";
+    if (!nextPageToken) break;
+  }
+  return null;
+}
+/** Create or adopt the provider meeting under the lease; bind it to the visit, or clean up what this attempt created. */
+async function admitProviderMeeting(config: TelehealthConfiguration, visit: VisitItem, binding: VisitBinding): Promise<VisitItem> {
+  if (visit.providerMeetingId && visit.joinUrl) return visit;
+  if (binding.providerMeetingId && binding.joinUrl) {
+    // A patient-app visit already has the meeting its reminders link to.
+    return saveVisit(config, { ...visit, providerMeetingId: binding.providerMeetingId, joinUrl: binding.joinUrl, passcode: passcodeFromJoinUrl(binding.joinUrl) }, visit.version);
+  }
+  const leased = await acquireMeetingLease(config, visit);
+  let created: { providerMeetingId: string; joinUrl: string } | null = null;
+  try {
+    const existing = await findZoomMeetingForVisit(config, visit.appointmentId);
+    const meeting = existing ?? await createZoomMeeting(config, {
+      requestId: meetingMarker(visit.appointmentId), start: binding.scheduledStart ?? new Date().toISOString(),
+      durationMinutes: Math.max(15, Math.ceil(((binding.scheduledEnd ? +new Date(binding.scheduledEnd) : 0) - (binding.scheduledStart ? +new Date(binding.scheduledStart) : 0)) / 60_000) || 30),
+      timeZone: binding.timeZone ?? "UTC" });
+    if (!existing) created = meeting;
+    return await saveVisit(config, { ...leased.visit, meetingLease: null, providerMeetingId: meeting.providerMeetingId, joinUrl: meeting.joinUrl, passcode: passcodeFromJoinUrl(meeting.joinUrl) }, leased.visit.version);
+  } catch (error) {
+    // Losing attempt or failed receipt: never leave an unaccounted provider copy behind.
+    if (created) { try { await deleteZoomMeeting(config, created.providerMeetingId); } catch { /* reconciled by marker on the next start */ } }
+    try { await saveVisit(config, { ...leased.visit, meetingLease: null }, leased.visit.version); } catch { /* lease expires on its own */ }
+    throw error;
+  }
+}
+
 /**
- * Starting a visit is the server-side consent control: no consent on record,
- * no Zoom meeting and no SDK session — whatever the UI showed. Returns the
- * embedded-meeting session (meeting number, passcode, short-lived Meeting SDK
- * signature, host ZAK) only when Zoom is enabled under a verified BAA.
+ * Starting a visit is the server-side consent control: no current consent
+ * authority, no meeting and no SDK session — whatever the UI showed. Returns
+ * the embedded-meeting session (meeting number, passcode, short-lived Meeting
+ * SDK signature, host ZAK) only when Zoom is enabled under a verified BAA.
  */
 async function startVisit(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
-  exact(value, ["appointmentId", "requestId", "start", "end", "timeZone", "hostDisplayName"], ["appointmentId", "start", "end", "timeZone", "hostDisplayName"]);
-  const appointmentId = String(value.appointmentId ?? ""); const start = String(value.start); const end = String(value.end); const timeZone = zone(value.timeZone);
-  const hostDisplayName = String(value.hostDisplayName ?? "").trim();
-  if (!date(start) || !date(end) || new Date(end) <= new Date(start) || hostDisplayName.length < 1 || hostDisplayName.length > 120) throw new TelehealthError("request_invalid");
+  exact(value, ["appointmentId", "requestId", "start", "end", "timeZone", "hostDisplayName"], ["appointmentId", "hostDisplayName"]);
+  const appointmentId = String(value.appointmentId ?? ""); const hostDisplayName = String(value.hostDisplayName ?? "").trim();
+  if (!UUID.test(appointmentId) || hostDisplayName.length < 1 || hostDisplayName.length > 120) throw new TelehealthError("request_invalid");
   const visit = await findVisit(config, actor.organizationId, appointmentId);
-  if (!visit || visit.consents.length === 0) throw new TelehealthError("consent_required");
-  if (visit.status === "ended") throw new TelehealthError("conflict");
-  if (!config.zoomEnabled) throw new TelehealthError("provider_unavailable");
-  if (!config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
-  let providerMeetingId = visit.providerMeetingId; let joinUrl = visit.joinUrl; let passcode = visit.passcode;
-  if (!providerMeetingId && visit.requestId) {
-    // A patient-booked visit already has the meeting its reminder links to.
-    const request = await find(config, actor.organizationId, visit.requestId);
-    if (request.providerMeetingId && request.joinUrl) { providerMeetingId = request.providerMeetingId; joinUrl = request.joinUrl; passcode = passcodeFromJoinUrl(request.joinUrl); }
-  }
-  if (!providerMeetingId || !joinUrl) {
-    const created = await createZoomMeeting(config, { requestId: appointmentId, start, durationMinutes: Math.max(15, Math.ceil((+new Date(end) - +new Date(start)) / 60_000)), timeZone });
-    providerMeetingId = created.providerMeetingId; joinUrl = created.joinUrl; passcode = passcodeFromJoinUrl(created.joinUrl);
-  }
-  const session = await meetingSdkSession(config, providerMeetingId, passcode, hostDisplayName);
-  const saved = await saveVisit(config, { ...visit, status: "in_visit", startedAt: visit.startedAt ?? new Date().toISOString(), providerMeetingId, joinUrl, passcode }, visit.version);
+  if (!visit) throw new TelehealthError("consent_required");
+  if (visit.status === "cancelled") throw new TelehealthError("appointment_cancelled");
+  if (visit.status === "ended" || visit.status === "ending") throw new TelehealthError("conflict");
+  const binding = await resolveBinding(config, actor, appointmentId, requestIdOf(value, visit), value);
+  await requireConsentAuthority(config, actor, visit);
+  if (!config.zoomEnabled || !config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
+  const withMeeting = await admitProviderMeeting(config, { ...visit, scheduledStart: visit.scheduledStart ?? binding.scheduledStart, scheduledEnd: visit.scheduledEnd ?? binding.scheduledEnd, timeZone: visit.timeZone ?? binding.timeZone }, binding);
+  const session = await meetingSdkSession(config, withMeeting.providerMeetingId as string, withMeeting.passcode, hostDisplayName);
+  const saved = await saveVisit(config, { ...withMeeting, status: "in_visit", startedAt: withMeeting.startedAt ?? new Date().toISOString() }, withMeeting.version);
   return { visit: publicVisit(saved), session };
 }
 
+/**
+ * Ending a visit is a durable shutdown intent followed by provider
+ * termination. The visit reads `ended` only once Zoom confirms the meeting is
+ * no longer running; otherwise it stays `ending` with the shutdown marked
+ * pending/failed so the practitioner can retry. Notes and flags are saved
+ * either way. Leaving one client is never taken as termination.
+ */
 async function endVisit(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
   exact(value, ["appointmentId", "expectedVersion", "flags", "quickNotes"], ["appointmentId", "expectedVersion"]);
   const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
@@ -532,8 +748,33 @@ async function endVisit(config: TelehealthConfiguration, actor: Actor, value: Re
   const quickNotes = value.quickNotes === undefined ? visit.quickNotes : String(value.quickNotes);
   if (quickNotes.length > 20_000) throw new TelehealthError("request_invalid");
   if (visit.status === "ended") return publicVisit(visit);
-  const saved = await saveVisit(config, { ...visit, status: "ended", endedAt: new Date().toISOString(), flags, quickNotes }, Number(value.expectedVersion));
-  return publicVisit(saved);
+  if (visit.status !== "in_visit" && visit.status !== "ending") throw new TelehealthError("conflict");
+  const at = new Date().toISOString();
+  const intent = await saveVisit(config, { ...visit, status: "ending", flags, quickNotes, providerShutdown: { status: "pending", attemptedAt: at, confirmedAt: null, detail: null } }, Number(value.expectedVersion));
+  if (!intent.providerMeetingId || !config.zoomEnabled) {
+    return publicVisit(await saveVisit(config, { ...intent, status: "ended", endedAt: at, providerShutdown: { status: "ended", attemptedAt: at, confirmedAt: at, detail: intent.providerMeetingId ? "provider disabled" : "no provider meeting" } }, intent.version));
+  }
+  const outcome = await endZoomMeeting(config, intent.providerMeetingId);
+  if (outcome.ended) {
+    return publicVisit(await saveVisit(config, { ...intent, status: "ended", endedAt: outcome.at, providerShutdown: { status: "ended", attemptedAt: at, confirmedAt: outcome.at, detail: null } }, intent.version));
+  }
+  return publicVisit(await saveVisit(config, { ...intent, providerShutdown: { status: "failed", attemptedAt: at, confirmedAt: null, detail: outcome.detail } }, intent.version));
+}
+/** End-for-all at the provider, then confirm by reading the meeting state. An unconfirmed end is reported as failed, never as ended. */
+async function endZoomMeeting(config: TelehealthConfiguration, meetingId: string): Promise<{ ended: true; at: string } | { ended: false; detail: string }> {
+  try {
+    const { accessToken } = await zoomAccess(config);
+    const end = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/status`, { method: "PUT", redirect: "manual", signal: AbortSignal.timeout(10_000),
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ action: "end" }) });
+    if (!end.ok && end.status !== 404) return { ended: false, detail: `provider end refused (${end.status})` };
+    const check = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
+    if (check.status === 404) return { ended: true, at: new Date().toISOString() };
+    if (!check.ok) return { ended: false, detail: `provider state unavailable (${check.status})` };
+    const state = await check.json() as { status?: string };
+    return state.status === "started" ? { ended: false, detail: "provider reports the meeting still running" } : { ended: true, at: new Date().toISOString() };
+  } catch (error) {
+    return { ended: false, detail: error instanceof Error && error.message !== "provider_unavailable" ? `provider unreachable: ${error.name}` : "provider unreachable" };
+  }
 }
 function parseFlags(value: unknown): VisitFlag[] {
   if (!Array.isArray(value) || value.length > 200) throw new TelehealthError("request_invalid");
@@ -544,6 +785,24 @@ function parseFlags(value: unknown): VisitFlag[] {
   });
 }
 
+/** Paginated, bounded, state-only list. `complete=false` says the bound was hit — never a silently truncated page. */
+async function listVisits(config: TelehealthConfiguration, actor: Actor) {
+  const visits: VisitItem[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  let complete = false;
+  for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+    const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk = :org AND begins_with(sk, :visit)",
+      ExpressionAttributeValues: { ":org": `ORG#${actor.organizationId}`, ":visit": "VISIT#" },
+      ProjectionExpression: "appointmentId, organizationId, requestId, consumerPersonId, scheduledStart, scheduledEnd, timeZone, #status, consents, providerMeetingId, joinUrl, startedAt, endedAt, providerShutdown, note.#status, note.#source, note.zoomSummaryId, note.revision, note.importedAt, note.signedAt, note.signedBy, #version, createdAt, updatedAt",
+      ExpressionAttributeNames: { "#status": "status", "#source": "source", "#version": "version" },
+      ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}) }));
+    for (const item of result.Items ?? []) visits.push({ flags: [], quickNotes: "", noteHistory: [], ...(item as Partial<VisitItem>) } as VisitItem);
+    exclusiveStartKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+    if (!exclusiveStartKey) { complete = true; break; }
+  }
+  return { visits: visits.map(publicVisitSummary), complete };
+}
+
 async function readVisitNote(config: TelehealthConfiguration, actor: Actor, event: ApiGatewayV2Event) {
   const appointmentId = String(event.queryStringParameters?.appointmentId ?? "");
   const visit = await requireVisit(config, actor.organizationId, appointmentId);
@@ -551,31 +810,41 @@ async function readVisitNote(config: TelehealthConfiguration, actor: Actor, even
 }
 
 /**
- * Import Zoom AI Companion's meeting summary into the visit as a NOT-REVIEWED
- * note. Zoom's free-form sections are stored verbatim (`aiOriginal`) and
- * mapped by label into the four chart sections; nothing is rewritten by a
- * model here. Next steps become SUGGESTED action items only.
+ * Import Zoom AI Companion's summary as a NOT-REVIEWED note. Zoom's payload is
+ * stored verbatim (`aiOriginal`). Its current unified `summary_content`
+ * (Markdown) is kept as one unreviewed Summary section; legacy
+ * overview/details/next-steps fields are mapped by label. Nothing is rewritten
+ * by a model, no section is invented, and next steps are SUGGESTIONS only. A
+ * payload with no usable text is "not ready", never an empty note.
  */
 async function importVisitNote(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
   exact(value, ["appointmentId"], ["appointmentId"]);
   const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
   if (visit.note?.status === "signed") throw new TelehealthError("conflict");
-  if (!visit.providerMeetingId) throw new TelehealthError("conflict");
+  if (!visit.providerMeetingId || !["ending", "ended"].includes(visit.status)) throw new TelehealthError("conflict");
+  await requireConsentAuthority(config, actor, visit);
   if (!config.zoomEnabled || !config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
   const summary = await zoomMeetingSummary(config, visit.providerMeetingId);
   if (!summary) return { visit: publicVisit(visit), summaryReady: false };
+  const aiSections = sectionsFromZoomSummary(summary); const suggested = nextStepsFromZoomSummary(summary);
+  if (!Object.values(aiSections).some((text) => text.trim()) && suggested.length === 0) return { visit: publicVisit(visit), summaryReady: false };
+  const previous = visit.note;
+  const actionItems = suggested.map((item) => { const earlier = previous?.actionItems.find((entry) => entry.text === item.text); return earlier ? { ...item, id: earlier.id, status: earlier.status } : item; });
   const note: VisitNote = {
     status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: typeof summary.meeting_uuid === "string" ? summary.meeting_uuid : null,
-    aiSections: sectionsFromZoomSummary(summary), aiOriginal: summary,
-    practitionerNotes: visit.note?.practitionerNotes ?? "",
-    actionItems: nextStepsFromZoomSummary(summary), revision: (visit.note?.revision ?? 0) + 1,
-    importedAt: new Date().toISOString(), signedAt: null, signedBy: null,
+    aiSections, aiOriginal: summary, practitionerNotes: previous?.practitionerNotes ?? "", actionItems,
+    revision: (previous?.revision ?? 0) + 1, importedAt: new Date().toISOString(), signedAt: null, signedBy: null,
   };
-  const saved = await saveVisit(config, { ...visit, note }, visit.version);
+  const saved = await saveVisit(config, { ...visit, note, noteHistory: previous ? [...visit.noteHistory, previous].slice(-MAX_NOTE_HISTORY) : visit.noteHistory }, visit.version);
   return { visit: publicVisit(saved), summaryReady: true };
 }
 
-/** One signature stores the reviewed AI sections, the practitioner's own notes, and the action-item decisions together. Signed notes are frozen. */
+/**
+ * One signature stores the reviewed AI sections, the practitioner's own notes
+ * and the action-item decisions together and freezes the note. The prior
+ * revision is kept in the visit's history. This is the TELEHEALTH visit
+ * record; it is not posted to the chart's clinical-note path (see docs).
+ */
 async function signVisitNote(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
   exact(value, ["appointmentId", "expectedVersion", "practitionerNotes", "aiSections", "actionItems"], ["appointmentId", "expectedVersion", "practitionerNotes", "aiSections", "actionItems"]);
   const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
@@ -585,7 +854,7 @@ async function signVisitNote(config: TelehealthConfiguration, actor: Actor, valu
   const aiSections = parseSections(value.aiSections); const actionItems = parseActionItems(value.actionItems, visit.note.actionItems);
   const signedAt = new Date().toISOString();
   const note: VisitNote = { ...visit.note, status: "signed", aiSections, practitionerNotes: value.practitionerNotes, actionItems, revision: visit.note.revision + 1, signedAt, signedBy: actor.personId };
-  const saved = await saveVisit(config, { ...visit, note }, Number(value.expectedVersion));
+  const saved = await saveVisit(config, { ...visit, note, noteHistory: [...visit.noteHistory, visit.note].slice(-MAX_NOTE_HISTORY) }, Number(value.expectedVersion));
   return publicVisit(saved);
 }
 function parseSections(value: unknown): VisitNote["aiSections"] {
@@ -593,7 +862,7 @@ function parseSections(value: unknown): VisitNote["aiSections"] {
   const record = value as Record<string, unknown>;
   exact(record, [...VISIT_NOTE_SECTION_KEYS], [...VISIT_NOTE_SECTION_KEYS]);
   const sections = {} as VisitNote["aiSections"];
-  for (const key of VISIT_NOTE_SECTION_KEYS) { const text = record[key]; if (typeof text !== "string" || text.length > 20_000) throw new TelehealthError("request_invalid"); sections[key] = text; }
+  for (const key of VISIT_NOTE_SECTION_KEYS) { const text = record[key]; if (typeof text !== "string" || text.length > 50_000) throw new TelehealthError("request_invalid"); sections[key] = text; }
   return sections;
 }
 function parseActionItems(value: unknown, existing: VisitActionItem[]): VisitActionItem[] {
@@ -606,11 +875,14 @@ function parseActionItems(value: unknown, existing: VisitActionItem[]): VisitAct
 }
 function sectionsFromZoomSummary(summary: Record<string, unknown>): VisitNote["aiSections"] {
   const sections: VisitNote["aiSections"] = { summary: "", patient_reported: "", results_reviewed: "", plan_discussed: "" };
-  if (typeof summary.summary_overview === "string") sections.summary = summary.summary_overview;
+  // Current API: one Markdown document. Kept whole as unreviewed source text.
+  if (typeof summary.summary_content === "string" && summary.summary_content.trim()) sections.summary = summary.summary_content.trim();
+  // Legacy API: overview + labelled details.
+  if (typeof summary.summary_overview === "string" && summary.summary_overview.trim()) sections.summary += (sections.summary ? "\n\n" : "") + summary.summary_overview.trim();
   const details = Array.isArray(summary.summary_details) ? summary.summary_details as Array<Record<string, unknown>> : [];
   const leftovers: string[] = [];
   for (const detail of details) {
-    const label = String(detail?.label ?? "").toLowerCase(); const text = typeof detail?.summary === "string" ? detail.summary : "";
+    const label = String(detail?.label ?? "").toLowerCase(); const text = typeof detail?.summary === "string" ? detail.summary.trim() : "";
     if (!text) continue;
     if (/report|symptom|history|concern/.test(label)) sections.patient_reported += (sections.patient_reported ? "\n\n" : "") + text;
     else if (/result|lab|marker|review/.test(label)) sections.results_reviewed += (sections.results_reviewed ? "\n\n" : "") + text;
@@ -627,15 +899,19 @@ function nextStepsFromZoomSummary(summary: Record<string, unknown>): VisitAction
 }
 function passcodeFromJoinUrl(joinUrl: string): string | null { try { return new URL(joinUrl).searchParams.get("pwd"); } catch { return null; } }
 
-/** Zoom AI Companion summary (null until Zoom has produced one, which can be minutes after the meeting ends). */
+/** Zoom AI Companion summary for THIS meeting (null until produced; a payload for another meeting instance is refused). */
 async function zoomMeetingSummary(config: TelehealthConfiguration, meetingId: string): Promise<Record<string, unknown> | null> {
   const { accessToken } = await zoomAccess(config);
   const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/meeting_summary`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
   if (result.status === 404) return null;
   if (!result.ok) throw new TelehealthError("provider_unavailable");
-  const payload = await result.json() as Record<string, unknown>;
-  if (!payload || typeof payload !== "object") throw new TelehealthError("provider_unavailable");
-  return payload;
+  const text = await result.text();
+  if (Buffer.byteLength(text) > MAX_SUMMARY_BYTES) throw new TelehealthError("provider_unavailable");
+  let payload: unknown; try { payload = JSON.parse(text); } catch { throw new TelehealthError("provider_unavailable"); }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new TelehealthError("provider_unavailable");
+  const summary = payload as Record<string, unknown>;
+  if (summary.meeting_id !== undefined && String(summary.meeting_id).replace(/\D/g, "") !== meetingId.replace(/\D/g, "")) throw new TelehealthError("provider_unavailable");
+  return summary;
 }
 /**
  * The Meeting SDK session the browser needs to embed the meeting as HOST:
@@ -660,6 +936,14 @@ export function signMeetingSdkJwt(sdkKey: string, sdkSecret: string, payload: Re
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const signingInput = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ ...payload, appKey: sdkKey })}`;
   return `${signingInput}.${createHmac("sha256", sdkSecret).update(signingInput).digest("base64url")}`;
+}
+/** A cancelled booking takes its visit with it: the visit is closed and a meeting this visit created is deleted. */
+async function reconcileVisitForCancelledRequest(config: TelehealthConfiguration, item: AppointmentItem) {
+  if (!item.appointmentId) return;
+  const visit = await findVisit(config, item.organizationId, item.appointmentId);
+  if (!visit || visit.status === "cancelled") return;
+  if (config.zoomEnabled && visit.providerMeetingId && visit.providerMeetingId !== item.providerMeetingId) await deleteZoomMeeting(config, visit.providerMeetingId);
+  await saveVisit(config, { ...visit, status: "cancelled", providerMeetingId: null, joinUrl: null, passcode: null }, visit.version);
 }
 
 function reminderName(requestId: string, offset: "24h" | "1h") { return `alp-${requestId.replaceAll("-", "")}-${offset}`; }
@@ -808,7 +1092,7 @@ async function handleStripeWebhook(config: TelehealthConfiguration, event: ApiGa
   return { received: true };
 }
 
-type Actor = { personId: string; organizationId: string; subject: string; email: string };
+type Actor = { personId: string; organizationId: string; subject: string; email: string; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
 function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, pool: "consumer" | "workforce"): Actor {
   const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
   const issuer = pool === "consumer" ? config.consumerIssuer : config.workforceIssuer; const audience = pool === "consumer" ? config.consumerAudience : config.workforceAudience;
@@ -816,7 +1100,8 @@ function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, poo
   if (claim("iss") !== issuer || claim("aud") !== audience || claim("token_use") !== "id" || !UUID.test(claim("custom:person_id")) || !UUID.test(claim("custom:organization_id")) || !SUBJECT.test(claim("sub"))
     || (pool === "consumer" && !/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(email))
     || (config.runtimeMode === "synthetic" ? claim("custom:synthetic_attested") !== "true" || claim("custom:production_bound") === "true" : claim("custom:production_bound") !== "true")) throw new TelehealthError("identity_refused");
-  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email };
+  const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
+  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, bearer: authorization.replace(/^Bearer\s+/i, "") };
 }
 
 function body(event: ApiGatewayV2Event): Record<string, unknown> { const content = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "content-type")?.[1]; if (!content?.startsWith("application/json") || typeof event.body !== "string" || Buffer.byteLength(event.body) > MAX_BODY) throw new TelehealthError("request_invalid"); try { const value = JSON.parse(event.body); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new TelehealthError("request_invalid"); } }
@@ -834,5 +1119,8 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   return result;
 }
 function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn)) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
-class TelehealthError extends Error { constructor(readonly category: "identity_refused" | "request_invalid" | "not_found" | "conflict" | "consent_required" | "provider_unavailable" | "service_unavailable") { super(category); } }
+type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
+  | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"
+  | "provider_unavailable" | "service_unavailable";
+class TelehealthError extends Error { constructor(readonly category: TelehealthRefusal) { super(category); } }
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response { return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) }; }

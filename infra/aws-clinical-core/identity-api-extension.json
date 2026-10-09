@@ -235,6 +235,22 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "WorkforceConsentArtifactRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/consent-artifact",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "WorkforceCurrentConsentRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/consents/current",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
     "ConsumerLabImportRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {

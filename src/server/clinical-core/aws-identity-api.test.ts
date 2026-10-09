@@ -26,6 +26,12 @@ function adapter(): AwsSyntheticIdentityConsentAdapter {
     claimInvitation: vi.fn(async () => ({ connectionId: CONNECTION, patientRecordId: PATIENT, consumerPersonId: PERSON, state: "verified" as const, verifiedAt: "2026-08-12T12:00:00Z" })),
     recordConsent: vi.fn(async (input) => ({ consentId: ARTIFACT, connectionId: input.connectionId, scope: input.scope, status: "granted" as const, version: 1, recordedAt: "2026-08-12T12:00:00Z" })),
     revokeConsent: vi.fn(async (input) => ({ consentId: ARTIFACT, connectionId: input.connectionId, scope: input.scope, status: "revoked" as const, version: 2, recordedAt: "2026-08-12T12:00:00Z" })),
+    getCurrentConsent: vi.fn(async (input) => ({
+      status: "granted" as const, patientRecordId: PATIENT, connectionId: CONNECTION, consentId: ARTIFACT, artifactId: ARTIFACT,
+      artifactVersion: "telehealth-recording/1", contentSha256: "b".repeat(64), artifactStatus: "approved" as const,
+      method: "patient_app" as const, representativeAuthority: "self" as const, version: 1, recordedAt: "2026-08-12T12:00:00Z",
+      scope: input.scope,
+    })),
   };
 }
 

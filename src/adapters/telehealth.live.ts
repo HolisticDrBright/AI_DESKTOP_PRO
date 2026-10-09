@@ -7,11 +7,15 @@ if (typeof window !== "undefined") throw new Error("telehealth.live is server-on
  *
  *   1. The Desktop-owned clinical calendar (`get_desktop_calendar`) for
  *      appointments of type `telehealth` — the same RPC the Calendar reads,
- *      so the day view and the calendar can never disagree about who is
- *      booked.
+ *      under the practitioner's own session and RLS. EVERY visit action
+ *      resolves its appointment here first: a nonexistent appointment, one in
+ *      another organization, or one the practitioner cannot see is refused
+ *      before the visit boundary is called, and the appointment's STORED
+ *      times are what the boundary receives — never times from the browser.
  *   2. The AWS telehealth boundary (workforce routes of the telehealth
- *      Lambda) for patient-app requests, consent, the Zoom meeting, the
- *      embedded-meeting session, and the post-visit note.
+ *      Lambda) for patient-app requests, consent receipts against the
+ *      governed consent authority, the Zoom meeting, the embedded-meeting
+ *      session, provider shutdown state, and the post-visit note.
  *
  * The visit service can be unreachable while the calendar is fine. That is
  * reported as `visitService.available = false` with the calendar rows still
@@ -23,6 +27,7 @@ import { getClinicalAccessToken } from "./session.server";
 import type { LiveAppointment } from "./live-types";
 import { getContractFixtureTransport } from "@/server/runtime/contractFixture";
 import type {
+  TelehealthConsentArtifact,
   TelehealthConsentInput,
   TelehealthDay,
   TelehealthDayVisit,
@@ -32,11 +37,13 @@ import type {
   TelehealthStartInput,
   TelehealthStartResult,
   TelehealthVisit,
+  TelehealthWithdrawInput,
 } from "./telehealth.types";
-import { TELEHEALTH_CONSENT_VERSION } from "./telehealth.types";
 
 const HOST = /^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Appointment statuses under which nothing may start or be recorded against the visit. */
+const CLOSED_APPOINTMENT_STATUSES = new Set(["cancelled", "no_show"]);
 
 /**
  * Workforce API origin: the AWS clinical API, or — only when the local
@@ -64,7 +71,27 @@ const SERVICE_NOT_CONFIGURED =
 const ERROR_MESSAGES: Record<string, { code: AdapterError["code"]; message: string }> = {
   consent_required: {
     code: "conflict",
-    message: "This visit has no signed telehealth consent on record. Record the consent before starting the visit.",
+    message: "This visit has no current telehealth consent on record. Record the consent before starting the visit.",
+  },
+  consent_withdrawn: {
+    code: "conflict",
+    message: "The patient withdrew the telehealth and recording consent. The visit cannot start and its AI notes cannot be read.",
+  },
+  consent_superseded: {
+    code: "conflict",
+    message: "The consent on record is for a superseded version of the practice's telehealth consent. A current consent must be recorded before this visit starts.",
+  },
+  consent_version_refused: {
+    code: "conflict",
+    message: "That is not the practice's current approved telehealth consent. Reload and record the consent again.",
+  },
+  consent_artifact_unavailable: {
+    code: "conflict",
+    message: "The practice has no approved telehealth and recording consent yet. One must be approved in the consent registry before any visit can be consented or started.",
+  },
+  appointment_cancelled: {
+    code: "conflict",
+    message: "This appointment was cancelled. Its visit cannot be started.",
   },
   provider_unavailable: {
     code: "unavailable",
@@ -81,10 +108,9 @@ const ERROR_MESSAGES: Record<string, { code: AdapterError["code"]; message: stri
 
 async function request<T>(
   path: string,
-  token: string | null,
+  token: string,
   init?: { method?: "GET" | "POST"; body?: Record<string, unknown> },
 ): Promise<T> {
-  if (!token) throw new AdapterError("unauthenticated");
   const method = init?.method ?? (init?.body ? "POST" : "GET");
   let response: Response;
   try {
@@ -142,21 +168,64 @@ function isRequestRow(value: unknown): value is WorkforceRequestRow {
   return Boolean(value && typeof value === "object" && typeof (value as WorkforceRequestRow).requestId === "string");
 }
 
-/** Local day → [from, to) instants. The day view is the viewer's calendar day, like the Today page. */
-export function dayBounds(date: string, now: Date = new Date()): { date: string; from: string; to: string } {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  const base = match
-    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0)
-    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  if (Number.isNaN(base.getTime())) throw new AdapterError("invalid", "A valid date is required.");
-  const next = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, 0, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return {
-    date: `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`,
-    from: base.toISOString(),
-    to: next.toISOString(),
-  };
+/* ------------------------------------------------------------ day bounds */
+
+function isTimeZone(timeZone: string): boolean {
+  if (!/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+){0,3}$/.test(timeZone)) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+/** Wall-clock parts of an instant in a zone. */
+function zonedParts(instant: number, timeZone: string): { y: number; m: number; d: number; h: number; mi: number; s: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(instant));
+  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  return { y: read("year"), m: read("month"), d: read("day"), h: read("hour"), mi: read("minute"), s: read("second") };
+}
+
+/** The instant at which the zone's wall clock reads exactly Y-M-D 00:00:00 (DST-aware), or null if no such instant exists. */
+function zonedMidnight(y: number, m: number, d: number, timeZone: string): number | null {
+  const asIfUtc = Date.UTC(y, m - 1, d, 0, 0, 0, 0);
+  let guess = asIfUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = zonedParts(guess, timeZone);
+    const wall = Date.UTC(parts.y, parts.m - 1, parts.d, parts.h, parts.mi, parts.s);
+    const delta = wall - asIfUtc;
+    if (delta === 0) return guess;
+    guess -= delta;
+  }
+  const check = zonedParts(guess, timeZone);
+  return check.y === y && check.m === m && check.d === d && check.h === 0 && check.mi === 0 ? guess : null;
+}
+
+/**
+ * [from, to) instants of one calendar day in the VIEWER'S zone. An impossible
+ * date (February 31) is refused rather than normalised, and a DST transition
+ * makes the day 23 or 25 hours long instead of shifting its boundaries.
+ */
+export function dayBounds(date: string, timeZone: string): { date: string; timeZone: string; from: string; to: string } {
+  if (!isTimeZone(timeZone)) throw new AdapterError("invalid", "A valid IANA time zone is required.");
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) throw new AdapterError("invalid", "A valid date (YYYY-MM-DD) is required.");
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (m < 1 || m > 12 || d < 1 || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    throw new AdapterError("invalid", "That calendar date does not exist.");
+  }
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const from = zonedMidnight(y, m, d, timeZone);
+  const to = zonedMidnight(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), timeZone);
+  if (from === null || to === null || to <= from) throw new AdapterError("invalid", "That calendar day cannot be resolved in this time zone.");
+  return { date, timeZone, from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+}
+
+/* ------------------------------------------------------------- merging */
 
 function calendarRow(appointment: LiveAppointment, visit: TelehealthVisit | null): TelehealthDayVisit | null {
   if (!appointment.startsAt || !appointment.endsAt) return null;
@@ -174,21 +243,22 @@ function calendarRow(appointment: LiveAppointment, visit: TelehealthVisit | null
   };
 }
 
-async function visitBoundary(token: string | null): Promise<
-  | { available: true; visits: Map<string, TelehealthVisit>; requests: WorkforceRequestRow[] }
-  | { available: false; message: string }
-> {
+type Boundary =
+  | { available: true; complete: boolean; visits: Map<string, TelehealthVisit>; requests: WorkforceRequestRow[] }
+  | { available: false; message: string };
+
+async function visitBoundary(token: string): Promise<Boundary> {
   try {
-    const [visitRows, requestRows] = await Promise.all([
-      request<unknown[]>("/clinical-core/workforce/appointments/visits", token),
+    const [listed, requestRows] = await Promise.all([
+      request<{ visits: unknown[]; complete: boolean }>("/clinical-core/workforce/appointments/visits", token),
       request<unknown[]>("/clinical-core/workforce/appointments/requests", token),
     ]);
     const visits = new Map<string, TelehealthVisit>();
-    for (const row of Array.isArray(visitRows) ? visitRows : []) if (isVisit(row)) visits.set(row.appointmentId, row);
+    for (const row of Array.isArray(listed?.visits) ? listed.visits : []) if (isVisit(row)) visits.set(row.appointmentId, row);
     const requests = (Array.isArray(requestRows) ? requestRows : []).filter(isRequestRow);
-    return { available: true, visits, requests };
+    return { available: true, complete: listed?.complete === true, visits, requests };
   } catch (error) {
-    if (error instanceof AdapterError && error.code === "unauthenticated") throw error;
+    if (error instanceof AdapterError && (error.code === "unauthenticated" || error.code === "forbidden")) throw error;
     return {
       available: false,
       message: error instanceof AdapterError && error.code === "unavailable" ? error.message : SERVICE_NOT_CONFIGURED,
@@ -196,146 +266,193 @@ async function visitBoundary(token: string | null): Promise<
   }
 }
 
-export const telehealthLive = {
-  /** Every telehealth appointment on one local day, with its visit record where the boundary has one. */
-  async day(date: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthDay> {
-    const bounds = dayBounds(date);
-    const token = await getClinicalAccessToken(sessionToken);
-    const [calendar, boundary] = await Promise.all([
-      scheduleLive.getCalendar(bounds.from, bounds.to, token, orgId),
-      visitBoundary(token),
-    ]);
-    const visits = boundary.available ? boundary.visits : new Map<string, TelehealthVisit>();
-    const rows: TelehealthDayVisit[] = [];
-    const seen = new Set<string>();
-    for (const appointment of calendar.appointments) {
-      if (appointment.appointmentType !== "telehealth") continue;
-      const row = calendarRow(appointment, visits.get(appointment.id) ?? null);
-      if (!row) continue;
-      seen.add(row.appointmentId);
-      rows.push(row);
-    }
-    if (boundary.available) {
-      const from = Date.parse(bounds.from);
-      const to = Date.parse(bounds.to);
-      for (const req of boundary.requests) {
-        if (!req.appointmentId || seen.has(req.appointmentId) || !req.scheduledStart || !req.scheduledEnd) continue;
-        if (req.status === "cancelled") continue;
-        const startsAt = Date.parse(req.scheduledStart);
-        if (!(startsAt >= from && startsAt < to)) continue;
-        seen.add(req.appointmentId);
-        rows.push({
-          appointmentId: req.appointmentId,
-          source: "patient_app",
-          patientId: null,
-          // The patient app's person id is not a chart identity; the row says so instead of inventing a name.
-          patientName: null,
-          practitionerName: null,
-          appointmentStatus: req.status === "scheduled" ? "confirmed" : "scheduled",
-          startsAt: req.scheduledStart,
-          endsAt: req.scheduledEnd,
-          requestId: req.requestId,
-          visit: visits.get(req.appointmentId) ?? null,
-        });
-      }
-    }
-    rows.sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.appointmentId.localeCompare(b.appointmentId));
-    return {
-      date: bounds.date,
-      from: bounds.from,
-      to: bounds.to,
-      visits: rows,
-      visitService: boundary.available ? { available: true } : { available: false, message: boundary.message },
-    };
-  },
-
-  /** One appointment's day row, located by the day it starts on (±14 days around `date` if it moved). */
-  async visit(appointmentId: string, date: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthDayVisit> {
-    if (!UUID.test(appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
-    const bounds = dayBounds(date);
-    const token = await getClinicalAccessToken(sessionToken);
-    const exact = await telehealthLive.day(bounds.date, token, orgId);
-    const direct = exact.visits.find((row) => row.appointmentId === appointmentId);
-    if (direct) return direct;
-    const center = Date.parse(bounds.from);
-    const from = new Date(center - 14 * 86_400_000).toISOString();
-    const to = new Date(center + 14 * 86_400_000).toISOString();
-    const [calendar, boundary] = await Promise.all([
-      scheduleLive.getCalendar(from, to, token, orgId),
-      visitBoundary(token),
-    ]);
-    const visit = boundary.available ? boundary.visits.get(appointmentId) ?? null : null;
-    const appointment = calendar.appointments.find((row) => row.id === appointmentId && row.appointmentType === "telehealth");
-    if (appointment) {
-      const row = calendarRow(appointment, visit);
-      if (row) return row;
-    }
-    const req = boundary.available ? boundary.requests.find((row) => row.appointmentId === appointmentId) : undefined;
-    if (req?.scheduledStart && req.scheduledEnd && req.status !== "cancelled") {
-      return {
-        appointmentId, source: "patient_app", patientId: null, patientName: null, practitionerName: null,
+async function buildDay(date: string, timeZone: string, token: string, orgId: string | null): Promise<TelehealthDay> {
+  const bounds = dayBounds(date, timeZone);
+  const [calendar, boundary] = await Promise.all([
+    scheduleLive.getCalendar(bounds.from, bounds.to, token, orgId),
+    visitBoundary(token),
+  ]);
+  const visits = boundary.available ? boundary.visits : new Map<string, TelehealthVisit>();
+  const rows: TelehealthDayVisit[] = [];
+  const seen = new Set<string>();
+  for (const appointment of calendar.appointments) {
+    if (appointment.appointmentType !== "telehealth") continue;
+    const row = calendarRow(appointment, visits.get(appointment.id) ?? null);
+    if (!row) continue;
+    seen.add(row.appointmentId);
+    rows.push(row);
+  }
+  if (boundary.available) {
+    const from = Date.parse(bounds.from);
+    const to = Date.parse(bounds.to);
+    for (const req of boundary.requests) {
+      if (!req.appointmentId || seen.has(req.appointmentId) || !req.scheduledStart || !req.scheduledEnd) continue;
+      if (req.status === "cancelled") continue;
+      const startsAt = Date.parse(req.scheduledStart);
+      if (!(startsAt >= from && startsAt < to)) continue;
+      seen.add(req.appointmentId);
+      rows.push({
+        appointmentId: req.appointmentId,
+        source: "patient_app",
+        patientId: null,
+        // The patient app's person id is not a chart identity; the row says so instead of inventing a name.
+        patientName: null,
+        practitionerName: null,
         appointmentStatus: req.status === "scheduled" ? "confirmed" : "scheduled",
-        startsAt: req.scheduledStart, endsAt: req.scheduledEnd, requestId: req.requestId, visit,
-      };
+        startsAt: req.scheduledStart,
+        endsAt: req.scheduledEnd,
+        requestId: req.requestId,
+        visit: visits.get(req.appointmentId) ?? null,
+      });
     }
-    throw new AdapterError("not_found", "This telehealth visit isn't on the schedule you can see.");
+  }
+  rows.sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.appointmentId.localeCompare(b.appointmentId));
+  return {
+    date: bounds.date,
+    timeZone: bounds.timeZone,
+    from: bounds.from,
+    to: bounds.to,
+    visits: rows,
+    visitService: boundary.available ? { available: true, complete: boundary.complete } : { available: false, message: boundary.message },
+  };
+}
+
+/**
+ * The authoritative appointment for a visit action, located through the
+ * practitioner's own calendar access: on the named day first, then ±14 days
+ * around it in case it was moved. Anything the calendar does not return
+ * (nonexistent, another organization, no access) is `not_found` here and the
+ * boundary is never called.
+ */
+async function resolveAppointment(appointmentId: string, date: string, timeZone: string, token: string, orgId: string | null): Promise<TelehealthDayVisit> {
+  if (!UUID.test(appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
+  const exact = await buildDay(date, timeZone, token, orgId);
+  const direct = exact.visits.find((row) => row.appointmentId === appointmentId);
+  if (direct) return direct;
+  const center = Date.parse(exact.from);
+  const from = new Date(center - 14 * 86_400_000).toISOString();
+  const to = new Date(center + 14 * 86_400_000).toISOString();
+  const [calendar, boundary] = await Promise.all([scheduleLive.getCalendar(from, to, token, orgId), visitBoundary(token)]);
+  const visit = boundary.available ? boundary.visits.get(appointmentId) ?? null : null;
+  const appointment = calendar.appointments.find((row) => row.id === appointmentId && row.appointmentType === "telehealth");
+  if (appointment) {
+    const row = calendarRow(appointment, visit);
+    if (row) return row;
+  }
+  const req = boundary.available ? boundary.requests.find((row) => row.appointmentId === appointmentId) : undefined;
+  if (req?.scheduledStart && req.scheduledEnd && req.status !== "cancelled") {
+    return {
+      appointmentId, source: "patient_app", patientId: null, patientName: null, practitionerName: null,
+      appointmentStatus: req.status === "scheduled" ? "confirmed" : "scheduled",
+      startsAt: req.scheduledStart, endsAt: req.scheduledEnd, requestId: req.requestId, visit,
+    };
+  }
+  throw new AdapterError("not_found", "This telehealth visit isn't on the schedule you can see.");
+}
+
+function requireOpenAppointment(row: TelehealthDayVisit) {
+  if (CLOSED_APPOINTMENT_STATUSES.has(row.appointmentStatus)) {
+    throw new AdapterError("conflict", `This appointment is ${row.appointmentStatus.replace("_", "-")}; its visit cannot proceed.`);
+  }
+}
+
+/** The boundary's binding fields for a desktop-booked appointment: the calendar's stored times, never the browser's. */
+function bindingFields(row: TelehealthDayVisit) {
+  return row.requestId
+    ? { requestId: row.requestId }
+    : { start: row.startsAt, end: row.endsAt };
+}
+
+export const telehealthLive = {
+  /** Every telehealth appointment on one calendar day in the viewer's zone, with its visit record where the boundary has one. */
+  async day(date: string, timeZone: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthDay> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return buildDay(date, timeZone, token, orgId);
   },
 
-  async recordConsent(input: TelehealthConsentInput, sessionToken: string | null): Promise<TelehealthVisit> {
+  async visit(appointmentId: string, date: string, timeZone: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthDayVisit> {
     const token = await getClinicalAccessToken(sessionToken);
+    return resolveAppointment(appointmentId, date, timeZone, token, orgId);
+  },
+
+  /** The organization's current approved consent artifact (version + hash), read through the boundary from the governed authority. */
+  async consentArtifact(sessionToken: string | null): Promise<TelehealthConsentArtifact> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return request<TelehealthConsentArtifact>("/clinical-core/workforce/appointments/visits/consent-artifact", token);
+  },
+
+  async recordConsent(input: TelehealthConsentInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthVisit> {
     if (input.agreed !== true) throw new AdapterError("invalid", "The consent must be attested before it is recorded.");
+    const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(input.appointmentId, input.date, input.timeZone, token, orgId);
+    requireOpenAppointment(row);
     const body: Record<string, unknown> = {
-      appointmentId: input.appointmentId,
-      consentVersion: TELEHEALTH_CONSENT_VERSION,
+      appointmentId: row.appointmentId,
+      ...bindingFields(row),
+      artifactId: input.artifactId,
+      artifactVersion: input.artifactVersion,
+      contentSha256: input.contentSha256,
       signerName: input.signerName,
+      representativeAuthority: input.representativeAuthority ?? "self",
       agreed: true,
     };
-    if (input.requestId) body.requestId = input.requestId;
+    if (!row.requestId) body.timeZone = input.timeZone;
     if (input.patientLocation) body.patientLocation = input.patientLocation;
     return request<TelehealthVisit>("/clinical-core/workforce/appointments/visits/consent", token, { body });
   },
 
-  async start(input: TelehealthStartInput, sessionToken: string | null): Promise<TelehealthStartResult> {
+  async withdrawConsent(input: TelehealthWithdrawInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthVisit> {
     const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(input.appointmentId, input.date, input.timeZone, token, orgId);
+    return request<TelehealthVisit>("/clinical-core/workforce/appointments/visits/consent/withdraw", token, {
+      body: { appointmentId: row.appointmentId, expectedVersion: input.expectedVersion, ...(input.reason ? { reason: input.reason } : {}) },
+    });
+  },
+
+  async start(input: TelehealthStartInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthStartResult> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(input.appointmentId, input.date, input.timeZone, token, orgId);
+    requireOpenAppointment(row);
     const body: Record<string, unknown> = {
-      appointmentId: input.appointmentId,
-      start: input.start,
-      end: input.end,
-      timeZone: input.timeZone,
-      hostDisplayName: input.hostDisplayName,
+      appointmentId: row.appointmentId,
+      ...bindingFields(row),
+      hostDisplayName: (input.hostDisplayName ?? "").trim() || row.practitionerName || "Practitioner",
     };
-    if (input.requestId) body.requestId = input.requestId;
+    if (!row.requestId) body.timeZone = input.timeZone;
     return request<TelehealthStartResult>("/clinical-core/workforce/appointments/visits/start", token, { body });
   },
 
-  async end(input: TelehealthEndInput, sessionToken: string | null): Promise<TelehealthVisit> {
+  async end(input: TelehealthEndInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthVisit> {
     const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(input.appointmentId, input.date, input.timeZone, token, orgId);
     return request<TelehealthVisit>("/clinical-core/workforce/appointments/visits/end", token, {
-      body: { appointmentId: input.appointmentId, expectedVersion: input.expectedVersion, flags: input.flags, quickNotes: input.quickNotes },
+      body: { appointmentId: row.appointmentId, expectedVersion: input.expectedVersion, flags: input.flags, quickNotes: input.quickNotes },
     });
   },
 
   async note(appointmentId: string, sessionToken: string | null): Promise<TelehealthVisit> {
-    const token = await getClinicalAccessToken(sessionToken);
     if (!UUID.test(appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
+    const token = await getClinicalAccessToken(sessionToken);
     return request<TelehealthVisit>(
       `/clinical-core/workforce/appointments/visits/notes?appointmentId=${encodeURIComponent(appointmentId)}`,
       token,
     );
   },
 
-  async importNote(appointmentId: string, sessionToken: string | null): Promise<TelehealthImportResult> {
+  async importNote(appointmentId: string, date: string, timeZone: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthImportResult> {
     const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(appointmentId, date, timeZone, token, orgId);
     return request<TelehealthImportResult>("/clinical-core/workforce/appointments/visits/notes/import", token, {
-      body: { appointmentId },
+      body: { appointmentId: row.appointmentId },
     });
   },
 
-  async signNote(input: TelehealthSignInput, sessionToken: string | null): Promise<TelehealthVisit> {
+  async signNote(input: TelehealthSignInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthVisit> {
     const token = await getClinicalAccessToken(sessionToken);
+    const row = await resolveAppointment(input.appointmentId, input.date, input.timeZone, token, orgId);
     return request<TelehealthVisit>("/clinical-core/workforce/appointments/visits/notes/sign", token, {
       body: {
-        appointmentId: input.appointmentId,
+        appointmentId: row.appointmentId,
         expectedVersion: input.expectedVersion,
         practitionerNotes: input.practitionerNotes,
         aiSections: input.aiSections,

@@ -96,7 +96,7 @@ type RouteDefinition = {
   pool: IdentityPool;
   purpose: ClinicalRequestContext["purpose"];
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
-    | "get_consent_artifact"
+    | "get_consent_artifact" | "get_current_consent"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
     | "record_clinical" | "list_clinical" | "list_consent_history"
       | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility"
@@ -115,6 +115,8 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/consents/revoke": { pool: "workforce", purpose: "consent_management", operation: "revoke" },
   "POST /clinical-core/consumer/consents/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke" },
   "GET /clinical-core/consumer/consent-artifact": { pool: "consumer", purpose: "consent_management", operation: "get_consent_artifact" },
+  "GET /clinical-core/workforce/consent-artifact": { pool: "workforce", purpose: "consent_management", operation: "get_consent_artifact" },
+  "GET /clinical-core/workforce/consents/current": { pool: "workforce", purpose: "consent_management", operation: "get_current_consent" },
   "POST /clinical-core/consumer/labs/import": { pool: "consumer", purpose: "clinical_data", operation: "import_lab" },
   "GET /clinical-core/consumer/connection": { pool: "consumer", purpose: "clinical_data", operation: "get_connection" },
   "GET /clinical-core/workforce/lab-imports": { pool: "workforce", purpose: "clinical_data", operation: "list_lab_imports" },
@@ -402,6 +404,26 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         }
         return response(200, { data: await familyAccessAdapter!.readDelegated(context, {
           relationshipId, scope: scope as FamilyAccessScope,
+        }) });
+      }
+      if (route.operation === "get_current_consent") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const scope = event.queryStringParameters?.scope ?? "";
+        const patientRecordId = event.queryStringParameters?.patientRecordId;
+        const consumerPersonId = event.queryStringParameters?.consumerPersonId;
+        if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])
+          || (patientRecordId === undefined) === (consumerPersonId === undefined)
+          || (patientRecordId !== undefined && !UUID.test(patientRecordId))
+          || (consumerPersonId !== undefined && !UUID.test(consumerPersonId))) {
+          throw new IdentityApiError("request_invalid");
+        }
+        if (input.productionPilot && !isProductionPilotConsentScopeAllowed(input.productionPilot.scope, scope)) {
+          return response(403, { error: "pilot_scope_refused" });
+        }
+        return response(200, { data: await adapter.getCurrentConsent({
+          context,
+          scope: scope as (typeof CONSENT_SCOPES)[number],
+          ...(patientRecordId !== undefined ? { patientRecordId } : { consumerPersonId }),
         }) });
       }
       const body = parseBody(event);

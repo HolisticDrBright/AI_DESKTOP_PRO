@@ -32,6 +32,7 @@ import {
   fmtTime,
   noteHref,
   patientLabel,
+  viewerTimeZone,
   visitHref,
   visitPhase,
 } from "./parts";
@@ -73,7 +74,7 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
     let cancelled = false;
     setState("loading");
     api.telehealth
-      .day(date)
+      .day(date, viewerTimeZone())
       .then((result) => {
         if (cancelled) return;
         setDay(result);
@@ -105,7 +106,7 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
       total: rows.length,
       consentMissing: phases.filter((p) => p === "consent_missing").length,
       inVisit: phases.filter((p) => p === "in_visit").length,
-      awaitingSignature: phases.filter((p) => p === "note_ready" || p === "ended").length,
+      awaitingSignature: phases.filter((p) => p === "note_ready" || p === "ended" || p === "ending").length,
     };
   }, [day, serviceAvailable]);
 
@@ -186,6 +187,18 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
             </div>
           )}
 
+          {day.visitService.available && !day.visitService.complete && (
+            <div
+              role="status"
+              data-testid="telehealth-service-partial"
+              className="mb-4 rounded-[10px] border border-[rgba(199,126,20,0.35)] bg-warning-tint px-[13px] py-[10px] text-[12px] leading-[1.55] text-warning-deep"
+            >
+              <strong>Visit list incomplete.</strong> The visit service returned more records than one read can
+              carry, so some consent and meeting states below may show as unknown. Open a visit to read its record
+              directly.
+            </div>
+          )}
+
           {day.visits.length === 0 ? (
             <ClinicalEmpty
               title="No telehealth visits on this day"
@@ -241,6 +254,11 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
                             {phase === "in_visit" ? "Rejoin visit" : "Start visit"}
                           </BtnLink>
                         )}
+                        {phase === "ending" && (
+                          <BtnLink size="sm" variant="danger" href={visitHref(row)}>
+                            Finish shutdown
+                          </BtnLink>
+                        )}
                         {(phase === "ended" || phase === "note_ready" || phase === "signed") && (
                           <BtnLink size="sm" variant={phase === "signed" ? "outline" : "primary"} href={noteHref(row)}>
                             {phase === "signed" ? "View note" : "Open note"}
@@ -257,7 +275,7 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
       )}
 
       {consentFor && (
-        <ConsentDialog row={consentFor} open onClose={() => setConsentFor(null)} onRecorded={onConsentRecorded} />
+        <ConsentDialog row={consentFor} date={date} open onClose={() => setConsentFor(null)} onRecorded={onConsentRecorded} />
       )}
     </section>
   );
