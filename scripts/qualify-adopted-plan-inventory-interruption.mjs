@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 const [mode, confirmation, ...extra] = process.argv.slice(2);
-if (extra.length || !['before-write', 'precommit', 'reconcile-only'].includes(mode)
-  || confirmation !== '--confirm-fictional-inventory-interruption') throw new Error('interruption_argument_refused');
+if (extra.length || !['before-write', 'precommit', 'postcommit', 'reconcile-only'].includes(mode)
+  || confirmation !== (mode === 'postcommit' ? '--confirm-fictional-inventory-postcommit-upgrade'
+    : '--confirm-fictional-inventory-interruption')) throw new Error('interruption_argument_refused');
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = 'C:/Users/Brand/Documents/Codex/2026-08-18/referenced-chatgpt-conversation-this-is-an/work/DESKTOP_COMMERCIAL_20261005/dist/synthetic-care-routing';
 const directory = resolve('dist/aws-clinical-core/adopted-plan-inventory-upgrade');
@@ -16,7 +17,7 @@ const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=a
   'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim();
 if (manifest.contract !== 'adopted-plan-inventory-upgrade-build/1' || manifest.sourceCommit !== head || manifest.clean !== true || dirty
   || manifest.phiAllowed !== false || manifest.activation !== 'blocked' || manifest.embeddedMigrationCount !== 107
-  || manifest.interruptionWorkerScope !== 'instrumented_real_core_and_ports_before_write_and_precommit_only'
+  || manifest.interruptionWorkerScope !== 'instrumented_real_core_and_ports_before_write_precommit_and_controller_receipt_loss_only'
   || sha(readFileSync(worker)) !== manifest.interruptionWorkerSha256
   || sha(readFileSync(resolve(directory, 'index.cjs'))) !== manifest.operatorSha256) throw new Error('interruption_artifact_refused');
 const lock = resolve(root, 'operator.lock');
@@ -24,7 +25,8 @@ const guard = resolve(root, 'inventory-upgrade-reconciliation.lock');
 if (mode !== 'reconcile-only' && (existsSync(lock) || existsSync(guard))) throw new Error('interruption_existing_custody_refused');
 
 function launch(command) {
-  const child = fork(worker, [command, '--confirm-fictional-inventory-interruption'], {
+  const child = fork(worker, [command, command === 'postcommit' ? '--confirm-fictional-inventory-postcommit-upgrade'
+    : '--confirm-fictional-inventory-interruption'], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [], windowsHide: true,
   });
   const messages = []; let byteCount = 0;
@@ -65,7 +67,8 @@ if (mode === 'reconcile-only') {
 } else {
   const writer = launch(mode), checkpoint = await writer.first;
   check(checkpoint?.kind === 'checkpoint' && checkpoint.mode === mode && checkpoint.execution === 'qualification'
-    && checkpoint.phiAllowed === false && checkpoint.activation === 'blocked' && checkpoint.transactionCommitAdmitted === false
+    && checkpoint.phiAllowed === false && checkpoint.activation === 'blocked' && checkpoint.transactionCommitAdmitted === (mode === 'postcommit')
+    && checkpoint.providerCommitAcknowledged === (mode === 'postcommit')
     && checkpoint.observedMigrationCount === (mode === 'before-write' ? 106 : 107)
     && Number.isSafeInteger(checkpoint.rowCount) && checkpoint.rowCount >= 0
     && /^[a-f0-9]{64}$/.test(checkpoint.dataSha256) && /^[a-f0-9]{64}$/.test(checkpoint.historicalSchemaSha256), 'checkpoint');
@@ -75,7 +78,8 @@ if (mode === 'reconcile-only') {
   const journal = resolve(root, `${header.runId}.inventory.events.jsonl`), journalBytes = readFileSync(journal);
   const events = journalBytes.toString('utf8').trimEnd().split('\n').map(line => JSON.parse(line));
   check(events.at(-1)?.stage === 'write_admitted', 'durable_admission');
-  console.log(JSON.stringify({ stage: 'observed_actual_checkpoint', mode, runId: header.runId, transactionCommitAdmitted: false }));
+  console.log(JSON.stringify({ stage: 'observed_actual_checkpoint', mode, runId: header.runId,
+    transactionCommitAdmitted: checkpoint.transactionCommitAdmitted, providerCommitAcknowledged: checkpoint.providerCommitAcknowledged }));
   const liveRefusal = await expectRefusal('live_writer_refused');
   check(readFileSync(lock).equals(lockBytes) && readFileSync(journal).equals(journalBytes), 'live_custody_preserved');
   check(writer.child.exitCode === null && writer.child.signalCode === null && writer.child.kill(), 'exact_child_stop');
@@ -88,12 +92,14 @@ if (mode === 'reconcile-only') {
   // evidence: recovery must acquire the real fence and migration/table locks.
   await new Promise(resolveWait => setTimeout(resolveWait, 210_000));
   const result = await reconcile();
-  check(result.observedMigrationCount === 106 && result.rowCount === checkpoint.rowCount && result.dataSha256 === checkpoint.dataSha256
+  check(result.observedMigrationCount === (mode === 'postcommit' ? 107 : 106) && result.rowCount === checkpoint.rowCount && result.dataSha256 === checkpoint.dataSha256
     && result.historicalSchemaSha256 === checkpoint.historicalSchemaSha256 && result.runId === header.runId
-    && readFileSync(journal).equals(journalBytes) && result.journalSha256 === sha(journalBytes), 'preserved_predecessor');
+    && readFileSync(journal).equals(journalBytes) && result.journalSha256 === sha(journalBytes), 'preserved_expected_state');
   console.log(JSON.stringify({ contract: 'adopted-inventory-interruption-qualification/1', mode, sourceCommit: head,
     workerSha256: manifest.interruptionWorkerSha256, sharedCustodyRoot: root, execution: 'qualification', verdict: 'passed',
     phiAllowed: false, activation: 'blocked', checkpoint, liveRefusal, immediateRefusal, originalLockSha256: sha(lockBytes), result,
-    instrumentedCoreAndNativePorts: true, publicOperatorEndToEndQualified: false, postCommitReceiptLossQualified: false,
+    instrumentedCoreAndNativePorts: true, publicOperatorEndToEndQualified: false,
+    controllerReceiptLossAfterAcknowledgedCommitQualified: mode === 'postcommit',
+    providerCommitResponseLossQualified: false,
     diskPowerLossQualified: false, fullFleetAcceptance: false, productionActivationEvidence: false }));
 }

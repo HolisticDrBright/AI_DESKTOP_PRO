@@ -32,6 +32,6 @@ writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({
   mandatoryRollbackRehearsal: true, postRehearsalPrestateRecheck: true, automaticWriteRetry: false,
   durableNativeCustody: true, sharedOperatorNamespace: true, readOnlyInterruptionReconciliation: true,
   reconciliationRequiresMigrationLocks: true, hostedRecoveryQualified: false,
-  interruptionWorkerScope: 'instrumented_real_core_and_ports_before_write_and_precommit_only',
+  interruptionWorkerScope: 'instrumented_real_core_and_ports_before_write_precommit_and_controller_receipt_loss_only',
 }, null, 2) + '\n');
 console.log(`Built separate inventory upgrade operator. Clean source: ${clean}. No AWS call or migration performed.`);

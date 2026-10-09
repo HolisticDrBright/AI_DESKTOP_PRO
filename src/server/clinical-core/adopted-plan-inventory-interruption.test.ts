@@ -36,6 +36,24 @@ it('precommit callback cannot return to the adapter commit after the actual upgr
   expect(ports.checkpoint).toHaveBeenCalledWith(expect.objectContaining({ mode: 'precommit', observedMigrationCount: 107, transactionCommitAdmitted: false }));
   expect(ports.committed()).toBe(false);
 });
+it('postcommit pauses only after the actual adapter acknowledged commit, before the controller receipt', async () => {
+  const ports = fixture();
+  await expect(runInventoryInterruptionWorker(['postcommit', '--confirm-fictional-inventory-postcommit-upgrade'],
+    build, {} as never, ports)).rejects.toThrow('test checkpoint reached');
+  expect(ports.run.mock.calls.map(c => c[3])).toEqual(['upgrade']);
+  expect(ports.committed()).toBe(true);
+  expect(ports.checkpoint).toHaveBeenCalledWith(expect.objectContaining({ mode: 'postcommit', observedMigrationCount: 107,
+    transactionCommitAdmitted: true, providerCommitAcknowledged: true }));
+});
+it('postcommit refuses an already-applied or invalid receipt rather than claiming a new committed write', async () => {
+  for (const change of [{ applied: false, alreadyApplied: true }, { historicalSchemaPreserved: false }]) {
+    const ports = fixture(); ports.run.mockImplementation(async db => db.transaction(async () =>
+      ({ ...observation('upgrade'), ...change }) as AdoptedInventoryUpgradeResult));
+    await expect(runInventoryInterruptionWorker(['postcommit', '--confirm-fictional-inventory-postcommit-upgrade'],
+      build, {} as never, ports)).rejects.toThrow('verification_failed');
+    expect(ports.checkpoint).not.toHaveBeenCalled();
+  }
+});
 it('refuses an invalid upgrade observation before producing the precommit checkpoint', async () => {
   const ports = fixture(); ports.run.mockImplementation(async db => db.transaction(async () =>
     ({ ...observation('upgrade'), dataPreserved: false }) as unknown as AdoptedInventoryUpgradeResult));
@@ -49,7 +67,8 @@ it('reconciliation forwards only the existing read-only recovery command', async
   expect(ports.run).not.toHaveBeenCalled(); expect(ports.checkpoint).not.toHaveBeenCalled();
 });
 it('refuses missing confirmations, overrides, dirty builds and non-IPC invocation before AWS or SQL', async () => {
-  for (const args of [[], ['upgrade', confirm], ['precommit'], ['precommit', confirm, '--database=clinical_core'], ['before-write', '--yes']]) {
+  for (const args of [[], ['upgrade', confirm], ['precommit'], ['precommit', confirm, '--database=clinical_core'], ['before-write', '--yes'],
+    ['postcommit', confirm], ['precommit', '--confirm-fictional-inventory-postcommit-upgrade']]) {
     const ports = fixture(); await expect(runInventoryInterruptionWorker(args, build, {} as never, ports)).rejects.toThrow('boundary_refused');
     expect(ports.execute).not.toHaveBeenCalled();
   }
@@ -59,13 +78,14 @@ it('refuses missing confirmations, overrides, dirty builds and non-IPC invocatio
   }
 });
 it('runner refuses invalid arguments before touching local artifacts or AWS', () => {
-  for (const args of [[], ['precommit'], ['precommit', confirm, '--root=other']]) {
+  for (const args of [[], ['precommit'], ['precommit', confirm, '--root=other'], ['postcommit', confirm]]) {
     expect(() => execFileSync(process.execPath, ['scripts/qualify-adopted-plan-inventory-interruption.mjs', ...args],
       { timeout: 10000, stdio: 'pipe' })).toThrow();
   }
   const source = readFileSync('scripts/qualify-adopted-plan-inventory-interruption.mjs', 'utf8');
   expect(source).toContain('work/DESKTOP_COMMERCIAL_20261005/dist/synthetic-care-routing');
   expect(source).toContain('writer.child.kill()'); expect(source).toContain('await writer.first');
-  expect(source).toContain('postCommitReceiptLossQualified: false');
+  expect(source).toContain('providerCommitResponseLossQualified: false');
+  expect(source).toContain("controllerReceiptLossAfterAcknowledgedCommitQualified: mode === 'postcommit'");
   expect(source).toContain('result.journalSha256 === sha(journalBytes)');
 });
