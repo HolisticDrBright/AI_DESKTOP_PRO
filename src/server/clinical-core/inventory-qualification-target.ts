@@ -84,7 +84,12 @@ export function validateInventoryQualificationTarget(input: unknown, supplied: I
   if (!Array.isArray(v.candidates) || v.candidates.length !== 12) return inventoryRefuse('target_fleet_refused');
   same(v.candidates.map(c => inventoryRecord(c) ? c.candidate : null).sort(), artifacts.candidates.map(c => c.candidate).sort());
   const subjects = designatedSubjects(base.identitySubjects);
-  if (subjects.some(s => !uuid.test(s))) return inventoryRefuse('target_identity_refused');
+  // Cognito users are UUID subjects; the scheduled sweep is deliberately a
+  // named non-human database identity, not a fourth human Cognito account.
+  if ([base.identitySubjects.consumer, base.identitySubjects.workforce, base.identitySubjects.foreignConsumer].some(s => !uuid.test(s)))
+    return inventoryRefuse('target_identity_refused');
+  if (base.identitySubjects.retentionService !== undefined && !/^svc-[a-z0-9][a-z0-9-]{2,60}$/.test(base.identitySubjects.retentionService))
+    return inventoryRefuse('target_retention_identity_refused');
   const objectNames = new Set<string>();
   const candidates = v.candidates.map(row => {
     const c = keys(row, ['candidate', 'stackName', 'manifestSha256', 'templateSha256', 'parameters', 'packages']);

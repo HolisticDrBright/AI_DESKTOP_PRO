@@ -17,6 +17,7 @@ import { buildQualificationFoundation } from '../../../scripts/build-aws-qualifi
 let directory: string, artifacts: InventoryArtifactSet;
 const consumer = '11111111-1111-4111-8111-111111111111', workforce = '22222222-2222-4222-8222-222222222222';
 const foreign = '33333333-3333-4333-8333-333333333333', retention = '44444444-4444-4444-8444-444444444444';
+const retentionSubject = 'svc-fictional-qualification-retention';
 const organization = '55555555-5555-4555-8555-555555555555', kms = 'arn:aws:kms:us-east-2:588966314750:key/66666666-6666-4666-8666-666666666666';
 const digest = 'a'.repeat(64);
 const fictionalSigner = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -48,7 +49,7 @@ function targetFixture(): InventoryQualificationTarget {
     databaseClusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional-qualification',
     databaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-secret', databaseName: 'clinical_core_qualification',
     exportBucket: 'fictional-qualification-exports', recordingBucket: 'fictional-qualification-recordings', sourceCommit: a.source.sourceCommit,
-    migrationReleaseHash: INVENTORY_RELEASE, identitySubjects: { consumer, workforce, foreignConsumer: foreign, retentionService: retention },
+    migrationReleaseHash: INVENTORY_RELEASE, identitySubjects: { consumer, workforce, foreignConsumer: foreign, retentionService: retentionSubject },
     stacks: Object.fromEntries(a.candidates.map(c => [c.candidate, `fictional-qualification-${c.candidate}`])),
     refused: { stagingFoundationStackName: 'fictional-staging', stagingApiOrigin: 'https://klmnopqrst.execute-api.us-east-2.amazonaws.com', stagingDatabaseName: 'clinical_core' },
     reviewedAt: '2026-10-09T00:00:00.000Z' };
@@ -60,11 +61,11 @@ function targetFixture(): InventoryQualificationTarget {
     const common: Record<string, string> = { ApiId: target.apiId, ClinicalApiId: target.apiId, PhiAllowed: 'false', Activation: 'blocked', ActivationEvidenceSha256: '',
       SourceCommit: a.source.sourceCommit, MigrationReleaseSha256: INVENTORY_RELEASE, InventoryQualificationProfile: INVENTORY_PROFILE,
       DatabaseClusterArn: target.databaseClusterArn, DatabaseSecretArn: target.databaseSecretArn, DatabaseName: target.databaseName,
-      QualificationExecution: 'enabled', QualificationAccountId: target.awsAccountId, QualificationIdentitySubjects: [consumer, workforce, foreign, retention].join(','),
+      QualificationExecution: 'enabled', QualificationAccountId: target.awsAccountId, QualificationIdentitySubjects: [consumer, workforce, foreign, retentionSubject].join(','),
       AlarmTopicArn: 'arn:aws:sns:us-east-2:588966314750:fictional-alarms', OrganizationId: organization, ...Object.fromEntries(Object.entries(identity).map(([k, v]) => [k[0].toUpperCase() + k.slice(1), v])),
       SecretKmsKeyArn: kms, LogsKmsKeyArn: kms, ClinicalCoreKeyArn: kms, ExportKmsKeyArn: kms, ExportBucketName: target.exportBucket, RecordingBucket: target.recordingBucket,
       AllowedScopes: 'forms_checkins,lab_history', BillingApiOrigin: target.apiOrigin, ConsumerJwtAuthorizerId: 'fictionalauthorizer',
-      OpenAISecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-provider', RetentionServiceSubject: retention,
+      OpenAISecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-provider', RetentionServiceSubject: retentionSubject,
       RecordingKmsKeyArn: kms, CaptureReleaseId: foreign, TranscriptionReleaseId: consumer, DraftingReleaseId: workforce, CleanupReleaseId: retention,
       LabRangeMode: 'reviewed_release', LabRangeReleaseBucket: 'fictional-qualification-ranges', LabRangeReleaseKey: 'reviewed-lab-ranges/fictional.json',
       LabRangeReleaseSha256: digest, LabRangeSignerPublicKeyPem: fictionalSigner,
@@ -480,6 +481,28 @@ it('retention activation cannot name another clinic or omit the service identity
     Object.assign(p, { RetentionScheduleEnabled: 'true', RetentionScheduleEvidenceSha256: digest, RetentionServicePersonId: retention, RetentionServiceOrganizationId: organizationId });
     expect(() => validateInventoryQualificationTarget(v, admissionFixture())).toThrow();
   }
+});
+it('admits the non-human retention subject required by the actual release operator and refuses a human subject', () => {
+  const v = targetFixture(), serviceSubject = 'svc-fictional-qualification-retention';
+  v.target.identitySubjects.retentionService = serviceSubject;
+  for (const c of v.candidates) {
+    c.parameters.QualificationIdentitySubjects = [consumer, workforce, foreign, serviceSubject].join(',');
+    if (Object.hasOwn(c.parameters, 'RetentionServiceSubject')) c.parameters.RetentionServiceSubject = serviceSubject;
+  }
+  const p = v.candidates.find(c => c.candidate === 'privacy-operations')!.parameters;
+  Object.assign(p, { RetentionScheduleEnabled: 'true', RetentionScheduleEvidenceSha256: digest, RetentionServicePersonId: retention,
+    RetentionServiceOrganizationId: organization, ExportCleanupEnabled: 'true', ExportCleanupEvidenceSha256: digest });
+  expect(() => validateInventoryQualificationTarget(v, admissionFixture())).not.toThrow();
+  for (const subject of [retention, 'svc-ACTUAL', 'svc-a', 'svc-name:invalid', 'svc-name_with_underscore']) {
+    const changed = structuredClone(v); changed.target.identitySubjects.retentionService = subject;
+    for (const c of changed.candidates) {
+      c.parameters.QualificationIdentitySubjects = [consumer, workforce, foreign, subject].join(',');
+      if (Object.hasOwn(c.parameters, 'RetentionServiceSubject')) c.parameters.RetentionServiceSubject = subject;
+    }
+    expect(() => validateInventoryQualificationTarget(changed, admissionFixture())).toThrow('target_retention_identity_refused');
+  }
+  const duplicate = structuredClone(v); duplicate.target.identitySubjects.retentionService = consumer;
+  expect(() => validateInventoryQualificationTarget(duplicate, admissionFixture())).toThrow('target_manifest_invalid');
 });
 it('unknown, cyclic and nonboolean conditions never select a permissive branch', () => {
   const t = structuredClone(artifacts.candidates[0].template);

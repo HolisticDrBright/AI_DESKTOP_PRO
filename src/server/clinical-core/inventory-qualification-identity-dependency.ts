@@ -167,6 +167,9 @@ export async function observeInventoryIdentityDependency(input: InventoryIdentit
   for (const o of observations) same(inventorySha(inventoryCanonical(await transport(o.service, o.operation, o.parameters))), o.sha256);
   return { contract: 'inventory-qualification-identity-dependency/1', identityConfigurationVerified: true,
     designatedSyntheticSubjectsVerified: true, observations: observations.length, observationSha256: inventorySha(inventoryCanonical(observations)),
+    // Bind DB mappings to the independently observed Cognito person attributes
+    // without publishing those identifiers. This is not a caller declaration.
+    personBindingsSha256: inventorySha(inventoryCanonical({ consumer: people[0], foreignConsumer: people[1], workforce: people[2] })),
     databaseIdentityAuthorityVerified: false, retentionServiceIdentityVerified: false, physicalLoginVerified: false,
     identityDependenciesVerified: false, liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false };
 }

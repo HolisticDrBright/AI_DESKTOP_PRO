@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { execFileSync } from 'node:child_process';
-import { inventoryCanonical } from './inventory-qualification-artifacts';
+import { inventoryCanonical, inventorySha } from './inventory-qualification-artifacts';
 import { inventoryIdentityReader, observeInventoryIdentityDependency, type InventoryIdentityDependency } from './inventory-qualification-identity-dependency';
 import type { InventoryServiceRead } from './inventory-qualification-service-observer';
 type Row = Record<string, unknown>;
@@ -59,6 +59,8 @@ it('independently repeats pool/client/MFA and exact designated-user observations
     identityDependenciesVerified: false, databaseIdentityAuthorityVerified: false, retentionServiceIdentityVerified: false,
     physicalLoginVerified: false, liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false });
   expect(f.calls).toHaveLength(20); expect(r.observationSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(r.personBindingsSha256).toBe(inventorySha(inventoryCanonical({ consumer: '55555555-5555-4555-8555-555555555555',
+    foreignConsumer: '66666666-5555-4555-8555-555555555555', workforce: '77777777-5555-4555-8555-555555555555' })));
   expect(f.calls.slice(0, 10)).toEqual(f.calls.slice(10));
   expect(f.calls.filter(c => c[1] === 'admin-get-user').map(c => c[2].Username)).toEqual([...Object.values(subjects), ...Object.values(subjects)]);
   expect(JSON.stringify(r)).not.toContain(subjects.consumer); expect(JSON.stringify(r)).not.toContain(org);

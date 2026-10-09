@@ -5,6 +5,7 @@ import { prepareInventoryQualificationConfiguration } from './inventory-qualific
 import { observeInventoryFoundation } from './inventory-qualification-foundation-observer';
 import { observeInventoryDatabaseDependency } from './inventory-qualification-database-dependency';
 import { observeInventoryIdentityDependency } from './inventory-qualification-identity-dependency';
+import { inventoryDatabaseIdentityReader } from './inventory-qualification-database-identity';
 import { observeInventoryStackDeclarations } from './inventory-qualification-stack-observer';
 import { observeInventoryCandidateServices } from './inventory-qualification-service-observer';
 import { observeInventoryCodeVersion } from './inventory-qualification-code-observer';
@@ -25,7 +26,8 @@ export async function observeInventoryQualificationFleet(args: string[]) {
     });
     let migration: unknown;
     try { migration = JSON.parse(candidateBytes); } catch { return inventoryRefuse('inventory_ledger_artifact_refused'); }
-    const ledgerRead = inventoryQualificationLedgerReader(inventoryQualificationLedgerArtifact(migration));
+    const migrationRows = inventoryQualificationLedgerArtifact(migration);
+    const ledgerRead = inventoryQualificationLedgerReader(migrationRows), databaseIdentityRead = inventoryDatabaseIdentityReader(migrationRows);
     // Bind the customer key from every candidate that declares the shared
     // database credential. Conflicting keys are refused, never first-wins.
     const keys = [...new Set(target.candidates.map(c => c.parameters.SecretKmsKeyArn).filter(k => k !== undefined))];
@@ -47,6 +49,8 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       // The successor-only adapter reads every row inside a read-only
       // transaction and requires rollback. A known 106 parent is not a pass.
       const ledger = await ledgerRead(ledgerBinding);
+      const databaseIdentity = await databaseIdentityRead({ database: ledgerBinding, organizationId: target.organizationId,
+        subjects: identityBinding.subjects, cognitoPersonBindingsSha256: identity.personBindingsSha256 });
       const candidates = [];
       for (const c of target.candidates) {
         prepared.assertUnchanged();
@@ -61,23 +65,24 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       const snapshots = Object.fromEntries(candidates.map(c => [c.declaration.candidate, c.declaration.snapshot]));
       const api = await observeInventorySharedApi(target, snapshots, foundation.foundationStackId, artifacts);
       prepared.assertUnchanged();
-      return { foundation, dependency, identity, ledger, candidates, api };
+      return { foundation, dependency, identity, databaseIdentity, ledger, candidates, api };
     };
     const first = await pass(), final = await pass();
     if (inventoryCanonical(first) !== inventoryCanonical(final)) return inventoryRefuse('fleet_observation_changed');
     prepared.assertUnchanged();
     return { contract: 'inventory-qualification-fleet-observation/1', status: 'not_completed',
-      observationScope: 'source_foundation_database_metadata_cognito_configuration_designated_synthetic_subjects_candidate_services_code_api_ledger',
+      observationScope: 'source_foundation_database_metadata_cognito_configuration_designated_synthetic_subjects_database_identity_authority_candidate_services_code_api_ledger',
       sourceCommit: source.sourceCommit, sourceInputSha256: source.sourceInputSha256, buildManifestSha256: artifacts.manifestSha256,
       targetSha256, observationSha256: inventorySha(inventoryCanonical(first)), passes: 2,
       candidates: first.candidates.length, packages: first.candidates.reduce((n, c) => n + c.code.length, 0),
       observedResourcePlane: true, successorLedgerObserved: true,
       identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: true,
+      databaseIdentityAuthorityVerified: true,
       // Deliberately NOT a qualification/acceptance verdict. Remove a remaining
       // gate only after engineering an independent observation for that scope.
       identityDependenciesVerified: false, networkVerified: false, providerDependenciesVerified: false,
       liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false,
-      remaining: ['database identity/organization/retention-service authority, real sign-in and network/external provider dependency observations',
+      remaining: ['retention-service authority, real sign-in and network/external provider dependency observations',
         'real interrupted custody and preservation qualification', 'runtime hosted acceptance',
         'matched releases and physical devices', 'human reviews and provider/policy approvals'] };
   } finally { prepared.dispose(); }
