@@ -23,10 +23,23 @@ holds. Malformed declared lengths are refused before reading; identity-encoded
 lengths must match received bytes. Fetch-decoded compressed bodies remain bounded
 but their compressed wire length is not equated to decoded length.
 
-These are source repairs, not deployed acceptance. The October 9 audit's meeting
-creation settlement, current note-read authorization and immutable patient/consent
-binding findings remain open, as do chart/lifecycle/multi-clinic integration and
-the authorized positive host-and-patient Zoom journey. PHI remains disabled.
+These are source repairs, not deployed acceptance. The subsequent source repair
+also keeps dispatched unknown creations fenced on empty or missing provider reads,
+checks complete exact-marker pagination before adoption, and refuses ambiguous
+matches. A stale original writer does not delete a meeting already bound by a
+reconciler. Note and list reads require current clinical calendar authorization;
+missing historical appointments are omitted with an incomplete-list flag rather
+than exposed through organization membership alone. A reviewed independent
+historical-record authorization path still belongs to chart/lifecycle integration.
+
+Visit subjects cannot silently change with the calendar or request. Patient-app
+visits require the current patient connection and calendar to agree. Start checks
+binding and consent again after provider creation and SDK work before returning
+a session; its final version-conditional write fences concurrent visit withdrawal.
+Even an already-ended idempotent response requires current authority. These checks
+do not certify atomic provider shutdown, orphan deletion, or actual provider races.
+Chart/lifecycle/multi-clinic integration and the authorized positive host-and-patient
+Zoom journey remain required. PHI remains disabled.
 
 | Decision | Where it is enforced |
 | --- | --- |
