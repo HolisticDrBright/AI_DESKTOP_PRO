@@ -38,6 +38,7 @@
     "check:aws-governed-catalog": "node scripts/check-aws-governed-catalog.mjs",
     "check:aws-governed-catalog-api": "node scripts/check-aws-governed-catalog-api.mjs",
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
+    "build:inventory-qualification-identity-mapping": "node scripts/build-inventory-qualification-identity-mapping.mjs",
     "build:aws-chat-transcription": "node scripts/build-aws-chat-transcription.mjs",
     "check:aws-chat-transcription": "node scripts/check-aws-chat-transcription.mjs",
     "build:aws-governed-catalog-api": "node scripts/build-aws-governed-catalog-api.mjs",

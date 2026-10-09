@@ -35,7 +35,7 @@ const posture = (v: Row) => {
 // values, labs, record contents, secrets or consent copy. All identities sharing
 // an admitted person's ID are included, so an extra identity cannot be hidden by
 // filtering only the three expected subjects. A seventeenth row forces refusal.
-const identitySql = `with selected_people as (
+export const inventoryIdentitySnapshotSql = `with selected_people as (
   select distinct person_id from clinical_core.identities where identity_subject in (:consumer,:foreignConsumer,:workforce)
 )
 select jsonb_build_object(
@@ -64,7 +64,7 @@ select jsonb_build_object(
    order by d.id limit 17) r),'[]'::jsonb)
 )::text`;
 
-function inspectSnapshot(raw: unknown, binding: InventoryDatabaseIdentityBinding) {
+export function inspectInventoryIdentitySnapshot(raw: unknown, binding: InventoryDatabaseIdentityBinding) {
   const s = obj(raw, ['identities', 'organizations', 'memberships', 'connections', 'directory']);
   const identities = rows(s.identities), organizations = rows(s.organizations), memberships = rows(s.memberships), connections = rows(s.connections), directory = rows(s.directory);
   if (identities.length !== 3 || organizations.length !== 1 || memberships.length !== 1 || connections.length !== 1 || directory.length > 1) return refuse();
@@ -148,9 +148,9 @@ export function inventoryDatabaseIdentityReader(expected: InventoryLedgerRow[], 
       }), admittedRows);
       const parameters = Object.entries({ ...b.subjects, organization: b.organizationId }).map(([name, value]) => ({ name, value: { stringValue: value } }));
       const snapshot = async () => {
-        const text = await read(identitySql, parameters); if (text.length > 65536) return refuse();
+        const text = await read(inventoryIdentitySnapshotSql, parameters); if (text.length > 65536) return refuse();
         let value: unknown; try { value = JSON.parse(text); } catch { return refuse(); }
-        inspectSnapshot(value, b); return value;
+        inspectInventoryIdentitySnapshot(value, b); return value;
       };
       observed = await snapshot();
       if (inventoryCanonical(observed) !== inventoryCanonical(await snapshot())) return refuse();
