@@ -25,7 +25,7 @@ function jwt(role: FixtureRole, kind: 'id' | 'access', patch: Record<string, unk
 function result(role: FixtureRole) { return { AuthenticationResult: { IdToken: jwt(role, 'id'), AccessToken: jwt(role, 'access'),
   RefreshToken: 'Fictional_refresh_not_returned', TokenType: 'Bearer', ExpiresIn: 900 } }; }
 function rig() {
-  let clock = now, enrolled = false, preferred = false;
+  let clock = now, enrolled = false, preferred = false, metadataVisible = true;
   const store = new Map<string, unknown>(), calls: string[] = [];
   const users = new Map<string, Record<string, unknown>>();
   for (const role of ['consumer', 'foreignConsumer', 'workforce'] as const) {
@@ -40,7 +40,7 @@ function rig() {
     now: () => clock, verifyPrivateConfiguration: async () => { calls.push('configuration'); },
     loadIntent: async () => structuredClone(intent),
     readUser: async (_pool, name) => { const role = roleFor(name), u = structuredClone(users.get(subjects[role]))!;
-      if (role === 'workforce') { u.UserMFASettingList = enrolled ? ['SOFTWARE_TOKEN_MFA'] : [];
+      if (role === 'workforce') { u.UserMFASettingList = enrolled && metadataVisible ? ['SOFTWARE_TOKEN_MFA'] : [];
         if (preferred) u.PreferredMfaSetting = 'SOFTWARE_TOKEN_MFA'; }
       return u; },
     initiate: async (_pool, _client, name) => { const role = roleFor(name); calls.push(`login:${role}`);
@@ -52,13 +52,13 @@ function rig() {
     associate: async () => { calls.push('associate'); return { SecretCode: seed, Session: session }; },
     verifySoftware: async (_session, code) => { expect(code).toBe(fictionalTotp(seed, clock)); calls.push('verify'); enrolled = true;
       return { Status: 'SUCCESS', Session: session }; },
-    preferSoftware: async () => { calls.push('prefer'); preferred = true; },
+    preferSoftware: async () => { calls.push('prefer'); preferred = true; metadataVisible = true; },
     loadMfa: async (_binding, phase) => structuredClone(store.get(phase) ?? null),
     createMfa: async (_binding, phase, value) => { calls.push(`save:${phase}`); if (store.has(phase)) return false;
       store.set(phase, structuredClone(value)); return true; },
     jwks: async () => structuredClone(jwks),
   };
-  return { t, calls, store, users, enroll: () => { enrolled = true; }, setClock: (n: number) => { clock = n; } };
+  return { t, calls, store, users, enroll: () => { enrolled = true; }, hideMfaMetadata: () => { metadataVisible = false; }, setClock: (n: number) => { clock = n; } };
 }
 
 describe('fixed fictional Cognito authority', () => {
@@ -136,6 +136,15 @@ describe('credential-safe fictional enrollment and actual MFA proof', () => {
     r.calls.length = 0;
     expect(await authenticateFictionalFixtures(r.t)).toMatchObject({ associateAttemptsCompleted: 0, freshWorkforceMfaChallengeVerified: true });
     expect(r.calls).not.toContain('verify'); expect(r.calls).not.toContain('associate');
+  });
+  it('recovers verified-but-unpreferred AWS metadata after setup expiry using exact fresh MFA proof and the same seed', async () => {
+    const r = rig(), verify = r.t.verifySoftware;
+    r.t.verifySoftware = async (...args) => { await verify(...args); r.hideMfaMetadata(); throw Error('setup continuation interrupted'); };
+    await expect(authenticateFictionalFixtures(r.t)).rejects.toThrow('setup continuation interrupted');
+    r.setClock(now + 91000); r.calls.length = 0;
+    expect(await authenticateFictionalFixtures(r.t)).toMatchObject({ associateAttemptsCompleted: 0, preferenceWritesCompleted: 1,
+      workforceMfaEnrollmentVerified: true, freshWorkforceMfaChallengeVerified: true });
+    expect(r.calls).not.toContain('associate'); expect(r.calls).not.toContain('verify');
   });
   it('refuses an expired unverified session rather than replacing the stored authenticator', async () => {
     const r = rig(); r.t.verifySoftware = async () => { throw Error('interrupted'); };

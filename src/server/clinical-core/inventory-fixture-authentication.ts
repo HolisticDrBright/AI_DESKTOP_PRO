@@ -84,6 +84,14 @@ export async function authenticateFictionalFixtures(t: FixtureAuthTransport) {
     if (role !== 'workforce' && enrolled) return refuse();
     let auth = await t.initiate(pool, a.audience, f.email, f.password);
     if (role !== 'workforce') { await tokens(t, auth, role, observed.subject, intent); continue; }
+    // Cognito can issue a software-token challenge after verification while
+    // AdminGetUser still omits the setting list until preference is enabled.
+    // Treat the exact challenge as a path to proof, not proof by itself. Never
+    // re-associate that verified token or let an expired setup session block
+    // fresh password-plus-code recovery from the already-persisted seed.
+    if (row(auth).ChallengeName === 'SOFTWARE_TOKEN_MFA') {
+      challenge(auth, 'SOFTWARE_TOKEN_MFA', observed.subject); enrolled = true;
+    }
     const binding: AuthBinding = { ...a, subject: observed.subject, personId: f.personId,
       organizationId: intent.organizationId, bindingSha256: fixtureBindingHash };
     let storedAdmission = await t.loadMfa(binding, 'admission');
@@ -136,8 +144,8 @@ export async function authenticateFictionalFixtures(t: FixtureAuthTransport) {
     await tokens(t, auth, role, observed.subject, intent);
     await t.verifyPrivateConfiguration();
     user = await t.readUser(pool, observed.subject);
-    if (inspectFixtureUser(user, f, intent.organizationId).subject !== observed.subject || !mfaStatus(user)) return refuse();
-    if (row(user).PreferredMfaSetting !== 'SOFTWARE_TOKEN_MFA') {
+    if (inspectFixtureUser(user, f, intent.organizationId).subject !== observed.subject) return refuse();
+    if (!mfaStatus(user) || row(user).PreferredMfaSetting !== 'SOFTWARE_TOKEN_MFA') {
       await t.preferSoftware(pool, observed.subject); preferences++;
     }
     user = await t.readUser(pool, observed.subject);

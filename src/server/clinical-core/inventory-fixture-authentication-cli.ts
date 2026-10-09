@@ -7,6 +7,16 @@ import { observeInventoryIdentityConfiguration } from './inventory-qualification
 import { fixtureIdentity, fixtureBindingHash, fixtureSecretName } from './inventory-qualification-fixtures';
 import { authenticateFictionalFixtures, mfaBindingHash, mfaSecretRoot } from './inventory-fixture-authentication';
 
+// Fixed operation/error classes only; never serialize the provider error.
+let operation = 'startup';
+const at = async <T>(name: string, work: () => Promise<T>): Promise<T> => { operation = name; return work(); };
+const safeErrorClass = (value: unknown) => {
+  const name = value && typeof value === 'object' && 'name' in value ? value.name : '';
+  return ['NotAuthorizedException', 'AccessDeniedException', 'UserNotFoundException', 'CodeMismatchException',
+    'ExpiredTokenException', 'TooManyRequestsException', 'InvalidParameterException', 'AbortError', 'TimeoutError'].includes(String(name))
+    ? String(name) : 'unclassified';
+};
+
 async function main() {
   if (process.argv.slice(2).join(' ') !== '--authenticate-fictional-fixtures') return inventoryRefuse('fictional_authentication_argument_refused');
   const config = { region: 'us-east-2', credentials: fromIni({ profile: 'ai-synthetic-member' }), maxAttempts: 1 };
@@ -31,28 +41,28 @@ async function main() {
   try {
     const result = await authenticateFictionalFixtures({
       now: () => Date.now(),
-      verifyPrivateConfiguration: async () => { await observeInventoryIdentityConfiguration(fixtureIdentity); },
-      loadIntent: () => load(fixtureSecretName, 'isolated-inventory-qualification-fixtures'),
-      readUser: (UserPoolId, Username) => cognito.send(new AdminGetUserCommand({ UserPoolId, Username }), options()),
-      initiate: (UserPoolId, ClientId, USERNAME, PASSWORD) => cognito.send(new AdminInitiateAuthCommand({
-        UserPoolId, ClientId, AuthFlow: 'ADMIN_USER_PASSWORD_AUTH', AuthParameters: { USERNAME, PASSWORD } }), options()),
-      respond: (UserPoolId, ClientId, USERNAME, ChallengeName, Session, code) => cognito.send(new AdminRespondToAuthChallengeCommand({
+      verifyPrivateConfiguration: () => at('configuration', async () => { await observeInventoryIdentityConfiguration(fixtureIdentity); }),
+      loadIntent: () => at('fixture_intent_read', () => load(fixtureSecretName, 'isolated-inventory-qualification-fixtures')),
+      readUser: (UserPoolId, Username) => at('user_read', () => cognito.send(new AdminGetUserCommand({ UserPoolId, Username }), options())),
+      initiate: (UserPoolId, ClientId, USERNAME, PASSWORD) => at('password_login', () => cognito.send(new AdminInitiateAuthCommand({
+        UserPoolId, ClientId, AuthFlow: 'ADMIN_USER_PASSWORD_AUTH', AuthParameters: { USERNAME, PASSWORD } }), options())),
+      respond: (UserPoolId, ClientId, USERNAME, ChallengeName, Session, code) => at('challenge_response', () => cognito.send(new AdminRespondToAuthChallengeCommand({
         UserPoolId, ClientId, ChallengeName, Session, ChallengeResponses: { USERNAME,
-          ...(code === undefined ? {} : { SOFTWARE_TOKEN_MFA_CODE: code }) } }), options()),
-      associate: Session => cognito.send(new AssociateSoftwareTokenCommand({ Session }), options()),
-      verifySoftware: (Session, UserCode) => cognito.send(new VerifySoftwareTokenCommand({ Session, UserCode,
-        FriendlyDeviceName: 'Fictional isolated qualification only' }), options()),
-      preferSoftware: async (UserPoolId, Username) => { await cognito.send(new AdminSetUserMFAPreferenceCommand({
-        UserPoolId, Username, SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true } }), options()); },
-      loadMfa: (binding, phase) => load(`${mfaSecretRoot}/${mfaBindingHash(binding)}/${phase}`, `isolated-fixture-mfa-${phase}`),
-      createMfa: async (binding, phase, value) => {
+          ...(code === undefined ? {} : { SOFTWARE_TOKEN_MFA_CODE: code }) } }), options())),
+      associate: Session => at('software_association', () => cognito.send(new AssociateSoftwareTokenCommand({ Session }), options())),
+      verifySoftware: (Session, UserCode) => at('software_verification', () => cognito.send(new VerifySoftwareTokenCommand({ Session, UserCode,
+        FriendlyDeviceName: 'Fictional isolated qualification only' }), options())),
+      preferSoftware: (UserPoolId, Username) => at('software_preference', async () => { await cognito.send(new AdminSetUserMFAPreferenceCommand({
+        UserPoolId, Username, SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true } }), options()); }),
+      loadMfa: (binding, phase) => at(`mfa_${phase}_read`, () => load(`${mfaSecretRoot}/${mfaBindingHash(binding)}/${phase}`, `isolated-fixture-mfa-${phase}`)),
+      createMfa: (binding, phase, value) => at(`mfa_${phase}_create`, async () => {
         try { await secrets.send(new CreateSecretCommand({ Name: `${mfaSecretRoot}/${mfaBindingHash(binding)}/${phase}`,
           ClientRequestToken: phase === 'admission' ? ('nonce' in value ? value.nonce : '') : ('admission' in value ? value.admission.nonce : ''),
           SecretString: JSON.stringify(value), Description: 'Create-only fictional authenticator custody, not a human authenticator',
           Tags: Object.entries(tags(`isolated-fixture-mfa-${phase}`)).map(([Key, Value]) => ({ Key, Value })) }), options()); return true; }
         catch (e) { if (errorName(e) === 'ResourceExistsException') return false; throw Error('fictional_mfa_custody_write_not_observed'); }
-      },
-      jwks: async issuer => {
+      }),
+      jwks: issuer => at('public_jwks_read', async () => {
         if (issuer !== fixtureIdentity.consumerIssuer && issuer !== fixtureIdentity.workforceIssuer) return inventoryRefuse('fictional_jwks_origin_refused');
         const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
         try {
@@ -69,14 +79,14 @@ async function main() {
           if (length !== null && Number(length) !== count) return inventoryRefuse('fictional_jwks_size_refused');
           return JSON.parse(Buffer.concat(chunks).toString('utf8'));
         } finally { clearTimeout(timer); }
-      },
+      }),
     });
     console.log(JSON.stringify(result));
   } finally { cognito.destroy(); secrets.destroy(); }
 }
 void main().catch(error => {
   const category = error instanceof InventoryQualificationError ? error.category : 'fictional_authentication_not_completed';
-  console.error(JSON.stringify({ status: 'not_completed', category, credentialsLoginVerified: false,
+  console.error(JSON.stringify({ status: 'not_completed', category, operation, errorClass: safeErrorClass(error), credentialsLoginVerified: false,
     workforceMfaEnrollmentVerified: false, physicalLoginVerified: false, acceptance: false, phiAllowed: false }));
   process.exitCode = 1;
 });
