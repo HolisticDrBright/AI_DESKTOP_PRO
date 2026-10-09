@@ -46,7 +46,7 @@ function save(file,bytes){
  finally{if(fd!==undefined)closeSync(fd);}check(bounded(file,4*1024*1024).equals(bytes),'save_readback');
 }
 export function readStandaloneEvidence(out,file,kind){
- check(['standalone-before','standalone-completed'].includes(kind)&&typeof file==='string'&&resolve(file)===resolve(out,basename(file))
+ check(['standalone-before','standalone-recovery','standalone-completed'].includes(kind)&&typeof file==='string'&&resolve(file)===resolve(out,basename(file))
   &&new RegExp('^'+kind+'-[a-f0-9]{64}\\.json$').test(basename(file)),'evidence_path');
  const bytes=bounded(file,4*1024*1024);check(basename(file)===kind+'-'+sha256(bytes)+'.json','evidence_digest');return bytes;
 }
@@ -131,7 +131,7 @@ export async function rehearseRegisteredStandaloneLive(root,mobileRoot,artifactD
     const next=Buffer.concat([stoppedJournal,Buffer.from(JSON.stringify(e)+'\n')]);check(next.length<=1024*1024,'journal_bound');
     const fd=openSync(c.journal,'a');try{writeFileSync(fd,JSON.stringify(e)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
     check(bounded(c.journal,1024*1024).equals(next),'journal_readback');stoppedJournal=next;return Buffer.from(next);},
-   save:async(kind,bytes)=>{sourceGuard();check(['standalone-before','standalone-completed'].includes(kind),'archive_kind');
+   save:async(kind,bytes)=>{sourceGuard();check(['standalone-before','standalone-recovery','standalone-completed'].includes(kind),'archive_kind');
     const file=resolve(out,kind+'-'+sha256(bytes)+'.json');save(file,bytes);return file;},
    verifyCreatedCustody:()=>{sourceGuard();check(owned,'new_custody_required');owned.verifyCreated();},
    verifyLocal:bytes=>{sourceGuard();owned.verifyLocal(bytes);},
