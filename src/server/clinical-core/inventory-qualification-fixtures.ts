@@ -14,7 +14,8 @@ export const fixtureIdentity = Object.freeze({
 export const fixtureBindingHash = inventorySha(inventoryCanonical(fixtureIdentity));
 export const fixtureSecretName = `alp/qualification/inventory-identities/${fixtureBindingHash}`;
 const roles = ['consumer', 'foreignConsumer', 'workforce'] as const;
-type Role = typeof roles[number];
+export type FixtureRole = typeof roles[number];
+type Role = FixtureRole;
 type Fixture = { email: string; password: string; personId: string };
 export type FixtureIntent = { contract: 'inventory-qualification-fixtures/1'; bindingSha256: string;
   organizationId: string; fixtures: Record<Role, Fixture> };
@@ -58,7 +59,7 @@ export function generateFixtureIntent(): FixtureIntent {
   return validateFixtureIntent({ contract: 'inventory-qualification-fixtures/1', bindingSha256: fixtureBindingHash,
     organizationId: randomUUID(), fixtures });
 }
-function inspectUser(raw: unknown, f: Fixture, organization: string) {
+export function inspectFixtureUser(raw: unknown, f: Fixture, organization: string) {
   const u = obj(raw);
   if (u.Enabled !== true || !['FORCE_CHANGE_PASSWORD', 'CONFIRMED'].includes(String(u.UserStatus))
     || !isInventoryCognitoSubject(u.Username) || !Array.isArray(u.UserAttributes)
@@ -97,12 +98,12 @@ export async function provisionFictionalInventoryFixtures(t: FixtureTransport) {
       created++;
       user = await t.readUser(pool, f.email);
     }
-    let observed = inspectUser(user, f, i.organizationId);
+    let observed = inspectFixtureUser(user, f, i.organizationId);
     if (!observed.confirmed) {
       await t.verifyPrivateConfiguration();
       await t.confirmNewUser(pool, f.email, f.password);
       confirmedNow++;
-      observed = inspectUser(await t.readUser(pool, f.email), f, i.organizationId);
+      observed = inspectFixtureUser(await t.readUser(pool, f.email), f, i.organizationId);
       if (!observed.confirmed) return refuse();
     }
     subjects[role] = observed.subject;
@@ -113,7 +114,7 @@ export async function provisionFictionalInventoryFixtures(t: FixtureTransport) {
   if (inventoryCanonical(i) !== inventoryCanonical(reread)) return refuse();
   for (const role of roles) {
     const pool = (role === 'workforce' ? fixtureIdentity.workforceIssuer : fixtureIdentity.consumerIssuer).split('/').at(-1)!;
-    const u = inspectUser(await t.readUser(pool, i.fixtures[role].email), i.fixtures[role], i.organizationId);
+    const u = inspectFixtureUser(await t.readUser(pool, i.fixtures[role].email), i.fixtures[role], i.organizationId);
     if (!u.confirmed || u.subject !== subjects[role]) return refuse();
   }
   return { contract: 'inventory-qualification-fixture-provisioning/1', bindingSha256: fixtureBindingHash,
