@@ -32,7 +32,8 @@ function pairs(value: unknown, key: string, field: string) {
 const types = new Set(['AWS::Logs::LogGroup', 'AWS::IAM::Role', 'AWS::IAM::Policy', 'AWS::Lambda::Function',
   'AWS::Lambda::Permission', 'AWS::Lambda::EventInvokeConfig', 'AWS::ApiGatewayV2::Integration', 'AWS::ApiGatewayV2::Route',
   'AWS::ApiGatewayV2::Authorizer', 'AWS::CloudWatch::Alarm', 'AWS::Events::Rule', 'AWS::DynamoDB::Table',
-  'AWS::S3::Bucket', 'AWS::S3::BucketPolicy', 'AWS::StepFunctions::StateMachine', 'AWS::SQS::Queue', 'AWS::SQS::QueuePolicy']);
+  'AWS::S3::Bucket', 'AWS::S3::BucketPolicy', 'AWS::StepFunctions::StateMachine', 'AWS::SQS::Queue', 'AWS::SQS::QueuePolicy',
+  'AWS::KMS::Key', 'AWS::SNS::Topic', 'AWS::SNS::TopicPolicy', 'AWS::ApiGatewayV2::Api', 'AWS::ApiGatewayV2::Stage']);
 const absent = Symbol('AWS::NoValue');
 type Context = { template: InventoryTemplate; parameters: Record<string, string>; refs: Record<string, string>; attributes: Record<string, string> };
 
@@ -123,6 +124,14 @@ function resourceAttributes(resources: InventoryStackResource[], template: Inven
     if (r.type === 'AWS::Lambda::Function') arn = `arn:aws:lambda:${region}:${account}:function:${r.physicalId}`;
     if (r.type === 'AWS::Logs::LogGroup') arn = `arn:aws:logs:${region}:${account}:log-group:${r.physicalId}:*`;
     if (r.type === 'AWS::S3::Bucket') arn = `arn:aws:s3:::${r.physicalId}`;
+    if (r.type === 'AWS::KMS::Key') {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(r.physicalId)) return inventoryRefuse('stack_physical_id_refused');
+      arn = `arn:aws:kms:${region}:${account}:key/${r.physicalId}`;
+    }
+    if (r.type === 'AWS::SNS::Topic') {
+      if (!new RegExp(`^arn:aws:sns:${region}:${account}:[A-Za-z0-9_-]+$`).test(r.physicalId)) return inventoryRefuse('stack_physical_id_refused');
+      arn = r.physicalId;
+    }
     if (r.type === 'AWS::DynamoDB::Table') arn = `arn:aws:dynamodb:${region}:${account}:table/${r.physicalId}`;
     if (r.type === 'AWS::Events::Rule') {
       const bus = template.Resources[r.logicalId].Properties.EventBusName;
@@ -192,6 +201,10 @@ export function inspectInventoryStackDeclarations(candidate: InventoryCandidateT
     if (r.type === 'AWS::StepFunctions::StateMachine' && properties.StateMachineName !== undefined
       && r.physicalId !== `arn:aws:states:${region}:${account}:stateMachine:${properties.StateMachineName}`) return inventoryRefuse('stack_physical_id_refused');
     if (r.type === 'AWS::SQS::Queue' && properties.QueueName !== undefined && context.attributes[`${r.logicalId}.QueueName`] !== properties.QueueName) return inventoryRefuse('stack_physical_id_refused');
+    if (r.type === 'AWS::SNS::Topic' && properties.TopicName !== undefined
+      && r.physicalId !== `arn:aws:sns:${region}:${account}:${properties.TopicName}`) return inventoryRefuse('stack_physical_id_refused');
+    if (r.type === 'AWS::ApiGatewayV2::Api' && !/^[a-z0-9]{10}$/.test(r.physicalId)) return inventoryRefuse('stack_physical_id_refused');
+    if (r.type === 'AWS::ApiGatewayV2::Stage' && r.physicalId !== properties.StageName) return inventoryRefuse('stack_physical_id_refused');
     return { ...r, properties };
   });
   const outputs: Record<string, string> = {};
