@@ -17,18 +17,30 @@ const outputs = { PhiAllowed: 'false', Activation: 'blocked', QualificationExecu
 const foundation = { StackStatus: 'CREATE_COMPLETE', StackId: 'arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-qualification-foundation/fictional',
   Outputs: Object.entries(outputs).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) };
 const build = { sourceCommit: '1'.repeat(40), clean: true }, confirm = '--confirm-fictional-adopted-inventory-upgrade';
-const result = (command: 'inspect' | 'rehearse' | 'upgrade'): AdoptedInventoryUpgradeResult => ({
+const result = (command: AdoptedInventoryUpgradeResult['command']): AdoptedInventoryUpgradeResult => ({
   contract: 'adopted-plan-inventory-schema-upgrade/1', command, execution: 'qualification', phiAllowed: false, activation: 'blocked',
   observedMigrationCount: command === 'upgrade' ? 107 : 106, applied: command === 'upgrade', alreadyApplied: false, rolledBack: command === 'rehearse',
   dataPreserved: true, historicalSchemaPreserved: true, tableCount: 209, rowCount: 3, dataSha256: 'a'.repeat(64), historicalSchemaSha256: 'b'.repeat(64),
   fromReleaseSha256: ADOPTED_INVENTORY_UPGRADE.from, toReleaseSha256: ADOPTED_INVENTORY_UPGRADE.to,
 });
 function fixture() {
+  let migrated = false;
   const database: ClinicalCoreDatabase = { transaction: async () => { throw Error('fictional transport is not hosted SQL evidence'); } };
+  const custody = { verify: vi.fn(async () => {}), record: vi.fn(async (_stage: string, _observation: AdoptedInventoryUpgradeResult) => {}), finding: vi.fn(async () => {}),
+    settle: vi.fn(async () => ({ runId: '1'.repeat(32), journalSha256: 'e'.repeat(64), custodySettled: true as const })) };
+  const recovery = { baseline: result('inspect-settled'), writeAdmitted: true, verify: vi.fn(async () => {}),
+    settle: vi.fn(async () => ({ runId: '1'.repeat(32), journalSha256: 'e'.repeat(64), custodySettled: true as const, originalWriteOutcome: 'unknown' as const })) };
+  const fence = { verify: vi.fn(async () => {}) };
   return {
     observeCaller: vi.fn(() => caller), observeFoundation: vi.fn(() => ({ Stacks: [foundation] })),
     loadMigrations: vi.fn(() => migrations.map(m => ({ ...m }))), createDatabase: vi.fn(() => database),
-    run: vi.fn<typeof runAdoptedInventorySchemaUpgrade>(async (_db, _m, _c, command) => result(command)),
+    run: vi.fn<typeof runAdoptedInventorySchemaUpgrade>(async (_db, _m, _c, command) => {
+      if (command === 'upgrade') migrated = true;
+      return { ...result(command), ...(command === 'inspect-settled' && migrated ? { observedMigrationCount: 107, alreadyApplied: true } : {}) };
+    }),
+    withFence: async <T>(work: (f: typeof fence) => Promise<T>) => work(fence),
+    createCustody: vi.fn(async () => custody), openRecoveryCustody: vi.fn(async () => recovery),
+    custody, recovery, fence,
   };
 }
 describe('fixed synthetic inventory operator admission, fictional observations only', () => {
@@ -69,29 +81,34 @@ describe('fixed synthetic inventory operator admission, fictional observations o
   });
   it('rehearses and reobserves before passing the exact prestate admission to one upgrade attempt', async () => {
     const d = fixture(); const receipt = await executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d);
-    expect(d.observeCaller).toHaveBeenCalledTimes(2); expect(d.observeFoundation).toHaveBeenCalledTimes(2);
-    expect(d.run.mock.calls.map(c => c[3])).toEqual(['rehearse', 'upgrade']);
-    expect(d.run.mock.calls[1][4]).toEqual({ observedMigrationCount: 106, rowCount: 3, dataSha256: 'a'.repeat(64), historicalSchemaSha256: 'b'.repeat(64) });
+    expect(d.observeCaller.mock.calls.length).toBeGreaterThan(2); expect(d.observeFoundation).toHaveBeenCalledTimes(d.observeCaller.mock.calls.length);
+    expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'rehearse', 'upgrade', 'inspect-settled', 'inspect-settled']);
+    expect(d.run.mock.calls[2][4]).toEqual({ observedMigrationCount: 106, rowCount: 3, dataSha256: 'a'.repeat(64), historicalSchemaSha256: 'b'.repeat(64) });
+    expect(d.custody.record.mock.calls.map(c => c[0])).toEqual(['rehearsal', 'write_admitted', 'write_reply', 'readback_one', 'readback_two']);
+    expect(d.custody.settle).toHaveBeenCalledTimes(1);
     expect(receipt).toMatchObject({ applied: true, rehearsal: { rolledBack: true }, phiAllowed: false, operatorScope: 'prepared_qualification_only' });
     expect(JSON.stringify(receipt)).not.toContain('DatabaseSecretArn');
   });
   it('refuses a changed principal or foundation after rehearsal without admitting a write', async () => {
     for (const changed of ['principal', 'cluster']) {
       const d = fixture();
-      if (changed === 'principal') d.observeCaller.mockReturnValueOnce(caller).mockReturnValue({ ...caller, Arn: caller.Arn + '-other' });
-      else d.observeFoundation.mockReturnValueOnce({ Stacks: [foundation] }).mockReturnValue({ Stacks: [{ ...foundation,
-        Outputs: foundation.Outputs.map(o => o.OutputKey === 'DatabaseClusterArn' ? { ...o, OutputValue: o.OutputValue + '-other' } : o) }] });
+      let rehearsed = false;
+      d.run.mockImplementation(async (_db, _m, _c, command) => { if (command === 'rehearse') rehearsed = true; return result(command); });
+      if (changed === 'principal') d.observeCaller.mockImplementation(() => rehearsed ? { ...caller, Arn: caller.Arn + '-other' } : caller);
+      else d.observeFoundation.mockImplementation(() => ({ Stacks: [rehearsed ? { ...foundation,
+        Outputs: foundation.Outputs.map(o => o.OutputKey === 'DatabaseClusterArn' ? { ...o, OutputValue: o.OutputValue + '-other' } : o) } : foundation] }));
       await expect(executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).rejects.toThrow('boundary_refused');
-      expect(d.run.mock.calls.map(c => c[3])).toEqual(['rehearse']);
+      expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'rehearse']);
+      expect(d.custody.settle).not.toHaveBeenCalled();
     }
   });
   it('refuses a false preservation or rollback report before admitting a write', async () => {
     for (const change of [{ rolledBack: false }, { historicalSchemaPreserved: false }, { dataPreserved: false }, { phiAllowed: true },
       { observedMigrationCount: 105 }, { observedMigrationCount: 107 }, { alreadyApplied: true },
       { tableCount: 208 }, { historicalSchemaSha256: 'invalid' }]) {
-      const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) => ({ ...result(command), ...change }) as AdoptedInventoryUpgradeResult);
+      const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) => ({ ...result(command), ...(command === 'rehearse' ? change : {}) }) as AdoptedInventoryUpgradeResult);
       await expect(executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).rejects.toThrow('verification_failed');
-      expect(d.run.mock.calls.map(c => c[3])).toEqual(['rehearse']);
+      expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'rehearse']);
     }
   });
   it('rejects a syntactically valid successor report that contradicts the actual rehearsal', async () => {
@@ -100,15 +117,16 @@ describe('fixed synthetic inventory operator admission, fictional observations o
       const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) =>
         ({ ...result(command), ...(command === 'upgrade' ? change : {}) }) as AdoptedInventoryUpgradeResult);
       await expect(executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).rejects.toThrow('verification_failed');
-      expect(d.run.mock.calls.map(c => c[3])).toEqual(['rehearse', 'upgrade']);
+      expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'rehearse', 'upgrade']);
     }
   });
-  it('accepts a validated already-applied inspection and rehearsed no-write replay', async () => {
+  it('accepts a validated already-applied inspection but refuses a new writer over that state', async () => {
     const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) => ({
       ...result(command), observedMigrationCount: 107, alreadyApplied: true, applied: false,
     }));
     expect(await executeAdoptedInventoryUpgradeCommand(['inspect'], build, d)).toMatchObject({ alreadyApplied: true, applied: false });
-    expect(await executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).toMatchObject({ alreadyApplied: true, applied: false });
+    await expect(executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).rejects.toThrow('history_refused');
+    expect(d.createCustody).not.toHaveBeenCalled();
   });
   it('never retries a write after an uncertain provider response', async () => {
     const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) => {
@@ -116,6 +134,40 @@ describe('fixed synthetic inventory operator admission, fictional observations o
       return result(command);
     });
     await expect(executeAdoptedInventoryUpgradeCommand(['upgrade', confirm], build, d)).rejects.toThrow('fictional lost commit response');
-    expect(d.run.mock.calls.map(c => c[3])).toEqual(['rehearse', 'upgrade']);
+    expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'rehearse', 'upgrade']);
+    expect(d.custody.finding).toHaveBeenCalledTimes(1); expect(d.custody.settle).not.toHaveBeenCalled();
+  });
+  it('refuses an absent native fence or custody before any AWS observation', async () => {
+    for (const command of ['upgrade', 'reconcile']) {
+      const d = fixture();
+      await expect(executeAdoptedInventoryUpgradeCommand([command, command === 'upgrade' ? confirm : '--reconcile-fictional-adopted-inventory-upgrade'],
+        build, { ...d, withFence: undefined })).rejects.toThrow('custody_refused');
+      expect(d.observeCaller).not.toHaveBeenCalled(); expect(d.run).not.toHaveBeenCalled();
+    }
+  });
+  it.each([106, 107])('reconciles preserved state %s with three locked observations and zero writes', async count => {
+    const d = fixture(); d.run.mockImplementation(async (_db, _m, _c, command) => ({
+      ...result(command), observedMigrationCount: count, alreadyApplied: count === 107,
+    }));
+    const r = await executeAdoptedInventoryUpgradeCommand(['reconcile', '--reconcile-fictional-adopted-inventory-upgrade'], build, d);
+    expect(r).toMatchObject({ contract: 'adopted-plan-inventory-upgrade-reconciliation/1', originalWriteOutcome: 'unknown',
+      observedMigrationCount: count, databaseMutationPerformed: false, retryPerformed: false, custodySettled: true, phiAllowed: false });
+    expect(d.run.mock.calls.map(c => c[3])).toEqual(['inspect-settled', 'inspect-settled', 'inspect-settled']);
+    expect(d.createCustody).not.toHaveBeenCalled(); expect(d.recovery.settle).toHaveBeenCalledTimes(1);
+  });
+  it('never settles changed, unadmitted, inconsistent or unverified recovery observations', async () => {
+    for (const fault of ['data', 'schema', 'rows', 'unadmitted', 'unstable', 'guard']) {
+      const d = fixture(); let pass = 0;
+      d.run.mockImplementation(async (_db, _m, _c, command) => ({ ...result(command), observedMigrationCount: 107, alreadyApplied: true,
+        ...(fault === 'data' ? { dataSha256: 'c'.repeat(64) } : {}),
+        ...(fault === 'schema' ? { historicalSchemaSha256: 'c'.repeat(64) } : {}),
+        ...(fault === 'rows' ? { rowCount: 4 } : {}),
+        ...(fault === 'unstable' && pass++ > 0 ? { observedMigrationCount: 106, alreadyApplied: false } : {}),
+      }));
+      if (fault === 'unadmitted') d.recovery.writeAdmitted = false;
+      if (fault === 'guard') d.recovery.verify.mockRejectedValue(Error('fictional changed custody'));
+      await expect(executeAdoptedInventoryUpgradeCommand(['reconcile', '--reconcile-fictional-adopted-inventory-upgrade'], build, d)).rejects.toThrow();
+      expect(d.recovery.settle).not.toHaveBeenCalled(); expect(d.run.mock.calls.every(c => c[3] === 'inspect-settled')).toBe(true);
+    }
   });
 });

@@ -73,7 +73,8 @@ jobs:
         run: |
           npx vitest run src/server/clinical-core/owned-plan-inventory.database.test.ts src/server/clinical-core/adopted-plan-inventory-artifact.test.ts
           npm run build:adopted-plan-inventory-candidate
-          npx vitest run src/server/clinical-core/adopted-plan-inventory-schema-upgrade.database.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-command.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-artifact.test.ts
+          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-schema-upgrade.database.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-command.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-artifact.test.ts
+          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-native-custody.test.ts src/server/clinical-core/adopted-plan-inventory-operator-fence.database.test.ts
           npm run build:adopted-plan-inventory-upgrade
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh

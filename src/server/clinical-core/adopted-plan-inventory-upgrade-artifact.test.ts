@@ -24,6 +24,8 @@ describe('actual bundled inventory upgrade operator, no AWS requests', () => {
       toReleaseSha256: ADOPTED_INVENTORY_UPGRADE.to, execution: 'qualification_only',
       phiAllowed: false, activation: 'blocked', migrationPerformed: false,
       mandatoryRollbackRehearsal: true, postRehearsalPrestateRecheck: true, automaticWriteRetry: false,
+      durableNativeCustody: true, sharedOperatorNamespace: true, readOnlyInterruptionReconciliation: true,
+      reconciliationRequiresMigrationLocks: true, hostedRecoveryQualified: false,
     });
     expect(manifest.operatorSha256).toBe(createHash('sha256').update(readFileSync(resolve(out, 'index.cjs'))).digest('hex'));
     const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
@@ -37,11 +39,15 @@ describe('actual bundled inventory upgrade operator, no AWS requests', () => {
     const operator = readFileSync('src/server/clinical-core/adopted-plan-inventory-schema-upgrade-operator.ts', 'utf8');
     expect(operator).toContain('loadMigrations: () => __ADOPTED_INVENTORY_MIGRATIONS__');
     expect(operator).not.toMatch(/readFile|node:fs|process\.env|loadMigrations\s*:\s*[^\n]*resolve\(/);
+    expect(operator).toContain('root: INVENTORY_OPERATOR_SHARED_ROOT, operatorFile: __filename');
+    expect(operator).toContain('withInventoryOperatorFence(database, work)');
+    expect(bundle).toContain('inventory-upgrade-reconciliation.lock');
   });
   it('refuses every override before observing AWS even from an unrelated directory', () => {
     for (const args of [[], ['apply'], ['inspect', '--profile=production'], ['inspect', '--database=clinical_core'],
       ['upgrade'], ['upgrade', '--yes'], ['upgrade', '--confirm-fictional-adopted-inventory-upgrade', '--skip-rehearsal'],
-      ['rehearse', '--activate'], ['inspect', '--phi-allowed=true']]) {
+      ['rehearse', '--activate'], ['inspect', '--phi-allowed=true'], ['reconcile'],
+      ['reconcile', '--yes'], ['reconcile', '--reconcile-fictional-adopted-inventory-upgrade', '--root=other']]) {
       const r = spawnSync(process.execPath, [resolve(out, 'index.cjs'), ...args], {
         cwd: tmpdir(), encoding: 'utf8', timeout: 10000,
         env: { ...process.env, PATH: '', AWS_PROFILE: 'not-an-authority', AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' },

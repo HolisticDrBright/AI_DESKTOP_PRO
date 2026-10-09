@@ -62,6 +62,15 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
       historicalSchemaSha256: before.historicalSchemaSha256, dataSha256: before.dataSha256, rowCount: 3 });
     await predecessor();
   });
+  it('settlement inspection takes migration/table locks under READ COMMITTED without DDL or DML', async () => {
+    const queries: string[] = [];
+    const r = await runAdoptedInventorySchemaUpgrade(db(async sql => { queries.push(sql); }), migrations, c, 'inspect-settled');
+    expect(r).toMatchObject({ command: 'inspect-settled', observedMigrationCount: 106, applied: false });
+    expect(queries[0]).toBe('set transaction isolation level read committed');
+    expect(queries.filter(q => q.startsWith('select pg_try_advisory')).length).toBe(2);
+    expect(queries.some(q => q.startsWith('lock table '))).toBe(true);
+    expect(queries.some(q => /^(create|alter|insert|update|delete)/i.test(q))).toBe(false);
+  });
   it('refuses activation, a wrong account/region/database or artifact before opening a transaction', async () => {
     let opened = false;
     const never: ClinicalCoreDatabase = { transaction: async () => { opened = true; throw Error('must not open'); } };
@@ -84,12 +93,12 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     } as ClinicalCoreTransaction)) };
     await expect(run('rehearse', locked)).rejects.toThrow('upgrade_busy'); await predecessor();
   });
-  it('refuses ledger drift admitted during table-lock waiting before successor DDL', async () => {
+  it.each(['rehearse', 'inspect-settled'] as const)('refuses ledger drift during %s table-lock waiting before certification', async mode => {
     const queries: string[] = [];
-    await expect(run('rehearse', db(async (sql, tx) => {
+    await expect(runAdoptedInventorySchemaUpgrade(db(async (sql, tx) => {
       queries.push(sql);
       if (sql.startsWith('lock table ')) await tx.query('update clinical_core.schema_migrations set sha256=$1 where version=$2', ['f'.repeat(64), migrations[0].version]);
-    }))).rejects.toMatchObject({ category: 'history_refused', stage: 'writer_history' });
+    }), migrations, c, mode)).rejects.toMatchObject({ category: 'history_refused', stage: 'writer_history' });
     expect(queries[0]).toBe('set transaction isolation level read committed');
     expect(queries.some(q => /^create function/i.test(q))).toBe(false); await predecessor();
   });

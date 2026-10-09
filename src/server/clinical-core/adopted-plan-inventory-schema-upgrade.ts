@@ -22,7 +22,7 @@ const FUNCTIONS = [
 const LEDGER = 'clinical_core.schema_migrations';
 const sha = (v: string) => createHash('sha256').update(v).digest('hex');
 type Category = 'boundary_refused' | 'artifact_refused' | 'history_refused' | 'inventory_refused'
-  | 'upgrade_busy' | 'data_changed' | 'verification_failed' | 'upgrade_failed';
+  | 'upgrade_busy' | 'data_changed' | 'verification_failed' | 'upgrade_failed' | 'custody_refused' | 'recovery_refused';
 export class AdoptedInventoryUpgradeError extends Error {
   constructor(readonly category: Category, readonly stage?: string) { super(category); }
 }
@@ -143,7 +143,7 @@ async function data(tx: ClinicalCoreTransaction, tables: Table[]) {
   return { rows: rows.rows, sha256: sha(JSON.stringify({ data: rows.sha256, historicReceipts: ledger.digest })) };
 }
 export type AdoptedInventoryUpgradeResult = {
-  contract: 'adopted-plan-inventory-schema-upgrade/1'; command: 'inspect' | 'rehearse' | 'upgrade';
+  contract: 'adopted-plan-inventory-schema-upgrade/1'; command: 'inspect' | 'inspect-settled' | 'rehearse' | 'upgrade';
   execution: 'qualification'; phiAllowed: false; activation: 'blocked';
   observedMigrationCount: number; applied: boolean; alreadyApplied: boolean; rolledBack: boolean;
   dataPreserved: true; historicalSchemaPreserved: true; tableCount: number; rowCount: number;
@@ -155,12 +155,12 @@ class RehearsalRollback extends Error {
   constructor(readonly result: AdoptedInventoryUpgradeResult) { super('inventory_rehearsal_rollback'); }
 }
 export async function runAdoptedInventorySchemaUpgrade(database: ClinicalCoreDatabase, supplied: ClinicalCoreMigration[],
-  configuration: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade',
+  configuration: QualificationUpgradeConfiguration, command: AdoptedInventoryUpgradeResult['command'],
   suppliedAdmission?: AdoptedInventoryAdmission): Promise<AdoptedInventoryUpgradeResult> {
   const migrations = supplied.map(m => ({ ...m })), c = { ...configuration };
   const admission = suppliedAdmission ? { ...suppliedAdmission } : undefined;
   assertAdoptedInventoryUpgrade(c, migrations);
-  if (!['inspect', 'rehearse', 'upgrade'].includes(command)) fail('boundary_refused');
+  if (!['inspect', 'inspect-settled', 'rehearse', 'upgrade'].includes(command)) fail('boundary_refused');
   if (command === 'upgrade' && (!admission || ![106, 107].includes(admission.observedMigrationCount)
     || !Number.isSafeInteger(admission.rowCount) || admission.rowCount < 0
     || !/^[a-f0-9]{64}$/.test(admission.dataSha256) || !/^[a-f0-9]{64}$/.test(admission.historicalSchemaSha256))) fail('boundary_refused');
@@ -189,7 +189,10 @@ export async function runAdoptedInventorySchemaUpgrade(database: ClinicalCoreDat
       stage = 'rehearsal_admission';
       if (command === 'upgrade' && (admission!.observedMigrationCount !== count || admission!.rowCount !== before.rows
         || admission!.dataSha256 !== before.sha256 || admission!.historicalSchemaSha256 !== beforeSchema)) fail('data_changed');
-      const applied = command !== 'inspect' && count === 106;
+      // Settlement inspection takes the actual writer/table locks under READ
+      // COMMITTED so a just-finished writer cannot be hidden by an earlier
+      // repeatable-read snapshot. It has no DDL/DML branch.
+      const applied = (command === 'rehearse' || command === 'upgrade') && count === 106;
       if (applied) {
         stage = 'migration_ddl'; for (const statement of splitPostgresStatements(migrations[106].sql)) await tx.query(statement);
         stage = 'ledger_receipt'; const m = migrations[106];
