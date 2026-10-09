@@ -407,6 +407,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
         timeout-minutes: 10
       - run: npm run build:clinical
+      - name: Built framework hydration, refused program APIs and recording headers (no credentials or provider)
+        run: APP_EDITION=clinical npm run test:e2e -- e2e/framework-release-boundary.spec.ts
       # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers,
       # AND CLINICAL_CONTRACT_FIXTURE=1. The point of the job is that none
       # of them — not the client-shipped NEXT_PUBLIC_* one, and not the

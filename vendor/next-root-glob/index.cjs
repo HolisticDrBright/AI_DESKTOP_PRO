@@ -6,7 +6,7 @@ const {isAbsolute,parse}=require('node:path');
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- Literal directory lookup is synchronous to match the Next caller.
 const {statSync}=require('node:fs');
 
-// Next 15.5.25's only fast-glob call is get-root-dirs.js:
+// Next 15.5.27's only fast-glob call is get-root-dirs.js:
 // globSync(pattern, {onlyDirectories:true}). Do not silently claim to provide
 // fast-glob's general API. A changed upstream consumer must fail its CI pin.
 function globSync(pattern,options){

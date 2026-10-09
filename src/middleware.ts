@@ -4,8 +4,9 @@ import { AdapterError } from "@/adapters/errors";
 import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixture";
 
 /**
- * Global authentication lifecycle (P0). LIVE mode only — the demo runs with no
- * auth and this middleware steps aside entirely.
+ * Global authentication lifecycle (P0) for the clinical-only repository.
+ * The demo is a separate product. The retired public live-mode flag must not
+ * disable sign-in or refresh handling in this clinical build.
  *
  * On every app request:
  *  - fully signed out → pages redirect to /login?next=…; APIs answer their
@@ -20,9 +21,6 @@ import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixtur
  *    the session; downstream states handle unavailability honestly
  */
 
-const LIVE =
-  process.env.NEXT_PUBLIC_USE_LIVE_API === "true" ||
-  process.env.NEXT_PUBLIC_USE_LIVE_API === "1";
 const WEEK = 60 * 60 * 24 * 7;
 const REFRESH_WINDOW_MS = 10 * 60_000;
 /**
@@ -57,7 +55,7 @@ function loginRedirect(req: NextRequest): NextResponse {
   const url = req.nextUrl.clone();
   url.pathname = "/login";
   url.search = `?next=${encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search)}`;
-  return NextResponse.redirect(url);
+  return NextResponse.redirect(url, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function middleware(req: NextRequest) {
@@ -71,8 +69,6 @@ export async function middleware(req: NextRequest) {
       },
     );
   }
-  if (!LIVE) return NextResponse.next();
-
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api/");
   // Public auth pages: reachable signed-out (reset links arrive by email).
@@ -91,6 +87,12 @@ export async function middleware(req: NextRequest) {
   if (!access && !refresh) {
     if (!isApi && !isLogin && !HAS_ENV_FALLBACK) return loginRedirect(req);
     return NextResponse.next();
+  }
+
+  if (expired && !refresh) {
+    const res = !isApi && !isLogin && !HAS_ENV_FALLBACK ? loginRedirect(req) : NextResponse.next();
+    clearAuthCookies(res);
+    return res;
   }
 
   if ((expired || nearExpiry || !access) && refresh) {
