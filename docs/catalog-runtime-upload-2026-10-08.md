@@ -34,7 +34,17 @@ The actual read-only predecessor result at source `14867ea` remains recorded sep
 
 Hosted CI completed successfully for parent source `14867eaad3938a398a1ae25d94593714f3961128` in runs `37885067052` and `37885070572`, and documentation head `4f87e539b2becdc19228330abda7fa7d3669cae6` in runs `37885488182` and `37885493014`. Those results do not qualify this later upload increment or replace hosted feature acceptance.
 
-## Work still required
+## Actual AWS upload
+
+At clean source `65e248f6ecd84a442b1511c52087cd708d7f792b`, paired with unchanged V2 `e92116b154dd1a206262926388cffe90ac5c06ce`, the actual operator completed successfully at `2026-10-09T05:14:02.819Z`. Its own fresh preflight completed at `05:12:06.931Z`. Admission, source/principal/custody checks, repeated complete control verification and encrypted exact-version byte readback all passed within the unchanged freshness limit.
+
+Run `25219310e8aa2126b58cb42a99591ff5` uploaded ZIP SHA-256 `ef9f9d38b755e0aa62da13a848181cc586988ba5bed4c328ab7948114abc27e3`, 1,874,730 bytes, to S3 version `d8uA5e4HL6vnpWXr9UiWYITVp2VeiU42`. The preserved original receipt and committed `docs/evidence/2026-10-08-catalog-runtime-upload.json` have identical SHA-256 `c59155bd377fdaeb53972c0f3f02c09a041351c3cd30c32913ce28b51b6ae08c`. The original journal remains in the preserved checkout's operation directory. Custody settled and a separate filesystem check found no shared lock files.
+
+The latest identity API remains the prior `9597fcb` artifact. No change set was created, no API was deployed, no schema changed and no recovery, feature, erasure or physical-device acceptance occurred. PHI and paid mobile builds remain off. Later documentation commits do not rename this tested and uploaded source; `DESKTOP_CATALOG_RUNTIME_FROZEN_65e248f` preserves it for independent reconstruction.
+
+An independent build from that clean frozen checkout reproduced the same ZIP digest and byte count after the upload. Full lint finished with zero errors and zero warnings. Hosted CI runs `37887166901` and `37887163408` at `65e248f` remain in progress at the last observation; no terminal success is claimed.
+
+## Remaining engineering
 
 After a successful live artifact upload, implement and verify the distinct catalog-runtime code-only proposal, execution, reconciliation and recovery path. Do not use the older fixed predecessor profile or alter observations to make it accept the new predecessor. Then qualify the deployed identity and catalog runtimes, implement authoritative owner-adopted plan inventory, and prove complete ingredients come from the same actual target. Program supplement steps remain held until that inventory is available.
 
