@@ -184,6 +184,9 @@ describe("real catalog SQL, review transitions and API-role RLS (local, not host
     expect((await page(api, "production-clinical")).products.map(p => p.stableId)).toEqual([manifest.products[0]!.stableId]);
   });
 
+  // This compatibility case boots a second database, applies its full legacy
+  // schema and reviews two releases before comparing API and raw RLS reads.
+  // Bound that whole operation without relaxing provider/runtime deadlines.
   it("the reader repair also withholds an obsolete destination on the unchanged registered two-migration schema", async () => {
     const legacy = new PGlite({ extensions: { pgcrypto } });
     try {
@@ -211,7 +214,7 @@ describe("real catalog SQL, review transitions and API-role RLS (local, not host
         return (await tx.query("select offer_stable_id from commercial_reference.affiliate_offer_versions")).rows;
       })).toHaveLength(1);
     } finally { await legacy.close(); }
-  });
+  }, 30000);
 
   it("a privileged template read returns only the current version's steps", async () => {
     const key = `case_${++serial}`;

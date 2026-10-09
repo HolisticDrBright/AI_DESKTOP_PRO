@@ -56,12 +56,15 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     });
     expect(queries[0]).toContain('read only'); expect(queries.some(q => /^(create|alter|insert|update|delete)/i.test(q))).toBe(false);
   });
+  // These compound cases inspect all 209 historical tables before/after real
+  // DDL and rollback. Budget the whole embedded-DB test, not an individual SQL
+  // request; the operator's lock/statement deadlines remain unchanged.
   it('rehearses actual DDL and verifies the complete historical schema and rows after rollback', async () => {
     const before = await run('inspect');
     expect(await run('rehearse')).toMatchObject({ observedMigrationCount: 106, applied: false, rolledBack: true,
       historicalSchemaSha256: before.historicalSchemaSha256, dataSha256: before.dataSha256, rowCount: 3 });
     await predecessor();
-  });
+  }, 30000);
   it('settlement inspection takes migration/table locks under READ COMMITTED without DDL or DML', async () => {
     const queries: string[] = [];
     const r = await runAdoptedInventorySchemaUpgrade(db(async sql => { queries.push(sql); }), migrations, c, 'inspect-settled');
@@ -108,7 +111,7 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     try { await expect(runAdoptedInventorySchemaUpgrade(db(), migrations, c, 'upgrade', rehearsal)).rejects.toMatchObject({ category: 'data_changed', stage: 'rehearsal_admission' }); }
     finally { await pg.query("update clinical_core.patient_records set first_name='Fictional' where id=$1", [patient]); }
     await predecessor();
-  });
+  }, 30000);
   it.each([
     "update clinical_core.patient_records set first_name='FICTIONAL mutation'",
     'grant select(first_name) on clinical_core.patient_records to clinical_core_api',

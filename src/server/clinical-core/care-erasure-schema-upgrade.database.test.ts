@@ -151,6 +151,9 @@ describe('exact preserving synthetic staging erasure successor', () => {
     await expect(run('upgrade', atReceipt(change))).rejects.toThrow('data_changed');
     expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
   });
+  // Seeding 12,001 rows plus complete before/rollback/after fingerprints is a
+  // compound embedded-DB operation. Keep every row and protection assertion;
+  // this test budget does not change the runtime database deadlines.
   it('detects a changed row beyond a 5k prefix without weakening append-only audit protections', async () => {
     await pg.query(`insert into clinical_reference.knowledge_sources(stable_id,environment)
       select 'src_fictional_tail_'||n,'synthetic-staging' from generate_series(1,12001) n`);
@@ -161,7 +164,7 @@ describe('exact preserving synthetic staging erasure successor', () => {
     expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
     // Leave these fictional rows for replay/preservation coverage; no trigger
     // or immutability guard is disabled to manufacture the failure.
-  });
+  }, 30000);
   it('never treats a bounded prefix as complete data-preservation evidence', async () => {
     const overBound: ClinicalCoreDatabase = { transaction: work => database().transaction(tx => work({ query: async <Row extends Record<string, unknown>>
       (s: string, p: readonly unknown[] = []) => {
