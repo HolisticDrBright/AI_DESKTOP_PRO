@@ -11584,10 +11584,22 @@ createServer(async (req, res) => {
       const { note, ...rest } = publicVisit(visit);
       return { ...rest, flags: [], quickNotes: "", noteHistory: [], note: note ? { status: note.status, source: note.source, zoomSummaryId: note.zoomSummaryId, revision: note.revision, importedAt: note.importedAt, signedAt: note.signedAt, signedBy: note.signedBy } : null };
     };
-    const newVisit = (appointmentId, binding) => ({
+    // The Lambda verifies a desktop-booked appointment INSIDE the AWS boundary
+    // through the compatibility calendar; the fixture consults its own
+    // calendar the same way. Not there, not telehealth, or closed → refused.
+    const calendarAppointment = (appointmentId, mode) => {
+      seedScheduleFor(new Date().toISOString());
+      const row = scheduleAppointments.find((appointment) => appointment.id === appointmentId && appointment.organizationId === "org-fixture");
+      if (!row) return { error: 404, code: "not_found" };
+      if (row.appointmentType !== "telehealth") return { error: 400, code: "request_invalid" };
+      if (mode === "mutate" && ["cancelled", "no_show"].includes(row.status)) return { error: 409, code: "appointment_cancelled" };
+      return { row };
+    };
+    const newVisit = (appointmentId, binding, row) => ({
       appointmentId, organizationId: "org-fixture", requestId: binding.requestId ?? null, consumerPersonId: null,
-      scheduledStart: binding.start ?? null, scheduledEnd: binding.end ?? null, timeZone: binding.timeZone ?? null,
-      status: "scheduled", consents: [], meetingLease: null, providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null,
+      patientRecordId: row?.patientId ?? null, practitionerUserId: row?.practitionerUserId ?? null,
+      scheduledStart: row?.startsAt ?? null, scheduledEnd: row?.endsAt ?? null, timeZone: binding.timeZone ?? null,
+      status: "scheduled", consents: [], meetingLease: null, providerMeetingId: null, providerMeetingUuid: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null,
       providerShutdown: { status: "not_started", attemptedAt: null, confirmedAt: null, detail: null },
       flags: [], quickNotes: "", note: null, noteHistory: [], version: 1, createdAt: nowIso(), updatedAt: nowIso(),
     });
@@ -11618,7 +11630,9 @@ createServer(async (req, res) => {
       }
       const existing = telehealthVisits.get(appointmentId);
       if (existing?.status === "cancelled") return json(res, 409, { error: "appointment_cancelled" });
-      const visit = existing ?? newVisit(appointmentId, body);
+      const calendar = calendarAppointment(appointmentId, "mutate");
+      if (calendar.error) return json(res, calendar.error, { error: calendar.code });
+      const visit = existing ?? newVisit(appointmentId, body, calendar.row);
       const consent = {
         consentId: `cccccccc-1111-2222-3333-${String(444444444400 + visit.consents.length + 1)}`,
         consentType: "telehealth_recording_combined", scope: "telehealth_recording",
@@ -11646,9 +11660,12 @@ createServer(async (req, res) => {
       if (!visit || !visit.consents.some((consent) => consent.status === "granted")) return json(res, 409, { error: "consent_required" });
       if (visit.status === "cancelled") return json(res, 409, { error: "appointment_cancelled" });
       if (visit.status === "ended" || visit.status === "ending") return json(res, 409, { error: "conflict" });
-      const saved = save({ ...visit, status: "in_visit", startedAt: visit.startedAt ?? nowIso(), providerMeetingId: "900000001", joinUrl: "https://zoom.us/j/900000001?pwd=fixture", passcode: "fixture" });
+      const calendar = calendarAppointment(appointmentId, "mutate");
+      if (calendar.error) return json(res, calendar.error, { error: calendar.code });
+      // Zoom's actual meeting password, as the Lambda keeps it — never the encrypted `pwd` token of the join URL.
+      const saved = save({ ...visit, status: "in_visit", startedAt: visit.startedAt ?? nowIso(), providerMeetingId: "900000001", providerMeetingUuid: "fixture-meeting-uuid", joinUrl: "https://zoom.us/j/900000001?pwd=ENCRYPTED-URL-TOKEN", passcode: "fixture-meeting-password" });
       return json(res, 200, { data: { visit: publicVisit(saved), session: {
-        meetingNumber: "900000001", passcode: "fixture", signature: "fixture.signature.value", sdkKey: "fixture-sdk-key", zak: "fixture-zak",
+        meetingNumber: "900000001", passcode: "fixture-meeting-password", signature: "fixture.signature.value", sdkKey: "fixture-sdk-key", zak: "fixture-zak",
         hostDisplayName: String(body.hostDisplayName ?? "Practitioner"), expiresAt: new Date(Date.now() + 7_200_000).toISOString(),
       } } });
     }
@@ -11658,6 +11675,8 @@ createServer(async (req, res) => {
       if (visit.version !== body.expectedVersion) return json(res, 409, { error: "conflict" });
       if (visit.status === "ended") return json(res, 200, { data: publicVisit(visit) });
       if (visit.status !== "in_visit" && visit.status !== "ending") return json(res, 409, { error: "conflict" });
+      const calendar = calendarAppointment(appointmentId, "close");
+      if (calendar.error) return json(res, calendar.error, { error: calendar.code });
       const at = nowIso();
       // The fixture "provider" confirms the end; the Lambda would leave the
       // visit `ending` with providerShutdown.failed if Zoom did not.
@@ -11674,7 +11693,7 @@ createServer(async (req, res) => {
       // Zoom's current unified `summary_content` kept whole as unreviewed
       // text, legacy details mapped by label, next steps as suggestions.
       const aiOriginal = {
-        meeting_id: 900000001, meeting_uuid: "fixture-summary-uuid",
+        meeting_id: 900000001, meeting_uuid: "fixture-meeting-uuid",
         summary_content: "## Follow-up on fatigue and iron status\n\nPatient reports gradual improvement.",
         summary_details: [
           { label: "Symptoms reported", summary: "Afternoon fatigue has eased since the last visit; sleep is 7 hours on average." },
@@ -11685,7 +11704,7 @@ createServer(async (req, res) => {
       };
       const previous = visit.note;
       const note = {
-        status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "fixture-summary-uuid",
+        status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "fixture-meeting-uuid",
         aiSections: {
           summary: aiOriginal.summary_content,
           patient_reported: aiOriginal.summary_details[0].summary,
