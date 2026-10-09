@@ -44,7 +44,7 @@ export function readCareRegisteredPredecessor(root){
 }
 const inspectorCodes=new Set(['care_canonical_registration_boundary_refused','care_canonical_registration_observation_changed',
  'care_canonical_registration_failed','artifact_refused','history_refused','boundary_refused','inventory_refused',
- 'verification_failed','upgrade_failed']);
+ 'policy_refused','data_changed','schema_changed','verification_failed','upgrade_failed']);
 const inspectorPhases=new Set(['begin','statement','commit','rollback','unknown']);
 const inspectorReasons=new Set(['database_resuming','database_unavailable','access_denied','token_expired','credentials_unavailable',
  'timeout','aborted','transaction_missing','statement_timeout','service_unavailable','transport_type_error','connection_reset','unknown']);

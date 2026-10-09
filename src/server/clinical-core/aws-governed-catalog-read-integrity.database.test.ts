@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
-import { readFileSync } from "node:fs";
 import type { ClinicalCoreDatabase } from "./database";
-import { loadGovernedCatalogMigrations } from "./catalog-migrations";
+import { loadGovernedCatalogMigrations, loadHistoricalGovernedCatalogMigrations } from "./catalog-migrations";
 import {
   catalogSha256, importGovernedCatalog, manifestContentForHash, offerContentForHash,
   productContentForHash, templateContentForHash, type CatalogProductSeed, type GovernedCatalogSeedManifest,
@@ -78,9 +77,6 @@ async function rawOffers() {
 beforeAll(async () => {
   pg = new PGlite({ extensions: { pgcrypto } });
   for (const migration of loadGovernedCatalogMigrations()) await pg.exec(migration.sql);
-  // Explicit candidate application in this disposable local database ONLY.
-  // This is not a canonical registration or a hosted migration receipt.
-  await pg.exec(readFileSync("infra/aws-clinical-core/source-candidates/catalog-offer-current-product.sql", "utf8"));
 });
 afterAll(async () => { await pg?.close(); });
 
@@ -191,7 +187,7 @@ describe("real catalog SQL, review transitions and API-role RLS (local, not host
   it("the reader repair also withholds an obsolete destination on the unchanged registered two-migration schema", async () => {
     const legacy = new PGlite({ extensions: { pgcrypto } });
     try {
-      for (const migration of loadGovernedCatalogMigrations()) await legacy.exec(migration.sql);
+      for (const migration of loadHistoricalGovernedCatalogMigrations()) await legacy.exec(migration.sql);
       const legacyAdmin = driver(undefined, () => legacy);
       const legacyApi = driver("clinical_core_api", () => legacy);
       const key = `case_${++serial}`;

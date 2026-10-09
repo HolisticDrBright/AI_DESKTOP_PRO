@@ -128,7 +128,7 @@ test('changed receipts, replayed request IDs, changed database and retained byte
   const x=fixture();
   if(kind==='receipt'){const phase=x.d.receiptPhase;x.d.receiptPhase=async name=>{const v=await phase(name);if(name==='retained')v[0].bodySha256='a'.repeat(64);return v;};}
   if(kind==='request'){const phase=x.d.intentPhase;x.d.intentPhase=async name=>{const v=await phase(name);if(name==='retained')v[0].requestId='intent-baseline-0-discover_erasure_requests';return v;};}
-  if(kind==='database'){let count=0;const inspect=x.d.inspect;x.d.inspect=async()=>{const v=await inspect();if(++count===2)v.historicalInspection.rowCount++;return v;};}
+  if(kind==='database'){let count=0;const inspect=x.d.inspect;x.d.inspect=async()=>{const v=await inspect();if(++count===2)v.catalogInspection.rowCount++;return v;};}
   if(kind==='retained'){let count=0;const read=x.d.retained;x.d.retained=async()=>{const v=await read();if(++count===2)v.sha256='f'.repeat(64);return v;};}
   await assert.rejects(run(x));assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
  }

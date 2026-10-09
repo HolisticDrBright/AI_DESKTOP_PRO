@@ -1,3 +1,4 @@
+import {careRegisteredDatabaseFixture} from './test-fixtures/care-registered-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -39,7 +40,7 @@ function fixture(){
  for(let n=raw.routes.Items.length;n<112;n++)raw.routes.Items.push({RouteId:'foreign'+n,RouteKey:'GET /fictional-other/'+n,Target:'integrations/other'});
  // Published receipt shape reused ONLY as fictional test input. The actual
  // runner calls the compiled database observer and never loads this file.
- const db=clone(JSON.parse(readFileSync(new URL('../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection);
+ const db=careRegisteredDatabaseFixture(current,Date.parse('2026-10-08T04:00:00Z'));
  db.operatorSource={sourceCommit:current.desktop.commit,clean:true};
  let clock=Date.parse('2026-10-08T04:00:00Z'),time=()=>clock;
  db.observedAt=new Date(clock).toISOString();const calls=[];
@@ -146,10 +147,21 @@ test('database observation binds current clean inspector, fresh registered ledge
  for(const change of [r=>delete r.operatorSource,r=>r.operatorSource.clean=false,r=>r.operatorSource.sourceCommit='f'.repeat(40),
   r=>r.observedAt='invalid',r=>r.observedAt='2026-10-08T03:59:59Z',r=>r.awsAccountId='173535830222',r=>r.canonicalRegistered=false,
   r=>r.liveMigrationCount=47,r=>r.sourceLedgerSha256='f'.repeat(64),r=>r.schemaReplayPerformed=true,r=>r.releaseAccepted=true,
-  r=>r.repeatedReadbackVerified=false,r=>r.historicalInspection.canonicalRegistered=true,
-  r=>r.historicalInspection.intentRowCount=1,r=>r.historicalInspection.rowCount++,r=>r.historicalInspection.originalDataSha256='f'.repeat(64),
-  r=>r.historicalInspection.schemaSha256='f'.repeat(64),r=>r.phiAllowed=true]){
+  r=>r.repeatedReadbackVerified=false,r=>r.catalogInspection.canonicalRegistered=true,
+  r=>r.catalogInspection.referenceMigrationCount=1,r=>r.catalogInspection.rowCount++,r=>r.catalogInspection.dataSha256='f'.repeat(64),
+  r=>r.catalogInspection.preservedSchemaSha256='f'.repeat(64),r=>r.phiAllowed=true]){
   const x=clone(f.db);change(x);assert.throws(()=>verifyCareRegisteredDatabase(x,f.current,f.now(),f.now()),undefined,change.toString());
+ }
+});
+test('historical reference2 report cannot become current by relabeling its contract or ledger identity',()=>{
+ const f=fixture(),old=JSON.parse(readFileSync(new URL('../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection;
+ old.operatorSource={sourceCommit:f.current.desktop.commit,clean:true};old.observedAt=new Date(f.now()).toISOString();
+ assert.throws(()=>verifyCareRegisteredDatabase(old,f.current,f.now(),f.now()),/database_boundary/);
+ for(const change of [r=>r.contract=old.contract,r=>r.referenceMigrationCount=2,
+  r=>r.referenceLedgerSha256=old.referenceLedgerSha256,r=>r.catalogInspection=old.historicalInspection,
+  r=>r.historicalInspection=old.historicalInspection,r=>r.catalogInspection.extraAcceptance=true,
+  r=>r.catalogInspection.historicalLedgerPreserved=false,r=>r.catalogInspection.candidateSqlSha256='a'.repeat(64)]){
+  const r=clone(f.db);change(r);assert.throws(()=>verifyCareRegisteredDatabase(r,f.current,f.now(),f.now()));
  }
 });
 test('complete fictional observation port requires independent rebuild and two live reads but certifies no deployment or acceptance',async()=>{
@@ -185,7 +197,7 @@ test('source, principal, controls, retained configuration and database drift aft
    if(kind==='principal')r.Arn+='changed';
    if(kind==='control')r.fn.RevisionId='changed';
    if(kind==='retained')r.configuration.RevisionId='changed';
-   if(kind==='database')r.historicalInspection.intentRowCount=1;
+   if(kind==='database')r.catalogInspection.referenceMigrationCount=1;
   }return r;};await assert.rejects(run(f),undefined,kind);
  }
  const f=fixture(),old=f.port.database;f.port.database=async()=>{const r=await old();f.advance(300001);return r;};await assert.rejects(run(f));

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { loadClinicalCoreMigrations } from './migrations';
-import { loadGovernedCatalogMigrations } from './catalog-migrations';
+import { loadHistoricalGovernedCatalogMigrations as loadGovernedCatalogMigrations } from './catalog-migrations';
 import { CARE_ERASURE_AWS, CARE_ERASURE_UPGRADE, type CareErasureUpgradeResult } from './care-erasure-schema-upgrade';
 import { executeCareErasureUpgradeCommand, type CareErasureUpgradeDependencies } from './care-erasure-upgrade-command';
 const a = CARE_ERASURE_AWS, build = { sourceCommit: 'a'.repeat(40), clean: true };

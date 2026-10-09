@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { applyClinicalCoreMigrations, loadClinicalCoreMigrations, type ClinicalCoreMigration } from './migrations';
-import { applyGovernedCatalogMigrations, loadGovernedCatalogMigrations } from './catalog-migrations';
+import { applyGovernedCatalogMigrations, loadHistoricalGovernedCatalogMigrations as loadGovernedCatalogMigrations } from './catalog-migrations';
 import { CARE_ERASURE_AWS, type CareErasureUpgradeConfiguration } from './care-erasure-schema-upgrade';
 import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
 import { CATALOG_FORWARD_UPGRADE, catalogForwardMapping, loadCatalogForwardCandidate, runCatalogForwardUpgrade } from './catalog-forward-upgrade';
