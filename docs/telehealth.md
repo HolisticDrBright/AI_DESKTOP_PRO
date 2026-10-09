@@ -3,14 +3,43 @@
 The Telehealth tab (sidebar, under Calendar) is where a practitioner runs a
 video visit without leaving the chart: the day's virtual visits, the visit
 itself with Zoom embedded in the page, and the post-visit note that starts as
-Zoom AI Companion's summary and becomes a chart note only when the
-practitioner signs it.
+Zoom AI Companion's summary and becomes a signed telehealth visit record when
+the practitioner signs it. Chart-note integration is still outstanding.
 
 This is the clinical edition. There is no sample data on any of these screens:
 every row is an appointment that exists, every consent is a record somebody
 made, and a service that cannot answer says so.
 
 ## Product decisions carried into code
+
+### October 9 summary-boundary repair
+
+Summary import requires a known visit instance UUID and an exact matching UUID
+in the provider response; a meeting number alone is not authority. Legacy visits
+without a verified instance remain refused rather than silently importing an
+unbound summary. Response bytes are streamed under the 256 KiB decoded limit,
+cancelled on overrun, decoded as strict UTF-8, and parsed only after the bound
+holds. Malformed declared lengths are refused before reading; identity-encoded
+lengths must match received bytes. Fetch-decoded compressed bodies remain bounded
+but their compressed wire length is not equated to decoded length.
+
+These are source repairs, not deployed acceptance. The subsequent source repair
+also keeps dispatched unknown creations fenced on empty or missing provider reads,
+checks complete exact-marker pagination before adoption, and refuses ambiguous
+matches. A stale original writer does not delete a meeting already bound by a
+reconciler. Note and list reads require current clinical calendar authorization;
+missing historical appointments are omitted with an incomplete-list flag rather
+than exposed through organization membership alone. A reviewed independent
+historical-record authorization path still belongs to chart/lifecycle integration.
+
+Visit subjects cannot silently change with the calendar or request. Patient-app
+visits require the current patient connection and calendar to agree. Start checks
+binding and consent again after provider creation and SDK work before returning
+a session; its final version-conditional write fences concurrent visit withdrawal.
+Even an already-ended idempotent response requires current authority. These checks
+do not certify atomic provider shutdown, orphan deletion, or actual provider races.
+Chart/lifecycle/multi-clinic integration and the authorized positive host-and-patient
+Zoom journey remain required. PHI remains disabled.
 
 | Decision | Where it is enforced |
 | --- | --- |
