@@ -404,7 +404,9 @@ it('actual bundled CLI reports only configuration, or refuses its independently 
   }
 }, 250000);
 it('actual bundled CLI refuses deployment commands with fixed non-sensitive output', () => {
-  for (const args of [[], ['--activate'], ['--check-configuration', '--target=target.json', '--deploy']]) {
+  for (const args of [[], ['--activate'], ['--check-configuration', '--target=target.json', '--deploy'],
+    ['--observe-fleet'], ['--observe-fleet', '--target='], ['--observe-fleet', '--target=target.json', '--acceptance=true'],
+    ['--observe-fleet', '--target=target.json', '--phi=true'], ['--observe-fleet', '--target=target.json', '--transport=fixture']]) {
     const result = spawnSync(process.execPath, ['dist/aws-clinical-core/inventory-qualification-target/index.cjs', ...args],
       { encoding: 'utf8', timeout: 30000, windowsHide: true });
     expect(result.error).toBeUndefined(); expect(result.status).toBe(1); expect(result.stdout).toBe('');
