@@ -96,6 +96,12 @@ run passed all13 checks in2.1minutes, including actual loopback fetch failures.
 The production-server fixture-refusal and eight framework checks remain in their
 separate built-runtime CI jobs. A development backend-down result does not replace
 production boundary evidence or authentication against a real clinical provider.
+After the test repair, a fresh production build and291-chunk scan passed, and
+all8 built-server boundary checks passed again in6.5seconds. The first local
+launch omitted APP_EDITION in the test shell and correctly refused to start;
+the corrected explicit clinical launch used the same built artifact. Final AST
+refresh completed14,117nodes/31,076edges/931communities with67 zero-node omissions
+and no semantic-provider call. Hosted CI at the final repair head remains pending.
 
 Rebuild and qualify an exact matched API/Desktop/mobile release after the frozen
 AWS routing run settles. Do not replace its source pair, bytes or dependency
