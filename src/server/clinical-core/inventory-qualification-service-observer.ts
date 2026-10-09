@@ -9,6 +9,7 @@ type Params = Record<string, string | string[]>;
 export type InventoryServiceRead = (service: string, operation: string, parameters: Params) => Promise<unknown>;
 const operations: Record<string, string[]> = {
   'sts/get-caller-identity': [],
+  'rds/describe-db-clusters': ['DBClusterIdentifier'], 'secretsmanager/describe-secret': ['SecretId'],
   'kms/describe-key': ['KeyId'], 'kms/get-key-policy': ['KeyId', 'PolicyName'], 'kms/get-key-rotation-status': ['KeyId'],
   'kms/list-resource-tags': ['KeyId'], 'kms/list-grants': ['KeyId'],
   'sns/get-topic-attributes': ['TopicArn'], 'sns/list-tags-for-resource': ['ResourceArn'],
@@ -55,7 +56,8 @@ export function inventoryServiceReader(execute: typeof execFileSync = execFileSy
     for (const name of names) {
       const values = Array.isArray(parameters[name]) ? parameters[name] as string[] : [parameters[name]];
       if (!values.length || values.length > 100 || values.some(v => typeof v !== 'string' || !v.length || v.length > 2048 || v.startsWith('-') || /[\x00-\x1f\x7f]/.test(v))) return inventoryRefuse('service_read_operation_refused');
-      args.push('--' + (name === 'ResourceARN' ? 'resource-arn' : name.replace(/[A-Z]/g, (v, n) => (n ? '-' : '') + v.toLowerCase())), ...values);
+      const acronym = { ResourceARN: 'resource-arn', DBClusterIdentifier: 'db-cluster-identifier' }[name];
+      args.push('--' + (acronym ?? name.replace(/[A-Z]/g, (v, n) => (n ? '-' : '') + v.toLowerCase())), ...values);
     }
     if (Object.hasOwn(parameters, 'ExpectedBucketOwner') && parameters.ExpectedBucketOwner !== account) return inventoryRefuse('service_read_operation_refused');
     args.push('--profile', 'ai-synthetic-member', '--region', region, '--output', 'json', '--no-cli-pager');
