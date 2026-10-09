@@ -7,6 +7,7 @@ import { CreateScheduleCommand, DeleteScheduleCommand, SchedulerClient } from "@
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
+import { boundedProviderJson } from "./bounded-provider-json";
 
 const document = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const secrets = new SecretsManagerClient({});
@@ -1064,15 +1065,13 @@ async function zoomMeetingSummary(config: TelehealthConfiguration, meetingId: st
   const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/meeting_summary`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
   if (result.status === 404) return null;
   if (!result.ok) throw new TelehealthError("provider_unavailable");
-  const declared = Number(result.headers?.get?.("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_SUMMARY_BYTES) throw new TelehealthError("provider_unavailable");
-  const text = await result.text();
-  if (Buffer.byteLength(text) > MAX_SUMMARY_BYTES) throw new TelehealthError("provider_unavailable");
-  let payload: unknown; try { payload = JSON.parse(text); } catch { throw new TelehealthError("provider_unavailable"); }
+  let payload: unknown;
+  try { payload = await boundedProviderJson(result, MAX_SUMMARY_BYTES); }
+  catch { throw new TelehealthError("provider_unavailable"); }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new TelehealthError("provider_unavailable");
   const summary = payload as Record<string, unknown>;
   if (summary.meeting_id === undefined || summary.meeting_id === null || String(summary.meeting_id).replace(/\D/g, "") !== meetingId.replace(/\D/g, "")) throw new TelehealthError("provider_unavailable");
-  if (meetingUuid && summary.meeting_uuid !== undefined && summary.meeting_uuid !== meetingUuid) throw new TelehealthError("provider_unavailable");
+  if (!meetingUuid || summary.meeting_uuid !== meetingUuid) throw new TelehealthError("provider_unavailable");
   return summary;
 }
 /**
