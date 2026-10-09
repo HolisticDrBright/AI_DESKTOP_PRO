@@ -37,7 +37,17 @@ Only account `588966314750`, profile `ai-synthetic-member`, region `us-east-2`, 
 
 At parent source `069ab459a3fbe6ffce696eed072bebbd8c046a96`, the full local suite passed 4,455 tests across 351 files with 11 existing skips, in 622.27 seconds. The separate complete care Node suite passed 420 tests without skips. Hosted CI runs `37883308731` and `37883311843` completed successfully at that exact source. Skipped deployed-backend CI steps are not live acceptance.
 
-The first focused run of this successor implementation passed 39 tests without skips, including the unchanged original registered-release/preflight suites and the new profile. Its tests cover cross-profile refusals, template/JWT/IAM/pagination drift, captured asynchronous witnesses, repeated observations, missing independent reconstruction, unknown authority fields, retained-version confusion and immutable artifact collisions. The live successor inspection and final-source build are still pending at document creation; record their results separately after they actually complete.
+The focused run of this successor implementation passed 39 tests without skips, including the unchanged original registered-release/preflight suites and the new profile. Its tests cover cross-profile refusals, template/JWT/IAM/pagination drift, captured asynchronous witnesses, repeated observations, missing independent reconstruction, unknown authority fields, retained-version confusion and immutable artifact collisions. Standalone typecheck and full lint passed. At clean source `14867eaad3938a398a1ae25d94593714f3961128`, the full care Node suite passed 432 tests without skips in 62.429 seconds. The parent's full Vitest result is not claimed as a new full Vitest run at this successor source.
+
+## Actual AWS read only result
+
+The actual observer completed successfully at source `14867eaad3938a398a1ae25d94593714f3961128`, observed `2026-10-09T04:45:10.100Z`. The saved report is `docs/evidence/2026-10-08-catalog-runtime-preflight.json`, SHA-256 `c7a335eb0f246c4daa451cc3e1052abd80ed0cb0099af347e3189785f6f2fef3`. It proves independent current and frozen-source rebuilds, matching managed and exact-version S3 predecessor bytes, separate retained version 2, repeated database/control/principal/source observations, complete unchanged authority and reference-three preservation.
+
+The rebuilt candidate binds Desktop `14867ea` to V2 `e92116b154dd1a206262926388cffe90ac5c06ce`, ZIP SHA-256 `a69bfa0733b3c430a1adf3a82330640d31bb1cdeda1fffc2ca4f0272034be342`, 1,874,730 bytes. It was not uploaded or deployed. The report explicitly keeps deployment authority, AWS mutation, recovery rehearsal, erasure acceptance, hosted feature acceptance, physical acceptance, PHI and paid mobile builds false. Future execution must obtain fresh observations; this saved result is not admission authority.
+
+The exact source is preserved separately in `DESKTOP_CATALOG_RUNTIME_FROZEN_14867ea`. Later evidence/documentation commits do not rename the tested or observed source. Hosted CI runs `37885067052` and `37885070572` were still in progress at the last observation; their terminal result is not yet claimed.
+
+## Remaining engineering
 
 Next engineering must wire the distinct predecessor profile into the custodied upload, exact code-only proposal, execution, settlement and recovery workflow before deploying a successor. Reusing the older execution profile or normalizing observations is not permitted. Then qualify the updated identity and catalog runtimes and implement authoritative owner-adopted plan continuity with complete same-target ingredient inventory. All program supplement steps stay held until that inventory is available.
 
