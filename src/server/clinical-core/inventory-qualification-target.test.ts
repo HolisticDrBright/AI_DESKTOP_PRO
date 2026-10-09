@@ -482,6 +482,20 @@ it('retention activation cannot name another clinic or omit the service identity
     expect(() => validateInventoryQualificationTarget(v, admissionFixture())).toThrow();
   }
 });
+it('binds non-RFC opaque Cognito subjects across every candidate without relaxing clinical UUIDs', () => {
+  const v = targetFixture(), opaque = '11111111-1111-7111-e111-111111111111';
+  v.target.identitySubjects.consumer = opaque;
+  for (const c of v.candidates) c.parameters.QualificationIdentitySubjects = [opaque, workforce, foreign, retentionSubject].join(',');
+  expect(() => validateInventoryQualificationTarget(v, admissionFixture())).not.toThrow();
+  const wrongOrganization = structuredClone(v); wrongOrganization.organizationId = opaque;
+  expect(() => validateInventoryQualificationTarget(wrongOrganization, admissionFixture())).toThrow();
+  for (const invalid of ['with spaces', '--profile=production', 'subject,other', 'a'.repeat(129)]) {
+    const bad = structuredClone(v); bad.target.identitySubjects.consumer = invalid;
+    expect(() => validateInventoryQualificationTarget(bad, admissionFixture())).toThrow();
+  }
+  const mismatch = structuredClone(v); mismatch.candidates[0].parameters.QualificationIdentitySubjects = [consumer, workforce, foreign, retentionSubject].join(',');
+  expect(() => validateInventoryQualificationTarget(mismatch, admissionFixture())).toThrow();
+});
 it('admits the non-human retention subject required by the actual release operator and refuses a human subject', () => {
   const v = targetFixture(), serviceSubject = 'svc-fictional-qualification-retention';
   v.target.identitySubjects.retentionService = serviceSubject;

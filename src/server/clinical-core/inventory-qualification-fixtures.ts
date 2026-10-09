@@ -1,6 +1,7 @@
 if (typeof window !== 'undefined') throw Error('qualification fixture provisioning is server-only');
 import { randomBytes, randomUUID } from 'node:crypto';
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha } from './inventory-qualification-artifacts';
+import { isInventoryCognitoSubject } from './inventory-cognito-subject';
 
 // These are the newly created, private fixture pools, NOT shared staging or
 // production. No caller/environment supplied resource can replace them.
@@ -60,7 +61,7 @@ export function generateFixtureIntent(): FixtureIntent {
 function inspectUser(raw: unknown, f: Fixture, organization: string) {
   const u = obj(raw);
   if (u.Enabled !== true || !['FORCE_CHANGE_PASSWORD', 'CONFIRMED'].includes(String(u.UserStatus))
-    || typeof u.Username !== 'string' || !uuid.test(u.Username) || !Array.isArray(u.UserAttributes)
+    || !isInventoryCognitoSubject(u.Username) || !Array.isArray(u.UserAttributes)
     || u.UserAttributes.length !== 6) return refuse();
   const attrs: Record<string, string> = {};
   for (const rawAttr of u.UserAttributes) {

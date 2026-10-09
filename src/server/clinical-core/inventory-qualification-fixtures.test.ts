@@ -23,6 +23,30 @@ function rig() {
   return { t, calls, users, getIntent: () => structuredClone(intent), setIntent: (i: unknown) => { intent = structuredClone(i); } };
 }
 describe('private fictional fixtures', () => {
+  it('reconciles opaque non-RFC subjects while still binding exact sub, owner and organization', async () => {
+    const r = rig(), create = r.t.createUser;
+    const opaque = ['22222222-2222-7222-e222-222222222222', 'Opaque_Consumer_Subject_02', 'Opaque_Workforce_Subject_03'];
+    r.t.createUser = async (...args) => {
+      await create(...args); const u = [...r.users.values()].at(-1)!;
+      const sub = opaque[r.users.size - 1]; u.Username = sub;
+      (u.UserAttributes as Array<{ Name: string; Value: string }>).find(a => a.Name === 'sub')!.Value = sub;
+    };
+    const result = await provisionFictionalInventoryFixtures(r.t);
+    expect(Object.values(result.subjects)).toEqual(opaque);
+    expect(result.credentialsLoginVerified).toBe(false);
+    r.calls.length = 0;
+    expect(await provisionFictionalInventoryFixtures(r.t)).toMatchObject({ createAttempts: 0, passwordWritesCompleted: 0 });
+    expect(r.calls).not.toContain('confirm');
+    ([...r.users.values()][0].UserAttributes as Array<{ Name: string; Value: string }>).find(a => a.Name === 'sub')!.Value = opaque[1];
+    await expect(provisionFictionalInventoryFixtures(r.t)).rejects.toThrow('fictional_fixture_authority_refused');
+    expect(r.calls).not.toContain('confirm');
+  });
+  it('does not accept opaque subjects as generated person or organization UUIDs', () => {
+    const original = generateFixtureIntent();
+    expect(() => validateFixtureIntent({ ...original, organizationId: '22222222-2222-7222-e222-222222222222' })).toThrow();
+    expect(() => validateFixtureIntent({ ...original, fixtures: { ...original.fixtures,
+      consumer: { ...original.fixtures.consumer, personId: 'Opaque_Consumer_Subject_02' } } })).toThrow();
+  });
   it('persists before creation, confirms three owned users, redacts credentials and refuses to claim login/MFA/DB/acceptance', async () => {
     const r = rig(), result = await provisionFictionalInventoryFixtures(r.t);
     expect(result).toMatchObject({ createAttempts: 3, passwordWritesCompleted: 3, fixtureAccountsObserved: true,

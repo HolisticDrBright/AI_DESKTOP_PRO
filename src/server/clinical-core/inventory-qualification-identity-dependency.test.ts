@@ -71,7 +71,7 @@ it('independently repeats pool/client/MFA and exact designated-user observations
 it('refuses malformed, shared or cross-region identity bindings before AWS', async () => {
   const changes: Array<(b: InventoryIdentityDependency) => void> = [
     b => { b.organizationId = 'invalid'; }, b => { b.subjects.foreignConsumer = b.subjects.consumer; },
-    b => { b.subjects.workforce = 'not-a-subject'; }, b => { b.identity.workforceIssuer = b.identity.consumerIssuer; },
+    b => { b.subjects.workforce = 'not a subject'; }, b => { b.identity.workforceIssuer = b.identity.consumerIssuer; },
     b => { b.identity.workforceAudience = b.identity.consumerAudience; }, b => { b.identity.consumerAudience = 'invalid'; },
     b => { b.identity.consumerIssuer = b.identity.consumerIssuer.replace('us-east-2', 'us-east-1'); },
     b => { obj(b).approved = true; }, b => { obj(b.identity).token = 'supplied'; }, b => { obj(b.subjects).retentionService = 'invented'; },
@@ -184,6 +184,22 @@ it('configuration-only inspection refuses unsafe pool settings, root, binding su
   await expect(observeInventoryIdentityConfiguration(drift.binding.identity, async (s, o, p) => {
     const value = await drift.read(s, o, p); if (++n === 9) obj(obj(value).UserPool).DeletionProtection = 'INACTIVE'; return value;
   })).rejects.toThrow('identity_dependency_refused');
+});
+it('observes opaque non-RFC subjects exactly and still refuses mismatched sub or clinical UUIDs', async () => {
+  const f = fixture();
+  const replacement = { consumer: '22222222-2222-7222-e222-222222222222', foreignConsumer: 'Opaque_Consumer_Subject_02', workforce: 'Opaque_Workforce_Subject_03' };
+  for (const role of ['consumer', 'foreignConsumer', 'workforce'] as const) {
+    const row = obj(f.responses[`admin-get-user/${f.binding.subjects[role]}`]);
+    (row.UserAttributes as Row[]).find(a => a.Name === 'sub')!.Value = replacement[role];
+    f.responses[`admin-get-user/${replacement[role]}`] = row; f.binding.subjects[role] = replacement[role];
+  }
+  expect((await observeInventoryIdentityDependency(f.binding, f.read)).designatedSyntheticSubjectsVerified).toBe(true);
+  const row = obj(f.responses[`admin-get-user/${replacement.consumer}`]);
+  (row.UserAttributes as Row[]).find(a => a.Name === 'sub')!.Value = replacement.foreignConsumer;
+  await expect(observeInventoryIdentityDependency(f.binding, f.read)).rejects.toThrow('identity_dependency_refused');
+  (row.UserAttributes as Row[]).find(a => a.Name === 'sub')!.Value = replacement.consumer;
+  (row.UserAttributes as Row[]).find(a => a.Name === 'custom:person_id')!.Value = replacement.consumer;
+  await expect(observeInventoryIdentityDependency(f.binding, f.read)).rejects.toThrow('identity_dependency_refused');
 });
 it('refuses person aliasing even when subjects are distinct', async () => {
   const f = fixture();

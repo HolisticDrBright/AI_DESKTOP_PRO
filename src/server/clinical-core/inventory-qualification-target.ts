@@ -1,5 +1,6 @@
 if (typeof window !== 'undefined') throw Error('inventory qualification target is server-only');
 import { createPublicKey } from 'node:crypto';
+import { isInventoryCognitoSubject } from './inventory-cognito-subject';
 import { designatedSubjects, validateQualificationTargetManifest, type QualificationTargetManifest } from './qualification-target-manifest';
 import { INVENTORY_PROFILE, INVENTORY_RELEASE } from '../../../scripts/inventory-care-qualification-template.mjs';
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, type InventoryArtifactSet, type InventoryTemplate } from './inventory-qualification-artifacts';
@@ -84,9 +85,9 @@ export function validateInventoryQualificationTarget(input: unknown, supplied: I
   if (!Array.isArray(v.candidates) || v.candidates.length !== 12) return inventoryRefuse('target_fleet_refused');
   same(v.candidates.map(c => inventoryRecord(c) ? c.candidate : null).sort(), artifacts.candidates.map(c => c.candidate).sort());
   const subjects = designatedSubjects(base.identitySubjects);
-  // Cognito users are UUID subjects; the scheduled sweep is deliberately a
+  // Cognito users are opaque issuer-local subjects; the scheduled sweep is a
   // named non-human database identity, not a fourth human Cognito account.
-  if ([base.identitySubjects.consumer, base.identitySubjects.workforce, base.identitySubjects.foreignConsumer].some(s => !uuid.test(s)))
+  if ([base.identitySubjects.consumer, base.identitySubjects.workforce, base.identitySubjects.foreignConsumer].some(s => !isInventoryCognitoSubject(s)))
     return inventoryRefuse('target_identity_refused');
   if (base.identitySubjects.retentionService !== undefined && !/^svc-[a-z0-9][a-z0-9-]{2,60}$/.test(base.identitySubjects.retentionService))
     return inventoryRefuse('target_retention_identity_refused');

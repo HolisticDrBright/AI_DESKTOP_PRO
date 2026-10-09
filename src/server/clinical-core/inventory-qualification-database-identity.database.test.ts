@@ -17,7 +17,7 @@ const u = (n: number) => String(n).repeat(8) + '-1111-4111-8111-111111111111';
 const people = { consumer: u(5), foreignConsumer: u(6), workforce: u(7) };
 const binding: InventoryDatabaseIdentityBinding = { database: { DatabaseName: 'clinical_core_qualification',
   DatabaseClusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional', DatabaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional' },
-  organizationId: u(1), subjects: { consumer: u(2), foreignConsumer: u(3), workforce: u(4) }, cognitoPersonBindingsSha256: inventorySha(inventoryCanonical(people)) };
+  organizationId: u(1), subjects: { consumer: '22222222-2222-7222-e222-222222222222', foreignConsumer: 'Opaque_Consumer_Subject_02', workforce: u(4) }, cognitoPersonBindingsSha256: inventorySha(inventoryCanonical(people)) };
 beforeAll(async () => {
   const a = JSON.parse(execFileSync(process.execPath, ['scripts/build-adopted-plan-inventory-candidate.mjs', '--json'],
     { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }));

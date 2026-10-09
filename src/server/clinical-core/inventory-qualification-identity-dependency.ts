@@ -1,6 +1,7 @@
 if (typeof window !== 'undefined') throw Error('inventory identity dependency observation is server-only');
 import { execFileSync } from 'node:child_process';
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha } from './inventory-qualification-artifacts';
+import { isInventoryCognitoSubject } from './inventory-cognito-subject';
 import { inventoryServiceReader, type InventoryServiceRead } from './inventory-qualification-service-observer';
 import type { InventoryQualificationTarget } from './inventory-qualification-target';
 
@@ -40,7 +41,7 @@ export function inventoryIdentityReader(execute: typeof execFileSync = execFileS
     if (Object.keys(parameters).sort().join(',') !== [...names].sort().join(',')
       || typeof parameters.UserPoolId !== 'string' || !/^us-east-2_[A-Za-z0-9]+$/.test(parameters.UserPoolId)
       || operation === 'describe-user-pool-client' && (typeof parameters.ClientId !== 'string' || !/^[A-Za-z0-9]{20,128}$/.test(parameters.ClientId))
-      || operation === 'admin-get-user' && (typeof parameters.Username !== 'string' || !uuid.test(parameters.Username)))
+      || operation === 'admin-get-user' && !isInventoryCognitoSubject(parameters.Username))
       return inventoryRefuse('identity_read_operation_refused');
     const args = [service, operation];
     for (const name of names) args.push('--' + name.replace(/[A-Z]/g, (v, n) => (n ? '-' : '') + v.toLowerCase()), parameters[name] as string);
@@ -193,7 +194,7 @@ export async function observeInventoryIdentityDependency(input: InventoryIdentit
   if (!inventoryRecord(b) || Object.keys(b).sort().join(',') !== 'identity,organizationId,subjects' || !uuid.test(b.organizationId)
     || !inventoryRecord(b.identity) || Object.keys(b.identity).sort().join(',') !== 'consumerAudience,consumerIssuer,workforceAudience,workforceIssuer'
     || !inventoryRecord(b.subjects) || Object.keys(b.subjects).sort().join(',') !== 'consumer,foreignConsumer,workforce'
-    || Object.values(b.subjects).some(s => typeof s !== 'string' || !uuid.test(s)) || new Set(Object.values(b.subjects)).size !== 3)
+    || Object.values(b.subjects).some(s => !isInventoryCognitoSubject(s)) || new Set(Object.values(b.subjects)).size !== 3)
     return inventoryRefuse('identity_dependency_binding_refused');
   const i = b.identity; validateIdentityBinding(i);
   const observations: Array<{ service: string; operation: string; parameters: Record<string, string | string[]>; sha256: string }> = [];

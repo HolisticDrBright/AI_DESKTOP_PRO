@@ -2,6 +2,7 @@ if (typeof window !== 'undefined') throw Error('inventory database identity obse
 import { fromIni } from '@aws-sdk/credential-provider-ini';
 import { BeginTransactionCommand, ExecuteStatementCommand, RDSDataClient, RollbackTransactionCommand } from '@aws-sdk/client-rds-data';
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha } from './inventory-qualification-artifacts';
+import { isInventoryCognitoSubject } from './inventory-cognito-subject';
 import { assertInventoryQualificationLedger, type InventoryLedgerDatabase, type InventoryLedgerRow } from './inventory-qualification-ledger';
 import type { InventoryIdentityDependency } from './inventory-qualification-identity-dependency';
 
@@ -121,7 +122,7 @@ export function inventoryDatabaseIdentityReader(expected: InventoryLedgerRow[], 
     if (b.database.DatabaseName !== 'clinical_core_qualification' || !uuid.test(b.organizationId)
       || !/^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(b.database.DatabaseClusterArn)
       || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/.test(b.database.DatabaseSecretArn)
-      || Object.values(b.subjects).some(s => typeof s !== 'string' || !uuid.test(s)) || new Set(Object.values(b.subjects)).size !== 3
+      || Object.values(b.subjects).some(s => !isInventoryCognitoSubject(s)) || new Set(Object.values(b.subjects)).size !== 3
       || !/^[a-f0-9]{64}$/.test(b.cognitoPersonBindingsSha256) || /^0+$/.test(b.cognitoPersonBindingsSha256)) return refuse();
     const client = makeClient(), base = { resourceArn: b.database.DatabaseClusterArn, secretArn: b.database.DatabaseSecretArn, database: b.database.DatabaseName };
     const send = (command: Command) => client.send(command, { abortSignal: AbortSignal.timeout(30000) });
