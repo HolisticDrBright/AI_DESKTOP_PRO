@@ -49,6 +49,14 @@ These are local package and fictional-runtime results. No provider call, actual 
 
 ## Required sequence before deployment and activation
 
+### Clean source checkpoint
+
+Engineering source `188b3e45981ebad22f183404b1de1f5f3f18564e` is pushed and independently matches the remote branch. The complete rebuild reports `sourceClean=true`, input digest `4b0af9855e62bb5723b2dab1f112821d03e2f66336573a16a6563b3dc5f9db9a`, and fleet-manifest digest `a176dd49a3a2cbe23f24edb8e8fcf1e883a8333b130ed8300d6d8f17b789228c`. All twelve rebuilt templates passed CloudFormation lint. Every candidate manifest, template and deployment ZIP digest is preserved in [the clean-build receipt](evidence/2026-10-09-inventory-qualification-fleet-clean-build.json). This receipt refers to the actual engineering source, not a later documentary commit.
+
+GitHub runs `37919658629` and `37919663623` at this source are observed in progress, not completed passes. Both prior care-only engineering runs at `e12c982` completed successfully. The prior documentary head's main run `37916909284` succeeded, while browser run `37916913957` remains in progress. Skipped deployed-backend steps still do not count as AWS acceptance, and the historical encounter-request failure is not retroactively resolved.
+
+### Remaining sequence
+
 1. Finish a distinct, exact twelve-candidate target manifest and observer. Bind the reviewed target to each actual template, artifact manifest, immutable S3 version, Lambda code checksum, source identity and live 107 ledger. Existing historical target contracts must not silently accept this successor.
 2. Qualify the native upgrade operator's interrupted-write custody and reconciliation against the actual synthetic target. Local stopped-process and embedded-database tests do not satisfy this requirement.
 3. Only then perform the preserving, rehearsed 106-to-107 upgrade and deploy the exact compatible fleet in dependency order, with PHI off and production activation blocked. No partial fleet may stand in for compatibility qualification.
