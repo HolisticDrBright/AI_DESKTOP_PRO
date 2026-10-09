@@ -143,7 +143,10 @@ export async function observeInventoryFoundation(supplied: InventoryFoundationBi
       const params = { Bucket: id, ExpectedBucketOwner: account };
       const encryption = object(await read('s3api', 'get-bucket-encryption', params));
       const rules = rows(object(encryption.ServerSideEncryptionConfiguration).Rules).map(q => {
-        fields(q, ['BucketKeyEnabled', 'ApplyServerSideEncryptionByDefault']);
+        fields(q, ['BucketKeyEnabled', 'ApplyServerSideEncryptionByDefault', 'BlockedEncryptionTypes']);
+        // This foundation needs service-managed encryption. Missing or altered
+        // customer-key blocking is not interpreted as equivalent protection.
+        equal(q.BlockedEncryptionTypes, { EncryptionType: ['SSE-C'] });
         if (q.BucketKeyEnabled === true) return inventoryRefuse('foundation_bucket_refused');
         return { ServerSideEncryptionByDefault: q.ApplyServerSideEncryptionByDefault };
       });

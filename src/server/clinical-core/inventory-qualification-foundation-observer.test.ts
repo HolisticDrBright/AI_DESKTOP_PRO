@@ -55,7 +55,8 @@ function fixture() {
   for (const name of ['CodeBucket', 'ExportBucket'] as const) {
     const p = properties[name], params = { Bucket: refs[name], ExpectedBucketOwner: account };
     set('s3api', 'get-bucket-encryption', params, { ServerSideEncryptionConfiguration: { Rules: arr(obj(p.BucketEncryption).ServerSideEncryptionConfiguration)
-      .map(q => ({ ApplyServerSideEncryptionByDefault: q.ServerSideEncryptionByDefault, BucketKeyEnabled: false })) } });
+      .map(q => ({ ApplyServerSideEncryptionByDefault: q.ServerSideEncryptionByDefault, BucketKeyEnabled: false,
+        BlockedEncryptionTypes: { EncryptionType: ['SSE-C'] } })) } });
     set('s3api', 'get-bucket-ownership-controls', params, { OwnershipControls: p.OwnershipControls });
     set('s3api', 'get-public-access-block', params, { PublicAccessBlockConfiguration: p.PublicAccessBlockConfiguration });
     set('s3api', 'get-bucket-versioning', params, { Status: 'Enabled' }); set('s3api', 'get-bucket-notification-configuration', params, {});
@@ -117,6 +118,9 @@ it('rejects altered infrastructure, missing resources, keys, policies, lifecycle
   add('kms', 'get-key-policy', r => { const p = obj(JSON.parse(String(r.Policy))); arr(p.Statement).push({ Effect: 'Allow', Action: '*', Principal: '*', Resource: '*' }); r.Policy = JSON.stringify(p); });
   add('kms', 'list-resource-tags', r => { r.Truncated = true; });
   add('s3api', 'get-bucket-encryption', r => { arr(obj(r.ServerSideEncryptionConfiguration).Rules)[0].BucketKeyEnabled = true; });
+  add('s3api', 'get-bucket-encryption', r => { delete arr(obj(r.ServerSideEncryptionConfiguration).Rules)[0].BlockedEncryptionTypes; });
+  add('s3api', 'get-bucket-encryption', r => { arr(obj(r.ServerSideEncryptionConfiguration).Rules)[0].BlockedEncryptionTypes = { EncryptionType: [] }; });
+  add('s3api', 'get-bucket-encryption', r => { arr(obj(r.ServerSideEncryptionConfiguration).Rules)[0].BlockedEncryptionTypes = { EncryptionType: ['SSE-C'], UnknownBypass: true }; });
   add('s3api', 'get-bucket-ownership-controls', r => { r.OwnershipControls = { Rules: [{ ObjectOwnership: 'ObjectWriter' }] }; });
   add('s3api', 'get-public-access-block', r => { obj(r.PublicAccessBlockConfiguration).BlockPublicAcls = false; });
   add('s3api', 'get-bucket-versioning', r => { r.Status = 'Suspended'; });
