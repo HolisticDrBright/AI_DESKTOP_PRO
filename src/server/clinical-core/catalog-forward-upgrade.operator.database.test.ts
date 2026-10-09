@@ -11,6 +11,7 @@ import { catalogSha256, importGovernedCatalog, manifestContentForHash, offerCont
   productContentForHash, type GovernedCatalogSeedManifest } from './aws-governed-catalog';
 import { approveGovernedCatalogRelease, reviewGovernedCatalogVersion } from './aws-governed-catalog-review';
 import { executeCatalogForwardInspectionCommand } from './catalog-forward-inspection-command';
+import { executeCatalogForwardRollback } from './catalog-forward-rehearsal-command';
 import { BeginTransactionCommand, ExecuteStatementCommand, CommitTransactionCommand, RollbackTransactionCommand, type Field } from '@aws-sdk/client-rds-data';
 import { createRdsDataAdministrativeDatabase } from './rds-data-database';
 
@@ -206,6 +207,32 @@ describe('preserving reference forward upgrade — real local SQL, no hosted or 
     await expect(invoke('upgrade', overBound)).rejects.toThrow('inventory_refused');
     await expect(invoke('upgrade', atReceipt(async () => { throw Error('secret credential and provider detail'); }))).rejects.toMatchObject({
       message: 'upgrade_failed', category: 'upgrade_failed', stage: 'ledger_receipt' }); await predecessor();
+  });
+  it('custodied rollback performs real local SQL and settles only after a separate unchanged inspection', async () => {
+    const a = CARE_ERASURE_AWS, events: string[] = []; let checks = 0, transactions = 0;
+    const d = {
+      verifyCustody: () => { checks++; }, record: (stage: string, digest: string) => { expect(digest).toMatch(/^[a-f0-9]{64}$/); events.push(stage); },
+      observeCaller: () => ({ Account: a.account, Arn: `arn:aws:sts::${a.account}:assumed-role/FictionalOperator/session` }),
+      observeFoundation: () => ({ Stacks: [{ StackStatus: 'UPDATE_COMPLETE',
+        StackId: `arn:aws:cloudformation:${a.region}:${a.account}:stack/${a.foundation}/fictional`, Outputs: Object.entries({
+          PhiAllowed: 'false', Environment: 'synthetic-staging', DataClassification: 'synthetic_only', DatabaseName: a.databaseName,
+          ClinicalApiId: a.apiId, DatabaseClusterArn: a.clusterArn, DatabaseSecretArn: a.secretArn,
+        }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] }),
+      loadCore: () => core, loadReference: () => reference, loadCandidate: () => candidate,
+      createDatabase: () => ({ transaction: work => { transactions++; return database().transaction(work); } } satisfies ClinicalCoreDatabase),
+    };
+    const build = { sourceCommit: '1'.repeat(40), clean: true };
+    const before = await inspect();
+    expect(await executeCatalogForwardRollback(build, d)).toMatchObject({ rolledBack: true, lastingApplyPerformed: false,
+      before: { observationSha256: before.observationSha256 }, after: { observationSha256: before.observationSha256 }, phiAllowed: false });
+    expect(events).toEqual(['catalog_rollback_admitted', 'catalog_rollback_readback_verified']);
+    expect(checks).toBeGreaterThan(40); expect(transactions).toBe(4); await predecessor();
+    await expect(executeCatalogForwardRollback({ ...build, clean: false }, d)).rejects.toThrow('boundary_refused');
+    const interrupted = { ...d, createDatabase: () => database(async sql => {
+      if (sql.startsWith('insert into clinical_reference.schema_migrations')) interrupted.verifyCustody = () => { throw Error('custody_lost'); };
+    }) };
+    await expect(executeCatalogForwardRollback(build, interrupted)).rejects.toThrow('upgrade_failed');
+    expect((await inspect()).observationSha256).toBe(before.observationSha256); await predecessor();
   });
   it('applies once, preserves approvals/holds/history and withdraws only the obsolete offer through actual RLS', async () => {
     const before = await inspect();

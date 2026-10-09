@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
-if (process.argv.length !== 2) throw new Error('catalog_forward_build_argument_invalid');
+const rehearsal = process.argv.length === 3 && process.argv[2] === '--rollback-rehearsal';
+if (process.argv.length !== 2 && !rehearsal) throw new Error('catalog_forward_build_argument_invalid');
 const sha = value => createHash('sha256').update(value).digest('hex');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const clean = !execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
@@ -25,15 +26,15 @@ const rows = entries => entries.map(({ version, name, sha256 }) => ({ version, n
 if (core.length !== 47 || sha(JSON.stringify(rows(core))) !== '02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7'
   || reference.length !== 2 || sha(JSON.stringify(rows(reference))) !== '83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62'
   || candidate.sha256 !== '3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117') throw new Error('catalog_forward_artifact_invalid');
-const directory = 'dist/aws-clinical-core/catalog-forward-inspector'; mkdirSync(directory, { recursive: true });
-await build({ entryPoints: ['src/server/clinical-core/catalog-forward-inspection-operator.ts'], outfile: `${directory}/index.cjs`,
+const directory = 'dist/aws-clinical-core/' + (rehearsal ? 'catalog-forward-rollback' : 'catalog-forward-inspector'); mkdirSync(directory, { recursive: true });
+await build({ entryPoints: ['src/server/clinical-core/' + (rehearsal ? 'catalog-forward-rehearsal-database.ts' : 'catalog-forward-inspection-operator.ts')], outfile: `${directory}/index.cjs`,
   bundle: true, platform: 'node', target: 'node22', format: 'cjs', minify: false, sourcemap: false, legalComments: 'none', treeShaking: true,
   define: { __CATALOG_FORWARD_BUILD__: JSON.stringify({ sourceCommit, clean }), __CATALOG_FORWARD_CORE__: JSON.stringify(core),
     __CATALOG_FORWARD_REFERENCE__: JSON.stringify(reference), __CATALOG_FORWARD_CANDIDATE__: JSON.stringify(candidate) } });
-writeFileSync(`${directory}/artifact-manifest.json`, JSON.stringify({ contract: 'catalog-forward-inspector-build/1', sourceCommit, clean,
+writeFileSync(`${directory}/artifact-manifest.json`, JSON.stringify({ contract: rehearsal ? 'catalog-forward-rollback-build/1' : 'catalog-forward-inspector-build/1', sourceCommit, clean,
   sha256: sha(readFileSync(`${directory}/index.cjs`)), execution: 'synthetic-staging', phiAllowed: false,
   coreSourceCount: 47, coreLiveCount: 48, referenceBeforeCount: 2, referenceCandidateCount: 3,
   referenceBeforeSha256: sha(JSON.stringify(rows(reference))), referenceCandidateSha256: sha(JSON.stringify([...rows(reference), ...rows([candidate])])),
-  candidateSqlSha256: candidate.sha256, readOnly: true, lastingApplyAvailable: false,
+  candidateSqlSha256: candidate.sha256, readOnly: !rehearsal, rollbackRehearsalAvailable: rehearsal, lastingApplyAvailable: false,
   canonicalRegistered: false, databaseMutationPerformed: false, hostedAcceptance: false, activationApproved: false }, null, 2) + '\n');
-console.log(JSON.stringify({ built: true, sourceCommit, clean, readOnly: true, databaseMutationPerformed: false }));
+console.log(JSON.stringify({ built: true, sourceCommit, clean, readOnly: !rehearsal, databaseMutationPerformed: false }));
