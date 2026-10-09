@@ -6,10 +6,15 @@
  * opens the patient's real chart tabs.
  *
  * Nothing on this screen can start a meeting on its own. "Start visit" asks
- * the server for a visit session; the server refuses without a signed
- * consent or without Zoom enabled under a verified BAA, and the refusal is
- * shown as-is. The SDK signature and host token arrive once per start and are
- * kept in component state only.
+ * the server for a visit session; the server resolves the appointment
+ * through the practitioner's calendar access, the boundary re-checks the
+ * consent authority and refuses without Zoom enabled under a verified BAA,
+ * and the refusal is shown as-is. The SDK signature and host token arrive
+ * once per start and are kept in component state only.
+ *
+ * Ending a visit is a server-side shutdown: the visit reads "ended" only once
+ * Zoom confirms the meeting stopped. Leaving this client is not the same
+ * claim and is never shown as one.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -27,11 +32,22 @@ import { TextArea } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { patientPath } from "@/lib/routes";
 import { useFeedback } from "@/lib/feedback";
-import { ConsentDialog, PhaseChip, fmtClock, fmtTime, noteHref, patientLabel, visitPhase } from "./parts";
-import { loadZoomMeetingSdk, type ZoomEmbeddedClient } from "./zoom-sdk";
+import {
+  ConsentDialog,
+  PhaseChip,
+  fmtClock,
+  fmtTime,
+  loadVisitRow,
+  noteHref,
+  patientLabel,
+  viewerTimeZone,
+  visitPhase,
+} from "./parts";
+import { ZoomSdkLoadError, loadZoomMeetingSdk, type ZoomEmbeddedClient } from "./zoom-sdk";
 
 type LoadState = "loading" | "ready" | "error";
-type MeetingState = "idle" | "starting" | "connecting" | "connected" | "closed" | "failed";
+/** Observable SDK bootstrap state (also exposed on the stage for the bootstrap test). */
+type MeetingState = "idle" | "starting" | "loading_sdk" | "initialized" | "joining" | "connected" | "closed" | "failed";
 
 export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: string; date: string }) {
   const router = useRouter();
@@ -60,8 +76,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
   useEffect(() => {
     let cancelled = false;
     setState("loading");
-    api.telehealth
-      .visit(appointmentId, date)
+    loadVisitRow(appointmentId, date)
       .then((result) => {
         if (cancelled) return;
         setRow(result);
@@ -91,7 +106,8 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
     return () => window.clearInterval(id);
   }, [startedAt]);
 
-  // Leave the meeting if the practitioner navigates away mid-visit.
+  // Leave the meeting if the practitioner navigates away mid-visit. Leaving is
+  // this client's departure only; the visit stays open on the server.
   useEffect(
     () => () => {
       const client = clientRef.current;
@@ -108,16 +124,14 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
     try {
       const result = await api.telehealth.start({
         appointmentId: row.appointmentId,
-        requestId: row.requestId,
-        start: row.startsAt,
-        end: row.endsAt,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles",
-        hostDisplayName: row.practitionerName ?? "Practitioner",
+        date,
+        timeZone: viewerTimeZone(),
+        hostDisplayName: row.practitionerName ?? undefined,
       });
       sessionRef.current = result.session;
       setRow({ ...row, visit: result.visit });
       if (result.visit.startedAt) setStartedAt(Date.parse(result.visit.startedAt));
-      setMeeting("connecting");
+      setMeeting("loading_sdk");
       const sdk = await loadZoomMeetingSdk();
       const client = sdk.createClient();
       clientRef.current = client;
@@ -131,6 +145,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           meetingInfo: ["topic", "participant"],
         },
       });
+      setMeeting("initialized");
       client.on("connection-change", (payload) => {
         const stateValue = (payload as { state?: string } | undefined)?.state;
         if (stateValue === "Connected") setMeeting("connected");
@@ -140,6 +155,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           setMeetingError("The Zoom connection failed. Reconnect to continue the visit.");
         }
       });
+      setMeeting("joining");
       await client.join({
         signature: result.session.signature,
         meetingNumber: result.session.meetingNumber,
@@ -152,11 +168,13 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
     } catch (e) {
       setMeeting("failed");
       setMeetingError(
-        isAdapterError(e)
-          ? e.message
-          : e instanceof Error
+        e instanceof ZoomSdkLoadError
+          ? `${e.message} The visit is open on the server; retry to load the meeting.`
+          : isAdapterError(e)
             ? e.message
-            : "The visit could not be started.",
+            : e instanceof Error
+              ? `The meeting could not be joined: ${e.message}`
+              : "The visit could not be started.",
       );
     }
   };
@@ -170,27 +188,35 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
   const endVisit = async () => {
     if (!row?.visit) return;
     setEnding(true);
+    setMeetingError(null);
     try {
+      // This client leaves; termination for everyone is the server's job below.
       const client = clientRef.current;
       clientRef.current = null;
-      if (client) {
+      if (client?.leaveMeeting) {
         try {
-          if (client.endMeeting) await client.endMeeting();
-          else if (client.leaveMeeting) await client.leaveMeeting();
+          await client.leaveMeeting();
         } catch {
-          /* the server record is the source of truth; a leave failure must not block ending the visit */
+          /* local departure only; the server decides whether the meeting ended */
         }
       }
       const visit = await api.telehealth.end({
         appointmentId: row.appointmentId,
+        date,
+        timeZone: viewerTimeZone(),
         expectedVersion: row.visit.version,
         flags,
         quickNotes,
       });
       setRow({ ...row, visit });
       setConfirmEnd(false);
-      announce("Visit ended. Opening the visit note.");
-      router.push(noteHref(row));
+      if (visit.status === "ended") {
+        announce("Visit ended. Zoom confirmed the meeting stopped. Opening the visit note.");
+        router.push(noteHref(row));
+      } else {
+        setMeeting("closed");
+        announce("Your notes are saved, but Zoom has not confirmed the meeting stopped. Retry the shutdown.");
+      }
     } catch (e) {
       setMeetingError(isAdapterError(e) ? e.message : "The visit could not be ended.");
       setConfirmEnd(false);
@@ -225,8 +251,12 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
   }
 
   const phase = visitPhase(row, true);
-  const ended = row.visit?.status === "ended";
-  const canStart = (phase === "ready" || phase === "in_visit") && meeting !== "connected" && meeting !== "connecting" && meeting !== "starting";
+  const visit = row.visit;
+  const ended = visit?.status === "ended";
+  const shutdownPending = visit?.status === "ending";
+  const cancelled = phase === "cancelled";
+  const canStart = (phase === "ready" || phase === "in_visit") && !["connected", "joining", "initialized", "loading_sdk", "starting"].includes(meeting);
+  const shutdownDetail = visit?.providerShutdown;
 
   return (
     <section data-screen-label="Telehealth visit" className="mx-auto max-w-[1180px] px-[22px] pt-[18px] pb-6">
@@ -247,13 +277,17 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
             >
               {startedAt === null ? "00:00" : fmtClock(elapsed)}
             </span>
-            {!ended && (
-              <Btn variant="danger" onClick={() => setConfirmEnd(true)} disabled={!row.visit || row.visit.status !== "in_visit"}>
-                <PhoneOff size={13} strokeWidth={2} aria-hidden /> End visit
+            {!ended && !cancelled && (
+              <Btn
+                variant="danger"
+                onClick={() => setConfirmEnd(true)}
+                disabled={!visit || !(visit.status === "in_visit" || visit.status === "ending") || ending}
+              >
+                <PhoneOff size={13} strokeWidth={2} aria-hidden /> {shutdownPending ? "Retry shutdown" : "End visit"}
               </Btn>
             )}
-            {ended && (
-              <BtnLink variant="primary" href={noteHref(row)}>
+            {(ended || shutdownPending) && (
+              <BtnLink variant={ended ? "primary" : "outline"} href={noteHref(row)}>
                 Open visit note
               </BtnLink>
             )}
@@ -261,29 +295,53 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
         }
       />
 
+      {shutdownPending && (
+        <div
+          role="alert"
+          data-testid="shutdown-pending"
+          className="mb-3 rounded-[10px] border border-[rgba(214,84,74,0.4)] bg-critical-tint px-[13px] py-[10px] text-[12px] leading-[1.55] text-critical"
+        >
+          <strong>Zoom has not confirmed the meeting stopped.</strong>{" "}
+          {shutdownDetail?.status === "failed"
+            ? `The shutdown request failed (${shutdownDetail.detail ?? "no detail"}). The meeting may still be running for other participants, and recording or AI processing may continue.`
+            : "A shutdown is in progress."}{" "}
+          Your quick notes and flagged moments are saved. Retry the shutdown; you can write the note meanwhile, but the
+          visit is not ended until Zoom confirms.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-3">
           <Card className="overflow-hidden">
             <div
               ref={mountRef}
               data-zoom-mount
+              data-zoom-state={meeting}
               data-testid="zoom-stage"
               className="relative flex min-h-[495px] items-center justify-center bg-[#0f1a26] text-white"
             >
               {meeting !== "connected" && (
                 <div className="flex max-w-[460px] flex-col items-center gap-3 px-6 text-center">
                   <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(255,255,255,0.1)]">
-                    {phase === "consent_missing" ? (
+                    {phase === "consent_missing" || cancelled ? (
                       <ShieldAlert size={22} strokeWidth={1.75} aria-hidden />
                     ) : (
                       <Video size={22} strokeWidth={1.75} aria-hidden />
                     )}
                   </span>
+                  {cancelled && (
+                    <>
+                      <p className="m-0 text-[14px] font-semibold">This appointment is cancelled</p>
+                      <p className="m-0 text-[12.5px] leading-[1.5] text-[rgba(255,255,255,0.75)]">
+                        A cancelled or no-show appointment cannot be started. Nothing here reaches Zoom.
+                      </p>
+                    </>
+                  )}
                   {phase === "consent_missing" && (
                     <>
                       <p className="m-0 text-[14px] font-semibold">This visit cannot start</p>
                       <p className="m-0 text-[12.5px] leading-[1.5] text-[rgba(255,255,255,0.75)]">
-                        There is no signed telehealth and recording consent on record for this appointment. Record
+                        There is no current telehealth and recording consent on record for this appointment. Record
                         it first; the server will refuse to open the meeting without it.
                       </p>
                       <Btn variant="primary" onClick={() => setConsentOpen(true)}>
@@ -295,20 +353,30 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
                     <>
                       <p className="m-0 text-[14px] font-semibold">Visit ended</p>
                       <p className="m-0 text-[12.5px] leading-[1.5] text-[rgba(255,255,255,0.75)]">
-                        The meeting is closed. The AI Companion summary can be imported from the visit note.
+                        Zoom confirmed the meeting stopped. The AI Companion summary can be imported from the visit note.
                       </p>
                     </>
                   )}
-                  {!ended && phase !== "consent_missing" && (
+                  {shutdownPending && (
+                    <>
+                      <p className="m-0 text-[14px] font-semibold">Meeting shutdown not confirmed</p>
+                      <p className="m-0 text-[12.5px] leading-[1.5] text-[rgba(255,255,255,0.75)]">
+                        You have left this meeting, but Zoom has not confirmed it ended for everyone. Use Retry shutdown.
+                      </p>
+                    </>
+                  )}
+                  {!ended && !shutdownPending && !cancelled && phase !== "consent_missing" && (
                     <>
                       <p className="m-0 text-[14px] font-semibold">
                         {meeting === "starting"
                           ? "Opening the visit…"
-                          : meeting === "connecting"
-                            ? "Connecting to Zoom…"
-                            : meeting === "closed"
-                              ? "Meeting closed"
-                              : "Ready to start"}
+                          : meeting === "loading_sdk"
+                            ? "Loading the Zoom Meeting SDK…"
+                            : meeting === "initialized" || meeting === "joining"
+                              ? "Connecting to Zoom…"
+                              : meeting === "closed"
+                                ? "Meeting closed"
+                                : "Ready to start"}
                       </p>
                       <p className="m-0 text-[12.5px] leading-[1.5] text-[rgba(255,255,255,0.75)]">
                         Zoom opens inside this panel with the waiting room on. Mute, camera, screen share, chat and
@@ -317,7 +385,8 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
                       </p>
                       {canStart && (
                         <Btn variant="primary" onClick={() => void startVisit()}>
-                          <Video size={13} strokeWidth={2} aria-hidden /> {phase === "in_visit" ? "Rejoin visit" : "Start visit"}
+                          <Video size={13} strokeWidth={2} aria-hidden />{" "}
+                          {meeting === "failed" || meeting === "closed" ? "Retry" : phase === "in_visit" ? "Rejoin visit" : "Start visit"}
                         </Btn>
                       )}
                     </>
@@ -339,7 +408,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           <Card className="p-4">
             <div className="flex items-center justify-between gap-3">
               <CardTitle>Quick notes for the call</CardTitle>
-              <Btn size="sm" onClick={flagMoment} disabled={ended}>
+              <Btn size="sm" onClick={flagMoment} disabled={ended || cancelled}>
                 <Flag size={12} strokeWidth={2} aria-hidden /> Flag this moment
               </Btn>
             </div>
@@ -350,7 +419,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
               aria-label="Quick notes"
               value={quickNotes}
               onChange={(e) => setQuickNotes(e.target.value)}
-              disabled={ended}
+              disabled={ended || cancelled}
               placeholder="Things to remember for the note…"
             />
             {flags.length > 0 && (
@@ -405,20 +474,25 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
 
           <Card className="p-4">
             <CardTitle>Consent</CardTitle>
-            {row.visit?.consents.length ? (
+            {visit?.consents.length ? (
               <ul className="m-0 mt-2 list-none p-0 text-[12px] leading-[1.5] text-body">
-                {row.visit.consents.map((consent) => (
+                {visit.consents.map((consent) => (
                   <li key={consent.consentId}>
-                    Combined telehealth + recording/AI notes, version {consent.consentVersion} ·{" "}
+                    Combined telehealth + recording/AI notes, version {consent.artifactVersion} ·{" "}
                     {consent.method === "patient_app" ? "signed in the patient app" : "recorded by staff"} by{" "}
                     {consent.signerName}
                     {consent.patientLocation ? ` · patient in ${consent.patientLocation}` : ""}
+                    {consent.status === "withdrawn" ? " · withdrawn" : ""}
                   </li>
                 ))}
               </ul>
             ) : (
               <p className="mt-2 mb-0 text-[12px] text-warning-deep">Not signed.</p>
             )}
+            <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-subtle">
+              Checked again against the practice&apos;s approved consent and the patient&apos;s current grant each
+              time the visit starts.
+            </p>
           </Card>
 
           <ClinicalNote>
@@ -429,15 +503,15 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
 
       <ConfirmDialog
         open={confirmEnd}
-        title="End this visit?"
-        body="The Zoom meeting closes for everyone. Your quick notes and flagged moments are saved with the visit and the visit note opens next."
-        confirmLabel={ending ? "Ending…" : "End visit"}
+        title={shutdownPending ? "Retry ending the meeting?" : "End this visit?"}
+        body="Desktop Pro asks Zoom to end the meeting for everyone and waits for Zoom to confirm. Your quick notes and flagged moments are saved with the visit. The visit note opens once Zoom confirms the meeting stopped."
+        confirmLabel={ending ? "Ending…" : shutdownPending ? "Retry shutdown" : "End visit"}
         destructive
         onConfirm={() => void endVisit()}
         onCancel={() => setConfirmEnd(false)}
       />
 
-      {consentOpen && <ConsentDialog row={row} open onClose={() => setConsentOpen(false)} onRecorded={onConsentRecorded} />}
+      {consentOpen && <ConsentDialog row={row} date={date} open onClose={() => setConsentOpen(false)} onRecorded={onConsentRecorded} />}
     </section>
   );
 }

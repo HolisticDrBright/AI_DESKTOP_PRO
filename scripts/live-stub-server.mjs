@@ -932,6 +932,11 @@ const scheduleAppointments = [];
 // Telehealth VISIT records (AWS telehealth-requests Lambda contract, workforce
 // routes): appointmentId → { consents, status, meeting, flags, quickNotes, note }.
 const telehealthVisits = new Map();
+/** The organization's one approved telehealth consent artifact (version + hash), as the identity authority would return it. */
+const TELEHEALTH_CONSENT_ARTIFACT = {
+  artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", artifactVersion: "telehealth-recording/1", contentSha256: "b".repeat(64),
+  jurisdiction: "US-CA", approvedAt: "2026-10-01T00:00:00.000Z", scope: "telehealth_recording",
+};
 function seedScheduleFor(fromIso) {
   if (scheduleSeeded) return;
   scheduleSeeded = true;
@@ -11564,20 +11569,27 @@ createServer(async (req, res) => {
   }
 
   // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====
-  // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts.
-  // Zoom is "enabled" here only in the sense that start returns a fixture
-  // session: the browser suite aborts the SDK download, so no meeting exists.
+  // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts
+  // (contract telehealth-requests/6). Zoom is "enabled" here only in the sense
+  // that start returns a fixture session and end confirms a fixture shutdown:
+  // the browser suite aborts the SDK download, so no meeting ever exists.
   if (url.pathname.startsWith("/clinical-core/workforce/appointments/")) {
     if (!/^Bearer .+/.test(req.headers.authorization ?? "")) return json(res, 403, { error: "identity_refused" });
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const publicVisit = (visit) => {
-      const { passcode: _passcode, ...rest } = visit;
-      return { ...rest, consentSigned: visit.consents.length > 0 };
+      const { passcode: _passcode, meetingLease: _lease, ...rest } = visit;
+      return { ...rest, consentSigned: visit.consents.some((consent) => consent.status === "granted") };
     };
-    const newVisit = (appointmentId, requestId) => ({
-      appointmentId, organizationId: "org-fixture", requestId, status: "scheduled", consents: [],
-      providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null, flags: [], quickNotes: "",
-      note: null, version: 1, createdAt: nowIso(), updatedAt: nowIso(),
+    const summaryVisit = (visit) => {
+      const { note, ...rest } = publicVisit(visit);
+      return { ...rest, flags: [], quickNotes: "", noteHistory: [], note: note ? { status: note.status, source: note.source, zoomSummaryId: note.zoomSummaryId, revision: note.revision, importedAt: note.importedAt, signedAt: note.signedAt, signedBy: note.signedBy } : null };
+    };
+    const newVisit = (appointmentId, binding) => ({
+      appointmentId, organizationId: "org-fixture", requestId: binding.requestId ?? null, consumerPersonId: null,
+      scheduledStart: binding.start ?? null, scheduledEnd: binding.end ?? null, timeZone: binding.timeZone ?? null,
+      status: "scheduled", consents: [], meetingLease: null, providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null,
+      providerShutdown: { status: "not_started", attemptedAt: null, confirmedAt: null, detail: null },
+      flags: [], quickNotes: "", note: null, noteHistory: [], version: 1, createdAt: nowIso(), updatedAt: nowIso(),
     });
     const save = (visit) => { const next = { ...visit, version: visit.version + 1, updatedAt: nowIso() }; telehealthVisits.set(next.appointmentId, next); return next; };
     const sub = url.pathname.slice("/clinical-core/workforce/appointments/".length);
@@ -11585,8 +11597,9 @@ createServer(async (req, res) => {
     if (sub === "requests" && req.method === "GET") return json(res, 200, { data: [] });
     if (sub === "slots" && req.method === "GET") return json(res, 200, { data: [] });
     if (sub === "visits" && req.method === "GET") {
-      return json(res, 200, { data: [...telehealthVisits.values()].map(publicVisit) });
+      return json(res, 200, { data: { visits: [...telehealthVisits.values()].map(summaryVisit), complete: true } });
     }
+    if (sub === "visits/consent-artifact" && req.method === "GET") return json(res, 200, { data: TELEHEALTH_CONSENT_ARTIFACT });
     if (sub === "visits/notes" && req.method === "GET") {
       const visit = telehealthVisits.get(url.searchParams.get("appointmentId") ?? "");
       if (!visit) return json(res, 404, { error: "not_found" });
@@ -11598,26 +11611,41 @@ createServer(async (req, res) => {
     if (!UUID_RE.test(appointmentId)) return json(res, 400, { error: "request_invalid" });
     if (sub === "visits/consent") {
       const signerName = String(body.signerName ?? "").trim();
-      if (body.agreed !== true || signerName.length < 2 || !/^[A-Za-z0-9._-]{1,64}$/.test(String(body.consentVersion ?? ""))) {
-        return json(res, 400, { error: "request_invalid" });
+      if (body.agreed !== true || signerName.length < 2) return json(res, 400, { error: "request_invalid" });
+      if (body.artifactId !== TELEHEALTH_CONSENT_ARTIFACT.artifactId || body.artifactVersion !== TELEHEALTH_CONSENT_ARTIFACT.artifactVersion
+        || body.contentSha256 !== TELEHEALTH_CONSENT_ARTIFACT.contentSha256) {
+        return json(res, 409, { error: "consent_version_refused" });
       }
-      const visit = telehealthVisits.get(appointmentId) ?? newVisit(appointmentId, body.requestId ?? null);
+      const existing = telehealthVisits.get(appointmentId);
+      if (existing?.status === "cancelled") return json(res, 409, { error: "appointment_cancelled" });
+      const visit = existing ?? newVisit(appointmentId, body);
       const consent = {
         consentId: `cccccccc-1111-2222-3333-${String(444444444400 + visit.consents.length + 1)}`,
-        consentType: "telehealth_recording_combined", consentVersion: String(body.consentVersion), signerName,
-        method: "staff_attested", signedAt: nowIso(), recordedBy: PRACTITIONER_USER_ID,
+        consentType: "telehealth_recording_combined", scope: "telehealth_recording",
+        artifactId: TELEHEALTH_CONSENT_ARTIFACT.artifactId, artifactVersion: TELEHEALTH_CONSENT_ARTIFACT.artifactVersion, contentSha256: TELEHEALTH_CONSENT_ARTIFACT.contentSha256,
+        signerName, method: "staff_attested", representativeAuthority: String(body.representativeAuthority ?? "self"), signedAt: nowIso(), recordedBy: PRACTITIONER_USER_ID,
         patientLocation: typeof body.patientLocation === "string" && body.patientLocation.trim() ? body.patientLocation.trim() : null,
+        grantId: null, connectionId: null, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null,
       };
-      const saved = telehealthVisits.has(appointmentId)
+      const saved = existing
         ? save({ ...visit, consents: [...visit.consents, consent] })
         : (telehealthVisits.set(appointmentId, { ...visit, consents: [consent] }), telehealthVisits.get(appointmentId));
-      pushAudit("telehealth.consent", "appointment", appointmentId, "Telehealth consent recorded", { method: "staff_attested" }, PATIENTS[0].id, "org-fixture");
+      pushAudit("telehealth.consent", "appointment", appointmentId, "Telehealth consent recorded", { method: "staff_attested", artifactVersion: TELEHEALTH_CONSENT_ARTIFACT.artifactVersion }, PATIENTS[0].id, "org-fixture");
+      return json(res, 200, { data: publicVisit(saved) });
+    }
+    if (sub === "visits/consent/withdraw") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      if (visit.version !== body.expectedVersion) return json(res, 409, { error: "conflict" });
+      const at = nowIso();
+      const saved = save({ ...visit, consents: visit.consents.map((consent) => consent.status === "granted" ? { ...consent, status: "withdrawn", withdrawnAt: at, withdrawnBy: PRACTITIONER_USER_ID, withdrawalReason: String(body.reason ?? "patient_request") } : consent) });
       return json(res, 200, { data: publicVisit(saved) });
     }
     if (sub === "visits/start") {
       const visit = telehealthVisits.get(appointmentId);
-      if (!visit || visit.consents.length === 0) return json(res, 409, { error: "consent_required" });
-      if (visit.status === "ended") return json(res, 409, { error: "conflict" });
+      if (!visit || !visit.consents.some((consent) => consent.status === "granted")) return json(res, 409, { error: "consent_required" });
+      if (visit.status === "cancelled") return json(res, 409, { error: "appointment_cancelled" });
+      if (visit.status === "ended" || visit.status === "ending") return json(res, 409, { error: "conflict" });
       const saved = save({ ...visit, status: "in_visit", startedAt: visit.startedAt ?? nowIso(), providerMeetingId: "900000001", joinUrl: "https://zoom.us/j/900000001?pwd=fixture", passcode: "fixture" });
       return json(res, 200, { data: { visit: publicVisit(saved), session: {
         meetingNumber: "900000001", passcode: "fixture", signature: "fixture.signature.value", sdkKey: "fixture-sdk-key", zak: "fixture-zak",
@@ -11629,17 +11657,25 @@ createServer(async (req, res) => {
       if (!visit) return json(res, 404, { error: "not_found" });
       if (visit.version !== body.expectedVersion) return json(res, 409, { error: "conflict" });
       if (visit.status === "ended") return json(res, 200, { data: publicVisit(visit) });
-      const saved = save({ ...visit, status: "ended", endedAt: nowIso(), flags: Array.isArray(body.flags) ? body.flags : visit.flags, quickNotes: typeof body.quickNotes === "string" ? body.quickNotes : visit.quickNotes });
+      if (visit.status !== "in_visit" && visit.status !== "ending") return json(res, 409, { error: "conflict" });
+      const at = nowIso();
+      // The fixture "provider" confirms the end; the Lambda would leave the
+      // visit `ending` with providerShutdown.failed if Zoom did not.
+      const saved = save({ ...visit, status: "ended", endedAt: at, providerShutdown: { status: "ended", attemptedAt: at, confirmedAt: at, detail: null },
+        flags: Array.isArray(body.flags) ? body.flags : visit.flags, quickNotes: typeof body.quickNotes === "string" ? body.quickNotes : visit.quickNotes });
       return json(res, 200, { data: publicVisit(saved) });
     }
     if (sub === "visits/notes/import") {
       const visit = telehealthVisits.get(appointmentId);
       if (!visit) return json(res, 404, { error: "not_found" });
-      if (visit.note?.status === "signed" || !visit.providerMeetingId) return json(res, 409, { error: "conflict" });
+      if (visit.note?.status === "signed" || !visit.providerMeetingId || visit.status !== "ended") return json(res, 409, { error: "conflict" });
+      if (!visit.consents.some((consent) => consent.status === "granted")) return json(res, 409, { error: "consent_required" });
       // What the Lambda stores once Zoom has produced an AI Companion summary:
-      // Zoom's text verbatim in aiOriginal, mapped by label into the sections.
+      // Zoom's current unified `summary_content` kept whole as unreviewed
+      // text, legacy details mapped by label, next steps as suggestions.
       const aiOriginal = {
-        meeting_uuid: "fixture-summary-uuid", summary_overview: "Follow-up on fatigue and iron status; patient reports gradual improvement.",
+        meeting_id: 900000001, meeting_uuid: "fixture-summary-uuid",
+        summary_content: "## Follow-up on fatigue and iron status\n\nPatient reports gradual improvement.",
         summary_details: [
           { label: "Symptoms reported", summary: "Afternoon fatigue has eased since the last visit; sleep is 7 hours on average." },
           { label: "Results reviewed", summary: "Ferritin and hs-CRP from the last panel were discussed." },
@@ -11647,19 +11683,20 @@ createServer(async (req, res) => {
         ],
         next_steps: ["Repeat ferritin in 8 weeks", "Send the patient a sleep log"],
       };
+      const previous = visit.note;
       const note = {
         status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "fixture-summary-uuid",
         aiSections: {
-          summary: aiOriginal.summary_overview,
+          summary: aiOriginal.summary_content,
           patient_reported: aiOriginal.summary_details[0].summary,
           results_reviewed: aiOriginal.summary_details[1].summary,
           plan_discussed: aiOriginal.summary_details[2].summary,
         },
-        aiOriginal, practitionerNotes: visit.note?.practitionerNotes ?? "",
-        actionItems: aiOriginal.next_steps.map((text, index) => ({ id: `action-${index + 1}`, text, status: "suggested" })),
-        revision: (visit.note?.revision ?? 0) + 1, importedAt: nowIso(), signedAt: null, signedBy: null,
+        aiOriginal, practitionerNotes: previous?.practitionerNotes ?? "",
+        actionItems: aiOriginal.next_steps.map((text, index) => previous?.actionItems.find((item) => item.text === text) ?? { id: `action-${index + 1}`, text, status: "suggested" }),
+        revision: (previous?.revision ?? 0) + 1, importedAt: nowIso(), signedAt: null, signedBy: null,
       };
-      const saved = save({ ...visit, note });
+      const saved = save({ ...visit, note, noteHistory: previous ? [...visit.noteHistory, previous] : visit.noteHistory });
       return json(res, 200, { data: { visit: publicVisit(saved), summaryReady: true } });
     }
     if (sub === "visits/notes/sign") {
@@ -11680,7 +11717,7 @@ createServer(async (req, res) => {
       });
       if (actionItems.some((item) => item === null)) return json(res, 400, { error: "request_invalid" });
       const note = { ...visit.note, status: "signed", aiSections: Object.fromEntries(keys.map((key) => [key, sections[key]])), practitionerNotes: body.practitionerNotes, actionItems, revision: visit.note.revision + 1, signedAt: nowIso(), signedBy: PRACTITIONER_USER_ID };
-      const saved = save({ ...visit, note });
+      const saved = save({ ...visit, note, noteHistory: [...visit.noteHistory, visit.note] });
       pushAudit("telehealth.note.signed", "appointment", appointmentId, "Telehealth visit note signed", { revision: note.revision }, PATIENTS[0].id, "org-fixture");
       return json(res, 200, { data: publicVisit(saved) });
     }

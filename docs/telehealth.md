@@ -24,60 +24,118 @@ made, and a service that cannot answer says so.
 ## Where the data lives
 
 ```
-Telehealth day view
+Telehealth day view (viewer's time zone)
   ├─ Desktop-owned calendar RPC (get_desktop_calendar) — appointments of type `telehealth`
   └─ AWS telehealth boundary (telehealth-requests Lambda, workforce routes)
        ├─ patient-app requests (already existed) — scheduled requests appear as rows
-       └─ VISIT records (new) — consent, Zoom meeting, flags/quick notes, the note
+       ├─ VISIT records (new) — consent receipts, Zoom meeting, provider shutdown, the note
+       └─ consent authority (identity extension, read through the clinical API with the caller's JWT)
+            ├─ consent_artifacts — the organization's approved `telehealth_recording` artifact (version + hash)
+            └─ consent_grants   — the patient's current grant/revocation for that scope (append-only)
 ```
 
 The two sources are merged per appointment in `src/adapters/telehealth.live.ts`.
 If the visit boundary is unreachable, the calendar rows still render and the
 screen says consent and meeting state are **unknown** — it never renders
-"Consent not signed" for a consent it could not read.
+"Consent not signed" for a consent it could not read. If the boundary's list
+hit its page bound, the day view says the list is incomplete rather than
+presenting a truncated list as whole.
 
-No new Supabase migration or `clinicalRpc` operation was added: the calendar
-read is the existing reviewed operation, and everything visit-specific is a
-DynamoDB item on the telehealth table the Lambda already owns.
+### Authority, in order
+
+1. **The appointment.** Every visit action (`consent`, `withdraw`, `start`,
+   `end`, `import`, `sign`) first resolves its appointment through the
+   practitioner's own calendar access (`get_desktop_calendar`, RLS). An
+   appointment the calendar does not return — nonexistent, another
+   organization, no access — is `not_found` before the boundary is called. A
+   cancelled or no-show appointment is refused. The appointment's **stored**
+   times go to the boundary; nothing from the browser does. The day and the
+   zone are the viewer's (`date` + IANA `timeZone` on every call), computed
+   DST-aware; February 31 is refused, not normalised.
+2. **The request.** A patient-app visit is bound to its request on the
+   boundary: the request must exist in the caller's organization, name this
+   exact appointment, and not be cancelled; its stored times and meeting are
+   authoritative. Cancelling a request closes its visit and deletes a meeting
+   the visit itself created.
+3. **The consent.** See the consent section below. No authority read, no
+   secret lookup and no provider call happens before a refusal.
+
+The Lambda cannot see the clinical calendar. For a desktop-booked visit (no
+request) it relies on the desktop server having resolved the appointment under
+the practitioner's session, which is why the desktop never forwards a browser
+value. That split is a known limit, documented here rather than hidden.
+
+### Consent
+
+The combined telehealth + recording/AI-notes consent is the governed
+`telehealth_recording` scope in the identity extension
+(`infra/aws-clinical-core/migrations/20261009100000_telehealth_recording_consent.sql`):
+one approved, versioned, hashed artifact per organization and an append-only
+grant/revoke lifecycle per patient connection. The identity API exposes two
+workforce reads for it — `GET /clinical-core/workforce/consent-artifact` and
+`GET /clinical-core/workforce/consents/current` — and the telehealth Lambda
+calls them with the caller's own JWT.
+
+| Path | What is checked |
+| --- | --- |
+| Patient app, at booking | the consent object must name the organization's **current approved** artifact (id, version, hash); otherwise `consent_version_refused` |
+| Desktop, staff-attested | the dialog reads the current artifact first and shows its version, jurisdiction and hash; the receipt must name exactly that artifact; when the patient has an app connection the grant is recorded in the identity authority (`in_person`) and its id is stored on the receipt |
+| Withdrawal | `POST …/visits/consent/withdraw` marks receipts withdrawn (append-only) and revokes the governed grant |
+| Start, and AI-summary import | a granted, un-withdrawn receipt; its artifact must still be the approved one (a retired/superseded release is no authority); when a connection exists the current grant must be `granted` for that artifact — a revocation in the authority revokes the visit |
+
+Refusals are named: `consent_required`, `consent_withdrawn`,
+`consent_superseded`, `consent_version_refused`,
+`consent_artifact_unavailable` (no approved artifact exists yet). Approving
+the artifact itself is a human review in the consent registry; nothing here
+invents a hash or substitutes a configuration flag.
 
 ### Visit record (`VISIT#<appointmentId>`)
 
 | Field | Meaning |
 | --- | --- |
-| `consents[]` | append-only; `method` is `patient_app` (typed by the patient at booking) or `staff_attested` (recorded on the desktop) |
-| `status` | `scheduled` → `in_visit` → `ended` |
+| `requestId`, `consumerPersonId`, `scheduledStart/End`, `timeZone` | the binding (request-derived or desktop-resolved) |
+| `consents[]` | append-only receipts: artifact id/version/hash, signer, method, representative authority, governed grant id, `granted`/`withdrawn` |
+| `status` | `scheduled` → `in_visit` → `ending` → `ended`; or `cancelled` |
+| `meetingLease` | the durable creating-intent held while a provider meeting is being created (2-minute TTL) |
 | `providerMeetingId`, `joinUrl`, `passcode` | the Zoom meeting; the passcode leaves the Lambda only inside a start-visit session |
+| `providerShutdown` | `not_started`/`pending`/`ended`/`failed` with the provider's answer; `ended` only when Zoom confirmed |
 | `flags[]`, `quickNotes` | stamped against the visit timer; saved when the visit ends |
-| `note` | `status` `not_reviewed` or `signed`; `aiSections` (four chart sections), `aiOriginal` (Zoom's summary verbatim), `practitionerNotes`, `actionItems[]`, `revision` |
+| `note`, `noteHistory[]` | the current note and its prior revisions (bounded); `status` `not_reviewed` or `signed` |
 
 Every write replaces the record under its `version` (optimistic concurrency),
 so two tabs cannot interleave. Signed notes are frozen: import and sign both
 refuse with `conflict`.
 
-## Workforce routes (telehealth Lambda)
+### The meeting: one per visit
 
-| Route | Does |
-| --- | --- |
-| `GET  …/appointments/visits` | list visit records for the organization |
-| `POST …/appointments/visits/consent` | record a staff-attested consent (`agreed: true` required) |
-| `POST …/appointments/visits/start` | **consent gate** → create/reuse the Zoom meeting → sign the Meeting SDK JWT → fetch the host ZAK → `{ visit, session }` |
-| `POST …/appointments/visits/end` | store flags + quick notes, mark ended |
-| `GET  …/appointments/visits/notes?appointmentId=` | the visit record with its note |
-| `POST …/appointments/visits/notes/import` | fetch `GET /meetings/{id}/meeting_summary`, store as `not_reviewed` (`summaryReady: false` until Zoom has produced it) |
-| `POST …/appointments/visits/notes/sign` | practitioner notes + reviewed sections + action-item decisions, frozen |
+Two simultaneous starts used to create two Zoom meetings. Now creation is
+admitted under a durable lease written to the visit before any provider call;
+a racing start loses the conditional write and is refused without a second
+meeting. Before creating, the Lambda looks for an existing upcoming meeting
+carrying the visit's marker (`alp-visit:<appointmentId>` in the agenda) so a
+lost create response is reconciled, not repeated. If the created meeting
+cannot be bound to the visit, it is deleted and the lease released.
 
-All routes sit behind the workforce JWT authorizer
-(`infra/aws-clinical-core/telehealth-requests-extension.json`, contract
-`telehealth-requests/5`). The consumer `POST …/consumer/appointments/requests`
-now accepts an optional `consent` object (`consentVersion`, `signerName`,
-`patientLocation`, `agreed: true`) — the last step of "Request a virtual
-visit" in the patient app. A consent signed there follows the appointment into
-its visit record when the request is scheduled.
+### Ending: a shutdown intent, confirmed by the provider
 
-The desktop reaches these through `src/app/api/live/telehealth/*` →
-`src/adapters/telehealth.live.ts`. In the browser suite the adapter uses the
-contract-fixture origin (same gate as every other live adapter), and
-`scripts/live-stub-server.mjs` implements the same routes.
+`end` saves the notes and flags, marks the visit `ending`, asks Zoom to end
+the meeting for everyone (`PUT /meetings/{id}/status {action: "end"}`) and then
+reads the meeting state. Only a confirmed stop makes the visit `ended`;
+otherwise it stays `ending` with `providerShutdown.failed` and the detail, the
+screens say the meeting may still be running (recording and AI processing
+included), and the practitioner retries. The browser leaving its own client
+is never shown as termination.
+
+### The AI summary
+
+`import` requires a current consent authority (summary access is a use of the
+recording consent), stores Zoom's payload verbatim, and refuses a payload that
+names another meeting or exceeds the size bound. Zoom's current unified
+`summary_content` (Markdown) is kept whole as the unreviewed Summary section
+and rendered as plain text; legacy overview/details/next-steps fields are
+mapped by label. A payload with no usable text is "not ready", never an empty
+editable note. Re-import keeps practitioner notes and action-item decisions
+and retains the prior revision.
 
 ## Zoom
 
@@ -106,9 +164,27 @@ it does not start it.
 
 `src/components/telehealth/zoom-sdk.ts` loads the Meeting SDK (component
 view) from `source.zoom.us` at a pinned version, only on the visit screen and
-only after the server has returned a visit session. The npm package pins
-React 18 as a peer, which this app does not use, so the self-contained CDN
-build is used instead.
+only after the server has returned a visit session. Zoom's embedded CDN build
+is not self-contained: it binds to the `React`, `ReactDOM`, `Redux`,
+`ReduxThunk` and `_` globals Zoom documents loading alongside it, at the
+React 18 line it was built against. The loader loads those vendor scripts in
+order and then the SDK. This application is a React 19 bundle whose React is
+module-scoped and never on `window`, so the two never meet: Zoom's UI renders
+with Zoom's React inside the mount element. (The first version loaded only
+the SDK script and died with "React is not defined".) A failed load clears
+the loader's cache so Retry really retries.
+
+Verification: `e2e/zoom-sdk-bootstrap.spec.ts` loads the real pinned build
+with network access, asserts `ZoomMtgEmbedded` registered and a client
+initialized under the visit route, and that the inevitable join failure
+(the fixture meeting does not exist) is reported as a join failure, not a load
+failure. CI runs it as its own step (`E2E_ZOOM_SDK=1`). The negative suite
+(`live-telehealth.spec.ts`) aborts the download and proves the honest
+failure state. `src/lib/telehealth-headers.test.ts` pins the production CSP
+and isolation headers. A two-participant run — host join, patient join,
+media permissions, reconnect, end-for-all — needs an authorized Zoom account
+and real devices; it is a manual acceptance step before any PHI, not a
+simulation here.
 
 `next.config.ts` gives `/telehealth/visit/*` a Content-Security-Policy that
 allows exactly the Zoom origins the SDK needs and nothing else, camera +
@@ -130,29 +206,76 @@ pending` / `Note awaiting signature` / `Note signed`) and one action: Record
 consent, Start visit, Rejoin visit, Open note, View note.
 
 **Visit** (`/telehealth/visit/[appointmentId]`): the stage says "This visit
-cannot start" without consent and offers to record it. Start visit asks the
-server for a session; the server's refusal (consent, Zoom off, BAA not
-verified) is shown as-is. Quick notes and flagged moments are stamped against
-the timer and saved when the visit ends; End visit confirms, closes the Zoom
-meeting, and opens the note.
+cannot start" without consent and offers to record it, and "cancelled" for a
+cancelled appointment. Start visit asks the server for a session; the
+server's refusal (consent missing, withdrawn, superseded; appointment
+cancelled; Zoom off; BAA not verified) is shown as-is. Quick notes and
+flagged moments are stamped against the timer and saved when the visit ends.
+End visit asks the server to end the meeting for everyone; the note opens
+only once Zoom confirms, otherwise the screen says the meeting may still be
+running and offers Retry shutdown.
 
-**Note** (`…/note`): Import AI Companion notes (available after the visit
-ends; "not produced yet" is reported, not faked). Practitioner notes on top,
-"Paste my quick notes from the call", four editable AI sections, action items
-to approve or dismiss (decisions only — tasks, orders and appointments are
-created separately), the recording/flags card, and Sign note with a
-confirmation. Signed notes render frozen and survive reload because the record
-is the source of truth.
+**Note** (`…/note`): labelled as the telehealth visit record. Import AI
+Companion notes (available once Zoom confirmed the end; "not produced yet" is
+reported, not faked). Practitioner notes on top, "Paste my quick notes from
+the call", four editable AI sections (Zoom's unified summary shown whole
+under Summary), action items to approve or dismiss (decisions only — tasks,
+orders and appointments are created separately), the recording/flags card,
+prior revisions, and Sign note with a confirmation. Signed notes render
+frozen and survive reload because the record is the source of truth.
 
 ## Verified by
 
 - `src/server/clinical-core/aws-telehealth-requests.test.ts` — route
-  registration, consent gate (409 `consent_required`), Zoom-off refusal,
-  append-only consent without passcode leakage, verbatim summary import with
-  suggested action items, no import over / no second signature on a signed
-  note, Meeting SDK JWT shape.
-- `e2e/live-telehealth.spec.ts` — the four browser proofs listed at the top of
-  that file, run in the one-process battery in any order.
+  registration and the API-origin wiring; refusals with no authority read,
+  secret or provider call (no consent, superseded artifact, withdrawn grant,
+  cancelled/mismatched/missing request); request times used over caller
+  times; staff consent only against the current artifact, append-only,
+  passcode never returned; governed grant recorded through the identity API;
+  withdrawal; one meeting under the lease with the racing start refused and
+  no second create; adoption by marker and cleanup on a failed receipt;
+  provider shutdown refused → `ending`/`failed`, confirmed → `ended`,
+  duplicate end idempotent; unified-summary import, wrong-meeting refusal,
+  empty → not ready; re-import keeps notes/decisions and history; frozen
+  signed notes; paginated complete/incomplete lists without note bodies;
+  cancelled booking closes the visit and deletes its meeting; SDK JWT shape.
+- `src/adapters/telehealth.live.test.ts` — zoned day bounds (zone, DST,
+  impossible dates), the merge, unavailable and incomplete boundary states,
+  appointment resolution before any boundary call, stored times only,
+  cancelled-appointment refusal, refusal message mapping.
+- `src/lib/telehealth-headers.test.ts` — the visit route's production CSP and
+  isolation headers.
+- `src/server/clinical-core/aws-identity-api.test.ts`,
+  `migrations.test.ts`, `authenticated-api-infrastructure.test.ts` — the
+  `telehealth_recording` scope, the workforce consent reads and route pins.
+- `e2e/live-telehealth.spec.ts` — the four browser proofs at the top of that
+  file (now including the artifact shown before attesting, the 404 for an
+  appointment the calendar does not return, and the 409 for a stale artifact),
+  in the one-process battery in any order.
+- `e2e/zoom-sdk-bootstrap.spec.ts` — the positive SDK bootstrap (CI step with
+  network access).
+
+## Not integrated yet — blocking for PHI
+
+These are stated so they are not mistaken for done:
+
+- **Chart integration.** The signed telehealth note lives on the visit
+  record with its revisions; it is not posted through the chart's
+  clinical-note/timeline/amendment path and does not appear in the patient
+  timeline. The screens and the sign confirmation say so.
+- **Record lifecycle.** Consent receipts, quick notes, AI originals and signed
+  visit text are new clinical data on the telehealth table. Export,
+  correction/amendment, retention, legal hold, erasure and provider-copy
+  reconciliation (Zoom's recording/summary copies) are not wired for them.
+- **Host binding.** The Lambda uses one configured Zoom host per deployment.
+  A multi-practitioner, multi-clinic binding of organization → authorized
+  host/practitioner is not proven by a workforce JWT and organization string.
+- **Patient-app consent screen.** The consumer booking route validates the
+  consent object; the released V2 screen and end-to-end receipt are the
+  platform repository's to prove.
+- **Zoom agreement.** `ZoomBaaVerified=true` is an operator attestation that
+  the executed agreement covers the account, the Meeting SDK app, AI Companion
+  and recording/AI policies; it is not the review itself.
 
 ## Open decisions (unchanged from the handoff)
 

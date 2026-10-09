@@ -13,4 +13,5 @@ export const handler = createTelehealthHandler({
   reminderEventsTopicArn: process.env.REMINDER_EVENTS_TOPIC_ARN?.trim() ?? "",
   stripeTestEnabled: required("STRIPE_TEST_ENABLED") === "true", stripeSecretArn: process.env.STRIPE_SECRET_ARN?.trim() ?? "",
   stripeSuccessUrl: process.env.STRIPE_SUCCESS_URL?.trim() ?? "", stripeCancelUrl: process.env.STRIPE_CANCEL_URL?.trim() ?? "",
+  identityApiOrigin: required("CLINICAL_API_ORIGIN"),
 });

@@ -20,6 +20,7 @@ export const CONSENT_SCOPES = [
   "lab_specimen_context",
   "billing_links",
   "research_n_of_1",
+  "telehealth_recording",
 ] as const;
 
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
@@ -82,6 +83,25 @@ export type ConsentResult = {
   recordedAt: string;
 };
 
+/** The current consent position for one patient and scope, read by the workforce under RLS. */
+export type CurrentConsentResult = {
+  /** `none` = no grant was ever recorded for a connection of this patient. */
+  status: "granted" | "revoked" | "none";
+  patientRecordId: string | null;
+  connectionId: string | null;
+  consentId: string | null;
+  artifactId: string | null;
+  /** Approved artifact the current grant references, or null when revoked/none. */
+  artifactVersion: string | null;
+  contentSha256: string | null;
+  /** `approved` or `retired` — a retired artifact is no longer current authority even if the grant stands. */
+  artifactStatus: "approved" | "retired" | null;
+  method: ConsentMethod | null;
+  representativeAuthority: RepresentativeAuthority | null;
+  version: number | null;
+  recordedAt: string | null;
+};
+
 export type ConsentArtifactResult = {
   artifactId: string;
   scope: ConsentScope;
@@ -109,6 +129,17 @@ export interface AwsIdentityConsentAdapter<Context extends ClinicalRequestContex
     context: Context;
     scope: ConsentScope;
   }): Promise<ConsentArtifactResult>;
+  /**
+   * Workforce read of a patient's current consent for one scope, located by
+   * the patient record or by the consumer person bound to a connection in the
+   * actor's organization. RLS restricts both tables to active members.
+   */
+  getCurrentConsent(input: {
+    context: Context;
+    scope: ConsentScope;
+    patientRecordId?: string;
+    consumerPersonId?: string;
+  }): Promise<CurrentConsentResult>;
   issueInvitation(input: {
     context: Context;
     patientRecordId: string;
@@ -170,7 +201,9 @@ function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>
 ): AwsIdentityConsentAdapter<Context> {
   return {
     async getCurrentConsentArtifact(input) {
-      assertContext(input.context, boundary, "consumer", "consent_management");
+      // Consumers read it to sign; workforce reads it to record an attested
+      // signature against the exact approved version and hash.
+      assertContext(input.context, boundary, undefined, "consent_management");
       if (!CONSENT_SCOPES.includes(input.scope)) {
         throw new ClinicalCoreAdapterError("consent_precondition_failed");
       }
@@ -195,6 +228,73 @@ function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>
         contentSha256: row.content_sha256,
         jurisdiction: row.jurisdiction,
         approvedAt: row.approved_at,
+      };
+    },
+
+    async getCurrentConsent(input) {
+      assertContext(input.context, boundary, "workforce", "consent_management");
+      if (!CONSENT_SCOPES.includes(input.scope)) {
+        throw new ClinicalCoreAdapterError("consent_precondition_failed");
+      }
+      const byPatient = typeof input.patientRecordId === "string";
+      const byConsumer = typeof input.consumerPersonId === "string";
+      if (byPatient === byConsumer) throw new ClinicalCoreAdapterError("request_context_invalid");
+      if (byPatient) assertUuid(input.patientRecordId as string);
+      if (byConsumer) assertUuid(input.consumerPersonId as string);
+      const rows = await run(database, input.context, async (tx) => (await tx.query<{
+        patient_record_id: string;
+        connection_id: string;
+        consent_id: string | null;
+        artifact_id: string | null;
+        artifact_version: string | null;
+        content_sha256: string | null;
+        artifact_status: "approved" | "retired" | null;
+        status: "granted" | "revoked" | null;
+        method: ConsentMethod | null;
+        representative_authority: RepresentativeAuthority | null;
+        version: number | null;
+        recorded_at: string | null;
+      }>(
+        `select c.patient_record_id, c.id as connection_id,
+                g.id as consent_id, g.artifact_id, a.artifact_version, a.content_sha256, a.status as artifact_status,
+                g.status, g.method, g.representative_authority, g.version, g.recorded_at
+           from clinical_core.patient_connections c
+           left join clinical_core.current_consent g
+             on g.connection_id = c.id and g.scope = $3
+           left join clinical_core.consent_artifacts a
+             on a.id = g.artifact_id
+          where c.organization_id = $1
+            and c.state in ('verified','paused')
+            and ${byPatient ? "c.patient_record_id = $2" : "c.consumer_person_id = $2"}
+          order by g.recorded_at desc nulls last, c.verified_at desc nulls last
+          limit 1`,
+        [
+          clinicalUuid(input.context.organizationId),
+          clinicalUuid((byPatient ? input.patientRecordId : input.consumerPersonId) as string),
+          input.scope,
+        ],
+      )).rows, "consent_precondition_failed");
+      const row = rows[0];
+      if (!row || !row.status) {
+        return {
+          status: "none", patientRecordId: row?.patient_record_id ?? null, connectionId: row?.connection_id ?? null,
+          consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null,
+          method: null, representativeAuthority: null, version: null, recordedAt: null,
+        };
+      }
+      return {
+        status: row.status,
+        patientRecordId: row.patient_record_id,
+        connectionId: row.connection_id,
+        consentId: row.consent_id,
+        artifactId: row.artifact_id,
+        artifactVersion: row.artifact_version,
+        contentSha256: row.content_sha256,
+        artifactStatus: row.artifact_status,
+        method: row.method,
+        representativeAuthority: row.representative_authority,
+        version: row.version,
+        recordedAt: row.recorded_at,
       };
     },
 
