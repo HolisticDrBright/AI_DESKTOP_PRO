@@ -25,7 +25,7 @@ function set(value: unknown): string[] {
 // never its value. AdminGetUser is subject-addressed, not a pool-wide user scan;
 // omit names, emails, phones, addresses and all unneeded attribute values.
 const projections = {
-  'describe-user-pool': '{UserPool:UserPool.{Id:Id,Arn:Arn,Status:Status,DeletionProtection:DeletionProtection,UsernameAttributes:UsernameAttributes,UsernameConfiguration:UsernameConfiguration,AutoVerifiedAttributes:AutoVerifiedAttributes,MfaConfiguration:MfaConfiguration,SoftwareTokenMfaConfiguration:SoftwareTokenMfaConfiguration,AccountRecoverySetting:AccountRecoverySetting,Policies:Policies,SchemaAttributes:SchemaAttributes,UserPoolTags:UserPoolTags,LambdaConfig:LambdaConfig,LastModifiedDate:LastModifiedDate,UserPoolAddOns:UserPoolAddOns,DeviceConfiguration:DeviceConfiguration}}',
+  'describe-user-pool': '{UserPool:UserPool.{Id:Id,Arn:Arn,Status:Status,DeletionProtection:DeletionProtection,UsernameAttributes:UsernameAttributes,UsernameConfiguration:UsernameConfiguration,AutoVerifiedAttributes:AutoVerifiedAttributes,MfaConfiguration:MfaConfiguration,SoftwareTokenMfaConfiguration:SoftwareTokenMfaConfiguration,AccountRecoverySetting:AccountRecoverySetting,Policies:Policies,SchemaAttributes:SchemaAttributes,UserPoolTags:UserPoolTags,LambdaConfig:LambdaConfig,LastModifiedDate:LastModifiedDate,UserPoolAddOns:UserPoolAddOns,DeviceConfiguration:DeviceConfiguration,AdminCreateUserConfig:AdminCreateUserConfig}}',
   'describe-user-pool-client': '{UserPoolClient:UserPoolClient.{UserPoolId:UserPoolId,ClientId:ClientId,HasClientSecret:ClientSecret != `null`,PreventUserExistenceErrors:PreventUserExistenceErrors,EnableTokenRevocation:EnableTokenRevocation,ExplicitAuthFlows:ExplicitAuthFlows,AccessTokenValidity:AccessTokenValidity,IdTokenValidity:IdTokenValidity,RefreshTokenValidity:RefreshTokenValidity,TokenValidityUnits:TokenValidityUnits,ReadAttributes:ReadAttributes,WriteAttributes:WriteAttributes,AllowedOAuthFlowsUserPoolClient:AllowedOAuthFlowsUserPoolClient,AllowedOAuthFlows:AllowedOAuthFlows,AllowedOAuthScopes:AllowedOAuthScopes,CallbackURLs:CallbackURLs,LogoutURLs:LogoutURLs,SupportedIdentityProviders:SupportedIdentityProviders,RefreshTokenRotation:RefreshTokenRotation,EnablePropagateAdditionalUserContextData:EnablePropagateAdditionalUserContextData,LastModifiedDate:LastModifiedDate}}',
   'get-user-pool-mfa-config': '{MfaConfiguration:MfaConfiguration,SoftwareTokenMfaConfiguration:SoftwareTokenMfaConfiguration,SmsMfaConfiguration:SmsMfaConfiguration,EmailMfaConfiguration:EmailMfaConfiguration,WebAuthnConfiguration:WebAuthnConfiguration}',
   'admin-get-user': '{Enabled:Enabled,UserStatus:UserStatus,PreferredMfaSetting:PreferredMfaSetting,UserMFASettingList:UserMFASettingList,UserLastModifiedDate:UserLastModifiedDate,UserAttributes:UserAttributes[?Name == `sub` || Name == `email_verified` || Name == `custom:person_id` || Name == `custom:organization_id` || Name == `custom:synthetic_attested` || Name == `custom:production_bound`]}',
@@ -162,12 +162,20 @@ export async function observeInventoryIdentityConfiguration(identity: InventoryQ
   for (const workforce of [false, true]) {
     const UserPoolId = (workforce ? binding.workforceIssuer : binding.consumerIssuer).split('/').at(-1)!;
     const ClientId = workforce ? binding.workforceAudience : binding.consumerAudience;
-    inspectPool(await read('cognito-idp', 'describe-user-pool', { UserPoolId }), UserPoolId, workforce);
+    const rawPool = await read('cognito-idp', 'describe-user-pool', { UserPoolId });
+    inspectPool(rawPool, UserPoolId, workforce);
+    const admin = obj(obj(obj(rawPool).UserPool).AdminCreateUserConfig);
+    same(admin.AllowAdminCreateUserOnly, true);
+    // Cognito's obsolete validity field can accompany the current password
+    // policy. It is not signup authority and must not replace that policy.
+    if (Object.keys(admin).some(k => !['AllowAdminCreateUserOnly', 'UnusedAccountValidityDays'].includes(k))
+      || admin.UnusedAccountValidityDays !== undefined && admin.UnusedAccountValidityDays !== 1)
+      return inventoryRefuse('identity_dependency_refused');
     inspectClient(await read('cognito-idp', 'describe-user-pool-client', { UserPoolId, ClientId }), UserPoolId, ClientId);
     inspectMfa(await read('cognito-idp', 'get-user-pool-mfa-config', { UserPoolId }), workforce);
   }
   for (const o of observations) same(inventorySha(inventoryCanonical(await transport(o.service, o.operation, o.parameters))), o.sha256);
-  return { contract: 'inventory-qualification-identity-configuration/1', identityConfigurationVerified: true,
+  return { contract: 'inventory-qualification-identity-configuration/1', identityConfigurationVerified: true, privateFixtureSignupVerified: true,
     observations: observations.length, observationSha256: inventorySha(inventoryCanonical(observations)),
     designatedSyntheticSubjectsVerified: false, databaseIdentityAuthorityVerified: false, retentionServiceIdentityVerified: false,
     physicalLoginVerified: false, identityDependenciesVerified: false, liveFleetVerified: false, acceptance: false,

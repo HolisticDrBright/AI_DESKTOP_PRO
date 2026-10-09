@@ -6,6 +6,8 @@ The 107-migration qualification fleet needs distinct consumer and practitioner i
 
 Both pools are restricted to synthetic account `588966314750` in `us-east-2`, with administrator-only fixture creation, email sign-in, verified-email recovery, password-only first factors and immutable identity attributes. Consumer TOTP is optional; workforce TOTP is mandatory. Clients have no secret, 15-minute access and ID tokens, 12-hour refresh tokens, token revocation, email-only write access, and no OAuth callbacks or external providers. Deletion protection and resource retention preserve the test pools on stack deletion or replacement.
 
+The configuration-only observer independently reads and requires `AllowAdminCreateUserOnly: true` on both fixture pools. Missing, false, malformed or additional invitation policy is refused. This private-fixture requirement does not change the designated-user observer's scope or impose administrator-only registration on public Core consumers.
+
 These private pools are not the Core self-service registration plane. No real contacts, medical information, user passwords or approvals belong in the template or its manifest. The `ESSENTIALS` tier is explicit because AWS requires it for the sign-in policy. See [AWS sign-in policy](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-cognito-userpool-signinpolicy.html) and [user pool configuration](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-cognito-userpool.html).
 
 ## Build and observation

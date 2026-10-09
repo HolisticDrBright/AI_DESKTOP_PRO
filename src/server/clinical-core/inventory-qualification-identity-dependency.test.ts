@@ -21,6 +21,7 @@ function fixture() {
       Arn: `arn:aws:cognito-idp:us-east-2:588966314750:userpool/${poolId(w)}`, Status: 'Enabled', DeletionProtection: 'ACTIVE',
       UsernameAttributes: ['email'], UsernameConfiguration: { CaseSensitive: false }, AutoVerifiedAttributes: ['email'],
       MfaConfiguration: w ? 'ON' : 'OPTIONAL', AccountRecoverySetting: { RecoveryMechanisms: [{ Name: 'verified_email', Priority: 1 }] },
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true, UnusedAccountValidityDays: 1 },
       Policies: { PasswordPolicy: { MinimumLength: w ? 14 : 12, RequireLowercase: true, RequireNumbers: true,
         RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 },
         SignInPolicy: { AllowedFirstAuthFactors: ['PASSWORD'] } },
@@ -141,12 +142,30 @@ it('observes configuration before subjects exist, without claiming accounts, dat
   for (const subject of Object.values(subjects)) delete f.responses[`admin-get-user/${subject}`];
   const r = await observeInventoryIdentityConfiguration(f.binding.identity, f.read);
   expect(r).toMatchObject({ contract: 'inventory-qualification-identity-configuration/1', observations: 7,
-    identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: false, databaseIdentityAuthorityVerified: false,
+    identityConfigurationVerified: true, privateFixtureSignupVerified: true, designatedSyntheticSubjectsVerified: false, databaseIdentityAuthorityVerified: false,
     retentionServiceIdentityVerified: false, physicalLoginVerified: false, identityDependenciesVerified: false,
     liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false });
   expect(f.calls).toHaveLength(14); expect(f.calls.slice(0, 7)).toEqual(f.calls.slice(7));
   expect(f.calls.some(c => c[1] === 'admin-get-user')).toBe(false);
   expect(r.observationSha256).toMatch(/^[a-f0-9]{64}$/);
+});
+it('private fixture configuration refuses public signup, absent or malformed admin policy without changing the full dependency observer scope', async () => {
+  for (const value of [undefined, null, false, {}, { AllowAdminCreateUserOnly: false }, { AllowAdminCreateUserOnly: 'true' },
+    { AllowAdminCreateUserOnly: true, UnusedAccountValidityDays: 30 },
+    { AllowAdminCreateUserOnly: true, InviteMessageTemplate: { EmailMessage: 'unreviewed' } }]) {
+    for (const w of [false, true]) {
+      const f = fixture(), pool = obj(obj(f.responses[`describe-user-pool/${poolId(w)}`]).UserPool);
+      pool.AdminCreateUserConfig = value;
+      await expect(observeInventoryIdentityConfiguration(f.binding.identity, f.read)).rejects.toThrow();
+    }
+  }
+  // The designated-user observer does not claim private-fixture signup and
+  // must not impose administrator-only signup on the public Core plane.
+  const publicPool = fixture();
+  obj(obj(publicPool.responses[`describe-user-pool/${poolId(false)}`]).UserPool).AdminCreateUserConfig = { AllowAdminCreateUserOnly: false };
+  const full = await observeInventoryIdentityDependency(publicPool.binding, publicPool.read);
+  expect(full.designatedSyntheticSubjectsVerified).toBe(true);
+  expect(full).not.toHaveProperty('privateFixtureSignupVerified');
 });
 it('configuration-only inspection refuses unsafe pool settings, root, binding substitutions and drift', async () => {
   const f = fixture();
@@ -194,6 +213,7 @@ it('pins read-only transport, finite output and non-secret projections; arbitrar
     expect(c.options).toMatchObject({ timeout: 30000, windowsHide: true, maxBuffer: 1048576, env: { AWS_MAX_ATTEMPTS: '1', AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true' } });
   }
   expect(calls[1].args.join(' ')).toContain('HasClientSecret:ClientSecret != `null`');
+  expect(calls[0].args.join(' ')).toContain('AdminCreateUserConfig:AdminCreateUserConfig');
   const userQuery = calls[3].args[calls[3].args.indexOf('--query') + 1];
   expect(userQuery).not.toContain('Username:'); expect(userQuery).not.toContain('Name == `email`'); expect(userQuery).not.toContain('phone_number');
   for (const o of ['list-users', 'admin-create-user', 'admin-initiate-auth', 'initiate-auth', 'admin-set-user-password', 'update-user-pool'])
