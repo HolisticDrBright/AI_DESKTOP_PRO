@@ -111,6 +111,7 @@
     "prepare:synthetic-catalog-runtime-proposal": "node scripts/catalog-runtime-proposal-live.mjs",
     "reconcile:synthetic-catalog-runtime-proposal": "node scripts/catalog-runtime-proposal-live.mjs",
     "test:synthetic-catalog-runtime-proposal": "node --test scripts/catalog-runtime-code-change.test.mjs scripts/catalog-runtime-proposal.test.mjs scripts/catalog-runtime-proposal-reconciliation.test.mjs scripts/catalog-runtime-control-observer.test.mjs",
+    "test:synthetic-catalog-runtime-deployment": "node --test scripts/catalog-runtime-deployment.test.mjs",
     "inspect:synthetic-catalog-runtime-release": "node scripts/inspect-synthetic-catalog-runtime-release.mjs",
     "inspect:synthetic-care-registered-artifact": "node scripts/inspect-synthetic-care-registered-artifact.mjs",
     "test:synthetic-care-registered-release": "node --test scripts/synthetic-care-registered-release.test.mjs",
