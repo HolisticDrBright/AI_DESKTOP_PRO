@@ -134,6 +134,9 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     "alter function clinical_core.get_owned_plan_inventory_source() set search_path=public",
     'revoke execute on function clinical_core.verify_product_ingredient_inventory(uuid,jsonb) from clinical_core_api',
     'create function clinical_core.get_owned_plan_inventory_source(text) returns int language sql as $$select 1$$',
+  // Each negative checks two full 209-table snapshots and a complete rehearsal.
+  // Its runner budget matches the compound positive below, not a SQL deadline.
+  // The operator's 5-second lock and 30-second statement limits are unchanged.
   ])('rolls back row/schema/ACL/role/contract drift at receipt: %s', async mutation => {
     const before = await run('inspect');
     await expect(run('rehearse', db(async (sql, tx) => {
@@ -142,7 +145,7 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     const after = await run('inspect');
     expect(after.dataSha256).toBe(before.dataSha256); expect(after.historicalSchemaSha256).toBe(before.historicalSchemaSha256);
     await predecessor();
-  });
+  }, 30000);
   it('refuses a relabeled successor receipt after its insert, before certification', async () => {
     await expect(run('rehearse', db(async (sql, tx) => {
       // The early history read has no successor to update. The final read is
