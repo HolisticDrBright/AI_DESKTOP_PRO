@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, secretsSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn() }));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
   DynamoDBClient: class DynamoDBClient {},
@@ -17,7 +17,7 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
 }));
 
 vi.mock("@aws-sdk/client-secrets-manager", () => ({
-  SecretsManagerClient: class SecretsManagerClient { send = vi.fn(); },
+  SecretsManagerClient: class SecretsManagerClient { send = secretsSend; },
   GetSecretValueCommand: class GetSecretValueCommand { constructor(readonly input: unknown) {} },
 }));
 
@@ -32,7 +32,7 @@ vi.mock("@aws-sdk/client-scheduler", () => ({
   DeleteScheduleCommand: class DeleteScheduleCommand { constructor(readonly input: unknown) {} },
 }));
 
-import { createTelehealthHandler, type TelehealthConfiguration } from "./aws-telehealth-requests";
+import { createTelehealthHandler, signMeetingSdkJwt, type TelehealthConfiguration } from "./aws-telehealth-requests";
 
 const config: TelehealthConfiguration = {
   tableName: "synthetic-appointments",
@@ -250,3 +250,130 @@ describe("AWS telehealth request boundary", () => {
 });
 
 const CONSUMER_AVAILABILITY_TEST = "POST /clinical-core/consumer/appointments/availability";
+
+describe("AWS telehealth visit boundary (embedded Zoom + AI Companion notes)", () => {
+  beforeEach(() => send.mockReset());
+  const APPOINTMENT = "77777777-7777-4777-8777-777777777777";
+  const visitRecord = (overrides: Record<string, unknown> = {}) => ({
+    pk: `ORG#${workforceClaims["custom:organization_id"]}`, sk: `VISIT#${APPOINTMENT}`, appointmentId: APPOINTMENT,
+    organizationId: workforceClaims["custom:organization_id"], requestId: null, status: "scheduled", consents: [],
+    providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null, flags: [], quickNotes: "",
+    note: null, version: 1, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...overrides,
+  });
+  const consent = { consentId: "88888888-8888-4888-8888-888888888888", consentType: "telehealth_recording_combined", consentVersion: "2026-10", signerName: "Synthetic Signer", method: "staff_attested", signedAt: "2026-10-01T00:00:00.000Z", recordedBy: workforceClaims["custom:person_id"], patientLocation: "CA" };
+
+  it("registers every visit route behind the workforce authorizer", () => {
+    const template = JSON.parse(readFileSync("infra/aws-clinical-core/telehealth-requests-extension.json", "utf8")) as { Resources: Record<string, { Type: string; Properties: { RouteKey?: string; AuthorizerId?: { Ref: string } } }> };
+    const routes = Object.values(template.Resources).filter((resource) => resource.Type === "AWS::ApiGatewayV2::Route");
+    for (const key of [
+      "GET /clinical-core/workforce/appointments/visits", "POST /clinical-core/workforce/appointments/visits/consent",
+      "POST /clinical-core/workforce/appointments/visits/start", "POST /clinical-core/workforce/appointments/visits/end",
+      "GET /clinical-core/workforce/appointments/visits/notes", "POST /clinical-core/workforce/appointments/visits/notes/import",
+      "POST /clinical-core/workforce/appointments/visits/notes/sign",
+    ]) {
+      const route = routes.find((resource) => resource.Properties.RouteKey === key);
+      expect(route, key).toBeDefined();
+      expect(route?.Properties.AuthorizerId).toEqual({ Ref: "WorkforceAuthorizer" });
+    }
+  });
+
+  it("refuses to start a visit without a recorded consent — the UI check is not the control", async () => {
+    send.mockResolvedValueOnce({ Item: visitRecord() });
+    const result = await createTelehealthHandler({ ...config, zoomEnabled: true, zoomBaaVerified: true, zoomSecretArn: "arn:secret" })(event("POST /clinical-core/workforce/appointments/visits/start", {
+      appointmentId: APPOINTMENT, start: "2026-10-09T17:00:00.000Z", end: "2026-10-09T17:30:00.000Z", timeZone: "America/Los_Angeles", hostDisplayName: "Dr. Synthetic",
+    }, workforceClaims));
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the video provider as unavailable rather than inventing a meeting when Zoom is off", async () => {
+    send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent] }) });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/start", {
+      appointmentId: APPOINTMENT, start: "2026-10-09T17:00:00.000Z", end: "2026-10-09T17:30:00.000Z", timeZone: "America/Los_Angeles", hostDisplayName: "Dr. Synthetic",
+    }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+  });
+
+  it("records a staff-attested consent append-only and never returns the passcode", async () => {
+    send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent], passcode: "secret-passcode" }) }).mockResolvedValueOnce({});
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, consentVersion: "2026-10", signerName: "Second Signer", agreed: true,
+    }, workforceClaims));
+    const payload = JSON.parse(result.body ?? "{}") as { data: Record<string, unknown> };
+    expect(result.statusCode).toBe(200);
+    expect(payload.data).toMatchObject({ consentSigned: true, version: 2 });
+    expect((payload.data.consents as unknown[]).length).toBe(2);
+    expect(payload.data).not.toHaveProperty("passcode");
+    const put = send.mock.calls[1]?.[0] as { input?: { ConditionExpression?: string } };
+    expect(put.input?.ConditionExpression).toBe("#version = :expected");
+  });
+
+  it("refuses a consent the staff member did not attest to", async () => {
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, consentVersion: "2026-10", signerName: "Second Signer", agreed: false,
+    }, workforceClaims));
+    expect(result.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("imports the AI Companion summary verbatim as NOT reviewed, with next steps as suggestions only", async () => {
+    secretsSend.mockResolvedValue({ SecretString: JSON.stringify({ accountId: "acct", clientId: "client-id", clientSecret: "client-secret", userId: "host@example.test", sdkKey: "sdk-key", sdkSecret: "sdk-secret" }) });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: "zoom-access" }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ meeting_uuid: "uuid-1", summary_overview: "Overview text.", summary_details: [{ label: "Symptoms reported", summary: "Fatigue in the afternoons." }, { label: "Plan", summary: "Repeat ferritin in 8 weeks." }], next_steps: ["Order ferritin", " "] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent], status: "ended", providerMeetingId: "123456789" }) }).mockResolvedValueOnce({});
+      const result = await createTelehealthHandler({ ...config, zoomEnabled: true, zoomBaaVerified: true, zoomSecretArn: "arn:secret" })(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+      const payload = JSON.parse(result.body ?? "{}") as { data: { summaryReady: boolean; visit: { note: Record<string, unknown> } } };
+      expect(result.statusCode).toBe(200);
+      expect(payload.data.summaryReady).toBe(true);
+      expect(payload.data.visit.note).toMatchObject({ status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "uuid-1", revision: 1, signedAt: null });
+      expect(payload.data.visit.note.aiSections).toEqual({ summary: "Overview text.", patient_reported: "Fatigue in the afternoons.", results_reviewed: "", plan_discussed: "Repeat ferritin in 8 weeks." });
+      expect(payload.data.visit.note.actionItems).toEqual([{ id: expect.any(String), text: "Order ferritin", status: "suggested" }]);
+      expect((payload.data.visit.note.aiOriginal as { summary_overview: string }).summary_overview).toBe("Overview text.");
+    } finally {
+      vi.unstubAllGlobals();
+      secretsSend.mockReset();
+    }
+  });
+
+  it("will not import over a signed note, and will not sign twice", async () => {
+    const signedNote = { status: "signed", source: "zoom_ai_companion", zoomSummaryId: null, aiSections: { summary: "", patient_reported: "", results_reviewed: "", plan_discussed: "" }, aiOriginal: {}, practitionerNotes: "x", actionItems: [], revision: 2, importedAt: "2026-10-01T00:00:00.000Z", signedAt: "2026-10-01T01:00:00.000Z", signedBy: workforceClaims["custom:person_id"] };
+    send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent], providerMeetingId: "123456789", note: signedNote, version: 3 }) });
+    const handler = createTelehealthHandler(config);
+    const imported = await handler(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(imported.statusCode).toBe(409);
+    send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent], providerMeetingId: "123456789", note: signedNote, version: 3 }) });
+    const signed = await handler(event("POST /clinical-core/workforce/appointments/visits/notes/sign", {
+      appointmentId: APPOINTMENT, expectedVersion: 3, practitionerNotes: "More", aiSections: signedNote.aiSections, actionItems: [],
+    }, workforceClaims));
+    expect(signed.statusCode).toBe(409);
+  });
+
+  it("signs practitioner notes together with the reviewed AI sections and action-item decisions", async () => {
+    const note = { status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "uuid-1", aiSections: { summary: "AI summary", patient_reported: "", results_reviewed: "", plan_discussed: "" }, aiOriginal: {}, practitionerNotes: "", actionItems: [{ id: "a1", text: "Order ferritin", status: "suggested" }], revision: 1, importedAt: "2026-10-01T00:00:00.000Z", signedAt: null, signedBy: null };
+    send.mockResolvedValueOnce({ Item: visitRecord({ consents: [consent], status: "ended", providerMeetingId: "123456789", note, version: 4 }) }).mockResolvedValueOnce({});
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/notes/sign", {
+      appointmentId: APPOINTMENT, expectedVersion: 4, practitionerNotes: "Patient tolerating protocol.",
+      aiSections: { summary: "AI summary (edited)", patient_reported: "", results_reviewed: "", plan_discussed: "" },
+      actionItems: [{ id: "a1", status: "approved" }],
+    }, workforceClaims));
+    const payload = JSON.parse(result.body ?? "{}") as { data: { note: Record<string, unknown>; version: number } };
+    expect(result.statusCode).toBe(200);
+    expect(payload.data.version).toBe(5);
+    expect(payload.data.note).toMatchObject({ status: "signed", revision: 2, practitionerNotes: "Patient tolerating protocol.", signedBy: workforceClaims["custom:person_id"] });
+    expect(payload.data.note.aiSections).toMatchObject({ summary: "AI summary (edited)" });
+    expect(payload.data.note.actionItems).toEqual([{ id: "a1", text: "Order ferritin", status: "approved" }]);
+  });
+
+  it("signs a Meeting SDK JWT with the SDK key as appKey and HS256", () => {
+    const token = signMeetingSdkJwt("sdk-key", "sdk-secret", { mn: "123456789", role: 1, iat: 1, exp: 2, tokenExp: 2 });
+    const [header, payload, signature] = token.split(".");
+    expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({ alg: "HS256", typ: "JWT" });
+    expect(JSON.parse(Buffer.from(payload, "base64url").toString())).toMatchObject({ appKey: "sdk-key", mn: "123456789", role: 1 });
+    expect(signature).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
