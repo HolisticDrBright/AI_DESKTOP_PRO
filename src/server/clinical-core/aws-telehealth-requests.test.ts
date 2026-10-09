@@ -316,7 +316,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   };
   const identityRoutes = (options: { grant?: Record<string, unknown> | null; calendar?: Array<Record<string, unknown>> | (() => unknown) } = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["/clinical-core/workforce/consent-artifact", () => jsonResponse(200, { data: ARTIFACT })],
-    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ?? { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null } })],
+    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT, ...options.grant } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null } })],
     ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted" } })],
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
     ["/clinical-core/workforce/data-compatibility", typeof options.calendar === "function" ? options.calendar : () => jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } })],
@@ -559,13 +559,40 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(JSON.parse(adopted.body ?? "{}").data.session.passcode).toBe("real-password-900000007");
     expect(creates(adoptedCalls)).toHaveLength(0);
 
-    // Retry 3: a complete, empty listing proves nothing exists → one create is permitted.
+    // Retry 3: complete absence is not settlement of the original dispatched writer.
     writes.length = 0;
     const recreatedCalls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
     queueGet(visitRecord({ meetingLease: lastLease, version: 4 }));
     const recreated = await start();
-    expect(recreated.statusCode).toBe(200);
-    expect(creates(recreatedCalls)).toHaveLength(1);
+    expect(recreated.statusCode).toBe(503);
+    expect(creates(recreatedCalls)).toHaveLength(0);
+    expect(putItems()).toHaveLength(0);
+  });
+
+  it("does not adopt an ambiguous later-page marker or a substring marker", async () => {
+    let page = 0;
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, ++page === 1
+      ? { meetings: [{ id: 900000001, agenda: `alp-visit:${APPOINTMENT}` }], next_page_token: "next" }
+      : { meetings: [{ id: 900000002, agenda: `alp-visit:${APPOINTMENT}` }] }) })]);
+    queueGet(visitRecord({ meetingLease: { leaseId: "original", acquiredAt: new Date().toISOString(), state: "dispatched", createdMeetingId: null } }));
+    expect((await start()).statusCode).toBe(503);
+    expect(page).toBe(2);
+    expect(creates(calls)).toHaveLength(0);
+    expect(putItems()).toHaveLength(0);
+
+    const substringCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000001, agenda: `alp-visit:${APPOINTMENT}-unrelated` }] }) })]);
+    queueGet(visitRecord({ meetingLease: { leaseId: "original", acquiredAt: new Date().toISOString(), state: "dispatched", createdMeetingId: null } }));
+    expect((await start()).statusCode).toBe(503);
+    expect(creates(substringCalls)).toHaveLength(0);
+    expect(putItems()).toHaveLength(0);
+  });
+
+  it("does not clear a known dispatched result merely because its read is temporarily absent", async () => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ get: () => jsonResponse(404, {}) })]);
+    queueGet(visitRecord({ meetingLease: { leaseId: "L", acquiredAt: "2026-01-01T00:00:00.000Z", state: "dispatched", createdMeetingId: "900000001" } }));
+    expect((await start()).statusCode).toBe(503);
+    expect(creates(calls)).toHaveLength(0);
+    expect(putItems()).toHaveLength(0);
   });
 
   it("an evidenced create is adopted by its exact id on retry, and a lost database receipt is confirmed by reread instead of deleting the meeting", async () => {
@@ -591,6 +618,15 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(confirmed.statusCode).toBe(200);
     expect(deletes(receiptCalls)).toHaveLength(0);
     expect(creates(receiptCalls)).toHaveLength(1);
+  });
+
+  it("does not delete a meeting a concurrent reconciler already bound when the original writer loses its lease receipt", async () => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    failWrite = input => (input.Item as { meetingLease?: { createdMeetingId?: string } })?.meetingLease?.createdMeetingId === "900000001" ? conditional() : null;
+    queueGet(visitRecord(), visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001", version: 9 }));
+    expect((await start()).statusCode).toBe(200);
+    expect(creates(calls)).toHaveLength(1);
+    expect(deletes(calls)).toHaveLength(0);
   });
 
   it("cleans up a meeting this attempt created when the reread shows the visit was cancelled underneath it", async () => {
@@ -742,7 +778,9 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   /* ---------------------------------------------------- lists and cancellation */
 
   it("lists visits across every page, says whether the list is complete, and never returns note bodies in a list", async () => {
-    const page = (index: number, last?: Record<string, unknown>) => ({ Items: [visitRecord({ appointmentId: `7777777${index}-7777-4777-8777-777777777777`, sk: `VISIT#${index}`, note: { status: "signed", source: "zoom_ai_companion", zoomSummaryId: "u", revision: 2, importedAt: "", signedAt: "", signedBy: "" } })], ...(last ? { LastEvaluatedKey: last } : {}) });
+    const idFor = (index: number) => `${(0x77777770 + index).toString(16)}-7777-4777-8777-777777777777`;
+    fetchRouter(identityRoutes({ calendar: Array.from({ length: 20 }, (_, index) => calendarRow({ id: idFor(index) })) }));
+    const page = (index: number, last?: Record<string, unknown>) => ({ Items: [visitRecord({ appointmentId: idFor(index), sk: `VISIT#${index}`, note: { status: "signed", source: "zoom_ai_companion", zoomSummaryId: "u", revision: 2, importedAt: "", signedAt: "", signedBy: "" } })], ...(last ? { LastEvaluatedKey: last } : {}) });
     queueQuery(page(1, { pk: "x", sk: "1" }), page(2));
     const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
     const payload = JSON.parse(result.body ?? "{}") as { data: { visits: Array<Record<string, unknown>>; complete: boolean } };
@@ -757,6 +795,72 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     for (let index = 0; index < 20; index += 1) queueQuery(page(index, { pk: "x", sk: String(index) }));
     const bounded = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
     expect(JSON.parse(bounded.body ?? "{}").data.complete).toBe(false);
+  });
+
+  it("does not read note text or list consent/links after clinical access is refused", async () => {
+    fetchRouter(identityRoutes({ calendar: () => jsonResponse(403, { error: "identity_refused" }) }));
+    queueGet(visitRecord({ quickNotes: "Fictional private text" }));
+    const handler = createTelehealthHandler(config);
+    const note = await handler({ ...(event("GET /clinical-core/workforce/appointments/visits/notes", undefined, workforceClaims) as unknown as Record<string, unknown>), queryStringParameters: { appointmentId: APPOINTMENT } } as never);
+    expect(note.statusCode).toBe(403);
+    expect(note.body).not.toContain("Fictional private text");
+    queueQuery({ Items: [visitRecord({ joinUrl: "https://zoom.us/j/900000001" })] });
+    const list = await handler(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
+    expect(list.statusCode).toBe(403);
+    expect(list.body).not.toContain("Synthetic Signer");
+    expect(list.body).not.toContain("zoom.us");
+  });
+
+  it("marks a list incomplete rather than exposing an appointment with no current clinical authorization", async () => {
+    fetchRouter(identityRoutes({ calendar: [] }));
+    queueQuery({ Items: [visitRecord()] });
+    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
+    expect(JSON.parse(result.body ?? "{}").data).toEqual({ visits: [], complete: false });
+  });
+
+  it("refuses patient substitution before secrets or meeting creation and rechecks after provider work", async () => {
+    const replacement = "99999999-9999-4999-8999-999999999999";
+    const calls = fetchRouter([...identityRoutes({ calendar: [calendarRow({ patient_id: replacement })] }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    expect((await start()).statusCode).toBe(400);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(creates(calls)).toHaveLength(0);
+    expect(putItems()).toHaveLength(0);
+
+    let authorityReads = 0;
+    const delayedCalls = fetchRouter([...identityRoutes({ calendar: () => jsonResponse(200, { data: { appointments: [calendarRow({ patient_id: ++authorityReads === 1 ? PATIENT : replacement })] } }) }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const delayed = await start();
+    expect(delayed.statusCode).toBe(400);
+    expect(creates(delayedCalls)).toHaveLength(1);
+    expect(delayedCalls.some(c => c.url.includes("type=zak"))).toBe(false);
+    expect(delayed.body).not.toContain("signature");
+    expect(putItems().some(item => item.patientRecordId === replacement)).toBe(false);
+  });
+
+  it("starts a connected patient-app visit only when its request, live patient mapping and calendar agree", async () => {
+    const grant = { status: "granted", patientRecordId: PATIENT, connectionId: "44444444-4444-4444-8444-444444444444", artifactId: ARTIFACT.artifactId, artifactStatus: "approved" };
+    const calls = fetchRouter([...identityRoutes({ grant }), ...zoomRoutes()]);
+    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"], patientRecordId: null }));
+    queueQuery(...Array.from({ length: 3 }, () => ({ Items: [requestRecord()] })));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.visit.patientRecordId).toBe(PATIENT);
+    expect(creates(calls)).toHaveLength(1);
+
+    const wrongCalls = fetchRouter([...identityRoutes({ grant, calendar: [calendarRow({ patient_id: "99999999-9999-4999-8999-999999999999" })] }), ...zoomRoutes()]);
+    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"], patientRecordId: null }));
+    queueQuery({ Items: [requestRecord()] });
+    expect((await start()).statusCode).toBe(400);
+    expect(creates(wrongCalls)).toHaveLength(0);
+  });
+
+  it("does not return an already-ended visit through the idempotent end route after access revocation", async () => {
+    fetchRouter(identityRoutes({ calendar: () => jsonResponse(403, { error: "identity_refused" }) }));
+    queueGet(visitRecord({ status: "ended", quickNotes: "Fictional retained note" }));
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/end", { appointmentId: APPOINTMENT, expectedVersion: 1 }, workforceClaims));
+    expect(result.statusCode).toBe(403);
+    expect(result.body).not.toContain("Fictional retained note");
   });
 
   it("closes a visit when its booking is cancelled, deleting a meeting the visit itself created", async () => {
