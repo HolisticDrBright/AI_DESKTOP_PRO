@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {readHistoricalCareParentMigrations} from './care-canonical-migrations.mjs';
+import {readHistoricalCareParentMigrations,readHistoricalCatalogParentMigrations} from './care-canonical-migrations.mjs';
 
 export const CARE_RELEASE = Object.freeze({
   contract: 'synthetic-care-release/1', account: '588966314750', region: 'us-east-2',
@@ -74,7 +74,7 @@ export function careMigrationBinding(root, historicalSourceOnly = false) {
     });
   };
   const core = historicalSourceOnly ? readHistoricalCareParentMigrations(root).map(({version,name,sha256})=>({version,name,sha256})) : load('migrations');
-  const catalog = load('catalog-migrations');
+  const catalog = historicalSourceOnly ? readHistoricalCatalogParentMigrations(root).map(({version,name,sha256})=>({version,name,sha256})) : load('catalog-migrations');
   if (core.length !== 46 || catalog.length !== 2 || sha256(JSON.stringify(core.slice(0, 45))) !== CARE_RELEASE.sourceBefore
     || sha256(JSON.stringify(core)) !== CARE_RELEASE.sourceAfter || sha256(JSON.stringify(catalog)) !== CARE_RELEASE.reference) refuseCareRelease('migration_drift');
   return {sourceBefore: CARE_RELEASE.sourceBefore, sourceAfter: CARE_RELEASE.sourceAfter,

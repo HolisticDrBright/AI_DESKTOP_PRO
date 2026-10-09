@@ -1,3 +1,4 @@
+import {careRegisteredDatabaseFixture} from './test-fixtures/care-registered-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdtempSync,rmSync,mkdirSync,existsSync} from 'node:fs';
@@ -52,7 +53,7 @@ function fixture(){
   {Evaluation:'Static',ChangeSource:'DirectModification',Target:target('S3ObjectVersion')},
   {Evaluation:'Static',ChangeSource:'ParameterReference',CausingEntity:'LambdaCodeKey',Target:target('S3Key')}];
  // Historical JSON used as FICTIONAL test fixture only, never loaded by CLI.
- f.db=JSON.parse(readFileSync(new URL('../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection;
+ f.db=careRegisteredDatabaseFixture(f.operator,f.now);
  f.db.operatorSource={sourceCommit:f.operator.desktop.commit,clean:true};f.db.observedAt=new Date(f.now).toISOString();
  f.caller={Account:P.account,Arn:`arn:aws:sts::${P.account}:assumed-role/OrganizationAccountAccessRole/fictional`,UserId:'fictional'};
  f.storage={state:'stored_exact_version',versionId:artifact.versionId,bytesVerified:true,sha256:artifact.sha256,bytes:artifact.bytes,
@@ -108,9 +109,9 @@ test('bad source, frozen rebuild, credentials, process or custody refuse before 
 });
 test('full live database preservation is mandatory twice and stale or operator-mismatched inspection cannot be substituted',async()=>{
  for(const mutate of [f=>f.db.operatorSource.sourceCommit=f.current.desktop.commit,f=>f.db.observedAt='2026-10-08T05:00:00Z',
-  f=>f.db.historicalInspection.completeRowCount++,f=>f.db.historicalInspection.completeDataSha256='0'.repeat(64),
+  f=>f.db.catalogInspection.rowCount++,f=>f.db.catalogInspection.dataSha256='0'.repeat(64),
   f=>f.db.sourceMigrationCount=46,f=>f.db.phiAllowed=true,
-  f=>{let n=0;const db=f.port.database;f.port.database=async()=>{const r=await db();if(++n===2)r.historicalInspection.intentRowCount=1;return r;};},
+  f=>{let n=0;const db=f.port.database;f.port.database=async()=>{const r=await db();if(++n===2)r.catalogInspection.referenceMigrationCount=1;return r;};},
   f=>{const db=f.port.database;f.port.database=async()=>{f.now+=300001;return db();};}]){
   const f=fixture();mutate(f);await assert.rejects(run(f));
  }

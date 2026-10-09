@@ -30,7 +30,8 @@ describe('actual canonical47 SQL with preserved alias and already-applied inspec
   const after=await inspectCanonicalCareErasure(db,m,reference,config);expect(after).toEqual(before);
   expect(before).toMatchObject({canonicalRegistered:true,alreadyApplied:true,sourceMigrationCount:47,liveMigrationCount:48,
    schemaReplayPerformed:false,ledgerRewritePerformed:false,erasureAccepted:false,releaseAccepted:false,phiAllowed:false,
-   historicalInspection:{canonicalRegistered:false,applied:false,alreadyApplied:true,tableCount:89,intentRowCount:0}});
+   referenceMigrationCount:3,historicalReferenceCount:2,
+   catalogInspection:{canonicalRegistered:false,applied:false,alreadyApplied:true,tableCount:89,referenceMigrationCount:3}});
   expect(queries.filter(sql=>sql.startsWith('set transaction'))).toHaveLength(2);
   expect(queries.some(sql=>/^(?:create|alter|insert|update|delete|drop|truncate|lock)\b/i.test(sql))).toBe(false);
   expect((await pg.query<{n:number}>('select count(*)::int n from clinical_core.schema_migrations')).rows[0].n).toBe(48);
@@ -46,10 +47,28 @@ describe('actual canonical47 SQL with preserved alias and already-applied inspec
   for(const changed of [m.slice(0,46),[...m].reverse(),m.map((x,i)=>i===46?{...x,name:'changed'}:x),
    m.map((x,i)=>i===46?{...x,sql:x.sql+'-- changed\n'}:x)])
    await expect(inspectCanonicalCareErasure(never,changed,reference,config)).rejects.toThrow('artifact_refused');
-  for(const changed of [reference.slice(0,1),[...reference].reverse(),reference.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n'}),
+  for(const changed of [reference.slice(0,1),reference.slice(0,2),[...reference,reference[2]],[...reference].reverse(),reference.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n'}),
    reference.map((x,i)=>i?x:{...x,sql:x.sql.replace(/\n/g,'\r\n')})])
    await expect(inspectCanonicalCareErasure(never,m,changed,config)).rejects.toThrow('artifact_refused');
   expect(opened).toBe(false);
+ });
+ it('missing actual catalog receipt is refused read-only rather than silently migrated',async()=>{
+  const row=(await pg.query<{version:string;name:string;sha256:string}>('select version,name,sha256 from clinical_reference.schema_migrations where version=$1',[reference[2].version])).rows[0];
+  await pg.query('delete from clinical_reference.schema_migrations where version=$1',[reference[2].version]);queries.length=0;
+  try{
+   await expect(inspectCanonicalCareErasure(db,m,reference,config)).rejects.toMatchObject({category:expect.stringMatching(/^(policy|history)_refused$/)});
+   expect(queries.some(sql=>/^(?:create|alter|insert|update|delete|drop|truncate)\b/i.test(sql))).toBe(false);
+  }finally{await pg.query('insert into clinical_reference.schema_migrations(version,name,sha256) values($1,$2,$3)',[row.version,row.name,row.sha256]);}
+ });
+ it('captures admitted source and configuration before a caller can alter them during SQL inspection',async()=>{
+  const source=m.map(x=>({...x})),catalog=reference.map(x=>({...x})),configuration={...config};let opened=0;
+  const mutating:ClinicalCoreDatabase={transaction:work=>{
+   opened++;source[0].sql='drop schema clinical_core cascade;';catalog[2].name='changed';Object.assign(configuration,{phiAllowed:true});
+   return db.transaction(work);
+  }};
+  const result=await inspectCanonicalCareErasure(mutating,source,catalog,configuration);
+  expect(opened).toBe(1);expect(result.referenceMigrationCount).toBe(3);expect(result.phiAllowed).toBe(false);
+  expect(result.catalogInspection.applied).toBe(false);
  });
  it('refuses actual missing successor or rewritten alias instead of applying or repairing history',async()=>{
   for(const version of ['20261007010000','20260902230000']){

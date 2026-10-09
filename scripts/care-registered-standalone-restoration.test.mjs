@@ -88,7 +88,7 @@ test('writers, foreign authority, bytes, database and storage drift fail closed'
   f=>f.port.current=async()=>({...f.operator,templateSha256:'0'.repeat(64)}),f=>f.port.latest=async()=>Buffer.from('wrong'),
   f=>f.after.raw.fn.RevisionId+='changed',f=>f.after.raw.routes.Items.pop(),f=>route(f).IntegrationUri=R.latestArn+':3',
   f=>f.policy.Policy=JSON.stringify({Version:'2012-10-17',Statement:[intentRecoveryPermission('alp-care-intent-recovery-'+'a'.repeat(32),'2')]}),
-  f=>f.port.storage=async()=>({state:'absent'}),f=>f.after.database.historicalInspection.rowCount++,
+  f=>f.port.storage=async()=>({state:'absent'}),f=>f.after.database.catalogInspection.rowCount++,
   f=>f.port.apiDeployment=async id=>({DeploymentId:id,DeploymentStatus:'PENDING'}),f=>f.original.journalBytes=Buffer.from('{}\n')]){
   const f=await stopped();mutate(f);await assert.rejects(run(f));assert.deepEqual(writes(f),[]);}
 });

@@ -1,5 +1,5 @@
+import {careRegisteredDatabaseFixture} from './care-registered-database.mjs';
 /** Fictional complete before/after deployment views. Not AWS evidence. */
-import {readFileSync} from 'node:fs';
 import {CARE_RELEASE as P} from '../synthetic-care-release.mjs';
 import {CARE_RECOVERY_ROUTE as R} from '../care-recovery-routing.mjs';
 import {careRegisteredControlFixture} from './care-registered-control.mjs';
@@ -31,7 +31,7 @@ export function careRegisteredDeploymentFixture(){
   RequiresRecreation:'Never',Path:'/Properties/Code/'+key,BeforeValue:properties.Code[key],AfterValue:afterProperties.Code[key],AttributeChangeType:'Modify'}}));
  // A published inspection is test material only; production must observe the
  // actual compiled inspector, not load this or any caller-provided receipt.
- const database=JSON.parse(readFileSync(new URL('../../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection;
+ const database=careRegisteredDatabaseFixture(f.current,f.now);
  database.operatorSource={sourceCommit:f.current.desktop.commit,clean:true};database.observedAt=new Date(f.now).toISOString();
  const before={observedAt:new Date(f.now).toISOString(),raw:structuredClone(f.raw),database,input,binding,summary,detailed,template:input.template};
  const after=structuredClone({observedAt:new Date(f.now+30000).toISOString(),raw:before.raw,database,summary,detailed,template:input.template});

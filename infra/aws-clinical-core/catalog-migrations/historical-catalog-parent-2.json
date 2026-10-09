@@ -8,10 +8,6 @@
     {
       "version": "20260820030000",
       "file": "20260820030000_governed_catalog_enrichment.sql"
-    },
-    {
-      "version": "20261008060000",
-      "file": "20261008060000_catalog_offer_current_product.sql"
     }
   ]
 }

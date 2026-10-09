@@ -80,3 +80,22 @@ Positive lab/document/audio, all nine erasure journeys, remaining privacy and
 retention/provider/store matrices, matched releases and physical devices remain.
 All six original phases are incomplete. Clinical holds and source-verification
 requirements are preserved; PHI stays OFF and paid mobile builds stay HELD.
+
+## Subsequent terminal and AWS evidence
+
+The earlier source-only status above is a historical checkpoint. The clean
+`a7c40e58bbacf9d343a5dbe0e2a90531e2523e84` workflow subsequently completed its
+actual synthetic apply as run `07dd6f805a8ff49528e05127bbac039d`, with terminal
+exit zero, mandatory rollback and lock-race checks, separate lasting-commit
+readback and settled custody. Its exact report and event journal are committed
+under `docs/evidence/2026-10-08-catalog-preserving-apply*`.
+
+The same source's full local suite passed 4,453 tests with 11 existing skips,
+and both final-source hosted CI runs completed successfully. Missing-secret
+deployed-backend steps were skipped, not live acceptance.
+
+See `docs/catalog-reference-registration-2026-10-08.md` for the preserving
+digests, the distinct current reference-three registration contract, explicit
+historical reference-two source view, and remaining matched-runtime work.
+No API deployment, clinical approval, physical acceptance or PHI activation is
+implied by the database apply.

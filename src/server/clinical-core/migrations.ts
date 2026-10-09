@@ -46,8 +46,10 @@ export class ClinicalCoreMigrationError extends Error {
 
 export function loadClinicalCoreMigrations(
   directory = path.join(process.cwd(), "infra", "aws-clinical-core", "migrations"),
+  manifestFile = "manifest.json",
 ): ClinicalCoreMigration[] {
-  const manifest = JSON.parse(readFileSync(path.join(directory, "manifest.json"), "utf8")) as MigrationManifest;
+  if (!/^[a-z0-9][a-z0-9-]*\.json$/.test(manifestFile)) throw new ClinicalCoreMigrationError("manifest_invalid");
+  const manifest = JSON.parse(readFileSync(path.join(directory, manifestFile), "utf8")) as MigrationManifest;
   if (manifest.contract_version !== "clinical-core-migrations/1" || !Array.isArray(manifest.migrations)) {
     throw new ClinicalCoreMigrationError("manifest_invalid");
   }

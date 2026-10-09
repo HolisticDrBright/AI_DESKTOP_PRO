@@ -3,7 +3,6 @@
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,verifyCareRegisteredArtifactBinding,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {CARE_CANONICAL as M} from './care-canonical-migrations.mjs';
-import {CARE_INTENT_POSTCOMMIT as B} from './care-intent-postcommit.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration,verifyRecoveryStage} from './care-recovery-routing.mjs';
 import {verifyRecoveryLatestPolicy} from './rehearse-synthetic-care-routing.mjs';
 import {verifyDeployedCareRole} from './verify-deployed-synthetic-care.mjs';
@@ -143,25 +142,43 @@ function verifyRegisteredControlInventory(o,source,expected,expectedParameters,v
   roleSha256:sha256(canonical({role,attached:o.attached,inline:o.inline,policies:o.policies,logs})),
   identityRouteCount:51,apiRouteCount:routes.length,iamVerified:true,loggingVerified:true,phiAllowed:false};
 }
+/** Exact post-apply same-engine fingerprints, independently observed by run
+ * 07dd6f805a8ff49528e05127bbac039d. This is a release-preservation pin, not
+ * clinical approval or hosted feature acceptance. No receipt file is loaded. */
+export const CARE_CATALOG_REGISTERED_DATABASE=Object.freeze({
+ rowCount:24035,dataSha256:'d4a896b07232292084b2fcfe1962d22a6885cb702fdd939c240e9327103b2889',
+ preservedSchemaSha256:'a274f92953f474f4f871764383c3a03bddf6b9425656b2952318a9b54196c8a0',
+ observationSha256:'32043a0f34cf40893ad65d5699523eb7c82b7f1eb0e06352c93a74257828959a',
+});
 export function verifyCareRegisteredDatabase(r,current,started,now){
- assertCareRegisteredCurrent(current);const h=r?.historicalInspection,t=Date.parse(r?.observedAt);
+ assertCareRegisteredCurrent(current);const h=r?.catalogInspection,t=Date.parse(r?.observedAt);
+ const fields=['contract','execution','canonicalRegistered','alreadyApplied','sourceMigrationCount','liveMigrationCount',
+  'sourceLedgerSha256','liveLedgerSha256','referenceLedgerSha256','referenceMigrationCount','historicalReferenceCount',
+  'historicalReferenceSha256','historicalAliasPreserved','catalogInspection','schemaReplayPerformed','ledgerRewritePerformed',
+  'apiDeploymentPerformed','erasureAccepted','releaseAccepted','physicalDeviceAcceptance','activationApproved','phiAllowed',
+  'operatorSource','awsAccountId','foundation','observedAt','repeatedReadbackVerified','reportIsNotAuthority'];
+ // This read-only contract has no optional approval/acceptance extension. Even a
+ // false unknown flag is refused instead of being carried into release evidence.
+ check(r&&typeof r==='object'&&!Array.isArray(r)
+  &&canonical(Object.keys(r).sort())===canonical(fields.sort()),'database_boundary');
  check(Number.isFinite(started)&&Number.isFinite(now)&&Number.isFinite(t)&&t>=started&&t<=now&&now-t<=300000,'database_freshness');
- check(r?.contract==='care-intent-canonical-registration-inspection/1'&&r.execution==='synthetic-staging'
+ check(r?.contract==='care-catalog-canonical-registration-inspection/1'&&r.execution==='synthetic-staging'
   &&r.canonicalRegistered===true&&r.alreadyApplied===true&&r.sourceMigrationCount===47&&r.liveMigrationCount===48
   &&r.sourceLedgerSha256===M.sourceSha256&&r.liveLedgerSha256===M.liveSha256&&r.referenceLedgerSha256===M.referenceSha256
+  &&r.referenceMigrationCount===3&&r.historicalReferenceCount===2&&r.historicalReferenceSha256===M.referenceParentSha256
   &&r.historicalAliasPreserved===true&&r.repeatedReadbackVerified===true&&r.reportIsNotAuthority===true
-  &&r.awsAccountId===P.account&&r.foundation===P.foundation
+  &&r.awsAccountId===P.account&&r.foundation===P.foundation&&r.historicalInspection===undefined
   &&canonical(r.operatorSource)===canonical({sourceCommit:current.desktop.commit,clean:true})
   &&['schemaReplayPerformed','ledgerRewritePerformed','apiDeploymentPerformed','erasureAccepted','releaseAccepted',
    'physicalDeviceAcceptance','activationApproved','phiAllowed'].every(k=>r[k]===false),'database_boundary');
- check(h?.contract==='care-erasure-intent-upgrade/1'&&h.command==='inspect'&&h.execution==='synthetic-staging'&&h.phiAllowed===false
-  &&h.observedMigrationCount===48&&h.sourceMigrationCount===47&&h.tableCount===89
-  &&h.rowCount===B.rowCount&&h.originalRowCount===B.rowCount&&h.completeRowCount===B.rowCount&&h.intentRowCount===0
-  &&h.originalDataSha256===B.originalDataSha256&&h.completeDataSha256===B.completeDataSha256
-  &&h.dataSha256===B.completeDataSha256&&h.schemaSha256===B.schemaSha256&&h.dataPreserved===true&&h.schemaPreserved===true
-  &&h.applied===false&&h.alreadyApplied===true&&h.rolledBack===false&&h.fromLedgerSha256===P.liveAfter
-  &&h.toLedgerSha256===M.liveSha256&&h.referenceLedgerSha256===M.referenceSha256
-  &&['canonicalRegistered','hostedAcceptance','recoveryAcceptance','activationApproved'].every(k=>h[k]===false),'database_inventory');
+ const expected={contract:'catalog-forward-upgrade/1',command:'inspect',execution:'synthetic-staging',phiAllowed:false,
+  coreLedgerSha256:M.liveSha256,referenceLedgerSha256:M.referenceSha256,referenceMigrationCount:3,
+  candidateSqlSha256:M.referenceSqlSha256,tableCount:89,...CARE_CATALOG_REGISTERED_DATABASE,
+  dataPreserved:true,schemaPreserved:true,historicalLedgerPreserved:true,applied:false,alreadyApplied:true,rolledBack:false,
+  canonicalRegistered:false,hostedAcceptance:false,activationApproved:false};
+ // Full field equality refuses old schemas, changed data, invented acceptance,
+ // absent policy readback, extra success flags and unobserved erasure states.
+ check(canonical(h)===canonical(expected),'database_inventory');
  return structuredClone(r);
 }
 /** Injectable observers are credential-free tests only. The public runner

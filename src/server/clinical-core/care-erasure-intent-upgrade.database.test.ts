@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from './database';
 import {applyClinicalCoreMigrations,loadClinicalCoreMigrations,type ClinicalCoreMigration} from './migrations';
-import {applyGovernedCatalogMigrations,loadGovernedCatalogMigrations} from './catalog-migrations';
+import {applyGovernedCatalogMigrations,loadHistoricalGovernedCatalogMigrations as loadGovernedCatalogMigrations} from './catalog-migrations';
 import {CARE_ERASURE_AWS,type CareErasureUpgradeConfiguration} from './care-erasure-schema-upgrade';
 import {CARE_ERASURE_INTENT_UPGRADE,careErasureIntentMapping,runCareErasureIntentUpgrade} from './care-erasure-intent-upgrade';
 import {releaseCareIntent} from '../../../scripts/care-intent-release.mjs';

@@ -63,10 +63,10 @@ test('full control inventory refuses hidden authority, route, logging, identity 
 });
 test('canonical data, schema, ledger, counts and operator source must survive execution unchanged',()=>{
  for(const mutate of [f=>f.witness.after.database.operatorSource.sourceCommit='f'.repeat(40),
-  f=>f.witness.after.database.schemaReplayPerformed=true,f=>f.witness.after.database.historicalInspection.rowCount++,
-  f=>f.witness.after.database.historicalInspection.intentRowCount++,
-  f=>f.witness.after.database.historicalInspection.completeDataSha256='0'.repeat(64),
-  f=>f.witness.after.database.historicalInspection.schemaSha256='0'.repeat(64),
+  f=>f.witness.after.database.schemaReplayPerformed=true,f=>f.witness.after.database.catalogInspection.rowCount++,
+  f=>f.witness.after.database.catalogInspection.referenceMigrationCount++,
+  f=>f.witness.after.database.catalogInspection.dataSha256='0'.repeat(64),
+  f=>f.witness.after.database.catalogInspection.preservedSchemaSha256='0'.repeat(64),
   f=>f.witness.after.database.liveMigrationCount++,f=>f.witness.after.database.repeatedReadbackVerified=false,
   f=>f.witness.after.database.observedAt=f.witness.before.database.observedAt]){
   const f=careRegisteredDeploymentFixture();mutate(f);assert.throws(()=>verify(f));

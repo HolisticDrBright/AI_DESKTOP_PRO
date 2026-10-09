@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
-import { applyGovernedCatalogMigrations, loadGovernedCatalogMigrations } from "./catalog-migrations";
+import { applyGovernedCatalogMigrations, loadGovernedCatalogMigrations, loadHistoricalGovernedCatalogMigrations } from "./catalog-migrations";
 
 function database() {
   const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
@@ -23,7 +23,10 @@ function database() {
 describe("governed reference catalog migration ledger", () => {
   test("is independent from the synthetic identity ledger", () => {
     const migrations = loadGovernedCatalogMigrations();
-    expect(migrations).toHaveLength(2);
+    expect(migrations).toHaveLength(3);
+    expect(migrations.slice(0, 2)).toEqual(loadHistoricalGovernedCatalogMigrations());
+    expect(migrations[2]).toMatchObject({ version: "20261008060000", name: "catalog_offer_current_product",
+      sha256: "3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117" });
     expect(migrations[0]).toMatchObject({
       version: "20260819173000",
       name: "governed_reference_catalog",
@@ -41,7 +44,7 @@ describe("governed reference catalog migration ledger", () => {
   test("uses a distinct lock and ledger schema", async () => {
     const db = database();
     await expect(applyGovernedCatalogMigrations(db.value)).resolves.toEqual({
-      applied: ["20260819173000", "20260820030000"], alreadyApplied: [],
+      applied: ["20260819173000", "20260820030000", "20261008060000"], alreadyApplied: [],
     });
     expect(db.calls[0]!.parameters).toEqual(["ai-desktop-pro:governed-catalog-migrations"]);
     expect(db.calls.some((call) => call.sql.includes("clinical_reference.schema_migrations"))).toBe(true);

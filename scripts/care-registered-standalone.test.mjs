@@ -47,7 +47,7 @@ test('original authority, application source, exact candidate and live inventory
   f=>f.after.raw.integrations.Items[0].IntegrationUri=R.latestArn+':2',f=>f.policy={Policy:'{}'},
   f=>f.retained.policy={Policy:'{}'},f=>f.retained.sha256='0'.repeat(64),f=>f.retained.configuration.Timeout++,
   f=>f.port.storage=async()=>({state:'absent_at_observation'}),f=>f.port.apiDeployment=async id=>({DeploymentId:id,DeploymentStatus:'PENDING'}),
-  f=>f.after.database.historicalInspection.rowCount++,f=>f.caller.Arn=`arn:aws:iam::${P.account}:root`]){
+  f=>f.after.database.catalogInspection.rowCount++,f=>f.caller.Arn=`arn:aws:iam::${P.account}:root`]){
   const f=fixture();mutate(f);await assert.rejects(run(f));assert.deepEqual(writes(f),[]);
  }
 });
@@ -98,7 +98,7 @@ test('hard-crash admission is recorded even when the permission reply is lost',a
 test('final candidate, database or authority drift cannot be hidden by a successful functional report',async()=>{
  for(const kind of ['database','revision','route','projection','permission']){
   const f=fixture(),recovery=f.port.recovery;f.port.recovery=async(...args)=>{const r=await recovery(...args);
-   if(kind==='database')f.after.database.historicalInspection.completeDataSha256='0'.repeat(64);if(kind==='revision')f.after.raw.fn.RevisionId+='changed';
+   if(kind==='database')f.after.database.catalogInspection.dataSha256='0'.repeat(64);if(kind==='revision')f.after.raw.fn.RevisionId+='changed';
    if(kind==='route')f.after.raw.routes.Items.pop();if(kind==='projection')f.after.summary.Description='changed';if(kind==='permission')f.policy={Policy:'{}'};return r;};
   await assert.rejects(run(f));assert(!f.events.some(e=>e.stage==='registered_standalone_completed'));assert.equal((await checkCustody(f)).originalRunOutcome,'failed');
  }
@@ -108,7 +108,7 @@ test('completion independently revalidates actual answers, identities, phases, d
  assert.doesNotThrow(()=>verifyRegisteredStandaloneRecovery(r.recovery,input,f.operator,Date.parse(r.recovery.startedAt),f.now,parse));
  for(const mutate of [v=>v.observations.retained.pop(),v=>v.intents.returned[0].status=503,v=>v.intents.retained[0].requestId=v.intents.baseline[0].requestId,
   v=>v.intents.retained[0].value.data.items[0].requestId='00000000-0000-4000-8000-000000000001',v=>v.metricWitness.response.Datapoints=[],
-  v=>v.metricWitness.minimum=0,v=>v.observations.extra=[],v=>v.databaseAfter.historicalInspection.intentRowCount++,
+  v=>v.metricWitness.minimum=0,v=>v.observations.extra=[],v=>v.databaseAfter.catalogInspection.referenceMigrationCount++,
   v=>v.current.desktop.commit='0'.repeat(40),v=>v.phiAllowed=true,v=>v.events=[]]){
   const v=structuredClone(r.recovery);mutate(v);assert.throws(()=>verifyRegisteredStandaloneRecovery(v,input,f.operator,Date.parse(r.recovery.startedAt),f.now,parse));
  }

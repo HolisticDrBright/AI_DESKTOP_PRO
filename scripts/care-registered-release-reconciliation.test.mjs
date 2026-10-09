@@ -235,7 +235,7 @@ test('unfinished execution, retained routing, temporary permission, byte drift o
   f=>f.port.latest=async()=>Buffer.from('not candidate'),f=>f.after.raw.integrations.Items[0].IntegrationUri+=':2',
   f=>f.after.raw.routes.Items.pop(),f=>f.after.raw.fn.Environment.Variables.PHI_ALLOWED='true',
   f=>f.port.apiDeployment=async id=>({DeploymentId:id,DeploymentStatus:'PENDING'}),
-  f=>f.after.database.historicalInspection.intentRowCount++,f=>f.port.storage=async()=>({state:'absent_at_observation'})]){
+  f=>f.after.database.catalogInspection.referenceMigrationCount++,f=>f.port.storage=async()=>({state:'absent_at_observation'})]){
   const f=fixture();mutate(f);await assert.rejects(run(f));
  }
 });
@@ -245,7 +245,7 @@ test('late storage, function, stage or database changes fail the second complete
   if(kind==='storage'){const old=f.port.storage;f.port.storage=async()=>{const r=await old();if(++n===2)r.versionId='changed';return r;};}
   if(kind==='function'||kind==='stage'){const old=f.port.control;f.port.control=async()=>{const r=await old();if(++n===2){
    if(kind==='function')r.fn.RevisionId+='changed';else {r.stage.DeploymentId='changed';r.stage.LastDeploymentStatusMessage="Successfully deployed stage with deployment ID 'changed'";}}return r;};}
-  if(kind==='database'){const old=f.port.database;f.port.database=async()=>{const r=await old();if(++n===2)r.historicalInspection.completeDataSha256='0'.repeat(64);return r;};}
+  if(kind==='database'){const old=f.port.database;f.port.database=async()=>{const r=await old();if(++n===2)r.catalogInspection.dataSha256='0'.repeat(64);return r;};}
   await assert.rejects(run(f));
  }
 });

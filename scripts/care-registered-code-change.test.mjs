@@ -1,3 +1,4 @@
+import {careRegisteredDatabaseFixture} from './test-fixtures/care-registered-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -175,8 +176,7 @@ function renewalPort(x){
  let renewals=0;
  x.port.refreshPreflight=async()=>{
   renewals++;
-  const r=structuredClone(x.f.preflight),db=structuredClone(JSON.parse(readFileSync(
-   new URL('../docs/evidence/2026-10-08-care-intent-canonical-registration.json',import.meta.url),'utf8')).inspection);
+  const r=structuredClone(x.f.preflight),db=careRegisteredDatabaseFixture(x.f.current,x.f.now);
   r.observedAt=new Date(x.f.now).toISOString();
   db.observedAt=r.observedAt;db.operatorSource={sourceCommit:x.f.current.desktop.commit,clean:true};
   r.databaseBefore=structuredClone(db);r.databaseAfter=structuredClone(db);return r;
@@ -250,7 +250,7 @@ test('renewal refuses stale/future/changed/partial observations before create ad
    if(kind==='source')r.current.desktop.sha256='0'.repeat(64);
    if(kind==='phi')r.phiAllowed=true;
    if(kind==='missing_database')delete r.databaseAfter;
-   if(kind==='wrong_database')r.databaseAfter.historicalInspection.completeDataSha256='0'.repeat(64);
+   if(kind==='wrong_database')r.databaseAfter.catalogInspection.dataSha256='0'.repeat(64);
    if(kind==='identity')x.caller.Arn+='different';return r;
   };
   await assert.rejects(propose(x),undefined,kind);assert.equal(x.creates(),0,kind);

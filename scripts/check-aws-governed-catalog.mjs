@@ -5,6 +5,7 @@ const root = new URL("../", import.meta.url);
 const migration = [
   "20260819173000_governed_reference_catalog.sql",
   "20260820030000_governed_catalog_enrichment.sql",
+  "20261008060000_catalog_offer_current_product.sql",
 ].map((file) => readFileSync(new URL(`infra/aws-clinical-core/catalog-migrations/${file}`, root), "utf8")).join("\n");
 const manifest = JSON.parse(readFileSync(new URL("infra/aws-clinical-core/catalog-migrations/manifest.json", root), "utf8"));
 const importer = readFileSync(new URL("src/server/clinical-core/aws-governed-catalog.ts", root), "utf8");
@@ -52,6 +53,10 @@ export function validateGovernedCatalogBoundary({ migration, manifest, importer,
   assert(errors, ledger?.file === "20260819173000_governed_reference_catalog.sql", "catalog migration is missing from the ordered ledger");
   const enrichmentLedger = manifest.migrations?.find((entry) => entry.version === "20260820030000");
   assert(errors, enrichmentLedger?.file === "20260820030000_governed_catalog_enrichment.sql", "catalog enrichment migration is missing from the ordered ledger");
+  assert(errors, manifest.migrations?.length === 3
+    && manifest.migrations[2]?.version === "20261008060000"
+    && manifest.migrations[2]?.file === "20261008060000_catalog_offer_current_product.sql",
+  "current catalog setup must include the registered current-product policy guard");
   assert(errors, reader.includes("pv.direct_order_allowed = true and pv.declared_restricted = false")
     && reader.includes("pv.product_type = 'supplement' and pv.access_tier = 'open'"),
   "offer reads must revalidate the current eligible product");

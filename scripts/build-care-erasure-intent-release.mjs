@@ -2,7 +2,7 @@
 import {execFileSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {build} from 'esbuild';
-import {readHistoricalCareParentMigrations} from './care-canonical-migrations.mjs';
+import {readHistoricalCareParentMigrations,readHistoricalCatalogParentMigrations} from './care-canonical-migrations.mjs';
 const historicalSourceOnly=process.argv.length===3&&process.argv[2]==='--historical-source-only';
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {careIntentMigrationBinding} from './synthetic-care-intent-release.mjs';
@@ -18,7 +18,7 @@ const load=folder=>{
   const sql=readFileSync(dir+x.file,'utf8').replace(/\r\n?/g,'\n');return {version:x.version,name:x.file.slice(15,-4),sql,sha256:sha256(sql)};
  });
 };
-const migrations=historicalSourceOnly?readHistoricalCareParentMigrations(process.cwd()):load('migrations'),reference=load('catalog-migrations'),mapping=careIntentMigrationBinding(process.cwd(),historicalSourceOnly);
+const migrations=historicalSourceOnly?readHistoricalCareParentMigrations(process.cwd()):load('migrations'),reference=historicalSourceOnly?readHistoricalCatalogParentMigrations(process.cwd()):load('catalog-migrations'),mapping=careIntentMigrationBinding(process.cwd(),historicalSourceOnly);
 const sql=readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8').replace(/\r\n?/g,'\n');
 const overlay={...mapping.overlay,sql};
 if(migrations.length!==46||reference.length!==2||sha256(sql)!==mapping.overlay.sha256

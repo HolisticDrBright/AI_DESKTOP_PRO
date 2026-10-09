@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
-import {readHistoricalCareParentMigrations} from './care-canonical-migrations.mjs';
+import {readHistoricalCareParentMigrations,readHistoricalCatalogParentMigrations} from './care-canonical-migrations.mjs';
 const historicalSourceOnly=process.argv.length===3&&process.argv[2]==='--historical-source-only';
 if ((!historicalSourceOnly && process.argv.length !== 2)) throw new Error('care_erasure_upgrade_build_argument_invalid');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -20,7 +20,7 @@ const load = folder => {
   });
 };
 const migrations = historicalSourceOnly ? readHistoricalCareParentMigrations(process.cwd()) : load('migrations');
-const reference = load('catalog-migrations');
+const reference = historicalSourceOnly ? readHistoricalCatalogParentMigrations(process.cwd()) : load('catalog-migrations');
 const rows = a => a.map(({ version, name, sha256 }) => ({ version, name, sha256 }));
 if (migrations.length !== 46 || reference.length !== 2
   || sha(JSON.stringify(rows(migrations))) !== '52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017'

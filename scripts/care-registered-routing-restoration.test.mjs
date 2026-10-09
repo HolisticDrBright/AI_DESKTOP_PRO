@@ -128,7 +128,7 @@ test('foreign routing, permission, code, database, execution or partial observat
   f=>f.retained.configuration.Timeout++,f=>f.retained.sha256='0'.repeat(64),
   f=>f.after.raw.routes.Items.pop(),f=>f.after.raw.role.Role.AssumeRolePolicyDocument.Statement.push({Effect:'Allow'}),
   f=>f.after.summary.ExecutionStatus='EXECUTE_IN_PROGRESS',f=>f.after.raw.stack.Stacks[0].StackStatus='UPDATE_IN_PROGRESS',
-  f=>f.port.latest=async()=>Buffer.from('foreign'),f=>f.after.database.historicalInspection.intentRowCount++,
+  f=>f.port.latest=async()=>Buffer.from('foreign'),f=>f.after.database.catalogInspection.referenceMigrationCount++,
   f=>f.port.storage=async()=>({state:'absent_at_observation'}),f=>f.port.apiDeployment=async id=>({DeploymentId:id,DeploymentStatus:'PENDING'})]){
   const f=fixture();mutate(f);await assert.rejects(run(f));assert(!f.calls.includes('return'));assert(!f.calls.includes('remove'));
  }
@@ -144,7 +144,7 @@ test('source, custody, rebuilt bytes, active writers and identity changes refuse
 test('drift during final readback cannot turn cleanup into a successful restoration receipt',async()=>{
  for(const kind of ['database','function','permission','stage']){
   const f=fixture(),old=f.port.control;f.port.control=async()=>{if(f.calls.includes('remove')){
-   if(kind==='database')f.after.database.historicalInspection.completeDataSha256='0'.repeat(64);
+   if(kind==='database')f.after.database.catalogInspection.dataSha256='0'.repeat(64);
    if(kind==='function')f.after.raw.fn.RevisionId+='changed';if(kind==='permission')f.policy={RevisionId:'foreign',Policy:'{}'};
    if(kind==='stage')f.after.raw.stage.DeploymentId='foreign';}return old();};
   await assert.rejects(run(f));assert(!f.records.includes('registered_stopped_restoration_observed'));

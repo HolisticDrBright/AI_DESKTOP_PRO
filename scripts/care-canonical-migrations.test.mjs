@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {CARE_CANONICAL,readCanonicalCareMigrations,readHistoricalCareParentMigrations,canonicalCareMapping} from './care-canonical-migrations.mjs';
+import {CARE_CANONICAL,readCanonicalCareMigrations,readHistoricalCareParentMigrations,readHistoricalCatalogParentMigrations,canonicalCareMapping} from './care-canonical-migrations.mjs';
 import {sha256,careMigrationBinding} from './synthetic-care-release.mjs';
 import {careIntentMigrationBinding} from './synthetic-care-intent-release.mjs';
 const current=readCanonicalCareMigrations(process.cwd()),overlay=current.migrations.at(-1).sql;
@@ -10,6 +10,10 @@ test('current canonical47 equals admitted source47/live48; exact parent and SQL 
  assert.equal(current.mapping.canonicalRegistered,true);assert.equal(current.mapping.sourceMigrationCount,47);
  assert.equal(current.mapping.liveMigrationCount,48);assert.equal(current.mapping.sourceLedgerSha256,CARE_CANONICAL.sourceSha256);
  assert.equal(current.mapping.liveLedgerSha256,CARE_CANONICAL.liveSha256);
+ assert.equal(current.mapping.referenceMigrationCount,3);
+ assert.equal(current.mapping.referenceLedgerSha256,'80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a');
+ assert.deepEqual(readHistoricalCatalogParentMigrations(process.cwd()),current.reference.slice(0,2));
+ assert.equal(current.reference[2].sql,readFileSync('infra/aws-clinical-core/source-candidates/catalog-offer-current-product.sql','utf8').replace(/\r\n?/g,'\n'));
  assert.equal(sha256(overlay),CARE_CANONICAL.sqlSha256);
  assert.equal(overlay,readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8').replace(/\r\n?/g,'\n'));
  assert.deepEqual(readHistoricalCareParentMigrations(process.cwd()),current.migrations.slice(0,46));
@@ -20,7 +24,9 @@ test('history omissions, ordering, duplicate and altered canonical or reference 
   current.migrations.map((x,i)=>i?x:{...x,name:'changed'}),current.migrations.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n'}),
   current.migrations.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n',sha256:sha256(x.sql+'-- changed\n')})])
   assert.throws(()=>canonicalCareMapping(m,current.reference,overlay),/refused/);
- for(const r of [current.reference.slice(0,1),[...current.reference].reverse(),current.reference.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n'})])
+ for(const r of [current.reference.slice(0,1),current.reference.slice(0,2),[...current.reference,current.reference[2]],
+  [...current.reference].reverse(),current.reference.map((x,i)=>i?x:{...x,sql:x.sql+'-- changed\n'}),
+  current.reference.map((x,i)=>i===2?{...x,sql:x.sql+'-- changed\n',sha256:sha256(x.sql+'-- changed\n')}:x)])
   assert.throws(()=>canonicalCareMapping(current.migrations,r,overlay),/refused/);
  assert.throws(()=>canonicalCareMapping(current.migrations,current.reference,overlay+'-- changed\n'),/terminal/);
 });

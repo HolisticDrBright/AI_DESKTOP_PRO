@@ -2,7 +2,7 @@
 import {execFileSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {build} from 'esbuild';
-import {readHistoricalCareParentMigrations} from './care-canonical-migrations.mjs';
+import {readHistoricalCareParentMigrations,readHistoricalCatalogParentMigrations} from './care-canonical-migrations.mjs';
 const historicalSourceOnly=process.argv.length===3&&process.argv[2]==='--historical-source-only';
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 if((!historicalSourceOnly&&process.argv.length!==2))throw Error('care_erasure_release_build_arguments');
@@ -17,7 +17,7 @@ const load=folder=>{
   const sql=readFileSync(dir+x.file,'utf8').replace(/\r\n?/g,'\n');return {version:x.version,name:x.file.slice(15,-4),sql,sha256:sha256(sql)};
  });
 };
-const migrations=historicalSourceOnly?readHistoricalCareParentMigrations(process.cwd()):load('migrations'),reference=load('catalog-migrations'),rows=v=>v.map(({version,name,sha256})=>({version,name,sha256}));
+const migrations=historicalSourceOnly?readHistoricalCareParentMigrations(process.cwd()):load('migrations'),reference=historicalSourceOnly?readHistoricalCatalogParentMigrations(process.cwd()):load('catalog-migrations'),rows=v=>v.map(({version,name,sha256})=>({version,name,sha256}));
 if(migrations.length!==46||reference.length!==2||sha256(JSON.stringify(rows(migrations)))!==P.sourceAfter
  ||sha256(JSON.stringify(rows(reference)))!==P.reference)throw Error('care_erasure_release_history');
 const dir='dist/aws-clinical-core/care-erasure-release';mkdirSync(dir,{recursive:true});

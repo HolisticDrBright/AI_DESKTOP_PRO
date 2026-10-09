@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
+import {readCanonicalCareMigrations,readHistoricalCatalogParentMigrations} from './care-canonical-migrations.mjs';
 const rehearsal = process.argv.length === 3 && process.argv[2] === '--rollback-rehearsal';
 const apply = process.argv.length === 3 && process.argv[2] === '--preserving-apply';
 if (process.argv.length !== 2 && !rehearsal && !apply) throw new Error('catalog_forward_build_argument_invalid');
@@ -20,7 +21,8 @@ function load(folder) {
     return { version: entry.version, name: entry.file.slice(15, -4), sha256: sha(sql), sql };
   });
 }
-const core = load('migrations'), reference = load('catalog-migrations');
+readCanonicalCareMigrations(process.cwd());
+const core = load('migrations'), reference = readHistoricalCatalogParentMigrations(process.cwd());
 const sql = readFileSync('infra/aws-clinical-core/source-candidates/catalog-offer-current-product.sql', 'utf8').replace(/\r\n?/g, '\n');
 const candidate = { version: '20261008060000', name: 'catalog_offer_current_product', sha256: sha(sql), sql };
 const rows = entries => entries.map(({ version, name, sha256 }) => ({ version, name, sha256 }));

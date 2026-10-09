@@ -129,6 +129,7 @@ async function pairedFixture(t){
  // These regressions exercise the archived parent-schema resumption profile.
  // The real current manifest remains47 and refuses that retired profile.
  d.put(infra+'migrations/manifest.json',readFileSync(infra+'migrations/historical-care-parent-46.json'));
+ d.put(infra+'catalog-migrations/manifest.json',readFileSync(infra+'catalog-migrations/historical-catalog-parent-2.json'));
  for(const path of ['source-candidates/care-erasure-intents.sql','identity-api-extension.json'])
   d.put(infra+path,readFileSync(infra+path));
  for(const name of ['careDataLifecycle','careErasureRecovery']){
