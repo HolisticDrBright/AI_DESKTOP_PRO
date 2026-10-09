@@ -82,8 +82,10 @@ async function history(tx: ClinicalCoreTransaction, migrations: ClinicalCoreMigr
 
 /** Separate from the empty installer. Atomic, exact 102->103 transition; never clears
  * fixtures, edits an old ledger row, starts services or activates any provider. */
-export async function runQualificationSchemaUpgrade(database: ClinicalCoreDatabase, migrations: ClinicalCoreMigration[],
-  configuration: QualificationUpgradeConfiguration, command: 'inspect' | 'upgrade') {
+export async function runQualificationSchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
+  suppliedConfiguration: QualificationUpgradeConfiguration, command: 'inspect' | 'upgrade') {
+  // Capture the reviewed inputs before any awaited transport can mutate them.
+  const migrations = suppliedMigrations.map(m => ({ ...m })), configuration = { ...suppliedConfiguration };
   assertQualificationUpgrade(configuration, migrations);
   if (command !== 'inspect' && command !== 'upgrade') fail('boundary_refused');
   let stage = 'transaction_start';

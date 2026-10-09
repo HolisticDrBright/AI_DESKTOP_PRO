@@ -51,6 +51,27 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close(); });
 
 describe('data-preserving qualification upgrade using actual 102/103 artifacts', () => {
+  it.each(['artifact', 'configuration'])('captures admitted %s before asynchronous caller mutation', async target => {
+    const supplied = migrations.map(m => ({ ...m })), config = { ...configuration };
+    const queries: string[] = []; let changed = false; let result: unknown;
+    const actual = database(async sql => {
+      queries.push(sql);
+      if (changed) return;
+      changed = true;
+      if (target === 'artifact') supplied[102].sql += '\nselect 12345;';
+      else config.qualificationDatabaseName = 'clinical_core';
+    });
+    // Run the real SQL but always roll the local transaction back, even when
+    // the old implementation wrongly admits a changed statement. No new
+    // public rehearsal or upgrade authority is created by this test adapter.
+    const rollback: ClinicalCoreDatabase = { transaction: work => actual.transaction(async tx => {
+      result = await work(tx); throw Error('fictional explicit rollback');
+    }) };
+    await expect(runQualificationSchemaUpgrade(rollback, supplied, config, 'upgrade'))
+      .rejects.toMatchObject({ category: 'upgrade_failed', stage: 'transaction_commit' });
+    expect(result).toMatchObject({ phiAllowed: false, activation: 'blocked', observedMigrationCount: 103 });
+    expect(queries.some(sql => sql.includes('12345'))).toBe(false); await remains102();
+  });
   it('sets writer isolation explicitly instead of inheriting a server default', async () => {
     const queries: string[] = [];
     await expect(upgrade(database(async sql => {

@@ -28,9 +28,9 @@ timeout, RLS checks, target pins and artifact identities are unchanged.
 | Care messaging | Qualification103 to104 | Fresh writer snapshot, history recheck and captured input artifacts |
 | Care connections | Qualification104 to105 | Fresh writer snapshot and history recheck |
 | Care claim recovery | Qualification105 to106 | Fresh writer snapshot and history recheck |
-| Qualification export recovery | Qualification102 to103 | Explicit writer isolation rather than inheriting a server default; existing post-lock history ordering retained |
+| Qualification export recovery | Qualification102 to103 | Explicit writer isolation and captured inputs; existing post-lock history ordering retained |
 
-The care-messaging operator additionally copies the supplied migration records
+The care-messaging and qualification export-recovery operators copy the supplied migration records
 and configuration before its first asynchronous operation. Its admitted SQL,
 target and activation values cannot change underneath the transaction. Existing
 connection, claim and erasure operators already capture those inputs. Structured
@@ -58,9 +58,32 @@ not independent-session Aurora concurrency evidence. The separately recorded
 catalog AWS concurrency pass does not qualify these different historical writers.
 Any future admitted use still needs its own exact-source hosted qualification.
 
-The full source suite and this branch's CI are recorded separately when terminal.
+The first repair's full source suite is recorded below; later source and CI are qualified separately.
 Previously completed PR81 CI at093b646 andb5669e1 is historical evidence for the
 catalog journal repair and its evidence commit, not this increment.
+
+### Full suite and qualification input capture
+
+Full suite27957 terminated exit0 at exact source
+`cde80f9edc42ef2256c5edbc61d75bbd08203ca1`:350files,4446passing tests,
+11existing skips,614.22seconds. The checkout remained unchanged throughout that
+run. CI37876631475 completed successfully at that commit;37876626628 was still
+in progress at the last observation.
+
+A later qualification input-capture check exposed two more regressions. Before
+repair, a supplied artifact changed during the first asynchronous request could
+execute an appended statement; a changed configuration could also alter subsequent
+boundary checks. Both tests failed against that implementation. Their disposable
+local adapter forced rollback even on wrongly admitted SQL; no AWS mutation or
+lasting fixture change occurred.
+
+The qualification operator now copies its admitted migrations and configuration
+before awaiting, as the messaging operator does. Its complete fifteen-test suite
+passes in7.04seconds after this later repair; standalone typecheck and focused lint
+also pass. The full4446 result belongs to earliercde80f9, not the later source.
+Final-source CI remains separate. Sixteen new regressions in total were shown to
+fail before their corresponding repairs; no waiver, timeout increase or activation
+substitution was used.
 
 ## Remaining original launch requirements
 
