@@ -35,6 +35,14 @@ Initial exploratory failures are not passes: the first operator run failed 13 of
 
 Build the read-only operator with `npm run build:catalog-forward-inspector` from a clean source checkout. Its artifact manifest states the operator commit, bundled-byte digest, both reference identities, read-only capability and false activation flags. CI builds it without AWS access. A dirty-source build cannot execute an inspection. Do not use this operator or its library to mutate the database while another run holds routing custody.
 
+## Writer snapshot repair
+
+The initial source candidate used repeatable read for writers before acquiring table locks. PostgreSQL fixes that snapshot at the first non-transaction-control statement; a writer that commits while the operator waits for a table lock could therefore be absent from its preservation witness. Table locks do not refresh an already fixed snapshot. See [PostgreSQL transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html).
+
+Write commands now use read committed, acquire the complete preservation-table and ledger locks, recheck the inventory, and only then read migration history, policies and fingerprints. Those locks keep preserved rows and ledger receipts stable during the mutation; the read-only inspector still uses repeatable read. The fresh inspection digest remains mandatory, so an intervening committed change must be refused rather than silently incorporated.
+
+The regression failed before this repair because the first write command selected repeatable read. After repair, all 46 focused tests in three files pass in 48.69 seconds, including actual command order, a real local row change injected at lock admission, its refusal before policy SQL, and rollback. Typecheck and focused lint pass. PGlite does not prove the two-session Aurora race; that hosted concurrency case remains mandatory before lasting deployment. The full run at predecessor source `62954f1` is separate and cannot qualify this later repair. Historical SQL, catalog approvals, holds, roles, timeout limits and activation restrictions are unchanged.
+
 ## Remaining work toward all six phases
 
 1. Complete and independently settle the currently admitted AWS recovery rehearsal without redefining its routing/refusal matrix as positive erasure acceptance.

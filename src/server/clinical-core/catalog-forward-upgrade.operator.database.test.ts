@@ -124,6 +124,26 @@ describe('preserving reference forward upgrade — real local SQL, no hosted or 
     finally { await pg.query("update clinical_reference.knowledge_sources set review_status='needs_review' where stable_id='src_fictional_upgrade_6001'"); }
     await predecessor();
   });
+  it('refreshes the write snapshot after every writer lock and refuses an intervening row change', async () => {
+    // PGlite is not a two-session Aurora race test. Assert the actual command
+    // order/isolation contract and inject a real row change at lock admission.
+    for (const command of ['upgrade', 'rehearse'] as const) {
+      const before = await inspect(), queries: string[] = [];
+      const changed = database(async (sql, tx) => {
+        queries.push(sql);
+        if (sql.startsWith('lock table ')) await tx.query("update clinical_reference.knowledge_sources set review_status='rejected' where stable_id='src_fictional_upgrade_6001'");
+      });
+      await expect(runCatalogForwardUpgrade(changed, core, reference, candidate, configuration, command, before.observationSha256))
+        .rejects.toThrow('observation_changed');
+      expect(queries[0]).toBe('set transaction isolation level read committed');
+      const locked = queries.findIndex(sql => sql.startsWith('lock table '));
+      expect(locked).toBeGreaterThan(0);
+      expect(queries.findIndex(sql => sql.startsWith('select version,name,sha256 from clinical_core.schema_migrations'))).toBeGreaterThan(locked);
+      expect(queries.some(sql => sql.startsWith('drop policy') || sql.startsWith('insert into clinical_reference.schema_migrations'))).toBe(false);
+      await predecessor();
+      expect((await pg.query<{ review_status: string }>("select review_status from clinical_reference.knowledge_sources where stable_id='src_fictional_upgrade_6001'")).rows[0]?.review_status).toBe('needs_review');
+    }
+  });
   it('runs actual successor SQL in a rollback rehearsal and independently reads the predecessor', async () => {
     const before = await inspect();
     expect((await rawOffers()).map(row => row.offer_stable_id)).toContain('off_forward_restricted');

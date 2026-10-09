@@ -175,7 +175,12 @@ export async function runCatalogForwardUpgrade(database: ClinicalCoreDatabase, s
   let stage = 'transaction_start';
   try { return await database.transaction(async tx => {
     stage = 'transaction_settings';
-    await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level repeatable read');
+    // Inspection needs a stable read-only snapshot. Writers need a fresh
+    // snapshot AFTER all table locks have been acquired: repeatable read would
+    // retain the snapshot taken by the earlier identity/advisory queries even
+    // if a conflicting writer commits while LOCK waits. The complete table
+    // locks below keep every preserved row and ledger stable thereafter.
+    await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
     await tx.query("set local lock_timeout='5s'"); await tx.query("set local statement_timeout='30s'"); await tx.query('set local row_security=off');
     stage = 'database_identity';
     if ((await tx.query<{ name: string }>('select current_database() as name')).rows[0]?.name !== configuration.databaseName) fail('boundary_refused');
@@ -184,7 +189,6 @@ export async function runCatalogForwardUpgrade(database: ClinicalCoreDatabase, s
       for (const key of ['ai-desktop-pro:clinical-core-migrations', 'ai-desktop-pro:governed-catalog-migrations'])
         if ((await tx.query<{ acquired: boolean }>('select pg_try_advisory_xact_lock(hashtext($1)) acquired', [key])).rows[0]?.acquired !== true) fail('upgrade_busy');
     }
-    stage = 'history'; const successor = await history(tx, mapping);
     stage = 'inventory'; const tables = await inventory(tx);
     if (command !== 'inspect') {
       stage = 'writer_locks';
@@ -192,6 +196,7 @@ export async function runCatalogForwardUpgrade(database: ClinicalCoreDatabase, s
       await tx.query(`lock table ${names.join(',')} in share row exclusive mode`);
       if (JSON.stringify(await inventory(tx)) !== JSON.stringify(tables)) fail('inventory_refused');
     }
+    stage = 'history'; const successor = await history(tx, mapping);
     stage = 'before_policy'; await verifyPolicy(tx, successor);
     stage = 'before_fingerprint'; const before = await fingerprint(tx, tables);
     const schema = await preservedSchema(tx, tables);
