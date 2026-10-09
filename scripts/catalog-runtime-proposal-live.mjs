@@ -15,7 +15,7 @@ import {verifyCatalogRuntimeUploadPreflight,catalogRuntimeOperationDirectory,ver
 import {createIntentUploadCustody} from './upload-synthetic-care-intent-release.mjs';
 import {REGISTERED_UPLOAD_TRANSPORT} from './upload-synthetic-care-registered-release.mjs';
 import {inspectRegisteredUploadObject,acquireRegisteredUploadReconciliationGuard,stoppedUploadWriter} from './reconcile-synthetic-care-registered-upload.mjs';
-import {observeIntentControlRaw} from './care-intent-live.mjs';
+import {observeCatalogRuntimeControlRaw} from './catalog-runtime-control-observer.mjs';
 import {verifyCatalogRuntimePredecessorControl} from './catalog-runtime-preflight.mjs';
 import {catalogRuntimeCodeTemplateInputs,catalogRuntimeChangeSetBinding,verifyCatalogRuntimeProposalViews} from './catalog-runtime-code-change.mjs';
 import {runCatalogRuntimeProposal} from './catalog-runtime-proposal.mjs';
@@ -108,7 +108,7 @@ export async function proposeCatalogRuntimeLive(root,options){
   const artifact=await c.stored(),preparation=await c.preflight();guard();
   const result=await runCatalogRuntimeProposal(c.candidate,c.current,c.sourceText,preparation,artifact,{
    now:Date.now,identity:async()=>observeSyntheticMemberIdentity(),unchanged:async()=>guard(),
-   refreshPreflight:c.preflight,control:async()=>observeIntentControlRaw(),record:custody.record,admit:async e=>{guard();custody.admit(e);},
+   refreshPreflight:c.preflight,control:observeCatalogRuntimeControlRaw,record:custody.record,admit:async e=>{guard();custody.admit(e);},
    list:async fixed=>listing(fixed),writeInput:async(fixed,input)=>{guard();const dir=folder(out,fixed);
     durable(resolve(dir,'template.json'),input.template);durable(resolve(dir,'parameters.json'),input.parameters);},
    create:async(fixed,input)=>{guard();const dir=folder(out,fixed);durable(resolve(dir,'template.json'),input.template);
@@ -121,7 +121,7 @@ export async function proposeCatalogRuntimeLive(root,options){
    wait:ms=>new Promise(done=>setTimeout(done,ms)),saveReport:async(fixed,report)=>{guard();durable(resolve(folder(out,fixed),sha256(canonical(report))+'.json'),report);},
   });
   check(equal(await c.stored(),artifact),'artifact_changed');guard();
-  const finalViews=views({stackId:result.stackId,id:result.changeSetId}),finalControl=observeIntentControlRaw();guard();
+  const finalViews=views({stackId:result.stackId,id:result.changeSetId}),finalControl=await observeCatalogRuntimeControlRaw();guard();
   verifyCatalogRuntimeProposalPublication(result,finalViews,finalControl,c.sourceText,c.candidate,c.current,artifact,Date.now());
   verifyCatalogRuntimeCustodyRoot(root,options.custodyRoot);
   const receipt=resolve(out,custody.runId+'.proposal.json');saveCatalogRuntimeReceipt(receipt,{runId:custody.runId,operatorSource:c.operator,...result});
@@ -212,7 +212,7 @@ export async function reconcileCatalogRuntimeProposalLive(root,options){
   const result=await runCatalogRuntimeProposalReconciliation(c.candidate,artifact,c.sourceText,{lockBytes,journalBytes},{
    now:Date.now,identity:async()=>observeSyntheticMemberIdentity(),unchanged:async()=>unchanged(),writerStopped:async pid=>stoppedUploadWriter(pid),
    custody:async()=>({lockBytes:bounded(lock,16384),journalBytes:bounded(journal,1024*1024)}),preflight:c.preflight,
-   storage:c.stored,control:async()=>observeIntentControlRaw(),list:async fixed=>listing(fixed),views:async binding=>views(binding),
+   storage:c.stored,control:observeCatalogRuntimeControlRaw,list:async fixed=>listing(fixed),views:async binding=>views(binding),
   });
   unchanged();verifyCatalogRuntimeCustodyRoot(root,options.custodyRoot);check(stoppedUploadWriter(saved.pid),'writer_active');
   check(bounded(lock,16384).equals(lockBytes)&&bounded(journal,1024*1024).equals(journalBytes),'custody_changed');
