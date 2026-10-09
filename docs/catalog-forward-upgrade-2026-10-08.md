@@ -52,3 +52,13 @@ The regression failed before this repair because the first write command selecte
 5. Complete the remaining hosted erasure/export/retention, document/audio import, provider and billing matrices, then matched API/Desktop/mobile release and physical iOS/Android acceptance. Core launch and PHI activation remain separate gated decisions. No paid mobile build is authorized by this upgrade.
 
 Clinical holds, unverified hormone sources, pediatric exclusions, disputed pearls, label holds and gated peptide/longevity tiers remain unchanged. All six original phases still require completion evidence; this forward upgrade does not narrow their scope.
+
+## Custodied rollback operator
+
+The read-only inspector remains read-only. A separate rollback-only operator now embeds the same exact histories and pending SQL. Its public command is `npm run rehearse:catalog-forward-rollback` from a clean checkout. It has no lasting-upgrade argument, database override or deployment port. A dirty build cannot run.
+
+The command uses the actual shared routing custody directory in the primary `DESKTOP_COMMERCIAL_20261005` working copy, a kernel-held Windows mutex, the existing reconciliation guard and an exclusive create-only operator lock. It requires the byte-exact completed recovery report and its settled archive, then independently checks the actual current Lambda code, revision, unqualified API integration and retained permission absence. An existing lock, whether live or abandoned, is never replaced or deleted by this command.
+
+Before rollback DDL is admitted, the command durably saves the full predecessor inspection. The preserving library then applies the exact policy and receipt inside a transaction, deliberately rolls that transaction back, and inspects again. A further separate read-only inspection must equal the original result. Source, control plane, all preserved data, complete historical receipts and preserved schema must remain unchanged. Only then are the completed report and original lock archived and read back before the owned lock is removed. A refusal, failed readback, process loss or uncertain transaction retains the operator lock for reconciliation; it cannot be marked successful by a supplied report or an automatic retry.
+
+This is one hosted prerequisite for a custodied forward registration and matched reference3 runtime, not their replacement. The writer-lock race still needs an actual two-session Aurora test. The nine positive erasure journeys, authoritative owner-plan and ingredient pipeline, other processing/privacy/provider matrices, matched releases and physical-device acceptance remain separate requirements. No clinical approval, source-verification hold, tier gate, PHI setting or paid-build authorization changes.
