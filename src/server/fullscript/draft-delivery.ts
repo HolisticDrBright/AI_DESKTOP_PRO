@@ -22,8 +22,8 @@ export type DraftDeliveryStatus={id:string;state:State;includedCount:number;excl
 type Row=Record<string,unknown>&{id:string;binding:unknown;state:State;writer_id:string|null;
  writer_live:boolean;writer_settled:boolean;writer_actor:unknown;provider_plan_id:string|null;receipt_sha256:string|null};
 
-/** Required SAME-TARGET transactional authority. No production implementation
- * is wired yet. Resolve/assertCurrent must read the current patient connection,
+/** Required SAME-TARGET transactional authority. A source-only qualification
+ * adapter exists; no production implementation is wired. Resolve/assertCurrent must read the current patient connection,
  * published manifest, catalog/ingredients/mappings, consent, holds and reviewed
  * provider release; assertAccess must validate identity and clinic/owner access.
  * This interface is not a caller-supplied approval, an OAuth token or a hash
