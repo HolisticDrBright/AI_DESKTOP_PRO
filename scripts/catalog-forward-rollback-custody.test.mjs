@@ -50,9 +50,34 @@ test('incomplete, failed, out-of-order and falsely activated results cannot sett
 test('exact read refuses truncation and no caller flag unlocks a lasting upgrade',()=>{
  for(const args of [[],['upgrade'],['inspect'],['--rehearse-fictional-catalog-rollback-only','--approve'],['--database','production']])
   assert.throws(()=>catalogRollbackArguments(args),/arguments/);
- catalogRollbackArguments(['--rehearse-fictional-catalog-rollback-only']);
+catalogRollbackArguments(['--rehearse-fictional-catalog-rollback-only']);
+ assert.equal(catalogRollbackArguments(['--qualify-fictional-catalog-lock-admission-only']),'lock-admission');
  const f=fixture();try{writeFileSync(resolve(f.out,'empty'),'');assert.throws(()=>boundedCatalogFile(resolve(f.out,'empty')),/file/);
   writeFileSync(resolve(f.out,'large'),'12345');assert.throws(()=>boundedCatalogFile(resolve(f.out,'large'),4),/file/);
+ }finally{f.close();}
+});
+
+test('lock admission needs every observed proof and the separate complete sequence before settlement',()=>{
+ const f=fixture();try{
+  const c=createCatalogRollbackCustody(f.shared,f.out,source,f.guard,Date.now(),process.pid,'lock-admission');
+  const r=()=>({...report(c),contract:'catalog-forward-custodied-lock-admission/1',
+   realLockWaitObserved:true,competingCommitVerified:true,changedWitnessRefused:true,workersSettled:true,fixtureRemoved:true});
+  assert.throws(()=>c.settle(r()),/settlement/);
+  for(const stage of ['catalog_lock_fixture_admitted','catalog_lock_writer_admitted','catalog_lock_wait_observed',
+   'catalog_lock_refusal_verified','catalog_lock_cleanup_admitted','catalog_lock_cleanup_verified','catalog_rollback_control_verified'])c.record(stage,{});
+  for(const key of ['realLockWaitObserved','competingCommitVerified','changedWitnessRefused','workersSettled','fixtureRemoved'])
+   assert.throws(()=>c.settle({...r(),[key]:false}),/settlement/);
+  assert.throws(()=>c.settle({...r(),contract:'catalog-forward-custodied-rollback/1'}),/settlement/);
+  assert.equal(c.settle(r()).custodySettled,true);
+ }finally{f.close();}
+});
+test('a failed lock test may admit exact fixture cleanup but cannot settle the shorter sequence',()=>{
+ const f=fixture();try{
+  const c=createCatalogRollbackCustody(f.shared,f.out,source,f.guard,Date.now(),process.pid,'lock-admission');
+  c.record('catalog_lock_fixture_admitted',{});c.record('catalog_lock_cleanup_admitted',{});
+  assert.throws(()=>c.settle({...report(c),contract:'catalog-forward-custodied-lock-admission/1',
+   realLockWaitObserved:true,competingCommitVerified:true,changedWitnessRefused:true,workersSettled:true,fixtureRemoved:true}),/settlement/);
+  assert.equal(existsSync(c.lock),true);
  }finally{f.close();}
 });
 test('artifact source, bytes, exact histories and false activation are mandatory',()=>{

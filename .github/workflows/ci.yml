@@ -179,7 +179,7 @@ jobs:
           npm run check:aws-governed-catalog-api
       - name: Build read-only pending catalog forward inspector (no AWS access or registration)
         run: npm run build:catalog-forward-inspector
-      - name: Catalog rollback custody tests and source-only build (no AWS calls)
+      - name: Catalog rollback and concurrent-lock custody tests and source-only build (no AWS calls)
         run: |
           npm run test:catalog-forward-rollback
           npm run build:catalog-forward-rollback

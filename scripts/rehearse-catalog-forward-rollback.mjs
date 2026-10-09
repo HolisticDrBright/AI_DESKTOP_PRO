@@ -12,15 +12,18 @@ import {acquireRegisteredRestorationMutex} from './care-registered-restoration-g
 import {boundedCatalogFile as bounded,saveCatalogBytes,createCatalogRollbackCustody,refuseCatalogRollback as fail} from './catalog-forward-rollback-custody.mjs';
 const check=(v,c)=>{if(!v)fail(c);};
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-export function catalogRollbackArguments(args){check(args.length===1&&args[0]==='--rehearse-fictional-catalog-rollback-only','arguments');}
-export function verifyCatalogRollbackBuild(m,bytes,source){
+export function catalogRollbackArguments(args){check(args.length===1&&[
+ '--rehearse-fictional-catalog-rollback-only','--qualify-fictional-catalog-lock-admission-only'].includes(args[0]),'arguments');
+ return args[0]==='--qualify-fictional-catalog-lock-admission-only'?'lock-admission':'rollback';}
+export function verifyCatalogRollbackBuild(m,bytes,source,mode='rollback'){
+ check(['rollback','lock-admission'].includes(mode),'mode');
  check(m?.contract==='catalog-forward-rollback-build/1'&&m.sourceCommit===source.commit&&m.clean===true&&m.sha256===sha256(bytes)
   &&m.execution==='synthetic-staging'&&m.phiAllowed===false&&m.coreSourceCount===47&&m.coreLiveCount===48
   &&m.referenceBeforeCount===2&&m.referenceCandidateCount===3
   &&m.referenceBeforeSha256==='83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62'
   &&m.referenceCandidateSha256==='80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a'
   &&m.candidateSqlSha256==='3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117'
-  &&m.rollbackRehearsalAvailable===true&&m.readOnly===false
+  &&m.rollbackRehearsalAvailable===true&&m.readOnly===false&&(mode==='rollback'||m.lockAdmissionQualificationAvailable===true)
   &&['lastingApplyAvailable','canonicalRegistered','databaseMutationPerformed','hostedAcceptance','activationApproved'].every(k=>m[k]===false),'build_binding');
 }
 export function verifyCatalogRollbackControl(r){
@@ -35,7 +38,7 @@ export function verifyCatalogRollbackControl(r){
   permissionSha256:sha256(JSON.stringify(r.permission)),retainedPermissionAbsent:true};
 }
 async function main(){
- catalogRollbackArguments(process.argv.slice(2));
+ const mode=catalogRollbackArguments(process.argv.slice(2));
  const root=realpathSync(process.cwd()),source=careSourceSnapshot(root,'desktop');
  const custodyRoot=realpathSync(resolve(root,'..','DESKTOP_COMMERCIAL_20261005'));
  check(careSourceSnapshot(custodyRoot,'desktop').commit==='c7e1840b9cd58086d077e54d224784a273246d77','custody_source');
@@ -53,9 +56,10 @@ async function main(){
  execFileSync(process.execPath,[resolve(root,'scripts/build-catalog-forward-inspector.mjs'),'--rollback-rehearsal'],
   {cwd:root,windowsHide:true,timeout:30000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});
  const directory=resolve(root,'dist/aws-clinical-core/catalog-forward-rollback'),moduleFile=resolve(directory,'index.cjs');
- verifyCatalogRollbackBuild(JSON.parse(bounded(resolve(directory,'artifact-manifest.json')).toString('utf8')),bounded(moduleFile,16*1024*1024),source);
+ verifyCatalogRollbackBuild(JSON.parse(bounded(resolve(directory,'artifact-manifest.json')).toString('utf8')),bounded(moduleFile,16*1024*1024),source,mode);
  const port=createRequire(import.meta.url)(moduleFile);
- check(typeof port.inspectCatalogForwardDatabase==='function'&&typeof port.rehearseCatalogForwardDatabase==='function','database_port');
+ check(typeof port.inspectCatalogForwardDatabase==='function'&&typeof port.rehearseCatalogForwardDatabase==='function'
+  &&(mode==='rollback'||typeof port.qualifyCatalogLockDatabase==='function'),'database_port');
  const out=resolve(directory,'runs');mkdirSync(out,{recursive:true});
  const mutex=await acquireRegisteredRestorationMutex(shared);let guard,owned;
  try{
@@ -65,7 +69,7 @@ async function main(){
   const bytes=Buffer.from(JSON.stringify({purpose:'registered-upload-reconciliation',pid:process.pid,runId:randomBytes(16).toString('hex'),operator:source.commit})+'\n');
   let fd;try{fd=openSync(guardFile,'wx',0o600);writeFileSync(fd,bytes);fsyncSync(fd);}finally{if(fd!==undefined)closeSync(fd);}
   guard={verify:()=>{mutex.verify();check(bounded(guardFile,16384).equals(bytes),'guard_changed');},close:()=>{guard.verify();unlinkSync(guardFile);}};
-  owned=createCatalogRollbackCustody(shared,out,source,guard);
+  owned=createCatalogRollbackCustody(shared,out,source,guard,Date.now(),process.pid,mode);
   const verify=()=>owned.verify();
   const unchanged=()=>{verify();check(eq(careSourceSnapshot(root,'desktop'),source),'source_changed');
    check(careSourceSnapshot(custodyRoot,'desktop').commit==='c7e1840b9cd58086d077e54d224784a273246d77','custody_source_changed');};
@@ -85,16 +89,26 @@ async function main(){
   unchanged();const beforeControl=control(),before=await port.inspectCatalogForwardDatabase(source.commit,{verify,record:()=>{fail('unexpected_inspection_event');}});
   check(before.referenceMigrationCount===2&&before.databaseMutationPerformed===false,'predecessor');
   saveCatalogBytes(resolve(out,owned.runId+'.before.json'),Buffer.from(JSON.stringify({source,beforeControl,before},null,2)+'\n'));
-  const result=await port.rehearseCatalogForwardDatabase(source.commit,{verify,record:(stage,digest)=>{
-   unchanged();check(digest===before.observationSha256,'inspection_changed');owned.record(stage,{observationSha256:digest});}});
-  check(eq(result.before,before)&&eq(result.after,before)&&result.rolledBack===true&&result.lastingApplyPerformed===false,'rollback_readback');
+  const result=mode==='rollback'?await port.rehearseCatalogForwardDatabase(source.commit,{verify,record:(stage,digest)=>{
+   unchanged();check(digest===before.observationSha256,'inspection_changed');owned.record(stage,{observationSha256:digest});}})
+   :await port.qualifyCatalogLockDatabase(source.commit,{verify,record:()=>fail('unexpected_rollback_event')},{
+    // No filesystem scan while the bounded database lock is waiting. Exact
+    // source snapshots are checked before admission and after all work settles.
+    record:(stage,details)=>{verify();owned.record(stage,details);},
+    persistFixture:fixture=>{unchanged();saveCatalogBytes(resolve(out,owned.runId+'.fixture.json'),Buffer.from(JSON.stringify(fixture,null,2)+'\n'));}
+   });
+  check(eq(result.before,before)&&eq(result.after,before)&&(mode==='rollback'?result.rolledBack===true:result.fixtureRemoved===true)
+   &&result.lastingApplyPerformed===false,'rollback_readback');
   const afterControl=control();check(eq(afterControl,beforeControl),'control_changed');unchanged();
   owned.record('catalog_rollback_control_verified',{configurationSha256:afterControl.configurationSha256});
-  const report={contract:'catalog-forward-custodied-rollback/1',runId:owned.runId,observedAt:new Date().toISOString(),
+  const proof=mode==='rollback'?{rolledBack:true}:{stableId:result.stableId,writerPid:result.writerPid,migrationPid:result.migrationPid,
+   realLockWaitObserved:result.realLockWaitObserved,competingCommitVerified:result.competingCommitVerified,
+   changedWitnessRefused:result.changedWitnessRefused,workersSettled:result.workersSettled,fixtureRemoved:result.fixtureRemoved};
+  const report={contract:mode==='rollback'?'catalog-forward-custodied-rollback/1':'catalog-forward-custodied-lock-admission/1',runId:owned.runId,observedAt:new Date().toISOString(),
    operatorSource:source,recoveryReportBytesSha256:sha256(recovery),before,after:result.after,control:afterControl,
-   rolledBack:true,repeatedDatabaseReadbackVerified:true,controlUnchanged:true,sourceUnchanged:true,journalSha256:owned.journalSha256(),
+   ...proof,repeatedDatabaseReadbackVerified:true,controlUnchanged:true,sourceUnchanged:true,journalSha256:owned.journalSha256(),
    lastingApplyPerformed:false,apiDeploymentPerformed:false,canonicalRegistered:false,hostedAcceptance:false,activationApproved:false,phiAllowed:false};
-  const settlement=owned.settle(report);console.log(JSON.stringify({...settlement,runId:owned.runId,rolledBack:true,lastingApplyPerformed:false,phiAllowed:false}));
+  const settlement=owned.settle(report);console.log(JSON.stringify({...settlement,runId:owned.runId,...proof,lastingApplyPerformed:false,phiAllowed:false}));
  }catch(error){
   if(owned){try{owned.record('catalog_rollback_finding',{outcome:'unsettled',noAutomaticReplay:true});}catch{ /* Preserve changed custody, never remove it. */ }}
   throw error;
