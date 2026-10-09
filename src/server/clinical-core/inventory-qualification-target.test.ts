@@ -9,6 +9,8 @@ import { inventoryCondition, inventoryRules, validateInventoryQualificationTarge
 import { validateQualificationTargetManifest } from './qualification-target-manifest';
 import { INVENTORY_PROFILE, INVENTORY_RELEASE } from '../../../scripts/inventory-care-qualification-template.mjs';
 import { inspectInventoryStackDeclarations, observeInventoryStackDeclarations, resolveInventoryTemplate } from './inventory-qualification-stack-observer';
+import { observeInventoryCandidateServices } from './inventory-qualification-service-observer';
+import { fictionalInventoryServices } from './testing/inventory-service-fixture';
 
 let directory: string, artifacts: InventoryArtifactSet;
 const consumer = '11111111-1111-4111-8111-111111111111', workforce = '22222222-2222-4222-8222-222222222222';
@@ -145,6 +147,109 @@ it('retention schedule declarations are omitted when off and required when indep
   expect(verified.resources.find(r => r.logicalId === 'RetentionSweepSchedule')!.properties.State).toBe('ENABLED');
   on.resources.StackResourceSummaries = on.resources.StackResourceSummaries.filter(r => r.LogicalResourceId !== 'RetentionSweep');
   expect(() => inspectInventoryStackDeclarations(c, a, on)).toThrow();
+});
+it('checks service configurations for every active resource in all twelve built templates using fictional responses only', async () => {
+  const target = targetFixture();
+  const retentionCandidate = target.candidates.find(c => c.candidate === 'privacy-operations')!;
+  Object.assign(retentionCandidate.parameters, { RetentionScheduleEnabled: 'true', RetentionScheduleEvidenceSha256: digest, RetentionServicePersonId: retention,
+    RetentionServiceOrganizationId: organization, ExportCleanupEnabled: 'true', ExportCleanupEvidenceSha256: digest });
+  validateInventoryQualificationTarget(target, admissionFixture());
+  const types = new Set<string>();
+  for (const c of target.candidates) {
+    const a = artifacts.candidates.find(a => a.candidate === c.candidate)!;
+    const snapshot = inspectInventoryStackDeclarations(c, a, stackFixture(c, a));
+    for (const resource of snapshot.resources) types.add(resource.type);
+    const report = await observeInventoryCandidateServices(snapshot, c, a, fictionalInventoryServices(snapshot, c, a).read);
+    expect(report.serviceDeclarationsVerified).toBe(true); expect(report.resources).toBe(snapshot.resources.length);
+    expect(report.observations).toBeGreaterThan(snapshot.resources.length);
+    for (const flag of ['sourcePrincipalFoundationVerified', 'uploadedVersionsVerified', 'wholeLedgerVerified', 'acceptance', 'humanReviewsVerified', 'phiAllowed', 'mutations'] as const)
+      expect(report[flag]).toBe(false);
+  }
+  expect(types.size).toBe(17);
+});
+it('refuses deployment, authority, data-store and configuration drift from an admitted owned-lab baseline', async () => {
+  const c = targetFixture().candidates.find(c => c.candidate === 'owned-lab')!, a = artifacts.candidates.find(a => a.candidate === c.candidate)!;
+  const snapshot = inspectInventoryStackDeclarations(c, a, stackFixture(c, a));
+  type R = Record<string, unknown>;
+  const child = (r: R, name: string) => r[name] as R;
+  const first = (r: R, name: string) => (r[name] as R[])[0];
+  const changes: Array<[string, string, string, (r: R) => void]> = [
+    ['lambda code', 'lambda', 'get-function-configuration', r => { r.CodeSha256 = 'unrelated'; }],
+    ['lambda runtime', 'lambda', 'get-function-configuration', r => { r.Runtime = 'python3.12'; }],
+    ['lambda handler', 'lambda', 'get-function-configuration', r => { r.Handler = 'worker.unexpected'; }],
+    ['lambda environment', 'lambda', 'get-function-configuration', r => { child(child(r, 'Environment'), 'Variables').PHI_ALLOWED = 'true'; }],
+    ['lambda layers', 'lambda', 'get-function-configuration', r => { r.Layers = [{ Arn: 'foreign-layer' }]; }],
+    ['lambda role', 'lambda', 'get-function-configuration', r => { r.Role = 'foreign-role'; }],
+    ['lambda inactive', 'lambda', 'get-function-configuration', r => { r.State = 'Pending'; }],
+    ['lambda KMS', 'lambda', 'get-function-configuration', r => { r.KMSKeyArn = 'foreign'; }],
+    ['lambda logging', 'lambda', 'get-function-configuration', r => { const logging = child(r, 'LoggingConfig'); logging.LogFormat = logging.LogFormat === 'JSON' ? 'Text' : 'JSON'; }],
+    ['lambda tracing', 'lambda', 'get-function-configuration', r => { r.TracingConfig = { Mode: 'Active' }; }],
+    ['lambda aliases', 'lambda', 'list-aliases', r => { r.Aliases = [{ Name: 'foreign' }]; }],
+    ['lambda versions', 'lambda', 'list-versions-by-function', r => { (r.Versions as unknown[]).push({ Version: '1' }); }],
+    ['lambda concurrency', 'lambda', 'get-function-concurrency', r => { r.ReservedConcurrentExecutions = 500; }],
+    ['public URL', 'lambda', 'get-function-url-config', r => { r.FunctionUrl = 'https://fictional.lambda-url.us-east-2.on.aws'; }],
+    ['IAM boundary', 'iam', 'get-role', r => { child(r, 'Role').PermissionsBoundary = {}; }],
+    ['IAM trust', 'iam', 'get-role', r => { child(r, 'Role').AssumeRolePolicyDocument = { Statement: [{ Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole' }] }; }],
+    ['attached policy', 'iam', 'list-attached-role-policies', r => { r.AttachedPolicies = [{ PolicyArn: 'foreign' }]; }],
+    ['IAM pagination', 'iam', 'list-role-policies', r => { r.IsTruncated = true; }],
+    ['inline policy', 'iam', 'get-role-policy', r => { r.PolicyDocument = { Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }] }; }],
+    ['log encryption', 'logs', 'describe-log-groups', r => { first(r, 'logGroups').kmsKeyId = 'foreign'; }],
+    ['log pagination', 'logs', 'describe-log-groups', r => { r.nextToken = 'more'; }],
+    ['API anonymous', 'apigatewayv2', 'get-route', r => { r.AuthorizationType = 'NONE'; }],
+    ['API target', 'apigatewayv2', 'get-integration', r => { r.IntegrationUri = 'https://foreign.invalid'; }],
+    ['API remapping', 'apigatewayv2', 'get-integration', r => { r.RequestParameters = { 'overwrite:header.auth': 'foreign' }; }],
+    ['authorizer', 'apigatewayv2', 'get-authorizer', r => { r.JwtConfiguration = { Issuer: 'foreign', Audience: ['foreign'] }; }],
+    ['alarm action drift', 'cloudwatch', 'describe-alarms', r => { first(r, 'MetricAlarms').ActionsEnabled = !first(r, 'MetricAlarms').ActionsEnabled; }],
+    ['alarm target', 'cloudwatch', 'describe-alarms', r => { first(r, 'MetricAlarms').AlarmActions = ['foreign']; }],
+    ['alarm undeclared unit', 'cloudwatch', 'describe-alarms', r => { first(r, 'MetricAlarms').Unit = 'Bytes'; }],
+    ['event target', 'events', 'list-targets-by-rule', r => { first(r, 'Targets').Arn = 'foreign'; }],
+    ['event state drift', 'events', 'describe-rule', r => { r.State = r.State === 'DISABLED' ? 'ENABLED' : 'DISABLED'; }],
+    ['Dynamo key schema', 'dynamodb', 'describe-table', r => { child(r, 'Table').KeySchema = []; }],
+    ['Dynamo encryption', 'dynamodb', 'describe-table', r => { child(child(r, 'Table'), 'SSEDescription').KMSMasterKeyArn = 'foreign'; }],
+    ['Dynamo index', 'dynamodb', 'describe-table', r => { first(child(r, 'Table'), 'GlobalSecondaryIndexes').IndexStatus = 'CREATING'; }],
+    ['Dynamo PITR', 'dynamodb', 'describe-continuous-backups', r => { child(child(r, 'ContinuousBackupsDescription'), 'PointInTimeRecoveryDescription').PointInTimeRecoveryStatus = 'DISABLED'; }],
+    ['Dynamo TTL', 'dynamodb', 'describe-time-to-live', r => { child(r, 'TimeToLiveDescription').TimeToLiveStatus = 'ENABLED'; }],
+    ['Dynamo policy', 'dynamodb', 'get-resource-policy', r => { r.Policy = '{}'; }],
+    ['S3 encryption', 's3api', 'get-bucket-encryption', r => { child(first(child(r, 'ServerSideEncryptionConfiguration'), 'Rules'), 'ApplyServerSideEncryptionByDefault').KMSMasterKeyID = 'foreign'; }],
+    ['S3 versioning', 's3api', 'get-bucket-versioning', r => { r.Status = 'Suspended'; }],
+    ['S3 public access', 's3api', 'get-public-access-block', r => { child(r, 'PublicAccessBlockConfiguration').BlockPublicPolicy = false; }],
+    ['S3 platform tag binding', 's3api', 'get-bucket-tagging', r => { (r.TagSet as R[]).find(t => t.Key === 'aws:cloudformation:stack-id')!.Value = 'foreign-stack'; }],
+    ['S3 undeclared lifecycle', 's3api', 'get-bucket-lifecycle-configuration', r => { r.Rules = [{ Status: 'Enabled' }]; }],
+    ['S3 foreign policy', 's3api', 'get-bucket-policy', r => { r.Policy = JSON.stringify({ Statement: [{ Effect: 'Allow', Principal: '*', Action: '*', Resource: '*' }] }); }],
+    ['state machine', 'stepfunctions', 'describe-state-machine', r => { r.definition = '{"StartAt":"foreign"}'; }],
+    ['SQS encryption', 'sqs', 'get-queue-attributes', r => { child(r, 'Attributes').SqsManagedSseEnabled = 'false'; }],
+    ['SQS policy', 'sqs', 'get-queue-attributes', r => { child(r, 'Attributes').Policy = '{"Statement":[]}'; }],
+    ['async destination', 'lambda', 'get-function-event-invoke-config', r => { child(r, 'DestinationConfig').OnFailure = { Destination: 'foreign' }; }],
+  ];
+  for (const [name, service, operation, mutate] of changes) {
+    const fixture = fictionalInventoryServices(snapshot, c, a);
+    await expect(observeInventoryCandidateServices(snapshot, c, a, fixture.read), name + ' valid baseline').resolves.toMatchObject({ serviceDeclarationsVerified: true, acceptance: false });
+    const id = [...fixture.responses.keys()].find(k => k.startsWith(`${service}/${operation}/`)); expect(id, name + ' exercised operation').toBeDefined();
+    const value = fixture.responses.get(id!) ?? {}, before = inventoryCanonical(value); mutate(value as R);
+    if (inventoryCanonical(value) === before) throw Error('negative fixture did not change: ' + name);
+    fixture.responses.set(id!, value);
+    let refused = false;
+    try { await observeInventoryCandidateServices(snapshot, c, a, fixture.read); } catch { refused = true; }
+    if (!refused) throw Error('service negative did not refuse: ' + name);
+  }
+  const incomplete = structuredClone(snapshot); incomplete.resources.pop();
+  await expect(observeInventoryCandidateServices(incomplete, c, a, fictionalInventoryServices(snapshot, c, a).read)).rejects.toThrow('service_resource_coverage_refused');
+  const tampered = structuredClone(snapshot);
+  (tampered.resources.find(r => r.type === 'AWS::Lambda::Function')!.properties.Environment as R).Variables = { PHI_ALLOWED: 'true' };
+  await expect(observeInventoryCandidateServices(tampered, c, a, fictionalInventoryServices(tampered, c, a).read)).rejects.toThrow('service_binding_refused');
+  const changedPackage = structuredClone(c); changedPackage.packages[0].sha256 = 'f'.repeat(64);
+  await expect(observeInventoryCandidateServices(snapshot, changedPackage, a, fictionalInventoryServices(snapshot, changedPackage, a).read)).rejects.toThrow('service_code_binding_refused');
+  const fixture = fictionalInventoryServices(snapshot, c, a); let configurationReads = 0;
+  await expect(observeInventoryCandidateServices(snapshot, c, a, async (s, o, p) => {
+    const value = await fixture.read(s, o, p); if (s === 'lambda' && o === 'get-function-configuration' && ++configurationReads > 3) (value as R).RevisionId = 'changed'; return value;
+  })).rejects.toThrow('service_observation_changed');
+  let operationalReads = 0;
+  await expect(observeInventoryCandidateServices(snapshot, c, a, async (s, o, p) => {
+    const value = await fixture.read(s, o, p);
+    if (s === 'dynamodb' && o === 'describe-table') child(value as R, 'Table').ItemCount = ++operationalReads;
+    if (s === 'cloudwatch' && o === 'describe-alarms') first(value as R, 'MetricAlarms').StateUpdatedTimestamp = ++operationalReads;
+    return value;
+  })).resolves.toMatchObject({ serviceDeclarationsVerified: true, acceptance: false });
 });
 describe('actual stack declaration negative matrix', () => {
   const mutations: Array<[string, (v: ReturnType<typeof stackFixture>) => void]> = [
