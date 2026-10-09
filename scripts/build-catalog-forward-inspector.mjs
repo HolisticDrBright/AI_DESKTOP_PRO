@@ -35,6 +35,6 @@ writeFileSync(`${directory}/artifact-manifest.json`, JSON.stringify({ contract: 
   sha256: sha(readFileSync(`${directory}/index.cjs`)), execution: 'synthetic-staging', phiAllowed: false,
   coreSourceCount: 47, coreLiveCount: 48, referenceBeforeCount: 2, referenceCandidateCount: 3,
   referenceBeforeSha256: sha(JSON.stringify(rows(reference))), referenceCandidateSha256: sha(JSON.stringify([...rows(reference), ...rows([candidate])])),
-  candidateSqlSha256: candidate.sha256, readOnly: !rehearsal, rollbackRehearsalAvailable: rehearsal, lastingApplyAvailable: false,
+  candidateSqlSha256: candidate.sha256, readOnly: !rehearsal, rollbackRehearsalAvailable: rehearsal, lockAdmissionQualificationAvailable: rehearsal, lastingApplyAvailable: false,
   canonicalRegistered: false, databaseMutationPerformed: false, hostedAcceptance: false, activationApproved: false }, null, 2) + '\n');
 console.log(JSON.stringify({ built: true, sourceCommit, clean, readOnly: !rehearsal, databaseMutationPerformed: false }));

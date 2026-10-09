@@ -6,3 +6,5 @@ infra/aws-clinical-core/production-candidates/*.sql text eol=lf
 infra/aws-clinical-core/source-candidates/*.sql text eol=lf
 infra/aws-clinical-core/production-migrations/manifest.json text eol=lf
 infra/aws-clinical-core/qualification-parameters/*.json text eol=lf
+docs/evidence/*.json text eol=lf
+docs/evidence/*.jsonl text eol=lf

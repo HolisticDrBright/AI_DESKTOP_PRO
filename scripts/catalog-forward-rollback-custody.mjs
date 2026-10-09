@@ -15,33 +15,49 @@ export function saveCatalogBytes(file,bytes){
  let fd;try{fd=openSync(file,'wx',0o600);writeFileSync(fd,bytes);fsyncSync(fd);}finally{if(fd!==undefined)closeSync(fd);}
  check(boundedCatalogFile(file).equals(bytes),'archive_readback');
 }
-export function createCatalogRollbackCustody(shared,out,source,guard,now=Date.now(),pid=process.pid){
+export function createCatalogRollbackCustody(shared,out,source,guard,now=Date.now(),pid=process.pid,mode='rollback'){
+ check(['rollback','lock-admission'].includes(mode),'mode');
+ const sequence=mode==='rollback'
+  ?['catalog_rollback_started','catalog_rollback_admitted','catalog_rollback_readback_verified','catalog_rollback_control_verified']
+  :['catalog_rollback_started','catalog_lock_fixture_admitted','catalog_lock_writer_admitted','catalog_lock_wait_observed',
+    'catalog_lock_refusal_verified','catalog_lock_cleanup_admitted','catalog_lock_cleanup_verified','catalog_rollback_control_verified'];
  check([shared,out].every(p=>{const s=lstatSync(p);return s.isDirectory()&&!s.isSymbolicLink();}),'directory');
  check(source?.clean===true&&/^[a-f0-9]{40}$/.test(source.commit)&&/^[a-f0-9]{64}$/.test(source.sha256)
   &&Number.isSafeInteger(source.files)&&source.files>0&&Number.isSafeInteger(pid)&&pid>0&&Number.isFinite(now),'source');
  guard.verify();const runId=randomBytes(16).toString('hex'),lock=resolve(shared,'operator.lock'),journal=resolve(out,runId+'.events.jsonl');
  check(!existsSync(lock),'operator_active');
- const row={purpose:'catalog-forward-rollback-rehearsal',runId,pid,source},lockBytes=Buffer.from(JSON.stringify(row)+'\n');
+ const row={purpose:mode==='rollback'?'catalog-forward-rollback-rehearsal':'catalog-lock-admission-qualification',runId,pid,source},lockBytes=Buffer.from(JSON.stringify(row)+'\n');
  let journalBytes=Buffer.from(JSON.stringify({stage:'catalog_rollback_started',runId,at:new Date(now).toISOString(),source})+'\n');
  saveCatalogBytes(journal,journalBytes);saveCatalogBytes(lock,lockBytes);
  let live=true;const stages=['catalog_rollback_started'];const lockStat=lstatSync(lock),journalStat=lstatSync(journal);
  const verify=()=>{guard.verify();check(live&&lstatSync(lock).ino===lockStat.ino&&lstatSync(journal).ino===journalStat.ino
   &&boundedCatalogFile(lock,16384).equals(lockBytes)&&boundedCatalogFile(journal).equals(journalBytes),'custody_changed');};
  const record=(stage,details)=>{verify();
-  const sequence=['catalog_rollback_started','catalog_rollback_admitted','catalog_rollback_readback_verified','catalog_rollback_control_verified'];
-  check(stage==='catalog_rollback_finding'||stage===sequence[stages.length],'stage');
+  check(details&&typeof details==='object'&&!Array.isArray(details)
+   &&!['stage','runId','at','source'].some(k=>Object.prototype.hasOwnProperty.call(details,k)),'reserved_event_metadata');
+  // A failed lock exercise may still admit exact fixture cleanup. That shorter
+  // sequence cannot settle; only the full ordered success sequence can.
+  const failedCleanup=mode==='lock-admission'&&stage==='catalog_lock_cleanup_admitted'
+   &&stages.includes('catalog_lock_fixture_admitted')&&!stages.includes(stage);
+  check(stage==='catalog_rollback_finding'||stage===sequence[stages.length]||failedCleanup,'stage');
   const next=Buffer.from(JSON.stringify({stage,runId,at:new Date().toISOString(),...details})+'\n');
   check(journalBytes.length+next.length<4*1024*1024,'journal_bound');const fd=openSync(journal,'a');
   try{writeFileSync(fd,next);fsyncSync(fd);}finally{closeSync(fd);}journalBytes=Buffer.concat([journalBytes,next]);stages.push(stage);verify();};
- const settle=report=>{verify();check(report?.contract==='catalog-forward-custodied-rollback/1'&&report.runId===runId
-  &&report.rolledBack===true&&report.repeatedDatabaseReadbackVerified===true&&report.controlUnchanged===true
+ const settle=report=>{verify();check(report?.contract===(mode==='rollback'?'catalog-forward-custodied-rollback/1':'catalog-forward-custodied-lock-admission/1')&&report.runId===runId
+  &&(mode==='rollback'?report.rolledBack===true:
+   ['realLockWaitObserved','competingCommitVerified','changedWitnessRefused','workersSettled','fixtureRemoved'].every(k=>report[k]===true))
+  &&report.repeatedDatabaseReadbackVerified===true&&report.controlUnchanged===true
   &&report.sourceUnchanged===true&&report.journalSha256===sha256(journalBytes)
   &&JSON.stringify(report.operatorSource)===JSON.stringify(source)
   &&JSON.stringify(report.before)===JSON.stringify(report.after)&&report.before?.contract==='catalog-forward-upgrade/1'
   &&report.before.command==='inspect'&&report.before.referenceMigrationCount===2&&report.before.phiAllowed===false
-  &&JSON.stringify(stages)===JSON.stringify(['catalog_rollback_started','catalog_rollback_admitted','catalog_rollback_readback_verified','catalog_rollback_control_verified'])
+  &&JSON.stringify(stages)===JSON.stringify(sequence)
   &&['lastingApplyPerformed','apiDeploymentPerformed','canonicalRegistered','hostedAcceptance','activationApproved','phiAllowed'].every(k=>report[k]===false),'settlement');
-  const receipt=resolve(out,runId+'.rollback-'+sha256(JSON.stringify(report))+'.json');
+  const durableEvents=journalBytes.toString('utf8').trimEnd().split('\n').map(line=>JSON.parse(line));
+  check(JSON.stringify(durableEvents.map(event=>event.stage))===JSON.stringify(sequence)
+   &&durableEvents.every(event=>event.runId===runId&&typeof event.at==='string'&&Number.isFinite(Date.parse(event.at)))
+   &&JSON.stringify(durableEvents[0].source)===JSON.stringify(source),'durable_event_sequence');
+  const receipt=resolve(out,runId+'.'+mode+'-'+sha256(JSON.stringify(report))+'.json');
   saveCatalogBytes(receipt,Buffer.from(JSON.stringify(report,null,2)+'\n'));
   saveCatalogBytes(resolve(out,runId+'.settled-lock.json'),lockBytes);verify();unlinkSync(lock);live=false;
   return {receipt,receiptBytesSha256:sha256(boundedCatalogFile(receipt)),custodySettled:true};};
