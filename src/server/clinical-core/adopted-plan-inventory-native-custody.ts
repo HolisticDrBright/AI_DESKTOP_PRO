@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, openSync, closeSync, readFileSync, writeFileSync, fsyncSync, lstatSync, fstatSync, linkSync, unlinkSync, existsSync } from 'node:fs';
+import { constants, openSync, closeSync, readSync, writeFileSync, fsyncSync, lstatSync, fstatSync, linkSync, unlinkSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { AdoptedInventoryUpgradeError, type AdoptedInventoryUpgradeResult } from './adopted-plan-inventory-schema-upgrade';
@@ -29,9 +29,21 @@ function bounded(file: string, maximum = 256 * 1024) {
   const before = lstatSync(file); check(before.isFile() && !before.isSymbolicLink() && before.size > 0 && before.size <= maximum, 'file');
   const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const opened = fstatSync(fd), value = readFileSync(fd), after = lstatSync(file);
-    check(opened.ino === before.ino && opened.dev === before.dev && after.ino === before.ino && after.dev === before.dev
-      && after.size === before.size && after.mtimeMs === before.mtimeMs && !after.isSymbolicLink() && value.length === before.size, 'file_changed');
+    const opened = fstatSync(fd);
+    check(opened.ino === before.ino && opened.dev === before.dev && opened.size === before.size
+      && opened.mtimeMs === before.mtimeMs, 'file_changed');
+    // A file can grow after lstat. Never let that turn an initially admitted
+    // journal/operator into an unbounded readFileSync allocation. One extra
+    // byte detects growth; short descriptor reads must still be completed.
+    const buffer = Buffer.alloc(before.size + 1); let received = 0;
+    while (received < buffer.length) {
+      const count = readSync(fd, buffer, received, buffer.length - received, received);
+      if (!count) break; received += count;
+    }
+    const value = buffer.subarray(0, received), final = fstatSync(fd), after = lstatSync(file);
+    check(final.ino === before.ino && final.dev === before.dev && final.size === before.size && final.mtimeMs === before.mtimeMs
+      && after.ino === before.ino && after.dev === before.dev && after.size === before.size && after.mtimeMs === before.mtimeMs
+      && !after.isSymbolicLink() && value.length === before.size, 'file_changed');
     return value;
   } finally { closeSync(fd); }
 }

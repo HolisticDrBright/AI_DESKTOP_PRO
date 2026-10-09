@@ -74,7 +74,7 @@ jobs:
           npx vitest run src/server/clinical-core/owned-plan-inventory.database.test.ts src/server/clinical-core/adopted-plan-inventory-artifact.test.ts
           npm run build:adopted-plan-inventory-candidate
           npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-schema-upgrade.database.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-command.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-artifact.test.ts
-          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-native-custody.test.ts src/server/clinical-core/adopted-plan-inventory-operator-fence.database.test.ts
+          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-native-custody.test.ts src/server/clinical-core/adopted-plan-inventory-custody-read.test.ts src/server/clinical-core/adopted-plan-inventory-operator-fence.database.test.ts
           npm run build:adopted-plan-inventory-upgrade
       - name: Distinct 107 care qualification profile (no AWS calls or activation)
         run: |
