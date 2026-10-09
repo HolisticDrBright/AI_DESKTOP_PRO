@@ -929,6 +929,9 @@ const PRACTITIONER_USER_ID = "dddddddd-1111-2222-3333-444444444401";
 let scheduleSeeded = false;
 let apptSeq = 0;
 const scheduleAppointments = [];
+// Telehealth VISIT records (AWS telehealth-requests Lambda contract, workforce
+// routes): appointmentId → { consents, status, meeting, flags, quickNotes, note }.
+const telehealthVisits = new Map();
 function seedScheduleFor(fromIso) {
   if (scheduleSeeded) return;
   scheduleSeeded = true;
@@ -1024,6 +1027,17 @@ function seedScheduleFor(fromIso) {
       title: "Admin block", appointmentType: "break", location: "Admin", telehealthUrl: null,
       status: "scheduled", version: 1,
       startsAt: at(2, 12).toISOString(), endsAt: at(2, 13).toISOString(),
+    },
+    // Dedicated to the telehealth walkthrough: a desktop-booked virtual visit
+    // with no consent on record, on Sunday so no front-desk suite trips over it.
+    {
+      id: "abababab-1111-2222-3333-444444444408",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[0].id, patientName: "Fixture Patient",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "telehealth", location: "Telehealth", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(7, 11).toISOString(), endsAt: at(7, 11, 30).toISOString(),
     },
   );
 }
@@ -2798,7 +2812,7 @@ const SNAPSHOT_COLLECTIONS = {
   scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
   scribeTranscripts, scribeGenerations, scribeAccessLog,
   lensEvaluations, lensQuestions, lensBlocks, lensFeedbackRows,
-  scheduleAppointments, apptTransitionKeys,
+  scheduleAppointments, apptTransitionKeys, telehealthVisits,
   protocols, protocolTemplates, protocolVersions,
   programs, programTemplates, programVersions, programOffers,
   programEnrollments, programProgressRows, programEvents,
@@ -11547,6 +11561,130 @@ createServer(async (req, res) => {
     }
 
     return json(res, 404, { code: "PGRST202", message: "fixture route not found" });
+  }
+
+  // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====
+  // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts.
+  // Zoom is "enabled" here only in the sense that start returns a fixture
+  // session: the browser suite aborts the SDK download, so no meeting exists.
+  if (url.pathname.startsWith("/clinical-core/workforce/appointments/")) {
+    if (!/^Bearer .+/.test(req.headers.authorization ?? "")) return json(res, 403, { error: "identity_refused" });
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const publicVisit = (visit) => {
+      const { passcode: _passcode, ...rest } = visit;
+      return { ...rest, consentSigned: visit.consents.length > 0 };
+    };
+    const newVisit = (appointmentId, requestId) => ({
+      appointmentId, organizationId: "org-fixture", requestId, status: "scheduled", consents: [],
+      providerMeetingId: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null, flags: [], quickNotes: "",
+      note: null, version: 1, createdAt: nowIso(), updatedAt: nowIso(),
+    });
+    const save = (visit) => { const next = { ...visit, version: visit.version + 1, updatedAt: nowIso() }; telehealthVisits.set(next.appointmentId, next); return next; };
+    const sub = url.pathname.slice("/clinical-core/workforce/appointments/".length);
+
+    if (sub === "requests" && req.method === "GET") return json(res, 200, { data: [] });
+    if (sub === "slots" && req.method === "GET") return json(res, 200, { data: [] });
+    if (sub === "visits" && req.method === "GET") {
+      return json(res, 200, { data: [...telehealthVisits.values()].map(publicVisit) });
+    }
+    if (sub === "visits/notes" && req.method === "GET") {
+      const visit = telehealthVisits.get(url.searchParams.get("appointmentId") ?? "");
+      if (!visit) return json(res, 404, { error: "not_found" });
+      return json(res, 200, { data: publicVisit(visit) });
+    }
+    if (req.method !== "POST") return json(res, 404, { error: "route_not_found" });
+    const body = await readBody(req);
+    const appointmentId = String(body.appointmentId ?? "");
+    if (!UUID_RE.test(appointmentId)) return json(res, 400, { error: "request_invalid" });
+    if (sub === "visits/consent") {
+      const signerName = String(body.signerName ?? "").trim();
+      if (body.agreed !== true || signerName.length < 2 || !/^[A-Za-z0-9._-]{1,64}$/.test(String(body.consentVersion ?? ""))) {
+        return json(res, 400, { error: "request_invalid" });
+      }
+      const visit = telehealthVisits.get(appointmentId) ?? newVisit(appointmentId, body.requestId ?? null);
+      const consent = {
+        consentId: `cccccccc-1111-2222-3333-${String(444444444400 + visit.consents.length + 1)}`,
+        consentType: "telehealth_recording_combined", consentVersion: String(body.consentVersion), signerName,
+        method: "staff_attested", signedAt: nowIso(), recordedBy: PRACTITIONER_USER_ID,
+        patientLocation: typeof body.patientLocation === "string" && body.patientLocation.trim() ? body.patientLocation.trim() : null,
+      };
+      const saved = telehealthVisits.has(appointmentId)
+        ? save({ ...visit, consents: [...visit.consents, consent] })
+        : (telehealthVisits.set(appointmentId, { ...visit, consents: [consent] }), telehealthVisits.get(appointmentId));
+      pushAudit("telehealth.consent", "appointment", appointmentId, "Telehealth consent recorded", { method: "staff_attested" }, PATIENTS[0].id, "org-fixture");
+      return json(res, 200, { data: publicVisit(saved) });
+    }
+    if (sub === "visits/start") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit || visit.consents.length === 0) return json(res, 409, { error: "consent_required" });
+      if (visit.status === "ended") return json(res, 409, { error: "conflict" });
+      const saved = save({ ...visit, status: "in_visit", startedAt: visit.startedAt ?? nowIso(), providerMeetingId: "900000001", joinUrl: "https://zoom.us/j/900000001?pwd=fixture", passcode: "fixture" });
+      return json(res, 200, { data: { visit: publicVisit(saved), session: {
+        meetingNumber: "900000001", passcode: "fixture", signature: "fixture.signature.value", sdkKey: "fixture-sdk-key", zak: "fixture-zak",
+        hostDisplayName: String(body.hostDisplayName ?? "Practitioner"), expiresAt: new Date(Date.now() + 7_200_000).toISOString(),
+      } } });
+    }
+    if (sub === "visits/end") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      if (visit.version !== body.expectedVersion) return json(res, 409, { error: "conflict" });
+      if (visit.status === "ended") return json(res, 200, { data: publicVisit(visit) });
+      const saved = save({ ...visit, status: "ended", endedAt: nowIso(), flags: Array.isArray(body.flags) ? body.flags : visit.flags, quickNotes: typeof body.quickNotes === "string" ? body.quickNotes : visit.quickNotes });
+      return json(res, 200, { data: publicVisit(saved) });
+    }
+    if (sub === "visits/notes/import") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      if (visit.note?.status === "signed" || !visit.providerMeetingId) return json(res, 409, { error: "conflict" });
+      // What the Lambda stores once Zoom has produced an AI Companion summary:
+      // Zoom's text verbatim in aiOriginal, mapped by label into the sections.
+      const aiOriginal = {
+        meeting_uuid: "fixture-summary-uuid", summary_overview: "Follow-up on fatigue and iron status; patient reports gradual improvement.",
+        summary_details: [
+          { label: "Symptoms reported", summary: "Afternoon fatigue has eased since the last visit; sleep is 7 hours on average." },
+          { label: "Results reviewed", summary: "Ferritin and hs-CRP from the last panel were discussed." },
+          { label: "Plan", summary: "Continue the current protocol and repeat ferritin in 8 weeks." },
+        ],
+        next_steps: ["Repeat ferritin in 8 weeks", "Send the patient a sleep log"],
+      };
+      const note = {
+        status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "fixture-summary-uuid",
+        aiSections: {
+          summary: aiOriginal.summary_overview,
+          patient_reported: aiOriginal.summary_details[0].summary,
+          results_reviewed: aiOriginal.summary_details[1].summary,
+          plan_discussed: aiOriginal.summary_details[2].summary,
+        },
+        aiOriginal, practitionerNotes: visit.note?.practitionerNotes ?? "",
+        actionItems: aiOriginal.next_steps.map((text, index) => ({ id: `action-${index + 1}`, text, status: "suggested" })),
+        revision: (visit.note?.revision ?? 0) + 1, importedAt: nowIso(), signedAt: null, signedBy: null,
+      };
+      const saved = save({ ...visit, note });
+      return json(res, 200, { data: { visit: publicVisit(saved), summaryReady: true } });
+    }
+    if (sub === "visits/notes/sign") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      if (!visit.note || visit.note.status === "signed") return json(res, 409, { error: "conflict" });
+      if (visit.version !== body.expectedVersion) return json(res, 409, { error: "conflict" });
+      const sections = body.aiSections;
+      const keys = ["summary", "patient_reported", "results_reviewed", "plan_discussed"];
+      if (!sections || typeof sections !== "object" || keys.some((key) => typeof sections[key] !== "string") || typeof body.practitionerNotes !== "string"
+        || !Array.isArray(body.actionItems) || body.actionItems.length !== visit.note.actionItems.length) {
+        return json(res, 400, { error: "request_invalid" });
+      }
+      const actionItems = visit.note.actionItems.map((item, index) => {
+        const decision = body.actionItems[index];
+        if (!decision || decision.id !== item.id || !["suggested", "approved", "dismissed"].includes(decision.status)) return null;
+        return { ...item, status: decision.status };
+      });
+      if (actionItems.some((item) => item === null)) return json(res, 400, { error: "request_invalid" });
+      const note = { ...visit.note, status: "signed", aiSections: Object.fromEntries(keys.map((key) => [key, sections[key]])), practitionerNotes: body.practitionerNotes, actionItems, revision: visit.note.revision + 1, signedAt: nowIso(), signedBy: PRACTITIONER_USER_ID };
+      const saved = save({ ...visit, note });
+      pushAudit("telehealth.note.signed", "appointment", appointmentId, "Telehealth visit note signed", { revision: note.revision }, PATIENTS[0].id, "org-fixture");
+      return json(res, 200, { data: publicVisit(saved) });
+    }
+    return json(res, 404, { error: "route_not_found" });
   }
 
   // Authorized source-document download (same contract as the real backend).

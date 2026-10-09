@@ -120,3 +120,4 @@ Every spec calls `resetBackend()` in `beforeAll`. If you add mutable state to
 | `docs/phase9b-knowledge-governance.md` | Governance model |
 | `docs/phase9b-operator-import.md` | Loading real practitioner material |
 | `docs/phase9c-curated-import.md` | The import safety layer, the inference boundary, the apply paths |
+| `docs/telehealth.md` | The Telehealth tab: embedded Zoom visits, the consent gate, AI Companion notes |

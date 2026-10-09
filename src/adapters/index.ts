@@ -37,6 +37,12 @@ import { executeLiveAction, type ActionContext, type ActionKind } from "./action
 import type { OptimalRange } from "./labs.types";
 import type { CreatePatientInput } from "./types";
 import type {
+  TelehealthConsentInput,
+  TelehealthEndInput,
+  TelehealthSignInput,
+  TelehealthStartInput,
+} from "./telehealth.types";
+import type {
   LiveAppointmentStatus,
   LiveAuditEvent,
   LiveBookInput,
@@ -130,6 +136,23 @@ export const api = {
      * is not computed at all. See docs/clinical-runtime-migration.md.
      */
     summary: notWired("The clinical summary score"),
+  },
+  telehealth: {
+    /**
+     * LIVE: the day's telehealth appointments from the Desktop-owned calendar
+     * RPC, merged with the AWS telehealth boundary (patient-app requests,
+     * consent, the Zoom meeting, the post-visit note). Visits start only when
+     * the server finds a signed consent; the embedded-meeting session is
+     * signed server-side and returned once, never stored in the browser.
+     */
+    day: async (date: string) => liveClient.telehealthDay(date),
+    visit: async (appointmentId: string, date: string) => liveClient.telehealthVisit(appointmentId, date),
+    recordConsent: async (input: TelehealthConsentInput) => liveClient.telehealthRecordConsent(input),
+    start: async (input: TelehealthStartInput) => liveClient.telehealthStart(input),
+    end: async (input: TelehealthEndInput) => liveClient.telehealthEnd(input),
+    note: async (appointmentId: string) => liveClient.telehealthNote(appointmentId),
+    importNote: async (appointmentId: string) => liveClient.telehealthImportNote(appointmentId),
+    signNote: async (input: TelehealthSignInput) => liveClient.telehealthSignNote(input),
   },
   schedule: {
     /**

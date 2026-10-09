@@ -65,6 +65,33 @@ const RECORDING_CSP = [
   "base-uri 'self'",
 ].join("; ");
 
+/**
+ * Embedded telehealth visit boundary (`/telehealth/visit/*`).
+ *
+ * The visit screen embeds Zoom's Meeting SDK (component view) and nothing
+ * else. This policy allows exactly the Zoom origins the SDK needs — script
+ * and assets from source.zoom.us, signalling/media over *.zoom.us — and
+ * refuses every other third-party destination, so a tracker or error
+ * reporter cannot ride along on the one route that carries video. The SDK
+ * loads only after the server has issued a visit session, which it refuses
+ * without a signed consent (`aws-telehealth-requests.ts`).
+ */
+const TELEHEALTH_VISIT_CSP = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${DEVELOPMENT_SCRIPT_EVAL} https://source.zoom.us`,
+  "style-src 'self' 'unsafe-inline' https://source.zoom.us",
+  "img-src 'self' data: blob: https://*.zoom.us https://*.zoomgov.com",
+  "font-src 'self' data: https://source.zoom.us",
+  "connect-src 'self' https://*.zoom.us wss://*.zoom.us https://*.zoomgov.com wss://*.zoomgov.com",
+  "media-src 'self' blob: https://*.zoom.us",
+  "worker-src 'self' blob:",
+  "frame-src https://*.zoom.us",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "base-uri 'self'",
+].join("; ");
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Keep standalone tracing anchored to this repository. Developer machines
@@ -119,6 +146,30 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Permissions-Policy", value: "microphone=(self), camera=(), geolocation=()" },
+        ],
+      },
+      {
+        // Embedded Zoom visit: Zoom-only egress, camera + microphone for this
+        // origin, and cross-origin isolation (credentialless) so the SDK can
+        // use SharedArrayBuffer for gallery view and virtual backgrounds.
+        source: "/telehealth/visit/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: TELEHEALTH_VISIT_CSP },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(self), camera=(self), display-capture=(self), geolocation=()" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+        ],
+      },
+      {
+        // The telehealth session routes carry the host token + SDK
+        // signature: never cached, never referred.
+        source: "/api/live/telehealth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {

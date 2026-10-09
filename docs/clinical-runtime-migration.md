@@ -131,7 +131,7 @@ only act when a human accepts them).
 | AI sync summary | Patient App tab AI panel | reviewable draft summary | governed AI config; human review already live |
 | Invitation delivery | Patient App tab | transmitted invitation | delivery provider (the one-time code is conveyed manually today) |
 | Other external integrations (EHR, lab vendors, wearables, automations, webhooks) | `/integrations` | connect connector | per-connector |
-| Telehealth | calendar drawer | join visit | external integration |
+| Telehealth video (Zoom embedded) | `/telehealth` | start a visit | AWS telehealth extension deployed with `ZoomEnabled` + `ZoomBaaVerified` + Secrets Manager secret — consent gate, visit records and AI-note import are live; see `docs/telehealth.md` |
 | Reports | `/reports` | save report run | access-scoped aggregate queries |
 | Templates | `/templates` | publish template version | schema ready (`templates`) |
 | Team role matrix | `/team` | change role (exists via org mgmt) | read UI over memberships |
