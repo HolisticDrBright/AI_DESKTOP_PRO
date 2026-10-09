@@ -206,6 +206,21 @@ export function inspectInventoryStackDeclarations(candidate: InventoryCandidateT
   return structuredClone({ stackId: s.StackId, outputs, resources: resolved });
 }
 
+/** Re-derive a supplied snapshot against artifact declarations. These synthetic
+ * shape rows are consistency checks, NEVER observations of live CloudFormation.
+ * The complete observer must separately make and repeat real stack reads. */
+export function assertInventorySnapshotConsistency(snapshot: InventoryStackSnapshot, candidate: InventoryCandidateTarget,
+  artifact: InventoryCandidateArtifact, category = 'stack_snapshot_refused') {
+  const derived = inspectInventoryStackDeclarations(candidate, artifact, {
+    stack: { Stacks: [{ StackName: candidate.stackName, StackId: snapshot.stackId, StackStatus: 'CREATE_COMPLETE',
+      Parameters: Object.entries(candidate.parameters).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })),
+      Outputs: Object.entries(snapshot.outputs).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] },
+    template: { TemplateBody: artifact.template }, resources: { StackResourceSummaries: snapshot.resources.map(r => ({
+      LogicalResourceId: r.logicalId, PhysicalResourceId: r.physicalId, ResourceType: r.type, ResourceStatus: 'CREATE_COMPLETE' })) },
+  });
+  same(snapshot, derived, category);
+}
+
 /** Fixed read-only transport. Missing is only AWS's exact DescribeStacks
  * not-found reply; denied/timeout/parsing errors cannot mean not deployed. */
 export function inventoryStackReader(execute: typeof execFileSync = execFileSync): InventoryStackRead {
@@ -216,7 +231,8 @@ export function inventoryStackReader(execute: typeof execFileSync = execFileSync
       '--output', 'json', '--no-cli-pager'];
     try {
       return JSON.parse(String(execute('aws', args, { encoding: 'utf8', windowsHide: true, timeout: 30000,
-        maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })));
+        maxBuffer: 4 * 1024 * 1024, env: { ...process.env, AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true',
+          AWS_MAX_ATTEMPTS: '1', AWS_CLI_AUTO_PROMPT: 'off' }, stdio: ['ignore', 'pipe', 'pipe'] })));
     } catch (error) {
       const message = `An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${stackName} does not exist`;
       const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim() : '';

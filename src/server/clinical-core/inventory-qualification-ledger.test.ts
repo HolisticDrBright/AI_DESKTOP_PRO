@@ -1,7 +1,8 @@
 import { beforeAll, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { assertInventoryQualificationLedger, inventoryQualificationLedgerArtifact, inventoryQualificationLedgerReader, type InventoryLedgerRow } from './inventory-qualification-ledger';
+import { assertInventoryQualificationLedger, classifyInventoryQualificationLedger, inventoryQualificationLedgerArtifact,
+  inventoryQualificationLedgerReader, inventoryQualificationLedgerStateReader, type InventoryLedgerRow } from './inventory-qualification-ledger';
 let artifact: Record<string, unknown>, rows: InventoryLedgerRow[];
 beforeAll(() => {
   artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-adopted-plan-inventory-candidate.mjs', '--json'],
@@ -25,6 +26,16 @@ it('metadata, extra files and modified SQL cannot become the reviewed artifact',
     (a: Record<string, unknown>) => { (a.files as Record<string, string>)['unexpected.sql'] = 'select 1'; },
   ];
   for (const mutate of mutations) { const changed = structuredClone(artifact); mutate(changed); expect(() => inventoryQualificationLedgerArtifact(changed)).toThrow('inventory_ledger_artifact_refused'); }
+});
+it('preflight admits only the exact known parent or successor and never widens the strict successor reader', () => {
+  expect(classifyInventoryQualificationLedger('clinical_core_qualification', rows.slice(0, 106), rows)).toBe('predecessor');
+  expect(classifyInventoryQualificationLedger('clinical_core_qualification', rows, rows)).toBe('successor');
+  for (const bad of [rows.slice(0, 105), [...rows, rows[106]], [...rows.slice(0, 106)].reverse(),
+    rows.slice(0, 106).map((r, n) => n === 31 ? { ...r, sha256: 'a'.repeat(64) } : r),
+    rows.slice(0, 106).map((r, n) => n === 8 ? { ...r, unreviewed: true } : r)])
+    expect(() => classifyInventoryQualificationLedger('clinical_core_qualification', bad, rows)).toThrow('inventory_ledger_refused');
+  expect(() => classifyInventoryQualificationLedger('clinical_core', rows, rows)).toThrow('inventory_ledger_refused');
+  expect(() => assertInventoryQualificationLedger('clinical_core_qualification', rows.slice(0, 106), rows)).toThrow('inventory_ledger_refused');
 });
 const target = { DatabaseName: 'clinical_core_qualification', DatabaseClusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional',
   DatabaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional' };
@@ -64,6 +75,22 @@ it('refuses a foreign account, region, secret or staging database before constru
   const inspect = inventoryQualificationLedgerReader(rows, () => { throw Error('client must never be constructed'); });
   for (const changed of [{ ...target, DatabaseName: 'clinical_core' }, { ...target, DatabaseClusterArn: target.DatabaseClusterArn.replace('588966314750', '173535830222') },
     { ...target, DatabaseSecretArn: target.DatabaseSecretArn.replace('us-east-2', 'us-west-2') }]) await expect(inspect(changed)).rejects.toThrow('inventory_ledger_target_refused');
+});
+for (const count of [106, 107]) it(`preflight SDK physically rolls back the exact ${count} ledger and cannot issue acceptance`, async () => {
+  const calls: string[] = []; let destroyed = false;
+  const inspect = inventoryQualificationLedgerStateReader(rows, () => ({ destroy: () => { destroyed = true; }, send: async command => {
+    calls.push(command.constructor.name);
+    if (command.constructor.name === 'BeginTransactionCommand') return { transactionId: 'fictional-transaction' };
+    if (command.constructor.name === 'RollbackTransactionCommand') return {};
+    const input = command.input as unknown as Record<string, unknown>;
+    if (String(input.sql).startsWith('set ')) return {};
+    if (input.sql === 'select current_database()') return { records: [[{ stringValue: 'clinical_core_qualification' }]] };
+    return { records: rows.slice(0, count).map(r => [{ stringValue: r.version }, { stringValue: r.sha256 }]) };
+  } }));
+  const report = await inspect(target);
+  expect(report).toMatchObject({ contract: 'inventory-qualification-ledger-state/1', state: count === 106 ? 'predecessor' : 'successor',
+    rows: count, successorLedgerVerified: count === 107, rolledBack: true, writes: false, acceptance: false, liveFleetVerified: false });
+  expect(calls.at(-1)).toBe('RollbackTransactionCommand'); expect(destroyed).toBe(true);
 });
 it('historical ledger remains strict 106 and the adapter has no commit, DDL or caller SQL', () => {
   const old = readFileSync('scripts/qualification-consent-ledger.mjs', 'utf8'), code = readFileSync('src/server/clinical-core/inventory-qualification-ledger.ts', 'utf8');

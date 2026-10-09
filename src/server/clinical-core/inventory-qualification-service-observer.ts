@@ -2,7 +2,7 @@ if (typeof window !== 'undefined') throw Error('inventory qualification service 
 import { execFileSync } from 'node:child_process';
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha, type InventoryCandidateArtifact } from './inventory-qualification-artifacts';
 import { inventoryCondition, type InventoryCandidateTarget } from './inventory-qualification-target';
-import { inspectInventoryStackDeclarations, type InventoryResolvedResource, type InventoryStackSnapshot } from './inventory-qualification-stack-observer';
+import { assertInventorySnapshotConsistency, type InventoryResolvedResource, type InventoryStackSnapshot } from './inventory-qualification-stack-observer';
 
 const account = '588966314750', region = 'us-east-2';
 type Params = Record<string, string | string[]>;
@@ -16,6 +16,7 @@ const operations: Record<string, string[]> = {
   'iam/list-attached-role-policies': ['RoleName'], 'logs/describe-log-groups': ['LogGroupNamePrefix'],
   'apigatewayv2/get-authorizer': ['ApiId', 'AuthorizerId'], 'apigatewayv2/get-integration': ['ApiId', 'IntegrationId'],
   'apigatewayv2/get-route': ['ApiId', 'RouteId'], 'apigatewayv2/get-api': ['ApiId'], 'apigatewayv2/get-stages': ['ApiId'],
+  'apigatewayv2/get-routes': ['ApiId'], 'apigatewayv2/get-integrations': ['ApiId'], 'apigatewayv2/get-authorizers': ['ApiId'],
   'cloudwatch/describe-alarms': ['AlarmNames'], 'events/describe-rule': ['Name'], 'events/list-targets-by-rule': ['Rule'],
   'dynamodb/describe-table': ['TableName'], 'dynamodb/describe-continuous-backups': ['TableName'],
   'dynamodb/describe-time-to-live': ['TableName'], 'dynamodb/list-tags-of-resource': ['ResourceArn'], 'dynamodb/get-resource-policy': ['ResourceArn'],
@@ -148,14 +149,7 @@ export async function observeInventoryCandidateServices(supplied: InventoryStack
   // Re-derive property consistency from the exact artifact and physical mapping.
   // These in-memory declaration rows are NOT new AWS observations. The enclosing
   // observer must independently obtain and repeat actual CloudFormation reads.
-  const derived = inspectInventoryStackDeclarations(candidate, artifact, {
-    stack: { Stacks: [{ StackName: candidate.stackName, StackId: snapshot.stackId, StackStatus: 'CREATE_COMPLETE',
-      Parameters: Object.entries(candidate.parameters).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })),
-      Outputs: Object.entries(snapshot.outputs).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] },
-    template: { TemplateBody: artifact.template }, resources: { StackResourceSummaries: snapshot.resources.map(r => ({
-      LogicalResourceId: r.logicalId, PhysicalResourceId: r.physicalId, ResourceType: r.type, ResourceStatus: 'CREATE_COMPLETE' })) },
-  });
-  same(snapshot, derived, 'service_binding_refused');
+  assertInventorySnapshotConsistency(snapshot, candidate, artifact, 'service_binding_refused');
   const reads: Array<{ service: string; operation: string; parameters: Params; digest: string }> = [];
   const read: InventoryServiceRead = async (service, operation, parameters) => {
     const value = await transport(service, operation, parameters);

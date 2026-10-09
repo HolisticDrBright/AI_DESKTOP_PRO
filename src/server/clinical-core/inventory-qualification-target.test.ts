@@ -11,6 +11,8 @@ import { INVENTORY_PROFILE, INVENTORY_RELEASE } from '../../../scripts/inventory
 import { inspectInventoryStackDeclarations, observeInventoryStackDeclarations, resolveInventoryTemplate } from './inventory-qualification-stack-observer';
 import { observeInventoryCandidateServices } from './inventory-qualification-service-observer';
 import { fictionalInventoryServices } from './testing/inventory-service-fixture';
+import { observeInventorySharedApi } from './inventory-qualification-api-observer';
+import { buildQualificationFoundation } from '../../../scripts/build-aws-qualification-foundation.mjs';
 
 let directory: string, artifacts: InventoryArtifactSet;
 const consumer = '11111111-1111-4111-8111-111111111111', workforce = '22222222-2222-4222-8222-222222222222';
@@ -123,6 +125,89 @@ function stackFixture(candidate: InventoryQualificationTarget['candidates'][numb
     Parameters: Object.entries(candidate.parameters).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })), Outputs: outputs }] },
     template: { TemplateBody: structuredClone(a.template) }, resources: { StackResourceSummaries: resources } };
 }
+
+function sharedApiFixture() {
+  const target = targetFixture(), storage = artifacts.candidates.find(c => c.candidate === 'personal-storage')!;
+  const consumerId = Object.entries(storage.template.Resources).find(([, r]) => r.Type === 'AWS::ApiGatewayV2::Authorizer'
+    && inventoryCanonical(r.Properties.JwtConfiguration).includes('ConsumerIssuer'))![0];
+  const voice = target.candidates.find(c => c.candidate === 'owned-voice')!;
+  voice.parameters.ConsumerJwtAuthorizerId = `personal-storage-${consumerId}`;
+  validateInventoryQualificationTarget(target, admissionFixture());
+  const snapshots = Object.fromEntries(target.candidates.map(c => {
+    const a = artifacts.candidates.find(a => a.candidate === c.candidate)!;
+    return [c.candidate, inspectInventoryStackDeclarations(c, a, stackFixture(c, a))];
+  }));
+  const foundation = buildQualificationFoundation(), stackId = `arn:aws:cloudformation:us-east-2:588966314750:stack/${target.target.foundationStackName}/fictional`;
+  const responses: Record<string, unknown> = {
+    'get-api': { ApiId: target.target.apiId, ApiEndpoint: target.target.apiOrigin, Name: foundation.Resources.Api.Properties.Name,
+      ProtocolType: 'HTTP', RouteSelectionExpression: '$request.method $request.path', ApiKeySelectionExpression: '$request.header.x-api-key',
+      DisableExecuteApiEndpoint: false, IpAddressType: 'ipv4', Tags: foundation.Resources.Api.Properties.Tags },
+    'get-stages': { Items: [{ StageName: '$default', AutoDeploy: true, DefaultRouteSettings: foundation.Resources.Stage.Properties.DefaultRouteSettings,
+      AccessLogSettings: { DestinationArn: `arn:aws:logs:us-east-2:588966314750:log-group:/aws/apigateway/qualification/${target.target.apiId}`,
+        Format: foundation.Resources.Stage.Properties.AccessLogSettings.Format }, RouteSettings: {}, StageVariables: {},
+      DeploymentId: 'fictional', LastDeploymentStatusMessage: "Successfully deployed stage with deployment ID 'fictional'",
+      Tags: foundation.Resources.Stage.Properties.Tags }] },
+  };
+  for (const suffix of ['Route', 'Integration', 'Authorizer']) responses[`get-${suffix.toLowerCase()}s`] = { Items: Object.values(snapshots)
+    .flatMap(s => s.resources.filter(r => r.type === `AWS::ApiGatewayV2::${suffix}`)).map(r => {
+      const { ApiId: _apiId, ...properties } = r.properties;
+      return { [`${suffix}Id`]: r.physicalId, ...properties };
+    }) };
+  return { target, snapshots, stackId, responses };
+}
+it('checks the whole shared HTTP API inventory derived from all twelve actual templates', async () => {
+  const f = sharedApiFixture(); let calls = 0;
+  const report = await observeInventorySharedApi(f.target, f.snapshots, f.stackId, admissionFixture(), async (service, operation, parameters) => {
+    expect(service).toBe('apigatewayv2'); expect(parameters).toEqual({ ApiId: f.target.target.apiId }); calls++;
+    return structuredClone(f.responses[operation]);
+  });
+  expect(report.sharedApiInventoryVerified).toBe(true); expect(report.routes).toBeGreaterThan(20); expect(calls).toBe(10);
+  for (const flag of ['sourcePrincipalFoundationVerified', 'wholeLedgerVerified', 'uploadedVersionsVerified', 'acceptance', 'humanReviewsVerified', 'phiAllowed', 'mutations'] as const)
+    expect(report[flag]).toBe(false);
+});
+it('refuses extra or hidden shared routes, stages, authorizers, integrations and configuration drift', async () => {
+  const baseline = sharedApiFixture();
+  await observeInventorySharedApi(baseline.target, baseline.snapshots, baseline.stackId, admissionFixture(), async (_s, o) => structuredClone(baseline.responses[o]));
+  type R = Record<string, unknown>;
+  const item = (r: R) => (r.Items as R[])[0];
+  const changes: Array<[string, (r: R) => void]> = [
+    ['get-api', r => { r.ProtocolType = 'WEBSOCKET'; }], ['get-api', r => { r.ApiEndpoint = 'https://foreign.invalid'; }],
+    ['get-api', r => { r.CorsConfiguration = { AllowOrigins: ['*'] }; }], ['get-api', r => { r.IpAddressType = 'dualstack'; }],
+    ['get-api', r => { r.RouteSelectionExpression = '$default'; }], ['get-api', r => { r.ApiGatewayManaged = true; }],
+    ['get-api', r => { (r.Tags as R)['aws:cloudformation:stack-id'] = 'foreign'; }],
+    ['get-stages', r => { (r.Items as R[]).push({ ...item(r), StageName: 'public' }); }],
+    ['get-stages', r => { item(r).AutoDeploy = false; }], ['get-stages', r => { item(r).RouteSettings = { '$default': { ThrottlingRateLimit: 10000 } }; }],
+    ['get-stages', r => { item(r).StageVariables = { routing: 'foreign' }; }],
+    ['get-stages', r => { item(r).AccessLogSettings = { DestinationArn: 'foreign', Format: '$context.requestBody' }; }],
+    ['get-stages', r => { item(r).LastDeploymentStatusMessage = 'deployment failed'; }],
+    ['get-stages', r => { r.NextToken = 'unfinished'; }],
+    ['get-routes', r => { (r.Items as R[]).push({ RouteId: 'foreign', RouteKey: '$default', AuthorizationType: 'NONE' }); }],
+    ['get-routes', r => { item(r).AuthorizationType = 'NONE'; }], ['get-routes', r => { item(r).Target = 'integrations/foreign'; }],
+    ['get-routes', r => { item(r).AuthorizationScopes = ['foreign']; }], ['get-routes', r => { (r.Items as R[]).pop(); }],
+    ['get-routes', r => { (r.Items as R[]).push(structuredClone(item(r))); }], ['get-routes', r => { r.NextToken = 'unfinished'; }],
+    ['get-integrations', r => { item(r).IntegrationUri = 'arn:aws:lambda:us-east-2:588966314750:function:foreign'; }],
+    ['get-integrations', r => { item(r).RequestParameters = { 'overwrite:header.Authorization': 'foreign' }; }],
+    ['get-integrations', r => { item(r).ConnectionType = 'VPC_LINK'; }], ['get-integrations', r => { item(r).IntegrationMethod = 'GET'; }],
+    ['get-authorizers', r => { item(r).AuthorizerType = 'REQUEST'; }],
+    ['get-authorizers', r => { item(r).JwtConfiguration = { Issuer: 'foreign', Audience: ['foreign'] }; }],
+    ['get-authorizers', r => { (r.Items as R[]).push({ AuthorizerId: 'foreign', AuthorizerType: 'JWT' }); }],
+  ];
+  for (const [operation, mutate] of changes) {
+    const changed = structuredClone(baseline.responses), before = inventoryCanonical(changed[operation]); mutate(changed[operation] as R);
+    expect(inventoryCanonical(changed[operation])).not.toBe(before);
+    await expect(observeInventorySharedApi(baseline.target, baseline.snapshots, baseline.stackId, admissionFixture(),
+      async (_s, o) => structuredClone(changed[o]))).rejects.toThrow();
+  }
+  let count = 0;
+  await expect(observeInventorySharedApi(baseline.target, baseline.snapshots, baseline.stackId, admissionFixture(), async (_s, o) => {
+    const response = structuredClone(baseline.responses[o]) as R;
+    if (++count === 6) response.Name = 'changed'; return response;
+  })).rejects.toThrow('shared_api_observation_changed');
+  const forged = structuredClone(baseline.snapshots), route = Object.values(forged).flatMap(s => s.resources).find(r => r.type === 'AWS::ApiGatewayV2::Route')!;
+  route.properties.RouteKey = 'POST /invented';
+  await expect(observeInventorySharedApi(baseline.target, forged, baseline.stackId, admissionFixture(),
+    async () => { throw Error('transport must not run'); })).rejects.toThrow('shared_api_binding_refused');
+});
 
 it('maps every active declaration in all twelve actually built templates without asserting live-service acceptance', async () => {
   const target = targetFixture(); validateInventoryQualificationTarget(target, admissionFixture());

@@ -44,11 +44,22 @@ export function assertInventoryQualificationLedger(database: unknown, records: u
       || row.version !== expected[n].version || row.sha256 !== expected[n].sha256)) return inventoryRefuse('inventory_ledger_refused');
 }
 
+/** Preflight classification only. A known parent is not a verified successor,
+ * deployment compatibility, preservation evidence or permission to upgrade. */
+export function classifyInventoryQualificationLedger(database: unknown, records: unknown, supplied: InventoryLedgerRow[]) {
+  const expected = expectedRows(supplied);
+  if (database !== 'clinical_core_qualification' || !Array.isArray(records) || ![106, 107].includes(records.length)
+    || records.some((row, n) => !inventoryRecord(row) || Object.keys(row).sort().join(',') !== 'sha256,version'
+      || row.version !== expected[n].version || row.sha256 !== expected[n].sha256)) return inventoryRefuse('inventory_ledger_refused');
+  return records.length === 106 ? 'predecessor' as const : 'successor' as const;
+}
+
 type Command = BeginTransactionCommand | ExecuteStatementCommand | RollbackTransactionCommand;
 type Transport = { send(command: Command, options: { abortSignal: AbortSignal }): Promise<unknown>; destroy(): void };
 export type InventoryLedgerDatabase = { DatabaseName: string; DatabaseClusterArn: string; DatabaseSecretArn: string };
 function actualClient(): Transport {
-  const client = new RDSDataClient({ region: 'us-east-2', credentials: fromIni({ profile: 'ai-synthetic-member' }), maxAttempts: 1 });
+  const client = new RDSDataClient({ region: 'us-east-2', endpoint: 'https://rds-data.us-east-2.amazonaws.com',
+    credentials: fromIni({ profile: 'ai-synthetic-member' }), maxAttempts: 1 });
   return { send: (command, options) => {
     if (command instanceof BeginTransactionCommand) return client.send(command, options);
     if (command instanceof ExecuteStatementCommand) return client.send(command, options);
@@ -66,6 +77,16 @@ const cell = (value: unknown): string => {
  * preservation; the whole observer must separately bind those observations.
  * No SQL supplied by a caller, no commit, no writes and no automatic retry. */
 export function inventoryQualificationLedgerReader(supplied: InventoryLedgerRow[], makeClient: () => Transport = actualClient) {
+  return ledgerReader(supplied, makeClient, false);
+}
+
+/** Separate preflight entry point; the historical and successor-only readers
+ * remain strict. Rollback and the entire ordered known ledger are mandatory. */
+export function inventoryQualificationLedgerStateReader(supplied: InventoryLedgerRow[], makeClient: () => Transport = actualClient) {
+  return ledgerReader(supplied, makeClient, true);
+}
+
+function ledgerReader(supplied: InventoryLedgerRow[], makeClient: () => Transport, preflight: boolean) {
   const expected = expectedRows(supplied);
   return async (foundation: InventoryLedgerDatabase) => {
     if (foundation?.DatabaseName !== 'clinical_core_qualification'
@@ -73,7 +94,7 @@ export function inventoryQualificationLedgerReader(supplied: InventoryLedgerRow[
       || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/.test(foundation.DatabaseSecretArn ?? '')) return inventoryRefuse('inventory_ledger_target_refused');
     const client = makeClient(), base = { resourceArn: foundation.DatabaseClusterArn, secretArn: foundation.DatabaseSecretArn, database: foundation.DatabaseName };
     const send = (command: Command) => client.send(command, { abortSignal: AbortSignal.timeout(30000) });
-    let transactionId: string | undefined, verified = false, rolledBack = false;
+    let transactionId: string | undefined, verified = false, rolledBack = false, state: 'predecessor' | 'successor' = 'successor';
     try {
       const begin = await send(new BeginTransactionCommand(base));
       if (!inventoryRecord(begin) || typeof begin.transactionId !== 'string' || !begin.transactionId || begin.transactionId.length > 1024
@@ -92,7 +113,9 @@ export function inventoryQualificationLedgerReader(supplied: InventoryLedgerRow[
         if (!Array.isArray(row) || row.length !== 2) return inventoryRefuse('inventory_ledger_refused');
         return { version: cell(row[0]), sha256: cell(row[1]) };
       });
-      assertInventoryQualificationLedger(foundation.DatabaseName, rows, expected); verified = true;
+      if (preflight) state = classifyInventoryQualificationLedger(foundation.DatabaseName, rows, expected);
+      else assertInventoryQualificationLedger(foundation.DatabaseName, rows, expected);
+      verified = true;
     } catch (error) {
       return inventoryRefuse(inventoryRecord(error) && error.name === 'DatabaseResumingException' ? 'inventory_database_resuming' : 'inventory_ledger_refused');
     } finally {
@@ -101,6 +124,9 @@ export function inventoryQualificationLedgerReader(supplied: InventoryLedgerRow[
       finally { client.destroy(); }
     }
     if (!verified || !rolledBack) return inventoryRefuse('inventory_ledger_refused');
+    if (preflight) return { contract: 'inventory-qualification-ledger-state/1', database: foundation.DatabaseName,
+      state, release: state === 'predecessor' ? INVENTORY_PARENT : INVENTORY_RELEASE, rows: state === 'predecessor' ? 106 : 107,
+      successorLedgerVerified: state === 'successor', rolledBack: true, writes: false, acceptance: false, liveFleetVerified: false };
     return { contract: 'inventory-qualification-ledger-observation/1', database: foundation.DatabaseName,
       release: INVENTORY_RELEASE, rows: 107, rolledBack: true, writes: false, acceptance: false, liveFleetVerified: false };
   };
