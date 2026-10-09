@@ -70,6 +70,7 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
       await expect(runAdoptedInventorySchemaUpgrade(never, migrations, { ...c, ...change } as QualificationUpgradeConfiguration, 'rehearse')).rejects.toThrow();
     }
     for (const changed of [migrations.slice(0, 106), [...migrations, migrations[106]],
+      migrations.map((m, i) => i === 106 ? { ...m, name: 'unreviewed_receipt' } : m),
       migrations.map((m, i) => i === 0 || i === 106 ? { ...m, sql: m.sql + '\nselect 1;', sha256: sha(m.sql + '\nselect 1;') } : m)]) {
       await expect(runAdoptedInventorySchemaUpgrade(never, changed, c, 'rehearse')).rejects.toThrow('artifact_refused');
     }
@@ -104,6 +105,8 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     'grant select(first_name) on clinical_core.patient_records to clinical_core_api',
     'alter table clinical_core.patient_records disable row level security',
     'alter table clinical_core.patient_records disable trigger all',
+    'alter table clinical_core.patient_records replica identity full',
+    'alter table clinical_core.patient_records alter first_name set statistics 100',
     "alter function clinical_private.owned_consumer_actor() set search_path=public",
     'grant usage on schema clinical_private to public',
     'create function clinical_private.unreviewed_inventory_helper() returns int language sql as $$select 1$$',
@@ -131,6 +134,19 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     expect(after.dataSha256).toBe(before.dataSha256); expect(after.historicalSchemaSha256).toBe(before.historicalSchemaSha256);
     await predecessor();
   });
+  it('refuses a relabeled successor receipt after its insert, before certification', async () => {
+    await expect(run('rehearse', db(async (sql, tx) => {
+      // The early history read has no successor to update. The final read is
+      // after the actual INSERT and must detect the changed new receipt.
+      if (sql === 'select version,name,sha256 from clinical_core.schema_migrations order by version') {
+        await tx.query("update clinical_core.schema_migrations set name='unreviewed successor receipt' where version='20261009010000'");
+      }
+    }))).rejects.toMatchObject({ category: 'history_refused', stage: 'final_history' });
+    await predecessor();
+  });
+  // This compound case performs an inspection and two complete rehearsal/write
+  // cycles over 209 real tables. Its test deadline is separate from the actual
+  // operator's unchanged 5-second lock and 30-second statement limits.
   it('commits exactly one schema row with no data or review mutation, and replay does not recreate functions', async () => {
     const before = await run('inspect'), queries: string[] = [];
     expect(await run('upgrade')).toMatchObject({ applied: true, alreadyApplied: false, observedMigrationCount: 107,
@@ -138,5 +154,5 @@ describe('distinct preserving 106 to 107 inventory transition, actual embedded S
     expect(await run('upgrade', db(async sql => { queries.push(sql); }))).toMatchObject({ applied: false, alreadyApplied: true, observedMigrationCount: 107 });
     expect(queries.some(q => /^(create|alter|insert|update|delete)/i.test(q))).toBe(false);
     expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_reference.product_label_verifications')).rows[0].n).toBe(0);
-  });
+  }, 30000);
 });

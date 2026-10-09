@@ -155,3 +155,17 @@ A read-only run of the dirty-source operator observed account `588966314750`, fo
 Desktop CI `37903644781` and `37903648961` at prior inventory source `4507677` completed successfully; V2 CI `37903652883` and `37903657240` at `4f9cff1` also completed successfully. Desktop's deployed-backend setup, build and test steps were skipped because secrets were absent, so that job supplies no hosted API acceptance. These are earlier-source results and do not qualify this new operator. The historical encounter-request failure remains unresolved.
 
 All six original readiness phases remain open. Same-target reviewed ingredients, program acceptance integration, the separate catalog reader, compatible recovery, Fullscript cart delivery, positive erasure and processing journeys, provider/store acceptance, matched releases and physical devices remain required. PHI stays off and paid mobile builds remain held.
+
+### Hosted rollback rehearsal at clean source
+
+Clean source `2162bca6084eab3780681ba47f56eb23696c1f8e` was pushed and independently matched to the remote branch. Its rebuilt operator has SHA-256 `6539e65ac2f49027344fb87d96209a1f5fbf1fe32f3955dcd21b6db4208bb26c`. The actual AWS `rehearse` command completed successfully: all successor DDL, new-function body/permission checks and preservation checks ran, then the transaction rolled back. Independent post-rollback inspection confirmed 106 migrations, 209 tables, 46 rows and the same data and historical-schema digests recorded above.
+
+The returned receipt is preserved in `docs/evidence/2026-10-09-adopted-inventory-rehearsal.json`; the build identity is in the adjacent operator-build receipt. This is hosted rollback-only qualification of that exact tool. It is not a permanent migration apply, interrupted-write recovery, compatible candidate deployment, API acceptance or approval to release a program supplement. Existing application deployments and data remain unchanged. CI for `2162bca` is separately in progress; none of its run statuses is claimed as a completed pass.
+
+### Expanded metadata preservation checks
+
+The later source expands the schema witness to full column, constraint and index metadata, plus replica identity and table options. It also pins the successor receipt's name, both in the embedded artifact and the actual ledger. The historical 106 receipts remain preserved as observed rather than rewritten. These checks do not change the extension SQL, either migration-release hash or any historical gate.
+
+Five focused suites passed 94 tests without skips after these additions. A negative test initially attempted to relabel the new receipt before it existed, producing no mutation; it now injects the change after INSERT and requires `history_refused:final_history`. The compound inspect/rehearsal/commit/replay test initially exceeded its default five-second test deadline after metadata expansion; its own deadline is now 30 seconds, while all assertions and the operator's five-second lock and 30-second statement limits remain unchanged. Both earlier failed runs remain failures, not retroactively counted as passes.
+
+The `2162bca` hosted rehearsal above qualifies only its original witness. The expanded witness produces a different schema digest and requires its own clean-build hosted rehearsal. A digest change between witness versions is not, by itself, evidence of changed database objects; compare before and after using the same operator artifact.

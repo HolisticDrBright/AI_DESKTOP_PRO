@@ -10,7 +10,8 @@ import { careErasurePreservation } from './care-erasure-schema-upgrade';
 export const ADOPTED_INVENTORY_UPGRADE = Object.freeze({
   from: '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
   to: '542b101ca1729576d2b203c9c2b3d98d2d9dd897e7480ab08ff150c8eacf773c',
-  version: '20261009010000', sqlSha256: '9624b2c199421a52e0ddba03ae8dd2a5fb6a578e7f9380f42a066a343d6b53c5',
+  version: '20261009010000', name: 'production_adopted_plan_inventory',
+  sqlSha256: '9624b2c199421a52e0ddba03ae8dd2a5fb6a578e7f9380f42a066a343d6b53c5',
   tableCount: 209, tableNamesSha256: 'c627ee381347d585bbeb1bd8d4e95a0df640de14dd1ab0989157fda4a4c2cd38',
 });
 const FUNCTIONS = [
@@ -35,13 +36,15 @@ export function assertAdoptedInventoryUpgrade(c: QualificationUpgradeConfigurati
   if (c.fromReleaseSha256 !== ADOPTED_INVENTORY_UPGRADE.from || c.toReleaseSha256 !== ADOPTED_INVENTORY_UPGRADE.to
     || m.length !== 107 || new Set(m.map(row => row.version)).size !== 107
     || m.some((row, i) => !/^\d{14}$/.test(row.version) || sha(row.sql) !== row.sha256 || i > 0 && m[i - 1].version >= row.version)
-    || m[106].version !== ADOPTED_INVENTORY_UPGRADE.version || m[106].sha256 !== ADOPTED_INVENTORY_UPGRADE.sqlSha256
+    || m[106].version !== ADOPTED_INVENTORY_UPGRADE.version || m[106].name !== ADOPTED_INVENTORY_UPGRADE.name
+    || m[106].sha256 !== ADOPTED_INVENTORY_UPGRADE.sqlSha256
     || productionArtifactReleaseHash(m.slice(0, 106)) !== ADOPTED_INVENTORY_UPGRADE.from
     || productionArtifactReleaseHash(m) !== ADOPTED_INVENTORY_UPGRADE.to) fail('artifact_refused');
 }
 async function history(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
-  const rows = (await tx.query<{ version: string; sha256: string }>(`select version,sha256 from ${LEDGER} order by version`)).rows;
-  if (![106, 107].includes(rows.length) || rows.some((r, i) => r.version !== m[i].version || r.sha256 !== m[i].sha256)) fail('history_refused');
+  const rows = (await tx.query<{ version: string; name: string; sha256: string }>(`select version,name,sha256 from ${LEDGER} order by version`)).rows;
+  if (![106, 107].includes(rows.length) || rows.some((r, i) => r.version !== m[i].version || r.sha256 !== m[i].sha256
+    || i === 106 && r.name !== ADOPTED_INVENTORY_UPGRADE.name)) fail('history_refused');
   return rows.length;
 }
 async function inventory(tx: ClinicalCoreTransaction) {
@@ -82,14 +85,16 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[]) {
   const entries = (await tx.query<{ name: string; digest: string }>(`select selected.name,
     encode(sha256(convert_to(jsonb_build_object(
       'relation',jsonb_build_object('kind',c.relkind,'rls',c.relrowsecurity,'forced',c.relforcerowsecurity,
-        'owner',c.relowner::regrole::text,'acl',coalesce(c.relacl,acldefault('r',c.relowner))::text),
-      'columns',(select jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),
-        'required',a.attnotnull,'acl',a.attacl::text,'default',pg_get_expr(d.adbin,d.adrelid)) order by a.attnum)
+        'owner',c.relowner::regrole::text,'acl',coalesce(c.relacl,acldefault('r',c.relowner))::text,
+        'replica_identity',c.relreplident,'options',c.reloptions),
+      'columns',(select jsonb_agg(jsonb_build_object('attribute',to_jsonb(a),
+        'type',format_type(a.atttypid,a.atttypmod),'default',pg_get_expr(d.adbin,d.adrelid)) order by a.attnum)
         from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
-        where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped),
-      'constraints',(select jsonb_agg(jsonb_build_object('name',k.conname,'validated',k.convalidated,'def',pg_get_constraintdef(k.oid))
+        where a.attrelid=c.oid and a.attnum>0),
+      'constraints',(select jsonb_agg(jsonb_build_object('metadata',to_jsonb(k),'def',pg_get_constraintdef(k.oid))
         order by k.conname) from pg_constraint k where k.conrelid=c.oid),
-      'indexes',(select jsonb_agg(pg_get_indexdef(i.indexrelid) order by i.indexrelid::regclass::text) from pg_index i where i.indrelid=c.oid),
+      'indexes',(select jsonb_agg(jsonb_build_object('metadata',to_jsonb(i),'def',pg_get_indexdef(i.indexrelid))
+        order by i.indexrelid::regclass::text) from pg_index i where i.indrelid=c.oid),
       'policies',(select jsonb_agg(to_jsonb(p)-'oid'-'polrelid' order by p.polname) from pg_policy p where p.polrelid=c.oid),
       'triggers',(select jsonb_agg(jsonb_build_object('enabled',t.tgenabled,'internal',t.tgisinternal,'def',pg_get_triggerdef(t.oid)) order by t.tgname)
         from pg_trigger t where t.tgrelid=c.oid)
