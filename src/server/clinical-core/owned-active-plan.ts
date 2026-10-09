@@ -3,6 +3,7 @@ import {clinicalUuid,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
 import {createHash} from 'node:crypto';
 import {canonicalPayload} from './aws-consumer-clinical-records';
+import {createOwnedPlanInventory} from './owned-plan-inventory';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
@@ -35,6 +36,7 @@ export function createOwnedActivePlan(run:Run){
     return {version:'owned-active-plan/1',current,history,historyLimit:100,...(duplicate===undefined?{}:{duplicate})};
   };
   return {
+    ...createOwnedPlanInventory(run,parse),
     async activePlan(context:ProductionClinicalRequestContext):Promise<ActivePlanState>{
       return run(context,async tx=>parse((await tx.query<{result:unknown}>('select clinical_core.get_owned_active_plan() as result')).rows[0]?.result));
     },

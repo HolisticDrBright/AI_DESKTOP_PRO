@@ -69,6 +69,10 @@ jobs:
           npm run test:care-connections-qualification-observer
       - name: Synthetic fixture connection lifecycle and no replay
         run: npm run test:fixture-transport
+      - name: Undeployed adopted-plan inventory successor (fictional database only)
+        run: |
+          npx vitest run src/server/clinical-core/owned-plan-inventory.database.test.ts src/server/clinical-core/adopted-plan-inventory-artifact.test.ts
+          npm run build:adopted-plan-inventory-candidate
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
