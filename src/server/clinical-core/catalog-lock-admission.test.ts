@@ -54,7 +54,11 @@ function setup(mode = 'success') {
     if (mode === 'wrong_refusal') throw new CatalogForwardUpgradeError('upgrade_busy');
     if (mode !== 'missed_change') throw new CatalogForwardUpgradeError('observation_changed', 'before_fingerprint');
   });
-  const dependencies = { verifyCustody: () => {}, record: (stage: string) => { events.push(stage); },
+  const dependencies = { verifyCustody: () => {}, record: (stage: string, details: Record<string, unknown>) => {
+    expect(Object.keys(details).some(key => ['stage', 'runId', 'at', 'source'].includes(key))).toBe(false);
+    if (stage === 'catalog_lock_refusal_verified') expect(details.refusalStage).toBe('before_fingerprint');
+    events.push(stage);
+  },
     persistFixture: (f: { stableId: string; original: string; changed: string }) => {
       expect(f).toEqual({ stableId: identity, original, changed }); durable = true;
     } };

@@ -33,6 +33,8 @@ export function createCatalogRollbackCustody(shared,out,source,guard,now=Date.no
  const verify=()=>{guard.verify();check(live&&lstatSync(lock).ino===lockStat.ino&&lstatSync(journal).ino===journalStat.ino
   &&boundedCatalogFile(lock,16384).equals(lockBytes)&&boundedCatalogFile(journal).equals(journalBytes),'custody_changed');};
  const record=(stage,details)=>{verify();
+  check(details&&typeof details==='object'&&!Array.isArray(details)
+   &&!['stage','runId','at','source'].some(k=>Object.prototype.hasOwnProperty.call(details,k)),'reserved_event_metadata');
   // A failed lock exercise may still admit exact fixture cleanup. That shorter
   // sequence cannot settle; only the full ordered success sequence can.
   const failedCleanup=mode==='lock-admission'&&stage==='catalog_lock_cleanup_admitted'
@@ -51,6 +53,10 @@ export function createCatalogRollbackCustody(shared,out,source,guard,now=Date.no
   &&report.before.command==='inspect'&&report.before.referenceMigrationCount===2&&report.before.phiAllowed===false
   &&JSON.stringify(stages)===JSON.stringify(sequence)
   &&['lastingApplyPerformed','apiDeploymentPerformed','canonicalRegistered','hostedAcceptance','activationApproved','phiAllowed'].every(k=>report[k]===false),'settlement');
+  const durableEvents=journalBytes.toString('utf8').trimEnd().split('\n').map(line=>JSON.parse(line));
+  check(JSON.stringify(durableEvents.map(event=>event.stage))===JSON.stringify(sequence)
+   &&durableEvents.every(event=>event.runId===runId&&typeof event.at==='string'&&Number.isFinite(Date.parse(event.at)))
+   &&JSON.stringify(durableEvents[0].source)===JSON.stringify(source),'durable_event_sequence');
   const receipt=resolve(out,runId+'.'+mode+'-'+sha256(JSON.stringify(report))+'.json');
   saveCatalogBytes(receipt,Buffer.from(JSON.stringify(report,null,2)+'\n'));
   saveCatalogBytes(resolve(out,runId+'.settled-lock.json'),lockBytes);verify();unlinkSync(lock);live=false;

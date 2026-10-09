@@ -141,7 +141,7 @@ export async function qualifyCatalogLockAdmission(database: ClinicalCoreDatabase
     }
     if (!refused || !waitObserved || !writerCommitted) refuse('migration_did_not_refuse_changed_witness');
     workersSettled = true;
-    d.record('catalog_lock_refusal_verified', { stableId, category: 'observation_changed', stage: 'before_fingerprint', workersSettled });
+    d.record('catalog_lock_refusal_verified', { stableId, category: 'observation_changed', refusalStage: 'before_fingerprint', workersSettled });
   } finally {
     release.resolve(false);
     if (writer) await writer;

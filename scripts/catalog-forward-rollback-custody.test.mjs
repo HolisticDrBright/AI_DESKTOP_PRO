@@ -37,6 +37,19 @@ test('changed journal or guard prevents requests and never removes the operator 
    assert.throws(c.verify);assert.equal(existsSync(c.lock),true);
   }finally{f.close();}}
 });
+
+test('diagnostic details cannot overwrite any authoritative event metadata',()=>{
+ const f=fixture();try{const c=f.create(),before=readFileSync(c.journal);
+  for(const key of ['stage','runId','at','source']){
+   assert.throws(()=>c.record('catalog_rollback_admitted',{[key]:'replacement'}),/reserved_event_metadata/);
+   assert.deepEqual(readFileSync(c.journal),before);assert.equal(existsSync(c.lock),true);
+  }
+  ready(c);const done=c.settle(report(c));
+  const events=readFileSync(c.journal,'utf8').trimEnd().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(events.map(event=>event.stage),['catalog_rollback_started','catalog_rollback_admitted','catalog_rollback_readback_verified','catalog_rollback_control_verified']);
+  assert.ok(events.every(event=>event.runId===c.runId));assert.equal(done.custodySettled,true);
+ }finally{f.close();}
+});
 test('incomplete, failed, out-of-order and falsely activated results cannot settle',()=>{
  const f=fixture();try{const c=f.create();assert.throws(()=>c.settle(report(c)),/settlement/);
   assert.throws(()=>c.record('catalog_rollback_control_verified',{}),/stage/);ready(c);
