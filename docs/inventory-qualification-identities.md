@@ -16,6 +16,8 @@ After the new stack completes, write only its four non-secret identity bindings 
 
 An accepted configuration report leaves designated-user, database-authority, retention-service, physical-login, complete-fleet, acceptance and human-review evidence false. Fictional accounts, staff TOTP enrollment and actual login, database mappings, target binding, provider/storage authority and hosted acceptance remain separate prerequisites. PHI and production activation remain disabled.
 
+Cognito can return `WebAuthnConfiguration: { FactorConfiguration: "SINGLE_FACTOR" }` from its MFA configuration API even when the separately observed first-factor policy permits only `PASSWORD`. The observer admits only that exact inert default (or absence), while refusing additional relying-party/user-verification configuration and every passwordless first-factor policy. It does not enable WebAuthn or treat the default as successful MFA enrollment.
+
 ## Verification limits
 
 The template-to-observer test uses fictional responses derived from rendered properties. It checks parity, not AWS behavior. Only the independent read against completed real resources can establish configuration. Even that read cannot certify a user's MFA login or commercial and PHI readiness.

@@ -102,8 +102,12 @@ function inspectClient(raw: unknown, poolId: string, clientId: string) {
 }
 function inspectMfa(raw: unknown, workforce: boolean) {
   const m = obj(raw); same(m.MfaConfiguration, workforce ? 'ON' : 'OPTIONAL'); same(m.SoftwareTokenMfaConfiguration, { Enabled: true });
-  for (const name of ['SmsMfaConfiguration', 'EmailMfaConfiguration', 'WebAuthnConfiguration'])
+  for (const name of ['SmsMfaConfiguration', 'EmailMfaConfiguration'])
     if (m[name] != null) return inventoryRefuse('identity_dependency_refused');
+  // AWS returns this inert default even without WEB_AUTHN in the pool's
+  // AllowedFirstAuthFactors. inspectPool already requires PASSWORD alone.
+  // Accept only the observed default, not relying-party or verification edits.
+  if (m.WebAuthnConfiguration != null) same(m.WebAuthnConfiguration, { FactorConfiguration: 'SINGLE_FACTOR' });
 }
 function inspectUser(raw: unknown, subject: string, workforce: boolean, organizationId: string): string {
   const u = obj(raw); same(u.Enabled, true); same(u.UserStatus, 'CONFIRMED');

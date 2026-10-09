@@ -34,7 +34,8 @@ function fixture() {
       ExplicitAuthFlows: ['ALLOW_USER_SRP_AUTH', 'ALLOW_USER_PASSWORD_AUTH', 'ALLOW_ADMIN_USER_PASSWORD_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'],
       ReadAttributes: ['email', 'email_verified', 'custom:person_id', 'custom:organization_id', 'custom:synthetic_attested', 'custom:production_bound'],
       WriteAttributes: ['email'], SupportedIdentityProviders: ['COGNITO'] } };
-    responses[`get-user-pool-mfa-config/${poolId(w)}`] = { MfaConfiguration: w ? 'ON' : 'OPTIONAL', SoftwareTokenMfaConfiguration: { Enabled: true } };
+    responses[`get-user-pool-mfa-config/${poolId(w)}`] = { MfaConfiguration: w ? 'ON' : 'OPTIONAL', SoftwareTokenMfaConfiguration: { Enabled: true },
+      WebAuthnConfiguration: { FactorConfiguration: 'SINGLE_FACTOR' } };
   }
   for (const [n, subject] of Object.values(subjects).entries()) {
     const w = n === 2;
@@ -115,6 +116,9 @@ it('refuses independent pool, client, MFA and synthetic identity failures, inclu
   changes.push([`get-user-pool-mfa-config/${poolId(true)}`, v => { v.MfaConfiguration = 'OFF'; }]);
   changes.push([`get-user-pool-mfa-config/${poolId(true)}`, v => { v.SoftwareTokenMfaConfiguration = { Enabled: false }; }]);
   changes.push([`get-user-pool-mfa-config/${poolId(true)}`, v => { v.SmsMfaConfiguration = { SmsAuthenticationMessage: 'unreviewed' }; }]);
+  for (const config of [{}, { FactorConfiguration: 'MULTI_FACTOR_WITH_USER_VERIFICATION' }, { FactorConfiguration: 'SINGLE_FACTOR', RelyingPartyId: 'unreviewed.test' },
+    { FactorConfiguration: 'SINGLE_FACTOR', UserVerification: 'required' }])
+    changes.push([`get-user-pool-mfa-config/${poolId(true)}`, v => { v.WebAuthnConfiguration = config; }]);
   user(v => { v.Enabled = false; }); user(v => { v.UserStatus = 'FORCE_CHANGE_PASSWORD'; });
   user(v => { v.UserMFASettingList = []; }); user(v => { v.PreferredMfaSetting = 'SMS_MFA'; });
   for (const [name, value] of Object.entries({ sub: subjects.consumer, email_verified: 'false', 'custom:person_id': 'invalid',
