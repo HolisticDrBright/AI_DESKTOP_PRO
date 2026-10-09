@@ -72,8 +72,9 @@ built final container or hosted deployment.
 
 The first full local run passed346 files and4,385 tests with11 existing skips in
 542.32seconds. Middleware code/tests changed while that run was active, so it is
-not a frozen-final-source receipt. A second full run against the fixed runtime
-source is pending. The unit environment uses America/Los_Angeles and removes the
+not a frozen-final-source receipt. The second full run against the fixed runtime
+source passed346 files and4,385 tests with11 existing skips in514.05seconds.
+The unit environment uses America/Los_Angeles and removes the
 pre-existing edition fixture's conflicting CLINICAL_SUPABASE_ANON_KEY; no deadlines,
 assertions or test inclusion were relaxed. Hosted CI must be observed at the
 actual pushed head before a hosted-source claim.
