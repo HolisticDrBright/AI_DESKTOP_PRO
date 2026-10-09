@@ -23,6 +23,61 @@ function metadataFixture(){
  return f;
 }
 
+for(const field of ['role_last_used','log_stored_bytes','both'])test(`usage-only observation movement after recovery is not configuration drift: ${field}`,async()=>{
+ const f=fixture(),recovery=f.port.recovery;
+ f.port.recovery=async(...args)=>{
+  const report=await recovery(...args);
+  if(field!=='log_stored_bytes')f.after.raw.role.Role.RoleLastUsed={LastUsedDate:new Date(f.now).toISOString(),Region:P.region};
+  if(field!=='role_last_used')f.after.raw.logGroups.logGroups[0].storedBytes=1234;
+  return report;
+ };
+ const report=await run(f);assert.equal(report.recoveryRehearsed,true);
+ assert.equal((await checkCustody(f)).originalRunOutcome,'completed');
+});
+
+test('usage-only comparison must retain unknown fields and validate values',async()=>{
+ for(const mutate of [r=>r.role.Role.RoleLastUsed={LastUsedDate:'invalid',Region:P.region},
+  r=>r.role.Role.RoleLastUsed={LastUsedDate:'2099-01-01T00:00:00Z',Region:P.region},
+  r=>r.role.Role.RoleLastUsed=null,r=>r.role.Role.RoleLastUsed=[],
+  r=>r.role.Role.RoleLastUsed={LastUsedDate:'2020-01-01T00:00:00Z',Region:P.region,PermissionsBoundary:'hidden'},
+  r=>r.logGroups.logGroups[0].storedBytes=-1,r=>r.logGroups.logGroups[0].storedBytes='1234',
+  r=>r.role.Role.permissionsChanged=true,r=>r.logGroups.logGroups[0].newAuthority=true]){
+  const f=fixture(),recovery=f.port.recovery;f.port.recovery=async(...args)=>{const report=await recovery(...args);mutate(f.after.raw);return report;};
+  await assert.rejects(run(f));assert.equal(f.events.some(e=>e.stage==='registered_standalone_completed'),false);
+ }
+});
+
+test('recovery archival cannot substitute a forged scope or completion witness',async()=>{
+ for(const kind of ['source','phi','completed_witness']){
+  const f=fixture(),save=f.port.save;f.port.save=async(name,bytes)=>{
+   if(name===(kind==='completed_witness'?'standalone-completed':'standalone-recovery')){
+    const value=JSON.parse(bytes);
+    if(kind==='source')value.current.desktop.commit='0'.repeat(40);
+    if(kind==='phi')value.phiAllowed=true;
+    if(kind==='completed_witness')value.recovery.transportWitness.restored.raw.fn.Timeout++;
+    const forged=Buffer.from(JSON.stringify(value,null,2)+'\n');return save(name,forged);
+   }
+   return save(name,bytes);
+  };
+  await assert.rejects(run(f),/archive_durability/);
+  assert.equal(f.events.some(e=>e.stage==='registered_standalone_completed'),false);
+ }
+});
+
+test('a later binding refusal preserves the actual validated recovery witness under durable custody',async()=>{
+ const f=fixture(),recovery=f.port.recovery;f.port.recovery=async(...args)=>{
+  const report=await recovery(...args);f.after.raw.fn.Timeout++;return report;
+ };
+ await assert.rejects(run(f));
+ const event=f.events.find(e=>e.stage==='registered_standalone_recovery_archived');assert(event);
+ const bytes=f.files.get(event.file);assert.equal(sha256(bytes),event.sha256);
+ const report=JSON.parse(bytes);assert.equal(report.contract,'synthetic-care-registered-routing-rehearsal/1');
+ assert.equal(report.phiAllowed,false);assert.equal(report.hostedAcceptance,false);
+ const custody=await checkCustody(f);assert.equal(custody.originalRunOutcome,'failed');
+ assert(custody.evidenceReferences.some(e=>e.kind==='standalone-recovery'&&e.sha256===event.sha256));
+ bytes[0]=0;await assert.rejects(checkCustody(f),/archive_bytes/);
+});
+
 test('standalone completion binds both retained metadata transitions to the actual before and repeated after observations',async()=>{
  const f=metadataFixture(),report=await run(f);
  assert.equal(report.recoveryRehearsed,true);assert.equal((await checkCustody(f)).originalRunOutcome,'completed');

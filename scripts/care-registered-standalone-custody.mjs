@@ -15,6 +15,7 @@ const fields={registered_standalone_started:['runId','originalRunId','originalLo
  registered_recovery_return_admitted:['version'],registered_recovery_compensating_return_admitted:['version'],
  registered_recovery_cases_verified:['caseCount','version'],registered_recovery_permission_cleanup_admitted:['version'],
  registered_recovery_route_permission_restored:[],registered_compatible_routing_completed:['version'],
+ registered_standalone_recovery_archived:['file','sha256'],
  registered_standalone_completed:['file','sha256'],registered_standalone_finding:['code','writeAdmitted']};
 const transitions={registered_standalone_started:['registered_standalone_before_archived'],
  registered_standalone_before_archived:['registered_standalone_rehearsal_admitted'],
@@ -26,7 +27,8 @@ const transitions={registered_standalone_started:['registered_standalone_before_
  registered_recovery_cases_verified:['registered_recovery_permission_cleanup_admitted','registered_recovery_route_permission_restored'],
  registered_recovery_permission_cleanup_admitted:['registered_recovery_route_permission_restored'],
  registered_recovery_route_permission_restored:['registered_compatible_routing_completed'],
- registered_compatible_routing_completed:['registered_standalone_completed']};
+ registered_compatible_routing_completed:['registered_standalone_completed','registered_standalone_recovery_archived'],
+ registered_standalone_recovery_archived:['registered_standalone_completed']};
 export function verifyRegisteredStandaloneLock(bytes,current,operator,original){
  assertCareRegisteredCurrent(current);assertCareRegisteredCurrent(operator);
  check(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=16384,'lock_bytes');let lock;
@@ -48,7 +50,7 @@ export async function verifyRegisteredStandaloneCustody(c,current,operator,origi
  check(Buffer.isBuffer(c?.journalBytes)&&c.journalBytes.length>0&&c.journalBytes.length<=1024*1024,'journal_bytes');
  const split=splitRegisteredRestorationJournal(c.journalBytes,current,now);let events;
  try{events=split.originalJournalBytes.toString('utf8').trimEnd().split('\n').map(JSON.parse);}catch{refuseRegistered('standalone_custody_journal_json');}
- check(events.length>=1&&events.length<=18,'journal_scope');let prior=-Infinity;
+ check(events.length>=1&&events.length<=19,'journal_scope');let prior=-Infinity;
  for(const e of events){
   check(Object.hasOwn(fields,e.stage)&&exact(e,['at','stage',...fields[e.stage]]),'event_fields');
   const t=Date.parse(e.at);check(Number.isFinite(t)&&t>=prior&&t<=now,'event_time');prior=t;
@@ -60,23 +62,31 @@ export async function verifyRegisteredStandaloneCustody(c,current,operator,origi
   &&first.originalJournalSha256===original.journalSha256,'start_binding');
  const finding=events.at(-1).stage==='registered_standalone_finding'?events.at(-1):null,
   rows=finding?events.slice(0,-1):events,evidenceReferences=[];
- let state=first.stage,beforeBytes,before,sid,completed;
+ let state=first.stage,beforeBytes,before,sid,completed,recovery;
  for(let i=1;i<rows.length;i++){
   const e=rows[i];check(transitions[state]?.includes(e.stage),'transition');state=e.stage;
   if(Object.hasOwn(e,'version'))check(e.version==='2','version');
-  if(e.stage==='registered_standalone_before_archived'||e.stage==='registered_standalone_completed'){
+  if(['registered_standalone_before_archived','registered_standalone_recovery_archived','registered_standalone_completed'].includes(e.stage)){
+   const kind=e.stage==='registered_standalone_before_archived'?'standalone-before'
+    :e.stage==='registered_standalone_recovery_archived'?'standalone-recovery':'standalone-completed';
    check(typeof readEvidence==='function'&&typeof e.file==='string'&&e.file.length>0&&e.file.length<=4096&&digest(e.sha256),'archive');
-   const bytes=await readEvidence(e.file,e.stage==='registered_standalone_before_archived'?'standalone-before':'standalone-completed');
+   const bytes=await readEvidence(e.file,kind);
    check(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=4*1024*1024&&sha256(bytes)===e.sha256,'archive_bytes');let value;
    try{value=JSON.parse(bytes);}catch{refuseRegistered('standalone_custody_archive_json');}
    check(bytes.equals(Buffer.from(JSON.stringify(value,null,2)+'\n')),'archive_encoding');
-   evidenceReferences.push({file:e.file,kind:e.stage==='registered_standalone_before_archived'?'standalone-before':'standalone-completed',sha256:e.sha256});
+   evidenceReferences.push({file:e.file,kind,sha256:e.sha256});
    if(e.stage==='registered_standalone_before_archived'){
     before=value;beforeBytes=bytes;check(exact(before,['contract','runId','applicationSource','operatorSource','original','startedAt','observations'])
      &&before.contract==='synthetic-care-registered-standalone-before/1'&&before.runId===lock.runId
      &&equal(before.applicationSource,current)&&equal(before.operatorSource,operator)&&equal(before.original,original)
      &&before.startedAt===first.at&&Array.isArray(before.observations)&&before.observations.length===2,'before_binding');
-   }else completed=value;
+   }else if(e.stage==='registered_standalone_recovery_archived'){
+    recovery=value;check(recovery.contract==='synthetic-care-registered-routing-rehearsal/1'
+     &&recovery.execution==='synthetic-staging'&&equal(recovery.current,current)&&equal(recovery.observerSource,operator)
+     &&Date.parse(recovery.startedAt)>=Date.parse(first.at)&&Date.parse(recovery.completedAt)<=Date.parse(e.at)
+     &&['schemaChanged','hostedAcceptance','erasureAccepted','releaseAccepted','physicalDeviceAcceptance','phiAllowed','paidMobileBuildStarted'].every(k=>recovery[k]===false),
+     'recovery_archive_binding');
+   }else{completed=value;if(recovery)check(equal(completed.recovery,recovery),'completion_recovery_binding');}
   }
   if(e.stage==='registered_standalone_rehearsal_admitted')check(e.beforeSha256===sha256(beforeBytes),'before_admission');
   if(e.stage==='registered_recovery_permission_admitted'){
@@ -90,7 +100,7 @@ export async function verifyRegisteredStandaloneCustody(c,current,operator,origi
   &&state!=='registered_standalone_completed','finding');
  if(split.restoration&&completed)check(split.restoration.events.every(e=>['registered_stopped_restoration_started','registered_stopped_restoration_observed'].includes(e.stage)),
   'completed_readonly_restoration');
- return {lock,current,operator,events,state,before,beforeBytes,sid,completed,evidenceReferences,writeAdmitted,
+ return {lock,current,operator,events,state,before,beforeBytes,sid,completed,recovery,evidenceReferences,writeAdmitted,
   journalSha256:sha256(c.journalBytes),originalJournalSha256:sha256(split.originalJournalBytes),
   originalRunOutcome:finding?'failed':completed?'completed':'interrupted',originalFailure:finding?.code??null,
   restoration:split.restoration,lastAt:split.restoration?.lastAt??prior};

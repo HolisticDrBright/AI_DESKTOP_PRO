@@ -82,6 +82,13 @@ test('evidence reader refuses wrong kind, alias, parent escape, byte digest and 
   writeFileSync(file,'changed');assert.throws(()=>readStandaloneEvidence(t.out,file,'standalone-before'),/evidence_digest/);
  }finally{destroy(t);}
 });
+
+test('recovery evidence uses its own digest-bound namespace, never a caller supplied report',()=>{
+ const t=local();try{const bytes=Buffer.from('{}\n'),file=resolve(t.out,'standalone-recovery-'+sha256(bytes)+'.json');writeFileSync(file,bytes);
+  assert(readStandaloneEvidence(t.out,file,'standalone-recovery').equals(bytes));
+  for(const kind of ['standalone-before','standalone-completed','recovery'])assert.throws(()=>readStandaloneEvidence(t.out,file,kind));
+ }finally{destroy(t);}
+});
 test('public arguments expose neither a supplied report, target/profile override nor PHI/build switch',()=>{
  const args=['--v2-root','mobile','--artifact','candidate','--application-root','application','--original-run','a'.repeat(32),'--rehearse-fictional-registered-only'];
  assert.equal(registeredStandaloneArguments(args).restore,false);

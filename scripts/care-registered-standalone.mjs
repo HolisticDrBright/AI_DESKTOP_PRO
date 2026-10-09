@@ -15,6 +15,28 @@ const equal=(a,b)=>canonical(a)===canonical(b);
 const inventory=v=>{const copy=structuredClone(v);delete copy.observedAt;return copy;};
 const databaseContents=v=>{const copy=inventory(v);delete copy.operatorSource;return copy;};
 const falseFlags=['schemaChanged','hostedAcceptance','erasureAccepted','releaseAccepted','physicalDeviceAcceptance','phiAllowed','paidMobileBuildStarted'];
+/** Usage observations are not configuration. Admit only the two fields already
+ * excluded by the authority verifier, after checking their service shapes.
+ * Everything else, including unknown fields and the complete returned stage,
+ * must remain exact. This does not admit Lambda permission metadata drift. */
+function usageComparable(raw,now){
+ const copy=structuredClone(raw),last=copy?.role?.Role?.RoleLastUsed;
+ if(last!==undefined){
+  check(last!==null&&typeof last==='object'&&!Array.isArray(last)
+   &&Object.keys(last).every(k=>['LastUsedDate','Region'].includes(k)),'usage_observation');
+  if(last.LastUsedDate!==undefined)check(typeof last.LastUsedDate==='string'
+   &&Number.isFinite(Date.parse(last.LastUsedDate))&&Date.parse(last.LastUsedDate)<=now,'usage_observation');
+  if(last.Region!==undefined)check(typeof last.Region==='string'&&last.Region.length<=64
+   &&/^[a-z]{2}(?:-[a-z]+)+-[0-9]+$/.test(last.Region),'usage_observation');
+  delete copy.role.Role.RoleLastUsed;
+ }
+ check(Array.isArray(copy?.logGroups?.logGroups),'usage_observation');
+ for(const group of copy.logGroups.logGroups){
+  if(group.storedBytes!==undefined)check(Number.isSafeInteger(group.storedBytes)&&group.storedBytes>=0,'usage_observation');
+  delete group.storedBytes;
+ }
+ return copy;
+}
 export function verifyRegisteredStandaloneRecovery(report,input,operator,started,now,parseIntent){
  const {candidate,current}=input;assertCareRegisteredCurrent(operator);const observerSource=input.observerSource??current;
  check(report?.contract==='synthetic-care-registered-routing-rehearsal/1'&&report.scope==='known-intent-predecessor-current-schema'
@@ -143,12 +165,16 @@ export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sour
     await append(stage,detail);if(stage==='registered_recovery_permission_admitted')writeAdmitted=true;},
   });
   verifyRegisteredStandaloneRecovery(recovery,input,operator,started,d.now(),d.parseIntent);
+  // Preserve the real transport snapshots even if a later readback/binding
+  // refuses completion. This is evidence, never deployment authority or a pass.
+  await append('registered_standalone_recovery_archived',await archive('standalone-recovery',recovery));
   const retainedLineage=verifyRegisteredRetainedPermissionLineage(recovery.retainedPermissionLineage,
    Date.parse(recovery.startedAt),Date.parse(recovery.completedAt),'alp-care-intent-recovery-'+lock.runId);
   check(equal(databaseContents(recovery.databaseBefore),databaseContents(first.database))
    &&equal(databaseContents(recovery.databaseAfter),databaseContents(first.database)),'rehearsal_database_binding');
   const third=await observe(),fourth=await observe();same(first,third,true,retainedLineage);same(third,fourth);
-  check(equal(recovery.initialControl,first.deployment.control)&&equal(recovery.transportWitness.restored.raw,fourth.raw)
+  check(equal(recovery.initialControl,first.deployment.control)
+   &&equal(usageComparable(recovery.transportWitness.restored.raw,d.now()),usageComparable(fourth.raw,d.now()))
    &&recovery.transportWitness.restored.policy===null&&recovery.transportWitness.initial===first.raw.stage.DeploymentId
    &&recovery.transportWitness.returnedDeployment===fourth.raw.stage.DeploymentId
    &&new Set([recovery.transportWitness.initial,recovery.transportWitness.retainedDeployment,recovery.transportWitness.returnedDeployment]).size===3,'recovery_transport_binding');
