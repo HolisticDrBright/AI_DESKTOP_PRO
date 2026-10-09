@@ -43,15 +43,23 @@ presenting a truncated list as whole.
 
 ### Authority, in order
 
-1. **The appointment.** Every visit action (`consent`, `withdraw`, `start`,
-   `end`, `import`, `sign`) first resolves its appointment through the
-   practitioner's own calendar access (`get_desktop_calendar`, RLS). An
-   appointment the calendar does not return — nonexistent, another
-   organization, no access — is `not_found` before the boundary is called. A
-   cancelled or no-show appointment is refused. The appointment's **stored**
-   times go to the boundary; nothing from the browser does. The day and the
-   zone are the viewer's (`date` + IANA `timeZone` on every call), computed
-   DST-aware; February 31 is refused, not normalised.
+1. **The appointment, inside the AWS boundary.** Every visit route
+   (`consent`, `withdraw`, `start`, `end`, `import`, `sign`) resolves its
+   appointment itself, with the caller's own JWT, through the reviewed
+   desktop-compatibility operation `get_desktop_calendar` on the clinical API
+   — so a direct call to the Lambda gets exactly the appointments that
+   practitioner can see under the clinical core's role rules. Nonexistent,
+   another organization, revoked membership (the calendar refuses), not a
+   telehealth appointment: refused before any write, consent read, secret or
+   provider call. A cancelled or no-show appointment is refused for
+   consent/start/import; ending a visit still resolves the appointment but
+   tolerates a closed status so an outstanding meeting can be shut down. The
+   visit keeps the calendar's patient record, practitioner and **stored**
+   times; caller-supplied times are at most a search hint. The desktop
+   server performs the same resolution first (so the UI never offers an
+   action the calendar would refuse), but that is convenience, not the
+   control. The day and the zone are the viewer's (`date` + IANA `timeZone`
+   on every call), computed DST-aware; February 31 is refused.
 2. **The request.** A patient-app visit is bound to its request on the
    boundary: the request must exist in the caller's organization, name this
    exact appointment, and not be cancelled; its stored times and meeting are
@@ -60,10 +68,9 @@ presenting a truncated list as whole.
 3. **The consent.** See the consent section below. No authority read, no
    secret lookup and no provider call happens before a refusal.
 
-The Lambda cannot see the clinical calendar. For a desktop-booked visit (no
-request) it relies on the desktop server having resolved the appointment under
-the practitioner's session, which is why the desktop never forwards a browser
-value. That split is a known limit, documented here rather than hidden.
+The compatibility calendar is the same reviewed operation the Calendar screen
+reads; nothing new is granted to the Lambda, and no shared secret is minted —
+the caller's JWT is the only credential in play.
 
 ### Consent
 
@@ -81,7 +88,7 @@ calls them with the caller's own JWT.
 | Patient app, at booking | the consent object must name the organization's **current approved** artifact (id, version, hash); otherwise `consent_version_refused` |
 | Desktop, staff-attested | the dialog reads the current artifact first and shows its version, jurisdiction and hash; the receipt must name exactly that artifact; when the patient has an app connection the grant is recorded in the identity authority (`in_person`) and its id is stored on the receipt |
 | Withdrawal | `POST …/visits/consent/withdraw` marks receipts withdrawn (append-only) and revokes the governed grant |
-| Start, and AI-summary import | a granted, un-withdrawn receipt; its artifact must still be the approved one (a retired/superseded release is no authority); when a connection exists the current grant must be `granted` for that artifact — a revocation in the authority revokes the visit |
+| Start, and AI-summary import | a granted, un-withdrawn receipt; its artifact must still be the approved one (a retired/superseded release is no authority); for a patient-app visit a live connection must exist, the receipt's connection must be that connection, and the current grant must be `granted` for that artifact — a revocation or a vanished/replaced connection is lost authority, never a fallback to staff-only consent |
 
 Refusals are named: `consent_required`, `consent_withdrawn`,
 `consent_superseded`, `consent_version_refused`,
@@ -96,8 +103,9 @@ invents a hash or substitutes a configuration flag.
 | `requestId`, `consumerPersonId`, `scheduledStart/End`, `timeZone` | the binding (request-derived or desktop-resolved) |
 | `consents[]` | append-only receipts: artifact id/version/hash, signer, method, representative authority, governed grant id, `granted`/`withdrawn` |
 | `status` | `scheduled` → `in_visit` → `ending` → `ended`; or `cancelled` |
-| `meetingLease` | the durable creating-intent held while a provider meeting is being created (2-minute TTL) |
-| `providerMeetingId`, `joinUrl`, `passcode` | the Zoom meeting; the passcode leaves the Lambda only inside a start-visit session |
+| `meetingLease` | the durable creating-intent: `acquired` (held, no provider call yet) or `dispatched` (a create was sent; `createdMeetingId` is the exact evidence once known). Only an expired `acquired` lease may be taken over; a `dispatched` lease is reconciled, never overwritten |
+| `patientRecordId`, `practitionerUserId` | from the calendar (desktop-booked) — the visit's authoritative patient and practitioner |
+| `providerMeetingId`, `providerMeetingUuid`, `joinUrl`, `passcode` | the Zoom meeting instance; `passcode` is Zoom's actual meeting password from create/get meeting, never the encrypted `pwd` token of the join URL, and it leaves the Lambda only inside a start-visit session |
 | `providerShutdown` | `not_started`/`pending`/`ended`/`failed` with the provider's answer; `ended` only when Zoom confirmed |
 | `flags[]`, `quickNotes` | stamped against the visit timer; saved when the visit ends |
 | `note`, `noteHistory[]` | the current note and its prior revisions (bounded); `status` `not_reviewed` or `signed` |
@@ -108,34 +116,51 @@ refuse with `conflict`.
 
 ### The meeting: one per visit
 
-Two simultaneous starts used to create two Zoom meetings. Now creation is
-admitted under a durable lease written to the visit before any provider call;
-a racing start loses the conditional write and is refused without a second
-meeting. Before creating, the Lambda looks for an existing upcoming meeting
-carrying the visit's marker (`alp-visit:<appointmentId>` in the agenda) so a
-lost create response is reconciled, not repeated. If the created meeting
-cannot be bound to the visit, it is deleted and the lease released.
+Creation is admitted under a durable lease on the visit before any provider
+call; a racing start loses the conditional write and is refused without a
+second meeting. The sequence is: lease `acquired` → a COMPLETE marker
+listing of the host's upcoming meetings (`alp-visit:<appointmentId>` in the
+agenda; an incomplete listing — pages left, or the page bound — refuses
+rather than concluding "nothing exists") → lease `dispatched` written
+BEFORE the create is sent → create → the created id written onto the lease
+as evidence → bind. A thrown create leaves the lease `dispatched`; the next
+start reconciles it first: by exact id when the evidence exists, otherwise
+by a complete listing, adopting what it finds and permitting one new create
+only after proof of absence. A lost database receipt is confirmed by a
+single reread (a write that landed is success, never undone); a visit that
+was cancelled or bound elsewhere underneath the attempt has the meeting this
+attempt created deleted. An expired `acquired` lease (the holder never
+reached the provider) may be taken over; an expired `dispatched` lease may
+not.
 
 ### Ending: a shutdown intent, confirmed by the provider
 
 `end` saves the notes and flags, marks the visit `ending`, asks Zoom to end
 the meeting for everyone (`PUT /meetings/{id}/status {action: "end"}`) and then
-reads the meeting state. Only a confirmed stop makes the visit `ended`;
-otherwise it stays `ending` with `providerShutdown.failed` and the detail, the
+reads the meeting back. The visit becomes `ended` only on a valid provider
+observation: a 2xx state for **this** meeting id whose `status` is exactly
+Zoom's documented `waiting` (not in progress). A refused end, a 404, an
+unreadable or empty body, a state for a different meeting, `started`, or a
+provider that is disabled on the deployment while a meeting exists — all
+leave the visit `ending` with `providerShutdown.failed` and the detail; the
 screens say the meeting may still be running (recording and AI processing
-included), and the practitioner retries. The browser leaving its own client
-is never shown as termination.
+included), and the practitioner retries. Only a visit with no provider
+meeting ends without an observation. The browser leaving its own client is
+never shown as termination.
 
 ### The AI summary
 
-`import` requires a current consent authority (summary access is a use of the
-recording consent), stores Zoom's payload verbatim, and refuses a payload that
-names another meeting or exceeds the size bound. Zoom's current unified
-`summary_content` (Markdown) is kept whole as the unreviewed Summary section
-and rendered as plain text; legacy overview/details/next-steps fields are
-mapped by label. A payload with no usable text is "not ready", never an empty
-editable note. Re-import keeps practitioner notes and action-item decisions
-and retains the prior revision.
+`import` requires the appointment authority and a current consent authority
+(summary access is a use of the recording consent), stores Zoom's payload
+verbatim, and refuses a payload that does not name this meeting id, that
+names another meeting uuid when the visit knows its own, or that exceeds the
+size bound (checked on the declared length before the body is read, and on
+the bytes received). Zoom's current unified `summary_content` (Markdown) is
+kept whole as the unreviewed Summary section and rendered as plain text;
+legacy overview/details/next-steps fields are mapped by label. A payload
+with no usable text is "not ready", never an empty editable note. Re-import
+keeps practitioner notes and action-item decisions and retains the prior
+revision.
 
 ## Zoom
 
@@ -171,8 +196,12 @@ React 18 line it was built against. The loader loads those vendor scripts in
 order and then the SDK. This application is a React 19 bundle whose React is
 module-scoped and never on `window`, so the two never meet: Zoom's UI renders
 with Zoom's React inside the mount element. (The first version loaded only
-the SDK script and died with "React is not defined".) A failed load clears
-the loader's cache so Retry really retries.
+the SDK script and died with "React is not defined".) Any failed bootstrap —
+a network failure or a script that loaded without registering — removes the
+elements it added and clears the loader's cache, so Retry fetches and
+evaluates every script again instead of rediscovering the same missing
+namespace. The session's `passcode` is Zoom's meeting password, which is what
+the SDK's `JoinOptions.password` expects.
 
 Verification: `e2e/zoom-sdk-bootstrap.spec.ts` loads the real pinned build
 with network access, asserts `ZoomMtgEmbedded` registered and a client
@@ -227,18 +256,28 @@ frozen and survive reload because the record is the source of truth.
 ## Verified by
 
 - `src/server/clinical-core/aws-telehealth-requests.test.ts` — route
-  registration and the API-origin wiring; refusals with no authority read,
-  secret or provider call (no consent, superseded artifact, withdrawn grant,
-  cancelled/mismatched/missing request); request times used over caller
-  times; staff consent only against the current artifact, append-only,
-  passcode never returned; governed grant recorded through the identity API;
-  withdrawal; one meeting under the lease with the racing start refused and
-  no second create; adoption by marker and cleanup on a failed receipt;
-  provider shutdown refused → `ending`/`failed`, confirmed → `ended`,
-  duplicate end idempotent; unified-summary import, wrong-meeting refusal,
-  empty → not ready; re-import keeps notes/decisions and history; frozen
-  signed notes; paginated complete/incomplete lists without note bodies;
-  cancelled booking closes the visit and deletes its meeting; SDK JWT shape.
+  registration and the API-origin wiring; a direct AWS call for an
+  appointment the caller's calendar does not return is refused with no
+  write, secret or provider call; a desktop-booked consent binds to the
+  calendar's patient and stored times, not the caller's; cancelled (calendar
+  or request), revoked membership, non-telehealth, mismatched and missing
+  bindings refused; no consent → appointment verified then nothing else;
+  superseded artifact, withdrawn grant and a vanished connection refused;
+  staff consent only against the current artifact, append-only, passcode
+  never listed; governed grant recorded through the identity API;
+  withdrawal; one meeting under the lease, bound with Zoom's actual password
+  (never the URL token), racing start refused without a second create; a
+  thrown create leaves a `dispatched` lease — incomplete listing refuses,
+  complete listing adopts, complete empty listing permits one create;
+  evidenced create adopted by exact id; lost database receipt confirmed by
+  reread without deleting; meeting deleted when the visit was cancelled
+  underneath; shutdown never certified on a disabled provider, empty state,
+  wrong meeting, 404, refused end or `started` — certified only on
+  `waiting` for this meeting; duplicate end idempotent; unified-summary
+  import, wrong-id/missing-id/wrong-uuid/oversized refusals, empty → not
+  ready; re-import keeps notes/decisions and history; frozen signed notes;
+  paginated lists without note bodies; cancelled booking closes the visit
+  and deletes its meeting; SDK JWT shape.
 - `src/adapters/telehealth.live.test.ts` — zoned day bounds (zone, DST,
   impossible dates), the merge, unavailable and incomplete boundary states,
   appointment resolution before any boundary call, stored times only,
@@ -276,6 +315,14 @@ These are stated so they are not mistaken for done:
 - **Zoom agreement.** `ZoomBaaVerified=true` is an operator attestation that
   the executed agreement covers the account, the Meeting SDK app, AI Companion
   and recording/AI policies; it is not the review itself.
+- **Positive visit acceptance.** The CI bootstrap step proves the SDK
+  registers and initializes under the dev server and that the fixture's join
+  fails as a join. A real two-participant meeting under production headers —
+  host join with the actual password, patient join, media, reconnect,
+  end-for-all, note import for the exact meeting instance — and the
+  direct-AWS authority negatives and creation/cancellation/withdrawal/
+  receipt-loss races against the deployed synthetic boundary are not run by
+  this repository and remain required before activation.
 
 ## Open decisions (unchanged from the handoff)
 

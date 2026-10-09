@@ -83,6 +83,12 @@ export class ZoomSdkLoadError extends Error {
 
 let loading: Promise<ZoomEmbeddedNamespace> | null = null;
 
+function invalidateLoadedScripts(): void {
+  for (const src of ZOOM_SDK_SCRIPTS) {
+    document.querySelectorAll<HTMLScriptElement>(`script[src="${src}"]`).forEach((element) => element.remove());
+  }
+}
+
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
@@ -122,6 +128,10 @@ export function loadZoomMeetingSdk(): Promise<ZoomEmbeddedNamespace> {
       if (!window.ZoomMtgEmbedded) throw new ZoomSdkLoadError(ZOOM_SDK_SCRIPTS[ZOOM_SDK_SCRIPTS.length - 1], "registration");
       return window.ZoomMtgEmbedded;
     } catch (error) {
+      // A failed bootstrap invalidates every element it added: a retry must
+      // fetch and evaluate the scripts again, not skip "loaded" tags and
+      // rediscover the same missing namespace.
+      invalidateLoadedScripts();
       loading = null;
       throw error;
     }
