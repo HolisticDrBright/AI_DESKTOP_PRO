@@ -92,6 +92,9 @@ jobs:
         run: |
           npm run test:inventory-qualification-target
           npm run build:inventory-qualification-target
+          npm run test:inventory-qualification-identities
+          npx vitest run src/server/clinical-core/inventory-qualification-identity-template.test.ts src/server/clinical-core/inventory-qualification-identity-configuration-command.test.ts
+          npm run build:inventory-qualification-identities
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
@@ -105,6 +108,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
+          cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json
           find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)

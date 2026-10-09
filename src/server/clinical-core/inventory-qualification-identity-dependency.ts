@@ -66,7 +66,10 @@ function inspectPool(raw: unknown, poolId: string, workforce: boolean) {
   const tags = obj(p.UserPoolTags); same(tags.Environment, 'synthetic-staging'); same(tags.DataClassification, 'synthetic_only');
   if (tags.ContainsPhi !== undefined && tags.ContainsPhi !== 'false') return inventoryRefuse('identity_dependency_refused');
   same(p.Policies, { PasswordPolicy: { MinimumLength: workforce ? 14 : 12, RequireLowercase: true, RequireNumbers: true,
-    RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 } });
+    RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 },
+    // Cognito returns this explicit policy even for password-only pools. Do not
+    // reject that safe AWS shape or silently admit passwordless first factors.
+    SignInPolicy: { AllowedFirstAuthFactors: ['PASSWORD'] } });
   if (!Array.isArray(p.SchemaAttributes) || p.SchemaAttributes.length > 128) return inventoryRefuse('identity_dependency_shape_refused');
   const schema = new Map<string, Row>();
   for (const v of p.SchemaAttributes) {
@@ -125,6 +128,48 @@ function inspectUser(raw: unknown, subject: string, workforce: boolean, organiza
   return person;
 }
 
+function validateIdentityBinding(value: unknown): asserts value is InventoryQualificationTarget['identity'] {
+  if (!inventoryRecord(value) || Object.keys(value).sort().join(',') !== 'consumerAudience,consumerIssuer,workforceAudience,workforceIssuer')
+    return inventoryRefuse('identity_dependency_binding_refused');
+  for (const issuer of [value.consumerIssuer, value.workforceIssuer])
+    if (typeof issuer !== 'string' || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(issuer))
+      return inventoryRefuse('identity_dependency_binding_refused');
+  for (const audience of [value.consumerAudience, value.workforceAudience])
+    if (typeof audience !== 'string' || !/^[A-Za-z0-9]{20,128}$/.test(audience)) return inventoryRefuse('identity_dependency_binding_refused');
+  if (value.consumerIssuer === value.workforceIssuer || value.consumerAudience === value.workforceAudience)
+    return inventoryRefuse('identity_dependency_binding_refused');
+}
+
+/** Infrastructure-only observation before fictional subjects exist. This is
+ * deliberately separate from designated-user, database and login evidence. */
+export async function observeInventoryIdentityConfiguration(identity: InventoryQualificationTarget['identity'],
+  transport: InventoryServiceRead = inventoryIdentityReader()) {
+  const binding = structuredClone(identity); validateIdentityBinding(binding);
+  const observations: Array<{ service: string; operation: string; parameters: Record<string, string | string[]>; sha256: string }> = [];
+  const read: InventoryServiceRead = async (service, operation, parameters) => {
+    const value = await transport(service, operation, parameters);
+    observations.push({ service, operation, parameters: structuredClone(parameters), sha256: inventorySha(inventoryCanonical(value)) });
+    return value;
+  };
+  const principal = obj(await read('sts', 'get-caller-identity', {}));
+  if (principal.Account !== account || typeof principal.Arn !== 'string'
+    || !/^arn:aws:sts::588966314750:assumed-role\/OrganizationAccountAccessRole\/[A-Za-z0-9+=,.@_-]+$/.test(principal.Arn))
+    return inventoryRefuse('identity_dependency_principal_refused');
+  for (const workforce of [false, true]) {
+    const UserPoolId = (workforce ? binding.workforceIssuer : binding.consumerIssuer).split('/').at(-1)!;
+    const ClientId = workforce ? binding.workforceAudience : binding.consumerAudience;
+    inspectPool(await read('cognito-idp', 'describe-user-pool', { UserPoolId }), UserPoolId, workforce);
+    inspectClient(await read('cognito-idp', 'describe-user-pool-client', { UserPoolId, ClientId }), UserPoolId, ClientId);
+    inspectMfa(await read('cognito-idp', 'get-user-pool-mfa-config', { UserPoolId }), workforce);
+  }
+  for (const o of observations) same(inventorySha(inventoryCanonical(await transport(o.service, o.operation, o.parameters))), o.sha256);
+  return { contract: 'inventory-qualification-identity-configuration/1', identityConfigurationVerified: true,
+    observations: observations.length, observationSha256: inventorySha(inventoryCanonical(observations)),
+    designatedSyntheticSubjectsVerified: false, databaseIdentityAuthorityVerified: false, retentionServiceIdentityVerified: false,
+    physicalLoginVerified: false, identityDependenciesVerified: false, liveFleetVerified: false, acceptance: false,
+    humanReviewsVerified: false, phiAllowed: false, mutations: false };
+}
+
 /** Independent Cognito configuration + designated fictional accounts only.
  * Reads no tokens/passwords, emits no contact attributes or client-secret value,
  * makes no auth request, mutation or provider call. Database identity mappings,
@@ -138,11 +183,7 @@ export async function observeInventoryIdentityDependency(input: InventoryIdentit
     || !inventoryRecord(b.subjects) || Object.keys(b.subjects).sort().join(',') !== 'consumer,foreignConsumer,workforce'
     || Object.values(b.subjects).some(s => typeof s !== 'string' || !uuid.test(s)) || new Set(Object.values(b.subjects)).size !== 3)
     return inventoryRefuse('identity_dependency_binding_refused');
-  const i = b.identity;
-  for (const issuer of [i.consumerIssuer, i.workforceIssuer]) if (!/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(issuer))
-    return inventoryRefuse('identity_dependency_binding_refused');
-  for (const audience of [i.consumerAudience, i.workforceAudience]) if (!/^[A-Za-z0-9]{20,128}$/.test(audience)) return inventoryRefuse('identity_dependency_binding_refused');
-  if (i.consumerIssuer === i.workforceIssuer || i.consumerAudience === i.workforceAudience) return inventoryRefuse('identity_dependency_binding_refused');
+  const i = b.identity; validateIdentityBinding(i);
   const observations: Array<{ service: string; operation: string; parameters: Record<string, string | string[]>; sha256: string }> = [];
   const read: InventoryServiceRead = async (service, operation, parameters) => {
     const value = await transport(service, operation, parameters);

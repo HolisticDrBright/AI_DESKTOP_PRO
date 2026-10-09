@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import type { execFileSync } from 'node:child_process';
 import { inventoryCanonical, inventorySha } from './inventory-qualification-artifacts';
-import { inventoryIdentityReader, observeInventoryIdentityDependency, type InventoryIdentityDependency } from './inventory-qualification-identity-dependency';
+import { inventoryIdentityReader, observeInventoryIdentityConfiguration, observeInventoryIdentityDependency, type InventoryIdentityDependency } from './inventory-qualification-identity-dependency';
 import type { InventoryServiceRead } from './inventory-qualification-service-observer';
 type Row = Record<string, unknown>;
 const obj = (v: unknown) => v as Row;
@@ -22,7 +22,8 @@ function fixture() {
       UsernameAttributes: ['email'], UsernameConfiguration: { CaseSensitive: false }, AutoVerifiedAttributes: ['email'],
       MfaConfiguration: w ? 'ON' : 'OPTIONAL', AccountRecoverySetting: { RecoveryMechanisms: [{ Name: 'verified_email', Priority: 1 }] },
       Policies: { PasswordPolicy: { MinimumLength: w ? 14 : 12, RequireLowercase: true, RequireNumbers: true,
-        RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 } },
+        RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 },
+        SignInPolicy: { AllowedFirstAuthFactors: ['PASSWORD'] } },
       UserPoolTags: { Environment: 'synthetic-staging', DataClassification: 'synthetic_only' }, LambdaConfig: {},
       SchemaAttributes: [['person_id', '36'], ['organization_id', '36'], ['synthetic_attested', '4'], ['production_bound', '4']].map(([Name, length]) =>
         ({ Name: `custom:${Name}`, AttributeDataType: 'String', Mutable: false, Required: false, DeveloperOnlyAttribute: false,
@@ -92,6 +93,11 @@ it('refuses independent pool, client, MFA and synthetic identity failures, inclu
   pool(v => { obj(v.UserPoolTags).DataClassification = 'production'; });
   pool(v => { obj(v.UserPoolTags).ContainsPhi = 'true'; });
   pool(v => { obj(obj(v.Policies).PasswordPolicy).MinimumLength = 10; });
+  pool(v => { delete obj(v.Policies).SignInPolicy; });
+  for (const factors of [[], ['EMAIL_OTP'], ['PASSWORD', 'SMS_OTP'], ['PASSWORD', 'WEB_AUTHN'], ['PASSWORD', 'PASSWORD']])
+    pool(v => { obj(v.Policies).SignInPolicy = { AllowedFirstAuthFactors: factors }; });
+  pool(v => { obj(v.Policies).UnknownPolicy = {}; });
+  pool(v => { obj(obj(v.Policies).SignInPolicy).Unknown = true; });
   pool(v => { (v.SchemaAttributes as Row[])[2].Mutable = true; });
   pool(v => { (v.SchemaAttributes as Row[])[0].DeveloperOnlyAttribute = true; });
   pool(v => { (v.SchemaAttributes as Row[])[0].StringAttributeConstraints = { MinLength: '1', MaxLength: '99' }; });
@@ -125,6 +131,36 @@ it('refuses independent pool, client, MFA and synthetic identity failures, inclu
     expect(inventoryCanonical(f.responses[key]), key).not.toBe(before);
     await expect(observeInventoryIdentityDependency(f.binding, f.read), key).rejects.toThrow();
   }
+});
+it('observes configuration before subjects exist, without claiming accounts, database mappings or a physical MFA login', async () => {
+  const f = fixture();
+  for (const subject of Object.values(subjects)) delete f.responses[`admin-get-user/${subject}`];
+  const r = await observeInventoryIdentityConfiguration(f.binding.identity, f.read);
+  expect(r).toMatchObject({ contract: 'inventory-qualification-identity-configuration/1', observations: 7,
+    identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: false, databaseIdentityAuthorityVerified: false,
+    retentionServiceIdentityVerified: false, physicalLoginVerified: false, identityDependenciesVerified: false,
+    liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false });
+  expect(f.calls).toHaveLength(14); expect(f.calls.slice(0, 7)).toEqual(f.calls.slice(7));
+  expect(f.calls.some(c => c[1] === 'admin-get-user')).toBe(false);
+  expect(r.observationSha256).toMatch(/^[a-f0-9]{64}$/);
+});
+it('configuration-only inspection refuses unsafe pool settings, root, binding substitutions and drift', async () => {
+  const f = fixture();
+  await expect(observeInventoryIdentityConfiguration({ ...f.binding.identity, consumerAudience: 'invalid' }, f.read))
+    .rejects.toThrow('identity_dependency_binding_refused');
+  expect(f.calls).toHaveLength(0);
+  for (const factors of [undefined, [], ['PASSWORD', 'EMAIL_OTP']]) {
+    const g = fixture(), p = obj(obj(g.responses[`describe-user-pool/${poolId(false)}`]).UserPool);
+    obj(p.Policies).SignInPolicy = factors === undefined ? undefined : { AllowedFirstAuthFactors: factors };
+    await expect(observeInventoryIdentityConfiguration(g.binding.identity, g.read)).rejects.toThrow();
+    expect(g.calls.some(c => c[1] === 'admin-get-user')).toBe(false);
+  }
+  const root = fixture(); obj(root.responses.sts).Arn = 'arn:aws:iam::588966314750:root';
+  await expect(observeInventoryIdentityConfiguration(root.binding.identity, root.read)).rejects.toThrow('identity_dependency_principal_refused');
+  const drift = fixture(); let n = 0;
+  await expect(observeInventoryIdentityConfiguration(drift.binding.identity, async (s, o, p) => {
+    const value = await drift.read(s, o, p); if (++n === 9) obj(obj(value).UserPool).DeletionProtection = 'INACTIVE'; return value;
+  })).rejects.toThrow('identity_dependency_refused');
 });
 it('refuses person aliasing even when subjects are distinct', async () => {
   const f = fixture();

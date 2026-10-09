@@ -171,6 +171,8 @@
     "build:aws-qualification-target-operator": "node scripts/build-aws-qualification-target-operator.mjs",
     "build:aws-qualification-foundation": "node scripts/build-aws-qualification-foundation.mjs",
     "test:aws-qualification-foundation": "node scripts/test-qualification-foundation.mjs",
+    "build:inventory-qualification-identities": "node scripts/build-inventory-qualification-identities.mjs",
+    "test:inventory-qualification-identities": "node --test scripts/inventory-qualification-identities.test.mjs",
     "build:aws-model-vendor-authority-operator": "node scripts/build-aws-model-vendor-authority-operator.mjs",
     "build:aws-covered-entity-deletion-operator": "node scripts/build-aws-covered-entity-deletion-operator.mjs",
     "build:aws-qualification-parameters": "node scripts/build-aws-qualification-parameters.mjs",
