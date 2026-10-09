@@ -3,6 +3,9 @@ import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import type {ClinicalCoreDatabase} from '../clinical-core/database';
 import type {FullscriptSupplementDraftInput} from './protocol-draft';
+import {FullscriptApiClient,readFullscriptConfiguration} from './client';
+import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
+import {createFullscriptDraftProvider} from './draft-provider';
 import {createDraftDeliveryService,type DraftDeliveryBinding,type DraftDeliveryActor,type DraftDeliveryAuthority,
  type FullscriptDraftObservation} from './draft-delivery';
 const id=(n:number)=>'e0000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -51,6 +54,37 @@ beforeEach(async()=>{
 afterEach(async()=>{await db.close();});
 
 describe('unreleased Fullscript durable ledger with actual SQL and fictional authority/provider',()=>{
+ it.each(['reply','lost-reply'])('settles the documented HTTP %s through the real ledger, never a second POST',async mode=>{
+  const input=binding().input;
+  const raw={treatment_plan:{id:id(11),patient:{id:input.fullscriptPatientId},practitioner:{id:input.practitionerId},
+   state:'draft',available_at:null,metadata:{id:input.idempotencyKey},lab_recommendations:[],resources:[],
+   recommendations:input.recommendations.map(r=>({variant_id:r.variantId,units_to_purchase:Number(r.unitsToPurchase),
+    refill:false,dosage:{additional_info:r.instructions}}))}};
+  const fetcher=vi.fn(async(url:string|URL|Request,init?:RequestInit)=>{
+   if(init?.method==='POST'){
+    expect((await db.query('select state,input from fullscript_delivery.draft_intents')).rows[0])
+     .toMatchObject({state:'dispatching',input});
+    if(mode==='lost-reply')throw Error('fictional lost reply');
+   }
+   const body=new URL(String(url)).pathname.endsWith('/metadata')?{
+    metadata:[{id:input.idempotencyKey,type:'treatment_plan',data:{id:id(11)}}],
+    meta:{current_page:1,next_page:null,prev_page:null,total_pages:1,total_count:1},
+   }:raw;
+   return new Response(JSON.stringify(body),{status:init?.method==='POST'?201:200,headers:{'content-type':'application/json'}});
+  });
+  const configuration=readFullscriptConfiguration({NODE_ENV:'test',FULLSCRIPT_ENVIRONMENT:'sandbox_us',
+   FULLSCRIPT_CLIENT_ID:'fictional-client-id-1234567890',FULLSCRIPT_CLIENT_SECRET:'fictional-client-secret-1234567890',
+   FULLSCRIPT_REDIRECT_URI:'https://desktop.example.test/api/live/fullscript/oauth/callback',
+   FULLSCRIPT_OAUTH_STATE_SECRET:'fictional-state-secret-longer-than-thirty-two'});
+  const adapter=createFullscriptDraftProvider(new FullscriptApiClient(configuration,'fictional-access-token-abcdefghijklmnopqrstuvwxyz',fetcher,FULLSCRIPT_DRAFT_SCOPES));
+  const connected=createDraftDeliveryService(database,authority,adapter),prepared=await connected.prepare(actor,selector);
+  expect((await connected.send(actor,prepared.id)).state).toBe(mode==='reply'?'verified':'uncertain');
+  await connected.send(actor,prepared.id);
+  if(mode==='lost-reply')expect((await connected.reconcile(actor,prepared.id)).state).toBe('verified');
+  expect(await connected.read(owner,prepared.id)).toMatchObject({state:'verified',providerPlanId:id(11),writerPending:false});
+  expect(fetcher.mock.calls.filter(c=>c[1]?.method==='POST')).toHaveLength(1);
+  expect(fetcher.mock.calls.filter(c=>c[1]?.method==='GET')).toHaveLength(mode==='reply'?0:2);
+ });
  it('persists the exact recipient intent before I/O, replays preparation, and sends once across two service instances',async()=>{
   const a=await prepare(),b=await prepare();expect(b.id).toBe(a.id);
   provider.create.mockImplementation(async input=>{

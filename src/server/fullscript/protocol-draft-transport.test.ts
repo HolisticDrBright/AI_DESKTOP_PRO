@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {FullscriptApiClient, readFullscriptConfiguration} from './client';
+import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 const config = () => readFullscriptConfiguration({NODE_ENV: 'test', FULLSCRIPT_ENVIRONMENT: 'sandbox_us',
   FULLSCRIPT_CLIENT_ID: 'fictional-client-id-1234567890', FULLSCRIPT_CLIENT_SECRET: 'fictional-client-secret-1234567890',
   FULLSCRIPT_REDIRECT_URI: 'https://desktop.example.test/api/live/fullscript/oauth/callback',
@@ -8,9 +9,10 @@ const id = (n: number) => 'e0000000-0000-4000-8000-' + String(n).padStart(12, '0
 const key = 'alp-cart-' + 'a'.repeat(64);
 const input = () => ({fullscriptPatientId: id(1), practitionerId: id(2), idempotencyKey: key,
   recommendations: [{variantId: id(3), unitsToPurchase: '2', instructions: 'Original fictional protocol directions'}]});
-const fixture = (scopes: string[] = ['clinic:write', 'clinic:read']) => {
+const fixture = (scopes: readonly string[] = FULLSCRIPT_DRAFT_SCOPES) => {
   const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
-    new Response(JSON.stringify({treatment_plan: {id: id(4)}}), {headers: {'content-type': 'application/json'}}));
+    new Response(JSON.stringify({treatment_plan: {id: id(4)}}), {status: _init?.method === 'POST' ? 201 : 200,
+      headers: {'content-type': 'application/json'}}));
   const configuration = config(), client = new FullscriptApiClient(configuration, 'fictional-access-token-abcdefghijklmnopqrstuvwxyz', fetcher as typeof fetch, scopes);
   return {fetcher, client, configuration};
 };
@@ -44,6 +46,15 @@ describe('Fullscript sandbox draft transport, not durable delivery or response c
     const {client, fetcher} = fixture(['clinic:write']);
     expect(() => client.retrieveTreatmentPlan(id(4))).toThrow('Fullscript');
     expect(() => client.findTreatmentPlanByMetadata(key)).toThrow('Fullscript'); expect(fetcher).not.toHaveBeenCalled();
+    const old = fixture(['clinic:read', 'clinic:write']);
+    expect(() => old.client.retrieveTreatmentPlan(id(4))).toThrow('Fullscript');
+    expect(() => old.client.findTreatmentPlanByMetadata(key)).toThrow('Fullscript');
+    expect(() => old.client.assertSupplementDraftCapabilities()).toThrow('Fullscript');
+    expect(old.fetcher).not.toHaveBeenCalled();
+    const history = fixture(['patients:treatment_plan_history']);
+    await history.client.retrieveTreatmentPlan(id(4)); expect(history.fetcher).toHaveBeenCalledOnce();
+    const catalog = fixture(['catalog:read']);
+    await catalog.client.findTreatmentPlanByMetadata(key); expect(catalog.fetcher).toHaveBeenCalledOnce();
   });
   it('snapshots configuration and scopes so later object mutation cannot redirect a token or grant writes', async () => {
     const f = fixture(); f.configuration.apiOrigin = 'https://attacker.example/api';

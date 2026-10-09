@@ -111,7 +111,8 @@ beforeEach(async()=>{
  if(m.action!=='compile')throw new Error('fixture');manifestId=m.manifestId;
  catalogHash=(await db.query<{sha:string}>('select catalog_source_sha256 as sha from fullscript_delivery.protocol_manifests where id=$1',[manifestId])).rows[0].sha;
  contents.provider={contract:'fullscript-sandbox-provider-release/1',environment:'sandbox_us',apiOrigin:'https://api-us-snd.fullscript.io/api',
-  clinicId:'fictional-clinic-id',tokenBindingSha256:'d'.repeat(64),scopes:['clinic:read','clinic:write']};
+  clinicId:'fictional-clinic-id',tokenBindingSha256:'d'.repeat(64),
+  scopes:['clinic:read','clinic:write','catalog:read','patients:treatment_plan_history']};
  releases.provider=await release('provider',org,contents.provider);
  contents.recipient={contract:'fullscript-recipient-binding/1',patientRecordId:patient,consumerPersonId:consumer,connectionId:connection,
   providerReleaseId:releases.provider,fullscriptPatientId:'fictional-patient-id'};
@@ -214,11 +215,14 @@ describe('same-target Fullscript authority with canonical SQL and fictional revi
   await externalGrant();expect(await consentRequest({action:'read',connectionId:connection})).toMatchObject({currentGrant:true,revision:2});
   await prepare();
  });
- it.each(['origin','environment','duplicate-scopes','unknown-field'])('refuses %s in a newer provider release',async reason=>{
+ it.each(['origin','environment','duplicate-scopes','old-insufficient-scopes','missing-history','missing-metadata','unknown-field'])('refuses %s in a newer provider release',async reason=>{
   const content={...contents.provider};
   if(reason==='origin')content.apiOrigin='https://unreviewed.example.test/api';
   if(reason==='environment')content.environment='production_us';
-  if(reason==='duplicate-scopes')content.scopes=['clinic:read','clinic:read'];
+  if(reason==='duplicate-scopes')content.scopes=['clinic:read','clinic:write','catalog:read','catalog:read'];
+  if(reason==='old-insufficient-scopes')content.scopes=['clinic:read','clinic:write'];
+  if(reason==='missing-history')content.scopes=['clinic:read','clinic:write','catalog:read'];
+  if(reason==='missing-metadata')content.scopes=['clinic:read','clinic:write','patients:treatment_plan_history'];
   if(reason==='unknown-field')content.override=true;
   await release('provider',org,content,2);
   await expect(prepare()).rejects.toThrow('fullscript_delivery_refused');expect(provider.create).not.toHaveBeenCalled();

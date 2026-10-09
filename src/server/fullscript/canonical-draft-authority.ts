@@ -5,6 +5,7 @@ import type {ClinicalCoreTransaction} from '../clinical-core/database';
 import {parseProtocolCartResponse} from '../../contracts/protocolCarts';
 import {compileFullscriptProtocolDraft} from './protocol-draft';
 import {DraftDeliveryRefused,type DraftDeliveryAuthority,type DraftDeliveryBinding} from './draft-delivery';
+import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 
 const uuid=z.string().uuid(), hash=z.string().regex(/^[a-f0-9]{64}$/).refine(v=>v!=='0'.repeat(64));
 const providerId=z.string().regex(/^[A-Za-z0-9-]{8,128}$/);
@@ -22,7 +23,7 @@ const snapshot=z.object({organizationId:uuid,consumerPersonId:uuid,patientRecord
 }).strict();
 const provider=z.object({contract:z.literal('fullscript-sandbox-provider-release/1'),environment:z.literal('sandbox_us'),
  apiOrigin:z.literal('https://api-us-snd.fullscript.io/api'),clinicId:providerId,tokenBindingSha256:hash,
- scopes:z.array(z.enum(['clinic:read','clinic:write'])).length(2)}).strict();
+ scopes:z.array(z.enum(FULLSCRIPT_DRAFT_SCOPES)).length(FULLSCRIPT_DRAFT_SCOPES.length)}).strict();
 const recipient=z.object({contract:z.literal('fullscript-recipient-binding/1'),patientRecordId:uuid,
  consumerPersonId:uuid,connectionId:uuid,providerReleaseId:uuid,fullscriptPatientId:providerId}).strict();
 const practitioner=z.object({contract:z.literal('fullscript-practitioner-binding/1'),practitionerPersonId:uuid,
@@ -44,7 +45,7 @@ function bindingFromSource(raw:unknown):DraftDeliveryBinding {
  const p=provider.parse(s.provider.content),r=recipient.parse(s.recipient.content),w=practitioner.parse(s.practitioner.content);
  const m=mapping.parse(s.mapping.content),c=consent.parse(s.externalConsent.content);
  const manifest=parseProtocolCartResponse({action:'read',manifestId:m.manifestId},s.manifest);
- if(manifest.action!=='read'||manifest.status!=='compiled'||new Set(p.scopes).size!==2
+ if(manifest.action!=='read'||manifest.status!=='compiled'||new Set(p.scopes).size!==FULLSCRIPT_DRAFT_SCOPES.length
   ||new Set(s.scopeGrants.map(g=>g.scope)).size!==2
   ||r.patientRecordId!==s.patientRecordId||r.consumerPersonId!==s.consumerPersonId||r.connectionId!==s.connectionId
   ||w.practitionerPersonId!==s.practitionerPersonId

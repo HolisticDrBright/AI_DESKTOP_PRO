@@ -209,6 +209,8 @@ describe('preserving reference forward upgrade — real local SQL, no hosted or 
       message: 'upgrade_failed', category: 'upgrade_failed', stage: 'ledger_receipt' }); await predecessor();
   });
   it('custodied rollback performs real local SQL and settles only after a separate unchanged inspection', async () => {
+    // Two real rollback paths plus independent full-schema/data inspections.
+    // Bound the compound test, not the operator's production deadlines.
     const a = CARE_ERASURE_AWS, events: string[] = []; let checks = 0, transactions = 0;
     const d = {
       verifyCustody: () => { checks++; }, record: (stage: string, digest: string) => { expect(digest).toMatch(/^[a-f0-9]{64}$/); events.push(stage); },
@@ -233,7 +235,7 @@ describe('preserving reference forward upgrade — real local SQL, no hosted or 
     }) };
     await expect(executeCatalogForwardRollback(build, interrupted)).rejects.toThrow('upgrade_failed');
     expect((await inspect()).observationSha256).toBe(before.observationSha256); await predecessor();
-  });
+  }, 30_000);
   it('applies once, preserves approvals/holds/history and withdraws only the obsolete offer through actual RLS', async () => {
     const before = await inspect();
     expect(await invoke('upgrade')).toMatchObject({ referenceMigrationCount: 3, applied: true, alreadyApplied: false,
@@ -246,7 +248,7 @@ describe('preserving reference forward upgrade — real local SQL, no hosted or 
     expect(await invoke('upgrade')).toMatchObject({ applied: false, alreadyApplied: true, observationSha256: after.observationSha256 });
     expect(await invoke('rehearse')).toMatchObject({ rolledBack: true, referenceMigrationCount: 3, observationSha256: after.observationSha256 });
     expect(loadGovernedCatalogMigrations()).toHaveLength(2);
-  });
+  }, 30_000); // Full upgrade, RLS reads, replay, and rollback in one case.
   it('public inspector observes member STS and the completed exact synthetic foundation, but cannot apply or rehearse', async () => {
     const a = CARE_ERASURE_AWS, calls: string[] = [];
     const dependencies = {

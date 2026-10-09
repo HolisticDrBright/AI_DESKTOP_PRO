@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { fullscriptSupplementDraftInput } from './protocol-draft';
+import { FULLSCRIPT_DRAFT_SCOPES } from './draft-scopes';
 
 export type FullscriptEnvironment = "sandbox_us" | "production_us";
 
@@ -220,6 +221,7 @@ async function tokenRequest(
     }),
   }).catch(() => null);
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
+    void response?.body?.cancel().catch(() => undefined);
     throw new FullscriptUnavailableError("Fullscript token exchange failed.");
   }
   const raw = await boundedFullscriptBody(response, 64_000, signal);
@@ -320,23 +322,33 @@ export class FullscriptApiClient {
         variant_id: safeId(row.variantId), units_to_purchase: row.unitsToPurchase,
         dosage: {additional_info: row.instructions},
       })),
-    }, undefined, {'idempotency-key': value.idempotencyKey});
+    }, undefined, {'idempotency-key': value.idempotencyKey}, 201);
   }
 
   retrieveTreatmentPlan(id: string) {
-    this.assertSandboxDraftScope('clinic:read');
-    return this.request('GET', `/clinic/treatment_plans/${safeId(id)}`);
+    this.assertSandboxDraftScope('patients:treatment_plan_history');
+    return this.request('GET', `/clinic/treatment_plans/${safeId(id)}`, undefined, undefined, undefined, 200);
   }
 
   findTreatmentPlanByMetadata(idempotencyKey: string) {
-    this.assertSandboxDraftScope('clinic:read');
+    this.assertSandboxDraftScope('catalog:read');
     if (!/^alp-cart-[a-f0-9]{64}$/.test(idempotencyKey)) throw new FullscriptUnavailableError();
-    return this.request('GET', '/clinic/metadata', undefined, {id: idempotencyKey, type: 'treatment_plan'});
+    return this.request('GET', '/clinic/metadata', undefined, {id: idempotencyKey, type: 'treatment_plan'}, undefined, 200);
   }
 
   private assertSandboxDraftScope(scope: string) {
     if (this.configuration.environment !== 'sandbox_us' || !this.grantedScopes.has(scope))
       throw new FullscriptUnavailableError();
+  }
+
+  /** Before admitting an adapter POST, require every permission necessary to
+   * reconcile an unknown response. This is not credential/release review. */
+  assertSupplementDraftCapabilities() {
+    for (const scope of FULLSCRIPT_DRAFT_SCOPES) this.assertSandboxDraftScope(scope);
+  }
+
+  assertSupplementDraftReadCapabilities() {
+    for (const scope of ['catalog:read', 'patients:treatment_plan_history']) this.assertSandboxDraftScope(scope);
   }
 
   searchProducts(query: string) {
@@ -392,6 +404,7 @@ export class FullscriptApiClient {
     body?: Record<string, unknown>,
     query?: Record<string, string>,
     extraHeaders?: Record<string, string>,
+    expectedStatus?: number,
   ): Promise<Record<string, unknown>> {
     const signal = AbortSignal.timeout(12_000);
     const url = new URL(`${this.configuration.apiOrigin}${path}`);
@@ -408,7 +421,9 @@ export class FullscriptApiClient {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     }).catch(() => null);
-    if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
+    if (!response?.ok || (expectedStatus !== undefined && response.status !== expectedStatus)
+      || !response.headers.get("content-type")?.includes("application/json")) {
+      void response?.body?.cancel().catch(() => undefined);
       throw new FullscriptUnavailableError("Fullscript request failed.");
     }
     const raw = await boundedFullscriptBody(response, 2_000_000, signal);

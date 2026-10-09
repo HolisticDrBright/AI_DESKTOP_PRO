@@ -33,9 +33,8 @@ export interface DraftDeliveryAuthority {
  assertAccess(tx:ClinicalCoreTransaction,actor:DraftDeliveryActor,binding:DraftDeliveryBinding):Promise<void>;
  assertCurrent(tx:ClinicalCoreTransaction,binding:DraftDeliveryBinding):Promise<void>;
 }
-/** Normalized observation, NOT a guessed Fullscript response schema. A future
- * provider adapter must bind real GET/POST observations to this contract. No
- * adapter interpreting raw provider responses is currently installed. */
+/** Normalized ledger observation, not the provider wire schema. The source
+ * adapter decodes documented GET/POST responses; it is not installed in an API. */
 const observationSchema=z.object({contract:z.literal('fullscript-draft-observation/1'),planId:providerId,
  patientId:providerId,practitionerId:providerId,state:z.literal('draft'),metadataId:z.string().regex(/^alp-cart-[a-f0-9]{64}$/),
  labs:z.array(z.never()).length(0),recommendations:fullscriptSupplementDraftInput.shape.recommendations}).strict();
@@ -65,6 +64,13 @@ const verifiedObservation=(raw:unknown,input:FullscriptSupplementDraftInput)=>{
  // Normalize recommendation order for identical receipts across GET/POST.
  return {planId:o.planId,receiptSha256:digest({...o,recommendations:sort(o.recommendations)})};
 };
+
+/** Shared exact-intent check used by the provider decoder and ledger. It never
+ * accepts a purchase URL, hidden extra recommendation, or inferred quantity. */
+export function parseFullscriptDraftObservation(raw:unknown,input:FullscriptSupplementDraftInput):FullscriptDraftObservation {
+ verifiedObservation(raw,input);
+ return observationSchema.parse(raw);
+}
 
 /** One admitted writer, persisted before the external request. No transaction
  * spans provider I/O. Unknown replies and expired writers never permit a second
