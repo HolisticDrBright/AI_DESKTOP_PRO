@@ -2,10 +2,10 @@
  * profile. Raw AWS responses are checked intact. This has no mutation port. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {CARE_REGISTERED as C,assertCareRegisteredCurrent,refuseRegistered} from './synthetic-care-registered-release.mjs';
-import {CATALOG_RUNTIME as K,catalogRuntimePredecessor,verifyCatalogRuntimeCandidate} from './synthetic-catalog-runtime-release.mjs';
+import {CATALOG_RUNTIME as K,catalogRuntimePredecessor,verifyCatalogRuntimeCandidate,verifyCatalogRuntimeArtifactBinding} from './synthetic-catalog-runtime-release.mjs';
 import {careRegisteredPredecessorTemplate,verifyRegisteredFunctionProfile,verifyRegisteredControlInventory,
  verifyCareRegisteredDatabase} from './care-registered-preflight.mjs';
-import {canonical} from './care-recovery-routing.mjs';
+import {canonical,CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
 import {assertSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
 const check=(ok,code)=>{if(!ok)refuseRegistered('catalog_runtime_preflight_'+code);};
 export function catalogRuntimePredecessorTemplate(source){
@@ -18,12 +18,20 @@ export function verifyCatalogRuntimePredecessorFunction(fn){
 export function verifyCatalogRuntimeRecoveryFunction(fn){
  return verifyRegisteredFunctionProfile(fn,C.predecessorZip,C.predecessorBytes,K.recoveryVersion);
 }
-export function verifyCatalogRuntimePredecessorControl(raw,source){
- const parameters={ClinicalApiId:P.apiId,DatabaseName:P.database,DatabaseClusterArn:P.cluster,DatabaseSecretArn:'****',
+const parameters=key=>({ClinicalApiId:P.apiId,DatabaseName:P.database,DatabaseClusterArn:P.cluster,DatabaseSecretArn:'****',
   ConsumerUserPoolId:P.consumerPool,ConsumerUserPoolClientId:P.consumerClient,WorkforceUserPoolId:P.workforcePool,
   WorkforceUserPoolClientId:P.workforceClient,ClinicalCoreKeyArn:P.keyArn,LambdaCodeBucket:P.bucket,
-  LambdaCodeKey:catalogRuntimePredecessor().key};
- return verifyRegisteredControlInventory(raw,source,catalogRuntimePredecessorTemplate(source),parameters,verifyCatalogRuntimePredecessorFunction);
+  LambdaCodeKey:key});
+export function verifyCatalogRuntimePredecessorControl(raw,source){
+ return verifyRegisteredControlInventory(raw,source,catalogRuntimePredecessorTemplate(source),parameters(catalogRuntimePredecessor().key),verifyCatalogRuntimePredecessorFunction);
+}
+export function verifyCatalogRuntimeSuccessorControl(raw,source,candidate,current,artifact,retainedVersion){
+ check(retainedVersion===undefined||retainedVersion===K.recoveryVersion,'routing_version');
+ verifyCatalogRuntimeArtifactBinding(candidate,current,artifact);
+ const expected=catalogRuntimePredecessorTemplate(source);expected.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=artifact.versionId;
+ return verifyRegisteredControlInventory(raw,source,expected,parameters(artifact.key),
+  fn=>verifyRegisteredFunctionProfile(fn,candidate.manifest.zipSha256,candidate.zip.length,'$LATEST'),
+  retainedVersion?R.latestArn+':'+retainedVersion:R.latestArn);
 }
 /** Injected ports are fictional tests only. The public observer constructs each
  * port from its own Git/STS/database/S3/Lambda read; no saved report is admitted. */

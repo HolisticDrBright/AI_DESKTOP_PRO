@@ -3,7 +3,7 @@
  * No AWS, upload, execution, SQL, activation or mobile build port exists here. */
 import {readFileSync,lstatSync,mkdirSync,realpathSync,openSync,writeFileSync,fsyncSync,closeSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {sha256,careReleaseZip,careSourceSnapshot,buildCareIdentityBundle} from './synthetic-care-release.mjs';
+import {CARE_RELEASE as P,sha256,careReleaseZip,careSourceSnapshot,buildCareIdentityBundle} from './synthetic-care-release.mjs';
 import {CARE_REGISTERED as C,careRegisteredCurrent,assertCareRegisteredCurrent,createCareRegisteredCandidate,
  readCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {canonical} from './care-recovery-routing.mjs';
@@ -61,6 +61,17 @@ export async function buildCatalogRuntimeCandidate(root,mobileRoot){
  const current=careRegisteredCurrent(root,mobileRoot),bundle=await buildCareIdentityBundle(root);
  check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');
  return createCatalogRuntimeCandidate(current,bundle);
+}
+/** Exact versioned storage binding, not a saved upload's authority. */
+export function verifyCatalogRuntimeArtifactBinding(candidate,current,artifact){
+ verifyCatalogRuntimeCandidate(candidate,current);
+ check(artifact&&canonical(Object.keys(artifact).sort())===canonical(['bucket','bytes','encryption','exactVersionReadbackVerified',
+  'key','kmsKeyArn','reused','sha256','versionId'])&&artifact.bucket===P.bucket&&artifact.key===candidate.manifest.key
+  &&artifact.sha256===candidate.manifest.zipSha256&&artifact.bytes===candidate.zip.length&&artifact.exactVersionReadbackVerified===true
+  &&typeof artifact.reused==='boolean'&&artifact.encryption==='aws:kms'&&artifact.kmsKeyArn===P.keyArn
+  &&typeof artifact.versionId==='string'&&artifact.versionId.length>0&&artifact.versionId.length<=1024
+  &&artifact.versionId!=='null'&&!/[\u0000-\u0020\u007f]/.test(artifact.versionId),'artifact_binding');
+ return structuredClone(artifact);
 }
 export async function inspectCatalogRuntimeArtifact(root,mobileRoot,directory){
  const current=careRegisteredCurrent(root,mobileRoot),candidate=readCareRegisteredCandidate(directory);

@@ -153,6 +153,8 @@ jobs:
         run: npm run test:synthetic-catalog-runtime-release
       - name: Fixed catalog-runtime immutable upload and stopped-writer reconciliation
         run: npm run test:synthetic-catalog-runtime-upload
+      - name: Fixed catalog-runtime unexecuted proposal and stopped-writer reconciliation
+        run: npm run test:synthetic-catalog-runtime-proposal
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - name: Preserve pinned Next lint rules with the bounded root matcher
