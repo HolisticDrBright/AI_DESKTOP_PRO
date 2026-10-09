@@ -52,6 +52,21 @@ describe('exact optional absence, not authorization failure', () => {
     await expect(inventoryServiceReader(execute)('lambda', 'get-function-configuration', { FunctionName: 'fictional' })).rejects.toThrow('service_aws_read_failed');
   });
 });
+it('admits successful empty notification output only for that operation, never for failed or unknown reads', async () => {
+  const parameters = { Bucket: 'fictional', ExpectedBucketOwner: '588966314750' };
+  for (const stdout of ['', ' \r\n', '{}']) {
+    const execute = (() => stdout) as unknown as typeof execFileSync;
+    await expect(inventoryServiceReader(execute)('s3api', 'get-bucket-notification-configuration', parameters)).resolves.toEqual({});
+  }
+  const blank = (() => '') as unknown as typeof execFileSync;
+  for (const operation of ['get-bucket-encryption', 'get-bucket-versioning', 'get-bucket-policy', 'get-bucket-lifecycle-configuration'])
+    await expect(inventoryServiceReader(blank)('s3api', operation, parameters)).rejects.toThrow('service_aws_read_failed');
+  await expect(inventoryServiceReader(blank)('sts', 'get-caller-identity', {})).rejects.toThrow('service_aws_read_failed');
+  for (const stderr of ['AccessDenied', 'timeout', 'unknown provider failure']) {
+    const failed = (() => { throw Object.assign(Error('failed read'), { stdout: '', stderr }); }) as typeof execFileSync;
+    await expect(inventoryServiceReader(failed)('s3api', 'get-bucket-notification-configuration', parameters)).rejects.toThrow('service_aws_read_failed');
+  }
+});
 it('normalizes policy syntax without relaxing authority, including literal percent strings', () => {
   const a = { Version: '2012-10-17', Id: 'default', Statement: [{ Sid: 'random', Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:fictional:100%/file', Principal: { Service: 'lambda.amazonaws.com' } }] };
   const b = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: ['s3:GetObject'], Resource: ['arn:fictional:100%/file'], Principal: { Service: 'lambda.amazonaws.com' } }] };

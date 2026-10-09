@@ -59,8 +59,15 @@ export function inventoryServiceReader(execute: typeof execFileSync = execFileSy
     }
     if (Object.hasOwn(parameters, 'ExpectedBucketOwner') && parameters.ExpectedBucketOwner !== account) return inventoryRefuse('service_read_operation_refused');
     args.push('--profile', 'ai-synthetic-member', '--region', region, '--output', 'json', '--no-cli-pager');
-    try { return JSON.parse(String(execute('aws', args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024,
-      env: { ...process.env, AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true', AWS_MAX_ATTEMPTS: '1', AWS_CLI_AUTO_PROMPT: 'off' }, stdio: ['ignore', 'pipe', 'pipe'] }))); }
+    try {
+      const output = String(execute('aws', args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true', AWS_MAX_ATTEMPTS: '1', AWS_CLI_AUTO_PROMPT: 'off' }, stdio: ['ignore', 'pipe', 'pipe'] }));
+      // The successful AWS CLI emits no text for an empty notification map.
+      // Only this exact operation admits that representation, and only after
+      // execFileSync returned successfully. Denied/failed reads still throw.
+      if (key === 's3api/get-bucket-notification-configuration' && !output.trim()) return {};
+      return JSON.parse(output);
+    }
     catch (error) {
       const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim().replace(/^aws: \[ERROR\]: /, '') : '';
       const codes = absent[key] ?? [], providerOperation = awsOperationNames[operation];
