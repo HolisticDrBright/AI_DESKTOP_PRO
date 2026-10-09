@@ -103,6 +103,28 @@ describe('blocked preserving intent successor operator library',()=>{
   expect(r).toMatchObject({rolledBack:true,observedMigrationCount:47,tableCount:88,applied:false,
    rowCount:before.rowCount,dataSha256:before.dataSha256,schemaSha256:before.schemaSha256});await predecessor();
  },30000); // Multiple complete SQL fingerprints and rollback over 12k+ fictional rows; transport deadlines are unchanged.
+ it('uses fresh writer statement snapshots while the inspector remains repeatable-read only',async()=>{
+  const queries:string[]=[];
+  await expect(run('upgrade',database(async sql=>{
+   queries.push(sql);if(sql.startsWith('lock table '))throw Error('fictional stop before mutation');
+  }))).rejects.toMatchObject({category:'upgrade_failed',stage:'writer_locks'});
+  expect(queries[0]).toBe('set transaction isolation level read committed');
+  expect(queries.some(sql=>/^(create|alter|insert|update|delete)/i.test(sql))).toBe(false);await predecessor();
+ });
+ it.each(['clinical_core.schema_migrations','clinical_reference.schema_migrations'])
+ ('refuses %s drift at lock admission before successor DDL',async table=>{
+  const queries:string[]=[];
+  const changed=database(async(sql,tx)=>{
+   queries.push(sql);
+   // Actual ledger SQL and rollback, with a modeled admission-boundary change.
+   // This is not independent-session or hosted concurrency evidence.
+   if(sql.startsWith('lock table '))await tx.query(`update ${table} set sha256=$1 where version=$2`,
+    ['f'.repeat(64),table.startsWith('clinical_core.')?m[0].version:reference[0].version]);
+  });
+  await expect(run('upgrade',changed)).rejects.toMatchObject({category:'history_refused',stage:'writer_history'});
+  expect(queries.some(sql=>/^(create|alter|insert|update|delete)/i.test(sql))).toBe(false);await predecessor();
+  expect((await run('inspect')).observedMigrationCount).toBe(47);
+ });
  it('refuses an unapplied terminal predecessor instead of implicitly upgrading the parent',async()=>{
   const terminal=m.at(-1)!;await pg.query('delete from clinical_core.schema_migrations where version=$1',[terminal.version]);
   try{await expect(run('upgrade')).rejects.toThrow('history_refused');}

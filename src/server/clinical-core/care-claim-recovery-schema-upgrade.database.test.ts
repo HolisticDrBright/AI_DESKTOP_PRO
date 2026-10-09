@@ -56,6 +56,31 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close(); });
 
 describe('prepared preserving claim recovery 105 to 106 transition', () => {
+  it('uses fresh writer statement snapshots before bounded table-lock admission', async () => {
+    const queries: string[] = [];
+    await expect(run('upgrade', database(async sql => {
+      queries.push(sql);
+      if (sql.startsWith('lock table ')) throw Error('fictional stop before mutation');
+    }))).rejects.toMatchObject({ category: 'upgrade_failed', stage: 'writer_locks' });
+    expect(queries[0]).toBe('set transaction isolation level read committed');
+    expect(queries.some(sql => /^(create|alter|insert|update|delete)/i.test(sql))).toBe(false);
+    await predecessor();
+  });
+  it('refuses ledger drift at lock admission before successor DDL', async () => {
+    const queries: string[] = [];
+    // A real local ledger update at the modeled admission boundary. This is
+    // rollback/order evidence, not a real concurrent or hosted writer.
+    const changed = database(async (sql, tx) => {
+      queries.push(sql);
+      if (sql.startsWith('lock table ')) await tx.query(
+        'update clinical_core.schema_migrations set sha256=$1 where version=$2',
+        ['f'.repeat(64), migrations[0].version]);
+    });
+    await expect(run('upgrade', changed)).rejects.toMatchObject({ category: 'history_refused', stage: 'writer_history' });
+    expect(queries.some(sql => /^(create|alter|insert|update|delete)/i.test(sql))).toBe(false);
+    await predecessor();
+    await run('inspect');
+  });
   it('refuses altered artifacts and activation boundaries before any database call', async () => {
     let opened = false;
     const never: ClinicalCoreDatabase = { transaction: async () => { opened = true; throw new Error('unexpected'); } };

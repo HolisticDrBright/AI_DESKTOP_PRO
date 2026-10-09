@@ -90,7 +90,8 @@ export async function runQualificationSchemaUpgrade(database: ClinicalCoreDataba
   try {
     return await database.transaction(async tx => {
       stage = 'transaction_settings';
-      if (command === 'inspect') await tx.query('set transaction isolation level repeatable read read only');
+      // Do not inherit a changed server default for mutable admission.
+      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
       await tx.query("set local lock_timeout='5s'");
       await tx.query("set local statement_timeout='30s'");
       // Fail instead of silently fingerprinting an RLS-filtered subset. This setting

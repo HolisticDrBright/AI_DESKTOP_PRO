@@ -116,15 +116,19 @@ class RehearsalRollback extends Error { constructor(readonly result: Result) { s
 
 /** Exact fictional qualification transition. Never touches staging, drops rows,
  * rewrites an earlier migration, enables APIs, grants consent or activates PHI. */
-export async function runCareMessagingSchemaUpgrade(database: ClinicalCoreDatabase, migrations: ClinicalCoreMigration[],
-  c: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade'): Promise<Result> {
+export async function runCareMessagingSchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
+  suppliedConfiguration: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade'): Promise<Result> {
+  // Awaited transports cannot replace the artifact/configuration admitted here.
+  const migrations = suppliedMigrations.map(m => ({ ...m })), c = { ...suppliedConfiguration };
   assertCareMessagingUpgrade(c, migrations);
   if (!['inspect', 'rehearse', 'upgrade'].includes(command)) fail('boundary_refused');
   let stage = 'transaction_start';
   try {
     return await database.transaction(async tx => {
       stage = 'transaction_settings';
-      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level repeatable read');
+      // Writer snapshots must see commits admitted during a table-lock wait.
+      // Complete table/ledger locks keep the post-admission witness stable.
+      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
       await tx.query("set local lock_timeout='5s'"); await tx.query("set local statement_timeout='30s'");
       await tx.query('set local row_security=off'); // Refuse filtered fingerprints, not grant RLS bypass.
       stage = 'database_identity';
@@ -140,6 +144,9 @@ export async function runCareMessagingSchemaUpgrade(database: ClinicalCoreDataba
       if (command !== 'inspect') {
         stage = 'writer_locks';
         await tx.query(`lock table ${[...beforeTables.tables.map(qualified), LEDGER].sort().join(',')} in share row exclusive mode`);
+        stage = 'writer_history';
+        if (await history(tx, migrations) !== count) fail('history_refused');
+        stage = 'writer_inventory';
         if (JSON.stringify(await inventory(tx, count)) !== JSON.stringify(beforeTables)) fail('inventory_refused');
       }
       stage = 'before_fingerprint'; const before = await fingerprint(tx, beforeTables.tables);
@@ -175,7 +182,7 @@ export async function runCareMessagingSchemaUpgrade(database: ClinicalCoreDataba
         || inspected.dataSha256 !== error.result.dataSha256 || inspected.rowCount !== error.result.rowCount) fail('verification_failed');
       return { ...inspected, command: 'rehearse', rolledBack: true };
     }
-    if (error instanceof CareMessagingUpgradeError) throw error;
+    if (error instanceof CareMessagingUpgradeError) throw new CareMessagingUpgradeError(error.category, error.stage ?? stage);
     throw new CareMessagingUpgradeError('upgrade_failed', stage);
   }
 }

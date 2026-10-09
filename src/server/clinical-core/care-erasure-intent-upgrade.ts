@@ -141,7 +141,9 @@ export async function runCareErasureIntentUpgrade(database:ClinicalCoreDatabase,
  const p=careErasureIntentMapping(m,reference,overlay,c);
  if(!['inspect','rehearse','upgrade'].includes(command))fail('boundary_refused');let stage='transaction_start';
  try{return await database.transaction(async tx=>{
-  stage='transaction_settings';await tx.query(command==='inspect'?'set transaction isolation level repeatable read read only':'set transaction isolation level repeatable read');
+  // Complete locks protect writer rows after admission; read committed sees a
+  // competing commit during a lock wait rather than retaining an older view.
+  stage='transaction_settings';await tx.query(command==='inspect'?'set transaction isolation level repeatable read read only':'set transaction isolation level read committed');
   await tx.query("set local lock_timeout='5s'");await tx.query("set local statement_timeout='30s'");await tx.query('set local row_security=off');
   stage='database_identity';if((await tx.query<{name:string}>('select current_database() as name')).rows[0]?.name!==c.databaseName)fail('boundary_refused');
   if(command!=='inspect')for(const key of ['ai-desktop-pro:clinical-core-migrations','ai-desktop-pro:governed-catalog-migrations']){
@@ -150,6 +152,8 @@ export async function runCareErasureIntentUpgrade(database:ClinicalCoreDatabase,
   stage='history';const successor=await history(tx,p);stage='inventory';const beforeTables=await inventory(tx,successor);
   if(command!=='inspect'){
    stage='writer_locks';await tx.query(`lock table ${[...beforeTables.tables.map(base.qualified),'clinical_core.schema_migrations','clinical_reference.schema_migrations'].sort().join(',')} in share row exclusive mode`);
+   stage='writer_history';if(await history(tx,p)!==successor)fail('history_refused');
+   stage='writer_inventory';
    if(JSON.stringify(await inventory(tx,successor))!==JSON.stringify(beforeTables))fail('inventory_refused');
   }
   stage='before_verification';if(successor)await verifySuccessor(tx,m,overlay);else await base.verifyTerminal(tx,m,true);

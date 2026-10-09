@@ -51,6 +51,15 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close(); });
 
 describe('data-preserving qualification upgrade using actual 102/103 artifacts', () => {
+  it('sets writer isolation explicitly instead of inheriting a server default', async () => {
+    const queries: string[] = [];
+    await expect(upgrade(database(async sql => {
+      queries.push(sql);
+      if (sql.startsWith('lock table ')) throw Error('fictional stop before mutation');
+    }))).rejects.toMatchObject({ category: 'upgrade_failed', stage: 'writer_locks' });
+    expect(queries[0]).toBe('set transaction isolation level read committed');
+    await remains102();
+  });
   it('reproduces empty-installer refusal without losing seeded data or retaining new DDL', async () => {
     await expect(applyProductionClinicalCoreMigrations(database(), migrations)).rejects.toThrow('verification_failed');
     await remains102();

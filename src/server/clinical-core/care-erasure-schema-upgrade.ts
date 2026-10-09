@@ -180,7 +180,7 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
   if (sha(JSON.stringify({ cols, constraints })) !== '5d1c88f1c605d77e0d9ccc613e700c5f6cba3a7691518d09909fedde203b0031') fail('verification_failed', 'receipt_schema_contract');
 }
 /** Source-only reuse by the intent successor. This exports no database grant or
- * transport and leaves the historical operator's pins and behavior unchanged. */
+ * transport and leaves the historical operator's artifact pins unchanged. */
 export const careErasurePreservation = Object.freeze({ tableQuery: TABLES, tableName: name, qualified,
   fingerprint, functionBodySha256: body, verifyTerminal: verify });
 export type CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1'; execution: 'synthetic-staging'; phiAllowed: false;
@@ -201,7 +201,10 @@ export async function runCareErasureSchemaUpgrade(database: ClinicalCoreDatabase
   try {
     return await database.transaction(async tx => {
       stage = 'transaction_settings';
-      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level repeatable read');
+      // A table-lock wait cannot refresh an existing repeatable-read snapshot.
+      // Fresh writer snapshots plus complete table/ledger locks below protect
+      // the preservation witness; inspectors retain a stable read-only view.
+      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
       await tx.query("set local lock_timeout='5s'"); await tx.query("set local statement_timeout='30s'"); await tx.query('set local row_security=off');
       stage = 'database_identity';
       if ((await tx.query<{ name: string }>('select current_database() as name')).rows[0]?.name !== c.databaseName) fail('boundary_refused');
@@ -216,6 +219,9 @@ export async function runCareErasureSchemaUpgrade(database: ClinicalCoreDatabase
       if (command !== 'inspect') {
         stage = 'writer_locks';
         await tx.query(`lock table ${[...beforeTables.tables.map(qualified), 'clinical_core.schema_migrations', 'clinical_reference.schema_migrations'].sort().join(',')} in share row exclusive mode`);
+        stage = 'writer_history';
+        if (await history(tx, m, reference) !== successor) fail('history_refused');
+        stage = 'writer_inventory';
         if (JSON.stringify(await inventory(tx, successor)) !== JSON.stringify(beforeTables)) fail('inventory_refused');
       }
       stage = 'before_verification'; await verify(tx, m, successor);
