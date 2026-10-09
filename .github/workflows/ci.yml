@@ -177,6 +177,8 @@ jobs:
         run: |
           npm run check:aws-governed-catalog
           npm run check:aws-governed-catalog-api
+      - name: Build read-only pending catalog forward inspector (no AWS access or registration)
+        run: npm run build:catalog-forward-inspector
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
