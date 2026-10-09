@@ -377,7 +377,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: "11111111-aaaa-4aaa-8aaa-111111111111", practitioner_name: "Dr",
     title: null, appointment_type: "telehealth", location: "Telehealth", telehealth_url: null, status: "confirmed", version: 1, starts_at: "2026-10-09T17:00:00.000Z", ends_at: "2026-10-09T17:30:00.000Z", ...overrides });
   const start = (handlerConfig = zoomConfig, extra: Record<string, unknown> = {}) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/start", { appointmentId: APPOINTMENT, hostDisplayName: "Dr. Synthetic", ...extra }, workforceClaims));
-  const jsonResponse = (status: number, body: unknown, text?: string) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => body, text: async () => text ?? JSON.stringify(body) });
+  const jsonResponse = (status: number, body: unknown, text?: string) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, body: new Response(text ?? JSON.stringify(body)).body, json: async () => body, text: async () => text ?? JSON.stringify(body) });
 
   /**
    * DynamoDB stand-in: reads are queued per command kind (so interleaved
@@ -761,6 +761,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
       { meeting_id: 123, summary_content: "someone else's meeting" },
       { summary_content: "no meeting id at all" },
       { meeting_id: 900000001, meeting_uuid: "another-instance", summary_content: "same number, other instance" },
+      { meeting_id: 900000001, summary_content: "missing exact instance identity" },
     ]) {
       fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, bad) })]);
       queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
@@ -773,17 +774,44 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     const oversized = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
     expect(oversized.statusCode).toBe(503);
 
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, summary_content: "   " }) })]);
-    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001" }));
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, meeting_uuid: "uuid-900000001", summary_content: "   " }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
     const empty = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
     expect(JSON.parse(empty.body ?? "{}").data).toMatchObject({ summaryReady: false });
     expect(putItems().filter((item) => item.note)).toHaveLength(1);
   });
 
+  it("refuses a summary when the visit has no verified instance UUID", async () => {
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, meeting_uuid: "uuid-900000001", summary_content: "unbound source" }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: null }));
+    const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(putItems()).toHaveLength(0);
+  });
+
+  it("cancels an undeclared oversized summary stream before later chunks and never saves a note", async () => {
+    let reads = 0, cancelled = false;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads++;
+        controller.enqueue(new Uint8Array(1536 * 1024));
+      },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 }));
+    response.text = async () => { throw Error("unbounded materialization forbidden"); };
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => response })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+    const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(reads).toBeLessThanOrEqual(2);
+    expect(cancelled).toBe(true);
+    expect(putItems()).toHaveLength(0);
+  });
+
   it("re-import keeps practitioner notes and action-item decisions and retains the prior revision", async () => {
     const previous = { status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "uuid-1", aiSections: { summary: "old", patient_reported: "", results_reviewed: "", plan_discussed: "" }, aiOriginal: {}, practitionerNotes: "Keep me", actionItems: [{ id: "a1", text: "Order ferritin", status: "approved" }], revision: 1, importedAt: "2026-10-01T00:00:00.000Z", signedAt: null, signedBy: null };
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, summary_overview: "new overview", next_steps: ["Order ferritin", "Sleep log"] }) })]);
-    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", note: previous, version: 4 }));
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, meeting_uuid: "uuid-900000001", summary_overview: "new overview", next_steps: ["Order ferritin", "Sleep log"] }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", note: previous, version: 4 }));
     const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
     const note = JSON.parse(result.body ?? "{}").data.visit.note as Record<string, unknown>;
     expect(note).toMatchObject({ revision: 2, practitionerNotes: "Keep me" });

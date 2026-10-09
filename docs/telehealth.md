@@ -3,14 +3,30 @@
 The Telehealth tab (sidebar, under Calendar) is where a practitioner runs a
 video visit without leaving the chart: the day's virtual visits, the visit
 itself with Zoom embedded in the page, and the post-visit note that starts as
-Zoom AI Companion's summary and becomes a chart note only when the
-practitioner signs it.
+Zoom AI Companion's summary and becomes a signed telehealth visit record when
+the practitioner signs it. Chart-note integration is still outstanding.
 
 This is the clinical edition. There is no sample data on any of these screens:
 every row is an appointment that exists, every consent is a record somebody
 made, and a service that cannot answer says so.
 
 ## Product decisions carried into code
+
+### October 9 summary-boundary repair
+
+Summary import requires a known visit instance UUID and an exact matching UUID
+in the provider response; a meeting number alone is not authority. Legacy visits
+without a verified instance remain refused rather than silently importing an
+unbound summary. Response bytes are streamed under the 256 KiB decoded limit,
+cancelled on overrun, decoded as strict UTF-8, and parsed only after the bound
+holds. Malformed declared lengths are refused before reading; identity-encoded
+lengths must match received bytes. Fetch-decoded compressed bodies remain bounded
+but their compressed wire length is not equated to decoded length.
+
+These are source repairs, not deployed acceptance. The October 9 audit's meeting
+creation settlement, current note-read authorization and immutable patient/consent
+binding findings remain open, as do chart/lifecycle/multi-clinic integration and
+the authorized positive host-and-patient Zoom journey. PHI remains disabled.
 
 | Decision | Where it is enforced |
 | --- | --- |
