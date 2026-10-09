@@ -94,6 +94,7 @@ jobs:
           npm run build:inventory-qualification-target
           npm run test:inventory-qualification-identities
           npx vitest run src/server/clinical-core/inventory-qualification-identity-template.test.ts src/server/clinical-core/inventory-qualification-identity-configuration-command.test.ts
+          npx vitest run src/server/clinical-core/inventory-qualification-fixtures.test.ts
           npm run build:inventory-qualification-identities
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh

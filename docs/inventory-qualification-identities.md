@@ -23,3 +23,13 @@ Cognito can return `WebAuthnConfiguration: { FactorConfiguration: "SINGLE_FACTOR
 ## Verification limits
 
 The template-to-observer test uses fictional responses derived from rendered properties. It checks parity, not AWS behavior. Only the independent read against completed real resources can establish configuration. Even that read cannot certify a user's MFA login or commercial and PHI readiness.
+
+## Fictional account provisioning
+
+Only after the owner's separate synthetic-resource authorization, build from clean committed source and run `node dist/aws-clinical-core/inventory-qualification-identities/provision-fictional-fixtures.cjs --provision-fictional-fixtures`. The command is restricted to the new isolated pools `us-east-2_G2Hvf9wzJ` and `us-east-2_zGOVBoeGT`; it accepts no alternative account, pool, username, password, consent or approval input. It rechecks the private configuration before every write and at completion.
+
+The operator first persists a create-only intent with randomly generated credentials in Secrets Manager under `alp/qualification/inventory-identities/<binding hash>`. Fictional addresses use the reserved `.invalid` domain; Cognito invitations are suppressed and alias takeover is refused. Three distinct immutable person IDs and one fictional organization ID are recorded. They are test identifiers, not database authority, and fixture email verification is not evidence of a real email-confirmation journey.
+
+On retry, the persisted intent wins. A missing user is created; an exact intent-owned user in `FORCE_CHANGE_PASSWORD` may receive its initial permanent password. A confirmed user is never reset, and missing, disabled, displaced or production-bound attributes are refused. SDK calls use the explicit member profile, Ohio endpoints, one attempt and a finite deadline. Uncertain writes stop rather than repeat. Credentials, SDK error bodies and tokens are never printed. The final report separately counts create attempts and completed initial-password writes; these are not claims of newly created users in a concurrent run.
+
+Workforce TOTP enrollment and authenticated consumer/workforce login remain unverified after provisioning. No clinical database row, retention-service authority, provider release, consent, review hash or PHI setting is written. Do not point a deployed API at these identities until its separate target binding, database mappings and safety qualifications are satisfied.

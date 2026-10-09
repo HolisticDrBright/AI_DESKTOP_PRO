@@ -73,10 +73,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   await build({ absWorkingDir: root, entryPoints: ['src/server/clinical-core/inventory-qualification-identity-configuration-cli.ts'],
     outfile: resolve(directory, 'observe-configuration.cjs'), bundle: true, platform: 'node', target: 'node22', format: 'cjs',
     minify: true, legalComments: 'none' });
+  await build({ absWorkingDir: root, entryPoints: ['src/server/clinical-core/inventory-qualification-fixtures-cli.ts'],
+    outfile: resolve(directory, 'provision-fictional-fixtures.cjs'), bundle: true, platform: 'node', target: 'node22', format: 'cjs',
+    minify: true, legalComments: 'none' });
   if (git(['rev-parse', 'HEAD']) !== sourceCommit || git(['status', '--porcelain', '--untracked-files=normal']))
     throw Error('inventory_identity_source_changed');
   writeFileSync(resolve(directory, 'manifest.json'), JSON.stringify({ contract: 'inventory-qualification-identities-build/1',
     sourceCommit, templateSha256: sha(template), configurationObserverSha256: sha(readFileSync(resolve(directory, 'observe-configuration.cjs'))),
+    fixtureProvisionerSha256: sha(readFileSync(resolve(directory, 'provision-fictional-fixtures.cjs'))),
     account: IDENTITY_ACCOUNT, region: IDENTITY_REGION,
     resources: 4, accountsCreated: false, deployed: false, physicalLoginVerified: false, databaseAuthorityVerified: false,
     acceptance: false, activation: 'blocked', phiAllowed: false }, null, 2) + '\n');
