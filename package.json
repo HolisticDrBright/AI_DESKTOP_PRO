@@ -12,6 +12,8 @@
     "test:catalog-forward-rollback": "node --test scripts/catalog-forward-rollback-custody.test.mjs",
     "rehearse:catalog-forward-rollback": "node scripts/rehearse-catalog-forward-rollback.mjs --rehearse-fictional-catalog-rollback-only",
     "qualify:catalog-lock-admission": "node scripts/rehearse-catalog-forward-rollback.mjs --qualify-fictional-catalog-lock-admission-only",
+    "build:catalog-forward-apply": "node scripts/build-catalog-forward-inspector.mjs --preserving-apply",
+    "apply:catalog-forward": "node scripts/apply-catalog-forward.mjs --apply-reviewed-synthetic-catalog-forward",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

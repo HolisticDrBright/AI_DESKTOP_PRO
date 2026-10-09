@@ -15,6 +15,7 @@ export const CATALOG_FORWARD_UPGRADE = Object.freeze({
   sourceCoreSha256: '02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7',
   liveCoreSha256: '447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50',
   referenceBeforeSha256: '83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62',
+  referenceAfterSha256: '80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a',
   tableMetadataSha256: 'b2f51c806ce1ddf0c7d7a1bb745136c4f468e01403f3f3de489ccd1d67b90a56',
 });
 
@@ -72,6 +73,18 @@ async function verifyPolicy(tx: ClinicalCoreTransaction, successor: boolean) {
   if (role !== true) fail('policy_refused');
 }
 type Mapping = ReturnType<typeof catalogForwardMapping>;
+/** Complete witness identity, shared by the writer and independent readback.
+ * A digest is an observation, never approval or deployment authority. */
+export function catalogForwardObservationSha256(configuration: CareErasureUpgradeConfiguration,
+  dataSha256: string, schemaSha256: string, successor: boolean) {
+  return sha(JSON.stringify({
+    contract: 'catalog-forward-upgrade-observation/1', account: configuration.account, region: configuration.region,
+    clusterArn: configuration.clusterArn, secretArn: configuration.secretArn, databaseName: configuration.databaseName,
+    coreLedgerSha256: CATALOG_FORWARD_UPGRADE.liveCoreSha256,
+    referenceLedgerSha256: successor ? CATALOG_FORWARD_UPGRADE.referenceAfterSha256 : CATALOG_FORWARD_UPGRADE.referenceBeforeSha256,
+    candidateSqlSha256: CATALOG_FORWARD_UPGRADE.sqlSha256, dataSha256, schemaSha256,
+  }));
+}
 async function history(tx: ClinicalCoreTransaction, mapping: Mapping) {
   const core = (await tx.query('select version,name,sha256 from clinical_core.schema_migrations order by version')).rows;
   if (JSON.stringify(core) !== JSON.stringify(mapping.liveCore)) fail('history_refused');
@@ -200,13 +213,8 @@ export async function runCatalogForwardUpgrade(database: ClinicalCoreDatabase, s
     stage = 'before_policy'; await verifyPolicy(tx, successor);
     stage = 'before_fingerprint'; const before = await fingerprint(tx, tables);
     const schema = await preservedSchema(tx, tables);
-    const observation = (data: string, preserved: string, state: boolean) => sha(JSON.stringify({
-      contract: 'catalog-forward-upgrade-observation/1', account: configuration.account, region: configuration.region,
-      clusterArn: configuration.clusterArn, secretArn: configuration.secretArn, databaseName: configuration.databaseName,
-      coreLedgerSha256: CATALOG_FORWARD_UPGRADE.liveCoreSha256,
-      referenceLedgerSha256: state ? mapping.referenceAfterSha256 : CATALOG_FORWARD_UPGRADE.referenceBeforeSha256,
-      candidateSqlSha256: mapping.candidateSqlSha256, dataSha256: data, schemaSha256: preserved,
-    }));
+    const observation = (data: string, preserved: string, state: boolean) =>
+      catalogForwardObservationSha256(configuration, data, preserved, state);
     if (command !== 'inspect' && observation(before.sha256, schema, successor) !== expectedObservationSha256) fail('observation_changed');
     let applied = false;
     if (command !== 'inspect' && !successor) {

@@ -183,6 +183,10 @@ jobs:
         run: |
           npm run test:catalog-forward-rollback
           npm run build:catalog-forward-rollback
+      - name: Catalog preserving apply source build and SQL readback tests (no AWS calls or activation)
+        run: |
+          npm run build:catalog-forward-apply
+          npx vitest run src/server/clinical-core/catalog-forward-apply-command.database.test.ts
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
