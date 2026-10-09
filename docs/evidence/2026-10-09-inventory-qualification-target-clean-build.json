@@ -1,0 +1,167 @@
+{
+  "contract": "inventory-qualification-build-readback/1",
+  "sourceCommit": "a6e71da17efec032d4e04ad44b89842639782eb5",
+  "sourceClean": true,
+  "sourceInputSha256": "24c9f4c05c555b7431b1d3ee1a2c63c4422bcee759fa122ac2ef00a974cffda7",
+  "manifestSha256": "c007ea27b24189923b5c52d7e106de5869b14454ade6673404f8e3abb4f50132",
+  "profile": "adopted-plan-inventory-qualification/1",
+  "migrationReleaseSha256": "542b101ca1729576d2b203c9c2b3d98d2d9dd897e7480ab08ff150c8eacf773c",
+  "candidates": [
+    {
+      "candidate": "personal-storage",
+      "manifestSha256": "5e9562769f6182216a3e05932681f0afe6d9d9e77659a06e942c71edd52327c0",
+      "templateSha256": "cd92643b5f8921dcc1224f0b240ce04f6e189211f298c73930b579e6f9ce9fbd",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "151df730370fd19ac9d2eca38afa700669df766ea4194132cbce9619ec087e9b",
+          "bytes": 1284444
+        }
+      ]
+    },
+    {
+      "candidate": "privacy-operations",
+      "manifestSha256": "4531bd3bc36922b6456f048fd4a16abcb7b48d162d88b16bd12b0f897fe25470",
+      "templateSha256": "acae883ee9b55216c581d86f8c20084d45819916cea66596f20e507fc4278fe7",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "9ac46ca91ca7d75133a1ef2dd3d6e0dca5f1f0996a6b6f988b44f53842c060ec",
+          "bytes": 2635535
+        }
+      ]
+    },
+    {
+      "candidate": "owned-lab",
+      "manifestSha256": "daf11bb539b5654463ca3c82f65c8e46316c9e8c8250bfc0af9d4cd2207f60e4",
+      "templateSha256": "67a510aad5e953cf0f3f6163d7bf7a6a75ba908d2ffebc1bb34080146c110eee",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "70a84fa96c315747de4912213c56c87057fea592330fc79a73f7c451b3a7872a",
+          "bytes": 1250512
+        },
+        {
+          "file": "deployment-2.zip",
+          "sha256": "fc5f242d26466e9ab138b7bedc56ffbcc5ac300dc9eae40315b2be17c2c2a9b7",
+          "bytes": 1369332
+        }
+      ]
+    },
+    {
+      "candidate": "owned-voice",
+      "manifestSha256": "1e9979cc1051a38b36efd8a37a69f79aae5fe20f35ca279e72bf847869a39176",
+      "templateSha256": "572a6bebd570e6f8c9533836c97d5eb898c67a4b224977e04936984babc8c934",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "321ea41ef1f4db9afdc06930ddacf2ae5e0a1ac13d17b7b7499a9e2c91369aca",
+          "bytes": 1193804
+        }
+      ]
+    },
+    {
+      "candidate": "recording-authority",
+      "manifestSha256": "fa67e9749bf402a3547ab9515b588052203f9bac4026d2a1befc819485a874c4",
+      "templateSha256": "45dd0af2eeb036f5ef3aef4e9a20fccd79e617b2e032b59ee744d3e1e83a6741",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "03a61723ea406d2263901192265b5672cefff7885ffaa2c8d3007f74ea2f137a",
+          "bytes": 776695
+        }
+      ]
+    },
+    {
+      "candidate": "recording-capture",
+      "manifestSha256": "50bc8dbddd3d3a75b6f11e341db4fb4864bd45000bbb743137b6c830c4aaa454",
+      "templateSha256": "acda2a8232d61306b8d1411e18a9534bb881975ff6ac4a02225932f971cf2159",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "a12a3ece19d822e326ef774b031cbf52abb510f3af1ff07019c9b843d9414e2b",
+          "bytes": 1292145
+        }
+      ]
+    },
+    {
+      "candidate": "recording-transcription",
+      "manifestSha256": "c11d34f2338f47c2ea376eed0a4c5eb3897c55800e1928b9c8c52c49be9a58e4",
+      "templateSha256": "78d277cd746f3369e703b07dfac9f85419e246d528c6a966599437c5733dc42f",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "4ff7df45a347a60ccf581de17d0979868150c8d796b9b5e6f5a5bdb27df9d6d8",
+          "bytes": 1348580
+        }
+      ]
+    },
+    {
+      "candidate": "recording-drafting",
+      "manifestSha256": "fada9ad97aa065f84335041b0189e20d0ded425d750d503d207166b4d2c6d7da",
+      "templateSha256": "c3212304e01a56f3254dd1497560a568868210db67593c645056d41cca33d8e1",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "c04777c031ff23db8c417f5a5d87dfe2242dcd2bcda461599de3e6ab459689bc",
+          "bytes": 1352817
+        }
+      ]
+    },
+    {
+      "candidate": "recording-cleanup-review",
+      "manifestSha256": "d639e11249be3930926fd690c4d10b650327e4a90654f5c9a0082dcda3584af8",
+      "templateSha256": "426ef4dd0edc9d4139bcc315fac677d059fbb20cb4236398a5e19c238972ecb0",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "7e69fdade9df3bb0f5a031a9614b25d0d392a87bc9e91b40d0cda5860d8dda28",
+          "bytes": 1111477
+        }
+      ]
+    },
+    {
+      "candidate": "recording-cleanup-execution",
+      "manifestSha256": "53fcc6ba6630c9cdac259380da215af590280c1bfc9a65bf7d32bfa7b334c972",
+      "templateSha256": "9972758787ae985cb211f4aa64091611c3bb24aef93a95c2c290d06ad4271de4",
+      "packages": [
+        {
+          "file": "deployment-1.zip",
+          "sha256": "cc7c2ae9cd1a61654e1c5ec9bbdd4a7e61c307e222a03cb67696cc29ca14e48e",
+          "bytes": 1309776
+        }
+      ]
+    },
+    {
+      "candidate": "care-messaging",
+      "manifestSha256": "dc47a2a516fbe38cfc28650c1b250cfb815b80a5c5dd572eb3c7f0489299fc13",
+      "templateSha256": "71ba02642145b18da477d3d63a9b43597bcc7ec1ee0636929cfc7f06da758442",
+      "packages": [
+        {
+          "file": "deployment.zip",
+          "sha256": "d3462bdb923b212f4ce28ac5fe9c83343f462bec4f8fc81965b2359590b0089e",
+          "bytes": 801910
+        }
+      ]
+    },
+    {
+      "candidate": "care-connections",
+      "manifestSha256": "ae098edaf074a485cb7029f5294d54c658615defccd6ad205375ed2b56530eb2",
+      "templateSha256": "016ac4084e750f30ce933fd40864d7ffd73d2db8483b07f298b568199755f8e0",
+      "packages": [
+        {
+          "file": "deployment.zip",
+          "sha256": "825d647731e62ac387d14424e0fb6084795ddfe3ffd27ea6c185ab90c115dddd",
+          "bytes": 809363
+        }
+      ]
+    }
+  ],
+  "localTestCount": 80,
+  "configurationOnly": true,
+  "reviewVerified": false,
+  "deploymentPerformed": false,
+  "hostedVerified": false,
+  "acceptance": false,
+  "phiAllowed": false
+}
