@@ -8,6 +8,7 @@ import { inventoryBoundedFile, inventoryCanonical, inventorySha, readInventoryQu
 import { inventoryCondition, inventoryRules, validateInventoryQualificationTarget, type InventoryQualificationTarget } from './inventory-qualification-target';
 import { validateQualificationTargetManifest } from './qualification-target-manifest';
 import { INVENTORY_PROFILE, INVENTORY_RELEASE } from '../../../scripts/inventory-care-qualification-template.mjs';
+import { inspectInventoryStackDeclarations, observeInventoryStackDeclarations, resolveInventoryTemplate } from './inventory-qualification-stack-observer';
 
 let directory: string, artifacts: InventoryArtifactSet;
 const consumer = '11111111-1111-4111-8111-111111111111', workforce = '22222222-2222-4222-8222-222222222222';
@@ -81,6 +82,102 @@ function targetFixture(): InventoryQualificationTarget {
   return { contract: 'inventory-qualification-target/1', target, organizationId: organization, identity, artifactBucket,
     buildManifestSha256: a.manifestSha256, sourceInputSha256: a.source.sourceInputSha256, reviewSha256: digest, candidates };
 }
+
+// Fictional CloudFormation responses, not deployed resources or actual reviews.
+// Attribute values below are assembled independently of the production mapper.
+function stackFixture(candidate: InventoryQualificationTarget['candidates'][number], a: InventoryArtifactSet['candidates'][number]) {
+  const p = { ...candidate.parameters, 'AWS::AccountId': '588966314750', 'AWS::Region': 'us-east-2', 'AWS::Partition': 'aws',
+    'AWS::StackName': candidate.stackName, 'AWS::StackId': `arn:aws:cloudformation:us-east-2:588966314750:stack/${candidate.stackName}/fixture`, 'AWS::URLSuffix': 'amazonaws.com' };
+  const active = Object.entries(a.template.Resources).filter(([, r]) => !r.Condition || inventoryCondition(a.template.Conditions[r.Condition], a.template, p));
+  const resources = active.map(([id, r]) => {
+    const names: Record<string, string> = { 'AWS::Lambda::Function': 'FunctionName', 'AWS::Logs::LogGroup': 'LogGroupName',
+      'AWS::Events::Rule': 'Name', 'AWS::DynamoDB::Table': 'TableName', 'AWS::S3::Bucket': 'BucketName', 'AWS::IAM::Role': 'RoleName', 'AWS::CloudWatch::Alarm': 'AlarmName' };
+    let physical = `${candidate.candidate}-${id}`;
+    const explicit = r.Properties[names[r.Type]];
+    if (explicit !== undefined) physical = String(resolveInventoryTemplate(explicit, { template: a.template, parameters: p, refs: {}, attributes: {} }));
+    if (r.Type === 'AWS::SQS::Queue') physical = `https://sqs.us-east-2.amazonaws.com/588966314750/${id}`;
+    if (r.Type === 'AWS::StepFunctions::StateMachine') physical = 'arn:aws:states:us-east-2:588966314750:stateMachine:'
+      + resolveInventoryTemplate(r.Properties.StateMachineName, { template: a.template, parameters: p, refs: {}, attributes: {} });
+    return { LogicalResourceId: id, PhysicalResourceId: physical, ResourceType: r.Type, ResourceStatus: 'CREATE_COMPLETE' };
+  });
+  const refs = Object.fromEntries(resources.map(r => [r.LogicalResourceId, r.PhysicalResourceId])), attributes: Record<string, string> = {};
+  for (const r of resources) {
+    const id = r.LogicalResourceId, physical = r.PhysicalResourceId;
+    const services: Record<string, string> = { 'AWS::Lambda::Function': 'lambda:us-east-2:588966314750:function:',
+      'AWS::DynamoDB::Table': 'dynamodb:us-east-2:588966314750:table/', 'AWS::Events::Rule': 'events:us-east-2:588966314750:rule/', 'AWS::IAM::Role': 'iam::588966314750:role/' };
+    if (services[r.ResourceType]) attributes[`${id}.Arn`] = 'arn:aws:' + services[r.ResourceType] + physical;
+    if (r.ResourceType === 'AWS::Logs::LogGroup') attributes[`${id}.Arn`] = `arn:aws:logs:us-east-2:588966314750:log-group:${physical}:*`;
+    if (r.ResourceType === 'AWS::S3::Bucket') attributes[`${id}.Arn`] = `arn:aws:s3:::${physical}`;
+    if (r.ResourceType === 'AWS::StepFunctions::StateMachine') attributes[`${id}.Arn`] = physical;
+    if (r.ResourceType === 'AWS::SQS::Queue') {
+      attributes[`${id}.QueueName`] = id; attributes[`${id}.Arn`] = `arn:aws:sqs:us-east-2:588966314750:${id}`;
+    }
+  }
+  const context = { template: a.template, parameters: p, refs, attributes };
+  const outputs = Object.entries(a.template.Outputs).filter(([, row]) => !(row as Record<string, unknown>).Condition
+    || inventoryCondition(a.template.Conditions[String((row as Record<string, unknown>).Condition)], a.template, p))
+    .map(([name, row]) => ({ OutputKey: name, OutputValue: String(resolveInventoryTemplate((row as Record<string, unknown>).Value, context)) }));
+  return { stack: { Stacks: [{ StackName: candidate.stackName, StackId: p['AWS::StackId'], StackStatus: 'CREATE_COMPLETE',
+    Parameters: Object.entries(candidate.parameters).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })), Outputs: outputs }] },
+    template: { TemplateBody: structuredClone(a.template) }, resources: { StackResourceSummaries: resources } };
+}
+
+it('maps every active declaration in all twelve actually built templates without asserting live-service acceptance', async () => {
+  const target = targetFixture(); validateInventoryQualificationTarget(target, admissionFixture());
+  for (const c of target.candidates) {
+    const a = artifacts.candidates.find(a => a.candidate === c.candidate)!, observed = stackFixture(c, a);
+    const snapshot = inspectInventoryStackDeclarations(c, a, observed);
+    expect(snapshot.resources.length).toBeGreaterThan(0); expect(snapshot.outputs.InventoryQualificationProfile).toBe(INVENTORY_PROFILE);
+    expect(snapshot.outputs.DatabaseName).toBe('clinical_core_qualification');
+    const report = await observeInventoryStackDeclarations(c, a, async operation => structuredClone(observed[operation === 'describe-stacks' ? 'stack' : operation === 'get-template' ? 'template' : 'resources']));
+    expect(report.declarationsVerified).toBe(true);
+    for (const flag of ['liveServicesVerified', 'wholeLedgerVerified', 'acceptance', 'humanReviewsVerified', 'phiAllowed', 'mutations'] as const) expect(report[flag]).toBe(false);
+  }
+});
+it('retention schedule declarations are omitted when off and required when independently reviewed on', () => {
+  const target = targetFixture(), c = target.candidates.find(c => c.candidate === 'privacy-operations')!, a = artifacts.candidates.find(a => a.candidate === 'privacy-operations')!;
+  const off = inspectInventoryStackDeclarations(c, a, stackFixture(c, a)); expect(off.resources.some(r => r.logicalId === 'RetentionSweep')).toBe(false);
+  Object.assign(c.parameters, { RetentionScheduleEnabled: 'true', RetentionScheduleEvidenceSha256: digest, RetentionServicePersonId: retention,
+    RetentionServiceOrganizationId: organization, ExportCleanupEnabled: 'true', ExportCleanupEvidenceSha256: digest });
+  validateInventoryQualificationTarget(target, admissionFixture());
+  const on = stackFixture(c, a), verified = inspectInventoryStackDeclarations(c, a, on);
+  expect(verified.resources.some(r => r.logicalId === 'RetentionSweep')).toBe(true);
+  expect(verified.resources.find(r => r.logicalId === 'RetentionSweepSchedule')!.properties.State).toBe('ENABLED');
+  on.resources.StackResourceSummaries = on.resources.StackResourceSummaries.filter(r => r.LogicalResourceId !== 'RetentionSweep');
+  expect(() => inspectInventoryStackDeclarations(c, a, on)).toThrow();
+});
+describe('actual stack declaration negative matrix', () => {
+  const mutations: Array<[string, (v: ReturnType<typeof stackFixture>) => void]> = [
+    ['wrong account', v => { v.stack.Stacks[0].StackId = v.stack.Stacks[0].StackId.replace('588966314750', '173535830222'); }],
+    ['unfinished stack', v => { v.stack.Stacks[0].StackStatus = 'UPDATE_IN_PROGRESS'; }],
+    ['changed source parameter', v => { v.stack.Stacks[0].Parameters.find(p => p.ParameterKey === 'SourceCommit')!.ParameterValue = 'f'.repeat(40); }],
+    ['changed template', v => { v.template.TemplateBody.Resources.Function.Properties.Timeout = 1; }],
+    ['missing resource', v => { v.resources.StackResourceSummaries.pop(); }],
+    ['extra resource', v => { v.resources.StackResourceSummaries.push({ LogicalResourceId: 'Unexpected', PhysicalResourceId: 'unexpected', ResourceType: 'AWS::IAM::Role', ResourceStatus: 'CREATE_COMPLETE' }); }],
+    ['duplicate resource', v => { v.resources.StackResourceSummaries.push(structuredClone(v.resources.StackResourceSummaries[0])); }],
+    ['wrong resource type', v => { v.resources.StackResourceSummaries[0].ResourceType = 'AWS::IAM::Role'; }],
+    ['unfinished resource', v => { v.resources.StackResourceSummaries[0].ResourceStatus = 'UPDATE_FAILED'; }],
+    ['wrong function name', v => { v.resources.StackResourceSummaries.find(r => r.LogicalResourceId === 'Function')!.PhysicalResourceId = 'different-function'; }],
+    ['wrong output', v => { v.stack.Stacks[0].Outputs.find(o => o.OutputKey === 'DatabaseName')!.OutputValue = 'clinical_core'; }],
+  ];
+  for (const [name, mutate] of mutations) it(name, () => {
+    const c = targetFixture().candidates.find(c => c.candidate === 'personal-storage')!, a = artifacts.candidates.find(a => a.candidate === c.candidate)!, observed = stackFixture(c, a);
+    expect(() => inspectInventoryStackDeclarations(c, a, observed)).not.toThrow(); mutate(observed); expect(() => inspectInventoryStackDeclarations(c, a, observed)).toThrow();
+  });
+});
+it('repeated metadata drift is refused and captured inputs do not mutate while awaiting AWS', async () => {
+  const c = targetFixture().candidates.find(c => c.candidate === 'personal-storage')!, a = artifacts.candidates.find(a => a.candidate === c.candidate)!, observed = stackFixture(c, a);
+  let calls = 0;
+  await expect(observeInventoryStackDeclarations(c, a, async operation => {
+    calls++; const value = structuredClone(observed[operation === 'describe-stacks' ? 'stack' : operation === 'get-template' ? 'template' : 'resources']);
+    if (calls === 4 && operation === 'describe-stacks') (value as typeof observed.stack).Stacks[0].StackStatus = 'UPDATE_IN_PROGRESS';
+    return value;
+  })).rejects.toThrow('stack_observation_changed'); expect(calls).toBe(6);
+  await expect(observeInventoryStackDeclarations(c, a, async operation => {
+    const value = structuredClone(observed[operation === 'describe-stacks' ? 'stack' : operation === 'get-template' ? 'template' : 'resources']);
+    c.parameters.DatabaseName = 'clinical_core'; return value;
+  })).resolves.toMatchObject({ acceptance: false, declarationsVerified: true });
+});
 
 it('reads all actual candidate/template/runtime/ZIP bytes and preserves builder identity', () => {
   expect(artifacts.candidates).toHaveLength(12); expect(artifacts.candidates.reduce((n, c) => n + c.bindings.length, 0)).toBe(15);
