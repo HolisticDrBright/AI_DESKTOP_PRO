@@ -10,9 +10,13 @@ let template:{Parameters:Record<string,{Default?:string}>;Conditions:Record<stri
   Resources:Record<string,{Type:string;Properties:Record<string,Json>;DeletionPolicy?:string}>};
 const out=mkdtempSync(join(tmpdir(),'alp-cleanup-execution-test-'))+sep;
 beforeAll(()=>{
-  execFileSync(process.execPath,['scripts/build-aws-recording-authority.mjs','--cleanup-execution','--out-dir='+out],{stdio:'pipe',timeout:10000});
+  // This is a native artifact build, not a runtime-request latency assertion.
+  // The full Windows audit hit the former 10 s child limit; all six assertions
+  // passed unchanged in a separate 5.34 s run. Keep setup bounded under compile
+  // contention without changing any Lambda, SQL, lease or request deadlines.
+  execFileSync(process.execPath,['scripts/build-aws-recording-authority.mjs','--cleanup-execution','--out-dir='+out],{stdio:'pipe',timeout:30000,windowsHide:true});
   template=JSON.parse(readFileSync(out+'template.json','utf8'));
-},15000);
+},45000);
 function evaluate(v:Json,p:Record<string,string>):unknown{
   if(v===null||typeof v!=='object')return v;
   if(Array.isArray(v))return v.map(x=>evaluate(x,p));
