@@ -7,6 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "build:catalog-forward-inspector": "node scripts/build-catalog-forward-inspector.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
