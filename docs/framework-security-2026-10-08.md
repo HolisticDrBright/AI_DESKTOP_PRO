@@ -81,6 +81,22 @@ actual pushed head before a hosted-source claim.
 
 ## Remaining release requirements
 
+Hosted CI at c9203cb failed the backend-down browser case, not the authentication
+repair's built-server case. The old test expected protected knowledge tabs while
+signed out; middleware now correctly sends it to sign-in. The repaired test uses
+fictional non-credential cookie hints and an explicitly allowed development-only
+loopback transport with no backend process. No production fallback was introduced.
+It now proves unavailable screens past the navigation gate rather than passing
+most cases on sign-in copy. Two subsequent runs exposed a separate test race:
+networkidle could precede React's unavailable-state commit. Assertions now wait
+for the same rendered refusal under the original budgets, exclusions and zero
+retries. Both earlier failures remain recorded. The final backend-down browser
+run passed all13 checks in2.1minutes, including actual loopback fetch failures.
+
+The production-server fixture-refusal and eight framework checks remain in their
+separate built-runtime CI jobs. A development backend-down result does not replace
+production boundary evidence or authentication against a real clinical provider.
+
 Rebuild and qualify an exact matched API/Desktop/mobile release after the frozen
 AWS routing run settles. Do not replace its source pair, bytes or dependency
 installation during custody. Successful routing recovery is not positive erasure

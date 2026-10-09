@@ -13,8 +13,8 @@ import { expect, test } from "@playwright/test";
  * prove the happy path works, this proves the sad path stays honest.
  *
  * Recipe (no backend process started — that is the point):
- *   APP_EDITION=clinical npm run build
- *   E2E_CLINICAL_DOWN=1 CLINICAL_SUPABASE_URL=http://127.0.0.1:59999 \
+ *   E2E_DEV_SERVER=1 CLINICAL_CONTRACT_FIXTURE=1 \
+ *     E2E_CLINICAL_DOWN=1 CLINICAL_SUPABASE_URL=http://127.0.0.1:59999 \
  *     CLINICAL_SUPABASE_ANON_KEY=stub CLINICAL_ORG_ID=org-fixture \
  *     APP_EDITION=clinical npm run test:e2e -- e2e/clinical-edition.spec.ts
  */
@@ -24,6 +24,18 @@ test.skip(
 );
 
 test.describe.configure({ mode: "serial" });
+
+test.beforeEach(async ({ context, baseURL }) => {
+  // A fictional, non-credential session hint lets middleware reach the page.
+  // It cannot authenticate to any provider and is never a clinical authority.
+  // The explicit dev-only loopback boundary sends reads to the stopped backend;
+  // production refusal and signed-out navigation have separate built-server tests.
+  await context.addCookies([
+    { name: "aidp_at", value: "fictional-down-backend-not-a-credential", url: baseURL! },
+    { name: "aidp_exp", value: String(Date.now() + 3_600_000), url: baseURL! },
+    { name: "aidp_org", value: "org-fixture", url: baseURL! },
+  ]);
+});
 
 /**
  * Wordings that count as an honest "this did not load" state.
@@ -41,6 +53,13 @@ const HONEST_FAILURE =
 /** Fixture identities that must never appear in clinical mode. */
 const FIXTURE_NAMES = ["Alexandra Morgan", "Michael Johnson", "Priya Sharma", "Marcus Webb"];
 const FIXTURE_IDS = ["p-78435", "p-64201", "p-59318"];
+
+async function honestBody(page: import("@playwright/test").Page): Promise<string> {
+  // Wait for the asserted state to render; networkidle alone is not a React
+  // completion signal. Original timeouts, exclusions and refusal copy remain.
+  await expect(page.locator("body")).toContainText(HONEST_FAILURE);
+  return (await page.locator("body").innerText()).trim();
+}
 
 async function expectNoFixtureData(bodyText: string, where: string) {
   for (const name of FIXTURE_NAMES) {
@@ -63,7 +82,7 @@ test("a down backend yields an honest state, never synthetic patients", async ({
   await page.goto("/patients");
   await page.waitForLoadState("networkidle");
 
-  const body = (await page.locator("body").innerText()).trim();
+  const body = await honestBody(page);
 
   // Something must be said. A blank screen is not an honest state.
   expect(body.length, "the page must explain itself rather than render blank").toBeGreaterThan(0);
@@ -89,7 +108,7 @@ test("the governed copilot stays honest with a down backend", async ({ page }) =
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/labs?view=copilot");
   await page.waitForLoadState("networkidle");
 
-  const body = (await page.locator("body").innerText()).trim();
+  const body = await honestBody(page);
   expect(body.length, "the copilot must explain itself rather than render blank").toBeGreaterThan(0);
   expect(
     body,
@@ -111,7 +130,7 @@ test("a patient chart with a down backend refuses rather than inventing a record
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/overview");
   await page.waitForLoadState("networkidle");
 
-  const body = (await page.locator("body").innerText()).trim();
+  const body = await honestBody(page);
   await expectNoFixtureData(body, "a clinical patient chart with the backend down");
 
   // Specifically: no fabricated clinical overview. A health score for a patient
@@ -124,7 +143,7 @@ test("the review queue and calendar stay honest with a down backend", async ({ p
   for (const route of ["/tasks", "/calendar"]) {
     await page.goto(route);
     await page.waitForLoadState("networkidle");
-    const body = (await page.locator("body").innerText()).trim();
+    const body = await honestBody(page);
     await expectNoFixtureData(body, `${route} with the backend down`);
     // The demo weekday calendar template must not stand in for a real week.
     expect(body, `${route} must not render the demo template`).not.toContain(
@@ -138,7 +157,7 @@ test("the today brief and protocol screen stay honest with a down backend", asyn
   // must say so — never fall back to a template day or a template protocol.
   await page.goto("/today");
   await page.waitForLoadState("networkidle");
-  let body = (await page.locator("body").innerText()).trim();
+  let body = await honestBody(page);
   await expectNoFixtureData(body, "/today with the backend down");
   expect(body.length, "/today must explain itself rather than render blank").toBeGreaterThan(0);
   expect(
@@ -151,7 +170,7 @@ test("the today brief and protocol screen stay honest with a down backend", asyn
 
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/protocol");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "a clinical protocol screen with the backend down");
   // No fabricated plan, and no false claim that this patient simply has none.
   expect(body).not.toContain("Interaction review not completed");
@@ -165,7 +184,7 @@ test("the programs workspace stays honest with a down backend", async ({ page })
   // (an empty org and an unreachable backend are different claims).
   await page.goto("/programs");
   await page.waitForLoadState("networkidle");
-  const body = (await page.locator("body").innerText()).trim();
+  const body = await honestBody(page);
   await expectNoFixtureData(body, "/programs with the backend down");
   expect(
     body,
@@ -181,7 +200,7 @@ test("the inbox stays honest with a down backend", async ({ page }) => {
   // empty inbox and an unreachable backend are different claims).
   await page.goto("/inbox");
   await page.waitForLoadState("networkidle");
-  const body = (await page.locator("body").innerText()).trim();
+  const body = await honestBody(page);
   await expectNoFixtureData(body, "/inbox with the backend down");
   expect(
     body,
@@ -200,7 +219,7 @@ test("the patient-sync surfaces stay honest with a down backend", async ({ page 
   // different statements), and never fabricated counts.
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/app-sync");
   await page.waitForLoadState("networkidle");
-  let body = (await page.locator("body").innerText()).trim();
+  let body = await honestBody(page);
   await expectNoFixtureData(body, "the patient-sync tab with the backend down");
   expect(
     body,
@@ -212,7 +231,7 @@ test("the patient-sync surfaces stay honest with a down backend", async ({ page 
   await page.goto("/integrations");
   await page.waitForLoadState("networkidle");
   body = (await page.locator("body").innerText)
-    ? (await page.locator("body").innerText()).trim()
+    ? await honestBody(page)
     : "";
   await expectNoFixtureData(body, "/integrations with the backend down");
   expect(
@@ -231,7 +250,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
   // charge could be taken.
   await page.goto("/billing");
   await page.waitForLoadState("networkidle");
-  let body = (await page.locator("body").innerText()).trim();
+  let body = await honestBody(page);
   await expectNoFixtureData(body, "/billing with the backend down");
   expect(
     body,
@@ -244,7 +263,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
 
   await page.goto("/settings/catalog");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "/settings/catalog with the backend down");
   expect(
     body,
@@ -256,7 +275,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
 
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/billing");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "the patient billing tab with the backend down");
   expect(
     body,
@@ -274,7 +293,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
   // control that implies care could be given away.
   await page.goto("/settings/plans");
   await page.waitForLoadState("networkidle");
-  let body = (await page.locator("body").innerText()).trim();
+  let body = await honestBody(page);
   await expectNoFixtureData(body, "/settings/plans with the backend down");
   expect(
     body,
@@ -286,7 +305,10 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
 
   await page.goto("/billing/reconciliation");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  // Network idle can precede React's final state commit. Require the same
+  // unavailable assertion on the rendered surface, not a transient loading read.
+  await expect(page.locator("body")).toContainText(HONEST_FAILURE);
+  body = await honestBody(page);
   await expectNoFixtureData(body, "/billing/reconciliation with the backend down");
   expect(
     body,
@@ -298,7 +320,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
 
   await page.goto("/billing/reports");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "/billing/reports with the backend down");
   expect(
     body,
@@ -310,7 +332,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
 
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/plans");
   await page.waitForLoadState("networkidle");
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "the patient plans tab with the backend down");
   expect(
     body,
@@ -333,10 +355,11 @@ test("the product catalog and template surfaces stay honest with a down backend"
   // the load is client-side, so reading the body once races the request and
   // can catch the panel mid-flight.
   await page.goto("/settings/knowledge");
+  await expect(page).toHaveURL(/\/settings\/knowledge$/);
   await page.getByRole("tab", { name: "Product catalog" }).click();
 
   await expect(page.getByTestId("catalog-error")).toContainText(HONEST_FAILURE);
-  let body = (await page.locator("body").innerText()).trim();
+  let body = await honestBody(page);
   await expectNoFixtureData(body, "/settings/knowledge catalog with the backend down");
   // The empty-state copy must NOT appear: it would assert an empty registry.
   expect(body).not.toContain("No governed products yet");
@@ -345,7 +368,7 @@ test("the product catalog and template surfaces stay honest with a down backend"
   await page.getByRole("tab", { name: "Protocol templates" }).click();
 
   await expect(page.getByTestId("template-error")).toContainText(HONEST_FAILURE);
-  body = (await page.locator("body").innerText()).trim();
+  body = await honestBody(page);
   await expectNoFixtureData(body, "/settings/knowledge templates with the backend down");
   expect(body).not.toContain("No protocol templates yet");
 });
