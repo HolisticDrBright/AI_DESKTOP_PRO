@@ -36,9 +36,9 @@ test('the actual pinned Next plugin resolves the internal adapter, not the vulne
   assert.equal(adapter.name, '@alp/next-root-glob');
   assert.equal(adapter.version, '1.0.0');
   assert.equal(adapter.dependencies.tinyglobby, '0.2.17');
-  assert.equal(require('@next/eslint-plugin-next/package.json').version, '15.5.25');
-  assert.equal(require('eslint-config-next/package.json').version, '15.5.25');
-  assert.equal(require('next/package.json').version, '15.5.25');
+  assert.equal(require('@next/eslint-plugin-next/package.json').version, '15.5.27');
+  assert.equal(require('eslint-config-next/package.json').version, '15.5.27');
+  assert.equal(require('next/package.json').version, '15.5.27');
   assert.deepEqual(Object.keys(pluginRequire('fast-glob')), ['globSync']);
 });
 
@@ -62,14 +62,15 @@ test('upstream has exactly the reviewed directory-only glob consumer', () => {
   assert.match(source, /rootDir\.replace/);
   assert.equal(createHash('sha256').update(source.replace(/\r\n/g, '\n')).digest('hex'), '886677432990a735e5ebdfb345ff1cbd40e264f9947a8432eeeb254b3a926bde');
   assert.equal(json('package-lock.json').packages['node_modules/@next/eslint-plugin-next'].integrity,
-    'sha512-dAzOqZQCAOgIq5yQpsuMBZcwxK0AtzGqHMQpxNWYLQlvf79rsP3SDwdGPNQC4ySaMSihOQXMO/VXubQ3JWW+3A==');
+    'sha512-a94xlzvOLaULh4Fzcvj9B2hwIOtPHJW75gghkXiJ8s1Jk0eo00UknrDVhx04Y+8ARu9ds13vy/jHg5u/PdVGqw==');
 });
 
 test('locked graph has no braces, micromatch or unrelated local override', () => {
   const pkg = json('package.json');
   const lock = json('package-lock.json');
   assert.equal(pkg.devDependencies['fast-glob'], 'file:vendor/next-root-glob');
-  assert.deepEqual(pkg.overrides['@next/eslint-plugin-next@15.5.25'], { 'fast-glob': '$fast-glob' });
+  assert.deepEqual(pkg.overrides['@next/eslint-plugin-next@15.5.27'], { 'fast-glob': '$fast-glob' });
+  assert.equal(pkg.overrides['@next/eslint-plugin-next@15.5.25'], undefined);
   assert.equal(lock.packages['node_modules/fast-glob'].resolved, 'vendor/next-root-glob');
   assert.equal(lock.packages['vendor/next-root-glob'].name, '@alp/next-root-glob');
   for (const [name, entry] of Object.entries(lock.packages)) {
@@ -79,6 +80,29 @@ test('locked graph has no braces, micromatch or unrelated local override', () =>
       assert.equal(entry.resolved, 'vendor/next-root-glob');
       assert.equal(entry.link, true);
     }
+  }
+});
+
+test('runtime, lint and all platform compilers are locked to the reviewed security patch', () => {
+  const pkg = json('package.json');
+  const lock = json('package-lock.json');
+  assert.equal(pkg.dependencies.next, '15.5.27');
+  assert.equal(pkg.devDependencies['eslint-config-next'], '15.5.27');
+  assert.equal(lock.packages[''].dependencies.next, pkg.dependencies.next);
+  assert.equal(lock.packages[''].devDependencies['eslint-config-next'], pkg.devDependencies['eslint-config-next']);
+  assert.equal(lock.packages['node_modules/next'].integrity,
+    'sha512-F82CrlPZ8GRxBH9RIIoR3qU1t5RT3dv1K8moe8SjlDEquiFipvEI13R1Om90TaUOEwShkWCMlg8+gvTNzfMhvg==');
+  const platformCompilers = Object.entries(lock.packages).filter(([name]) => name.startsWith('node_modules/@next/swc-'));
+  assert.equal(platformCompilers.length, 8);
+  for (const [name, entry] of [
+    ['node_modules/next', lock.packages['node_modules/next']],
+    ['node_modules/eslint-config-next', lock.packages['node_modules/eslint-config-next']],
+    ['node_modules/@next/eslint-plugin-next', lock.packages['node_modules/@next/eslint-plugin-next']],
+    ['node_modules/@next/env', lock.packages['node_modules/@next/env']],
+    ...platformCompilers,
+  ]) {
+    assert.equal(entry.version, '15.5.27', name);
+    assert.match(entry.resolved, /-15\.5\.27\.tgz$/, name);
   }
 });
 

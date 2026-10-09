@@ -185,7 +185,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1109.0",
     "@tanstack/react-query": "^5.101.2",
     "lucide-react": "^1.24.0",
-    "next": "^15.5.25",
+    "next": "15.5.27",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zod": "4.3.6"
@@ -201,7 +201,7 @@
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^15.5.25",
+    "eslint-config-next": "15.5.27",
     "fast-glob": "file:vendor/next-root-glob",
     "js-yaml": "4.3.2",
     "playwright": "^1.61.1",
@@ -210,7 +210,7 @@
     "vitest": "4.1.11"
   },
   "overrides": {
-    "@next/eslint-plugin-next@15.5.25": {
+    "@next/eslint-plugin-next@15.5.27": {
       "fast-glob": "$fast-glob"
     },
     "nanoid": "3.3.18",
