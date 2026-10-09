@@ -1,0 +1,97 @@
+# Release qualification harnesses (security, load, application rollback)
+
+September 16, 2026. Credential-free source tooling. Nothing here is a hosted penetration test, a production load test or an executed rollback; each harness produces hashed evidence that a later hosted run must reproduce.
+
+## Security qualification
+
+`npm run build:security-qualification && npm run qualify:security` builds and runs `src/server/clinical-core/security-qualification.ts`: an in-process adversarial matrix against the production-owned consumer API and the telehealth boundary with a storage adapter that records whether it was ever invoked. Twenty-nine cases cover blocked activation, nine identity forgeries (issuer, audience, expiry, future issue time, synthetic attestation, non-production binding, unverified email, access-token misuse, malformed person id), a bearer header without the gateway authorizer, owner injection, malformed cursors and collections, workforce and unknown routes, wearable and reproductive scope escalation, oversized, malformed and prototype-polluting bodies, sanitized storage failure, and telehealth refusals (production without the PHI gate, missing attestation, workforce route with consumer claims, Stripe webhook without the boundary, reminder event while disabled, payment setup without Stripe, oversized body). Each case records the expected refusal, whether storage may be touched, the actual status and error, whether any identifier or internal message leaked, and a pass flag. The report (`dist/qualification/security-qualification.json`, exclusive-create) carries a SHA-256 over the outcomes; the unit test asserts the hash is stable for a fixed clock. CI runs it as source evidence.
+
+## Load qualification
+
+September 28 hardening: the URL pattern and a confirmation environment variable
+are no longer sufficient for a hosted run. `--execute --origin <origin>` also
+requires `--target <reviewed-qualification-target.json>`. Set `AWS_PROFILE` to the
+approved synthetic profile and use a clean, exact-source checkout. The runner
+loads the shared target validator and observes the actual STS account, source
+commit, foundation and personal-storage/owned-lab candidate stacks before sending
+any load request. Wrong/missing targets, placeholders, staging resources, dirty
+source and mismatched live bindings are refused. Local self-tests stay explicitly
+marked as local/unverified transport evidence, not hosted qualification.
+
+`infra/aws-clinical-core/load-qualification-plan.json` describes refusal-path load
+scenarios only: unauthenticated bursts against personal records and lab jobs,
+oversized-body refusals and unknown-route probes, with bounded concurrency,
+request counts and latency/error-rate objectives. `npm run qualify:load-plan`
+validates and prints the schedule without sending anything. Hosted execution uses
+`node scripts/run-aws-load-qualification.mjs --execute --origin <qualification API origin> --target <reviewed-target.json>`
+with `LOAD_QUALIFICATION_CONFIRM_SYNTHETIC=1` and the live checks above. It writes
+`dist/qualification/load-qualification.json` exclusively, recording latency,
+status distribution and an evidence hash. Any 2xx fails; unexpected statuses or
+transport failures above the scenario's error budget, or a latency breach, also
+fail. The committed plan permits no errors. `npm run test:aws-load-qualification`
+uses a local stub to prove refusal success, 2xx failure and unexpected-status failure.
+
+September 28 follow-up: a negative test reproduced a false pass when an observed
+2xx response's body cancellation threw. Status observations now precede disposal,
+so no allowed transport-error budget can hide a 2xx. Request error rates count
+each request once even when its status and disposal both fail. Regression cases
+cover one and all 2xx disposal failures plus a refused response's disposal error
+within an explicitly configured transport allowance. The committed plan still
+permits zero errors; these are local transport tests, not hosted acceptance.
+
+Reports now include their target observation. Even a passing hosted refusal-path
+load run is explicitly `positiveClinicalAcceptance: false` and
+`activationEvidence: false`. Its migration hash is declared by the reviewed target;
+this load tool does not inspect the database ledger or certify provider behavior.
+Keep the separate positive acceptance and database checks. Empty/malformed plans,
+empty refusal lists and ambiguous paths fail before dispatch. No hosted load run
+was executed while implementing this hardening.
+
+## Local release-record verification
+
+`npm run build:release-record` executes the real command on Windows as well as
+Linux/macOS. The old file-URL/path comparison silently skipped the CLI on Windows.
+`SOURCE_COMMIT`, if set, must match observed Git HEAD rather than replacing it.
+New records are create-only; choose `--output <new-file>` for another snapshot.
+`--verify <record>` reports source/artifact differences and refuses dirty snapshots
+or a dirty current checkout. A dirty inventory can still be written, explicitly
+marked dirty; it cannot pass verification. Missing, duplicate, malformed or
+path-escaping migration entries are refused rather than hashed as missing data.
+
+The seven release-record tests now run in CI, including actual command execution
+from paths with spaces, missing records, source-label spoofing, overwrite refusal,
+dirty-to-dirty verification and migration failures. A matching record is only a
+local file inventory: it does not prove that those files were built from that
+commit, were deployed, passed hosted/device tests or received human approval.
+
+## Application rollback rehearsal
+
+`scripts/run-aws-application-rollback-rehearsal.ps1` rolls one Lambda extension stack back to a previously deployed artifact. It refuses without `-ConfirmApplicationRollbackRehearsal`, outside account `173535830222`, or when the foundation reports `PhiAllowed` other than false. The previous artifact must exist in the artifact bucket and hash to the supplied SHA-256. The current `LambdaCodeKey` is recorded as the re-forward key; a change set is created with only `LambdaCodeKey` changed and every other parameter kept, then described and refused if it would touch anything other than Lambda functions. Without `-ExecuteChangeSet` the change set is deleted and nothing changes; with it the stack update is awaited and each function's `CodeSha256` is recorded. Evidence includes start and completion times, `recoveryTimeSeconds` and an evidence hash. `npm run check:aws-application-rollback` (CI) pins those safety markers.
+
+## Hosted qualification harnesses (the reviewed target, none executed)
+
+These four drive a deployed qualification target and produce reports bound to the source commit, the migration release
+hash and the configuration they used. All take the reviewed qualification target manifest
+(`infra/aws-clinical-core/qualification-target.example.json`, filled, checked with
+`npm run check:aws-qualification-target -- <file>`), verify the live account, the checkout and each candidate stack
+before their first request, and refuse the staging foundation, API and database by name. In acceptance mode, the default,
+every case is mandatory and the observations are made by the run itself; `-Mode exploratory` keeps a partial run honest
+and can never read as acceptance.
+
+| Harness | Runner | What a pass means | What it never means |
+|---|---|---|---|
+| Export and retention | `run-aws-export-retention-acceptance.ps1` | Eleven cases from consumer posture to the operator passes, including the delivered object downloaded from the reviewed bucket and version and verified against every part digest and the composite checksum | Not a retention policy, and a copy still pending cleanup is not deleted; with `-ScheduledCleanupWaitMinutes` the schedule's own removal is required, otherwise that step is skipped |
+| Recording, transcription, drafting | `run-aws-recording-acceptance.ps1` | Sixteen cases with fictional generated audio, from consent through review-only drafting to cleanup review | Not clinical quality, and not physical-device capture |
+| Voice shutdown (drain) | `run-aws-voice-shutdown-acceptance.ps1` | The draining plane refuses every public method with `voice_cleanup_only`, serves no identity, carries no qualification marker, and two read-only inventories certify nothing and show no growth | Not erasure, not an atomic snapshot, and not a completion review |
+| Retention service release | `release-aws-retention-service.ps1` | The reviewed release row is written to the qualification database, never to staging | Not an operating model and not a service level |
+
+`scripts/test-qualification-acceptance-runners.ps1` proves the binding of all of these credential-free in CI (52 cases,
+no AWS call, no request, no fixture write) and parses every operator script, alongside the 32-case name-refusal test for
+the preparation runner.
+
+## What remains
+
+None of the hosted harnesses above has been executed: no qualification candidate is deployed, so their evidence does not
+exist yet, and whatever a first run finds is new engineering. Beyond them:
+
+Independent security review and vulnerability remediation, hosted penetration testing, load qualification against the deployed synthetic stack and later the production stack, an executed rollback rehearsal with recorded RTO, snapshot/object/Cognito recovery drills, and the tabletop exercises listed in the activation checklist. Passing these harnesses in CI does not close any of those items.

@@ -144,6 +144,246 @@
     {
       "version": "20260904090000",
       "file": "20260904090000_production_independent_consumer_chat_context.sql"
+    },
+    {
+      "version": "20260908090000",
+      "file": "20260908090000_production_owned_consumer_records.sql"
+    },
+    {
+      "version": "20260908100000",
+      "file": "20260908100000_production_owned_storage_reads.sql"
+    },
+    {
+      "version": "20260908110000",
+      "file": "20260908110000_production_owned_lab_history.sql"
+    },
+    {
+      "version": "20260916010000",
+      "file": "20260916010000_production_owned_privacy_export.sql"
+    },
+    {
+      "version": "20260916020000",
+      "file": "20260916020000_production_owned_voice_consent.sql"
+    },
+    {
+      "version": "20260916030000",
+      "file": "20260916030000_production_owned_active_plan.sql"
+    },
+    {
+      "version": "20260916040000",
+      "file": "20260916040000_production_owned_privacy_requests.sql"
+    },
+    {
+      "version": "20260916050000",
+      "file": "20260916050000_production_guardian_authority.sql"
+    },
+    {
+      "version": "20260916060000",
+      "file": "20260916060000_production_owned_reproductive_context_guard.sql"
+    },
+    {
+      "version": "20260916070000",
+      "file": "20260916070000_production_owned_deletion_hold_guard.sql"
+    },
+    {
+      "version": "20260916080000",
+      "file": "20260916080000_production_lab_specimen_context.sql"
+    },
+    {
+      "version": "20260917010000",
+      "file": "20260917010000_production_privacy_fulfillment_safety.sql"
+    },
+    {
+      "version": "20260917020000",
+      "file": "20260917020000_production_owned_correction_resolution.sql"
+    },
+    {
+      "version": "20260917030000",
+      "file": "20260917030000_production_privacy_operator_queue.sql"
+    },
+    {
+      "version": "20260917040000",
+      "file": "20260917040000_production_reviewed_personal_purge.sql"
+    },
+    {
+      "version": "20260917050000",
+      "file": "20260917050000_production_external_deletion_guard.sql"
+    },
+    {
+      "version": "20260917060000",
+      "file": "20260917060000_production_external_privacy_inventory.sql"
+    },
+    {
+      "version": "20260917070000",
+      "file": "20260917070000_production_encounter_recording_authority.sql"
+    },
+    {
+      "version": "20260917080000",
+      "file": "20260917080000_production_recording_workspace.sql"
+    },
+    {
+      "version": "20260917090000",
+      "file": "20260917090000_production_recording_segments.sql"
+    },
+    {
+      "version": "20260917100000",
+      "file": "20260917100000_production_recording_lifecycle.sql"
+    },
+    {
+      "version": "20260917110000",
+      "file": "20260917110000_production_recording_qualified_start.sql"
+    },
+    {
+      "version": "20260917120000",
+      "file": "20260917120000_production_recording_reconciliation.sql"
+    },
+    {
+      "version": "20260917130000",
+      "file": "20260917130000_production_recording_readiness.sql"
+    },
+    {
+      "version": "20260917140000",
+      "file": "20260917140000_production_recording_cleanup_intents.sql"
+    },
+    {
+      "version": "20260917150000",
+      "file": "20260917150000_production_recording_cleanup_authority.sql"
+    },
+    {
+      "version": "20260917160000",
+      "file": "20260917160000_production_recording_cleanup_attempts.sql"
+    },
+    {
+      "version": "20260917170000",
+      "file": "20260917170000_production_recording_cleanup_rechecks.sql"
+    },
+    {
+      "version": "20260917180000",
+      "file": "20260917180000_production_recording_cleanup_review.sql"
+    },
+    {
+      "version": "20260917190000",
+      "file": "20260917190000_production_owned_diet_preferences.sql"
+    },
+    {
+      "version": "20260917200000",
+      "file": "20260917200000_production_owned_deletion_write_fence.sql"
+    },
+    {
+      "version": "20260917210000",
+      "file": "20260917210000_production_owned_processing_authorization.sql"
+    },
+    {
+      "version": "20260918010000",
+      "file": "20260918010000_production_owned_lab_analyses.sql"
+    },
+    {
+      "version": "20260919010000",
+      "file": "20260919010000_production_external_privacy_purge.sql"
+    },
+    {
+      "version": "20260919020000",
+      "file": "20260919020000_production_owned_identity_deletion.sql"
+    },
+    {
+      "version": "20260919030000",
+      "file": "20260919030000_production_owned_record_tombstones.sql"
+    },
+    {
+      "version": "20260920010000",
+      "file": "20260920010000_production_recording_transcription.sql"
+    },
+    {
+      "version": "20260920020000",
+      "file": "20260920020000_production_recording_workspace_finished.sql"
+    },
+    {
+      "version": "20260920030000",
+      "file": "20260920030000_production_recording_transcription_artifacts.sql"
+    },
+    {
+      "version": "20260920040000",
+      "file": "20260920040000_production_recording_drafting.sql"
+    },
+    {
+      "version": "20260920050000",
+      "file": "20260920050000_production_owned_correction_request_content.sql"
+    },
+    {
+      "version": "20260920060000",
+      "file": "20260920060000_production_owned_privacy_request_paging.sql"
+    },
+    {
+      "version": "20260920070000",
+      "file": "20260920070000_production_recording_artifact_reconciliation.sql"
+    },
+    {
+      "version": "20260920080000",
+      "file": "20260920080000_production_owned_correction_paths.sql"
+    },
+    {
+      "version": "20260920090000",
+      "file": "20260920090000_production_recording_object_intents.sql"
+    },
+    {
+      "version": "20260920100000",
+      "file": "20260920100000_production_recording_processing_retention.sql"
+    },
+    {
+      "version": "20260920110000",
+      "file": "20260920110000_production_owned_privacy_export_jobs.sql"
+    },
+    {
+      "version": "20260920120000",
+      "file": "20260920120000_production_owned_correction_lists.sql"
+    },
+    {
+      "version": "20260920130000",
+      "file": "20260920130000_production_owned_privacy_export_recovery.sql"
+    },
+    {
+      "version": "20260920140000",
+      "file": "20260920140000_production_owned_privacy_export_settlement.sql"
+    },
+    {
+      "version": "20260920150000",
+      "file": "20260920150000_production_owned_privacy_export_retention_ops.sql"
+    },
+    {
+      "version": "20260920160000",
+      "file": "20260920160000_production_owned_correction_entry_lists.sql"
+    },
+    {
+      "version": "20260920170000",
+      "file": "20260920170000_production_owned_disputes.sql"
+    },
+    {
+      "version": "20260920180000",
+      "file": "20260920180000_production_owned_privacy_export_cross_store.sql"
+    },
+    {
+      "version": "20260921010000",
+      "file": "20260921010000_production_owned_privacy_export_part_sizes.sql"
+    },
+    {
+      "version": "20260922010000",
+      "file": "20260922010000_production_record_source_regime.sql"
+    },
+    {
+      "version": "20260928010000",
+      "file": "20260928010000_production_owned_privacy_export_discovery.sql"
+    },
+    {
+      "version": "20261006010000",
+      "file": "20261006010000_production_care_messaging.sql"
+    },
+    {
+      "version": "20261006020000",
+      "file": "20261006020000_production_care_connections.sql"
+    },
+    {
+      "version": "20261006030000",
+      "file": "20261006030000_production_care_claim_recovery.sql"
     }
   ]
 }

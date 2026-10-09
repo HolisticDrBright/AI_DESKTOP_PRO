@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * Nutrition behind a TYPED Passio-shaped adapter boundary.
+ * Nutrition behind a TYPED food-database adapter boundary (Passio retired; the
+ * consumer catalog is the V2 in-house USDA catalog).
  *
- * `NutritionAdapter` is the contract a real Passio-backed implementation
- * will satisfy SERVER-SIDE (the Passio key never ships in client code —
+ * `NutritionAdapter` is the contract a real food-database-backed implementation
+ * will satisfy SERVER-SIDE (no vendor key ever ships in client code —
  * the live adapter will call a backend route, exactly like labs/tRPC).
  * `passioMockAdapter` is the demo implementation: deterministic synthetic
  * entries; capture methods (photo/barcode/voice) simulate parsed results
@@ -468,7 +469,7 @@ export const passioMockAdapter: NutritionAdapter = {
     return {
       ok: true,
       entry,
-      message: `Parsed via ${method} (demo — no camera, microphone, or Passio call was made).`,
+      message: `Parsed via ${method} (demo — no camera, microphone, or food-database call was made).`,
     };
   },
 

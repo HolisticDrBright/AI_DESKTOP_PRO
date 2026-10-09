@@ -8,8 +8,15 @@ mkdirSync(outdir, { recursive: true });
 await build({
   entryPoints: {
     operator: "src/server/clinical-core/aws-deployment-cli.ts",
+    syntheticProgramMigration: "src/server/clinical-core/aws-synthetic-program-migration-cli.ts",
+    syntheticLifecycleMigrations: "src/server/clinical-core/aws-synthetic-lifecycle-migrations-cli.ts",
+    syntheticIntakeMigrations: "src/server/clinical-core/aws-synthetic-intake-migrations-cli.ts",
+    syntheticFinalMigrations: "src/server/clinical-core/aws-synthetic-final-migrations-cli.ts",
     catalogOperator: "src/server/clinical-core/aws-catalog-import-cli.ts",
     acceptance: "src/server/clinical-core/aws-acceptance-cli.ts",
+    exportRetentionAcceptance: "src/server/clinical-core/export-retention-acceptance-cli.ts",
+    recordingAcceptance: "src/server/clinical-core/recording-acceptance-cli.ts",
+    voiceShutdownAcceptance: "src/server/clinical-core/voice-shutdown-acceptance-cli.ts",
   },
   outdir,
   bundle: true,

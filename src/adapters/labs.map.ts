@@ -11,6 +11,7 @@ import type { ReviewState, Tone } from "./types";
 
 export interface LabObservationRow {
   id: string;
+  import_event_id?: string | null;
   biomarker_definition_id: string | null;
   canonical_name: string | null;
   biological_system: string | null;
@@ -128,6 +129,8 @@ export function buildLabMarkers(rows: LabObservationRow[]): BiomarkerMarker[] {
 
     markers.push({
       id: latest.id,
+      ...(typeof latest.import_event_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(latest.import_event_id)
+        ? {labImportEventId:latest.import_event_id}:{}),
       name,
       unit,
       current,

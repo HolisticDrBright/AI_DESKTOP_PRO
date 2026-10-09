@@ -10,6 +10,103 @@ on:
 # the two refusal gates (no edition / demo edition) still hold.
 
 jobs:
+  care-messaging-source:
+    name: Care messaging database API and blocked-deployment regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Canonical schema and covered-entity mapping (no seeded approvals)
+        run: |
+          npm run check:aws-production-clinical-core
+          npm run check:aws-covered-entity-coverage
+          node --test scripts/covered-entity-disposition.test.mjs
+      - name: Fictional embedded database only; no AWS access or activation
+        run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
+      - name: Build explicitly non-deployable source artifact
+        run: npm run build:care-messaging-source
+      - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
+        run: |
+          npx vitest run src/contracts/careConnections.test.ts src/server/clinical-core/production-care-connections.database.test.ts src/server/clinical-core/production-care-connections-api.test.ts src/server/clinical-core/care-connections-source-artifact.test.ts src/server/clinical-core/care-connections-schema-upgrade.database.test.ts
+          npm run build:care-connections-source
+      - name: Unreleased claim receipt, settlement and preserving upgrade (fictional embedded database only)
+        run: |
+          npx vitest run src/server/clinical-core/care-claim-recovery.database.test.ts src/server/clinical-core/care-claim-recovery-api.test.ts src/server/clinical-core/care-claim-recovery-source-artifact.test.ts src/server/clinical-core/care-claim-recovery-schema-upgrade.database.test.ts
+          npx vitest run src/server/clinical-core/care-claim-recovery-upgrade-command.test.ts
+          npm run build:care-claim-recovery-source
+      - name: Bound qualification-only connection upgrade command (no AWS calls)
+        run: |
+          npx vitest run src/server/clinical-core/care-connections-upgrade-command.test.ts
+          npx vitest run src/server/clinical-core/care-connections-database-binding.test.ts
+          npx vitest run src/server/clinical-core/rds-single-attempt-client.test.ts src/server/clinical-core/rds-data-database.test.ts src/server/clinical-core/rds-resume-retry.test.ts
+          npm run build:aws-care-connections-upgrade
+      - name: Preserving synthetic erasure upgrade and historical alias (no AWS calls)
+        run: |
+          npm run test:ci-browser-download
+          npx vitest run src/server/clinical-core/care-erasure-operator-client.test.ts
+          npx vitest run src/server/clinical-core/care-erasure-schema-upgrade.database.test.ts src/server/clinical-core/care-erasure-upgrade-command.test.ts
+          npm run build:aws-care-erasure-upgrade -- --historical-source-only
+          npx vitest run src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts src/server/clinical-core/care-erasure-intent-command.test.ts
+          npm run build:aws-care-erasure-intent-inspector -- --historical-source-only
+      - name: Qualification-only exact approved consent copy (no AWS calls or approvals)
+        run: |
+          npx vitest run src/server/clinical-core/care-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-command.test.ts
+          npm run build:aws-care-consent-copy
+      - name: Artifact-bound connection handler and default-blocked template (no AWS calls)
+        run: |
+          npx vitest run src/server/clinical-core/care-connections-deployment.test.ts src/server/clinical-core/care-connections-artifact.test.ts
+          npm run build:aws-care-connections
+      - name: Versioned target and complete fleet capacity regressions (no AWS access)
+        run: |
+          npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts
+          node --test scripts/check-aws-qualification-capacity.test.mjs
+          node --test scripts/qualification-consent-ledger.test.mjs
+          npm run test:care-messaging-qualification-observer
+          npm run test:care-connections-qualification-observer
+      - name: Qualification wrapper parity and principal refusals (no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-acceptance-runners.ps1
+      - name: Build qualification-only preserving migration operator (no AWS execution)
+        run: npm run build:aws-care-messaging-upgrade
+      - name: Build and lint blocked/logs-only messaging candidate (no AWS execution)
+        run: |
+          npm run build:aws-care-messaging
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/care-messaging/template.json
+          cfn-lint dist/aws-clinical-core/care-connections/template.json
+  e2e-aws-recording-consent:
+    name: Browser suite (AWS recording controls, generated audio and cookie refusal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+      - name: Verify generated browser audio with fictional AWS responses; no real patient audio
+        run: |
+          node scripts/live-stub-server.mjs &
+          E2E_RECORDING_AWS=1 E2E_CARE_MESSAGES=1 E2E_DEV_SERVER=1 APP_EDITION=clinical \
+          NEXT_PUBLIC_USE_LIVE_API=true CLINICAL_CONTRACT_FIXTURE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo CLINICAL_ORG_ID=org-fixture \
+          RECORDING_AWS_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
+          RECORDING_CLEANUP_EXECUTION_UI=enabled RECORDING_CLEANUP_EXECUTION_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
+          npm run test:e2e -- e2e/aws-recording-consent.spec.ts e2e/aws-recording-capture.spec.ts e2e/aws-recording-cleanup-review.spec.ts e2e/aws-recording-cleanup-execution.spec.ts e2e/aws-recording-transcription.spec.ts e2e/care-messages.spec.ts --trace retain-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-recording-consent-browser-evidence
+          path: test-results/
+  # Existing fixture recording suites retain their own isolated runtime.
   checks:
     name: Typecheck, lint, unit, build
     runs-on: ubuntu-latest
@@ -21,8 +118,51 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Refuse root credentials in fictional intake operators
+        run: npm run test:synthetic-aws-principal
+      - name: Keep fictional identity timeout changes narrow
+        run: npm run test:synthetic-identity-timeout
+      - name: Bind fictional API/mobile sources and refuse unsafe schema rollback (no AWS calls)
+        run: npm run test:synthetic-care-release
+      - name: Intent-aware exact-source artifact and read-only preflight refusals
+        run: npm run test:synthetic-care-intent-release
+      - name: Intent code upload and single-resource change-set refusals
+        run: npm run test:synthetic-care-intent-upload
+      - name: Explicit two-resource integration dependency scope (no AWS execution)
+        run: npm run test:synthetic-care-intent-dependency
+      - name: Live-runner failure matrix and compatible recovery gated intent continuation (no AWS execution)
+        run: npm run test:synthetic-care-intent-continuation
+      - name: Distinguish immutable deployed application and repaired operator sources (no AWS execution)
+        run: node --test scripts/care-intent-resumption-source.test.mjs
+      - name: Executed intent reconciliation and current-operator continuation (no AWS execution)
+        run: node --test scripts/care-intent-resumption-deployment.test.mjs scripts/care-intent-interruption.test.mjs scripts/care-intent-resumption-custody.test.mjs
+      - name: Read-only admitted successor reconciliation and fingerprint separation (no AWS execution)
+        run: node --test scripts/care-intent-postcommit.test.mjs scripts/care-intent-postcommit-settlement.test.mjs
+      - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
+        run: |
+          npm run test:care-erasure-recovery-source
+          npm run build:care-erasure-recovery-source
+      - name: Current canonical mapping, registered artifact and read-only inspection (no AWS execution)
+        run: |
+          node --test scripts/care-canonical-migrations.test.mjs scripts/synthetic-care-registered-release.test.mjs scripts/care-registered-preflight.test.mjs scripts/care-registered-upload.test.mjs scripts/care-registered-upload-reconciliation.test.mjs scripts/care-registered-code-change.test.mjs scripts/care-registered-proposal-reconciliation.test.mjs scripts/care-registered-deployment.test.mjs scripts/care-registered-routing.test.mjs scripts/care-registered-live-runner.test.mjs scripts/care-registered-release-reconciliation.test.mjs scripts/care-registered-routing-restoration.test.mjs scripts/care-registered-standalone.test.mjs scripts/care-registered-standalone-live.test.mjs scripts/care-registered-standalone-restoration.test.mjs
+          npx vitest run src/server/clinical-core/care-erasure-canonical-registration.database.test.ts
+          npm run build:care-intent-canonical-inspector
+      - name: Dependency security gate
+        run: npm audit --audit-level=high
+      - name: Preserve pinned Next lint rules with the bounded root matcher
+        run: npm run test:lint-root-matcher
+      - name: Verify local lint dependency in the real Linux Node 22 container stage
+        run: |
+          docker build --target dependencies -f Dockerfile.production --tag alp-lint-dependencies .
+          docker run --rm --entrypoint npm alp-lint-dependencies ls fast-glob braces micromatch
+          docker run --rm --entrypoint node alp-lint-dependencies -e "const assert=require('node:assert/strict'); const {createRequire}=require('node:module'); const r=createRequire(require.resolve('@next/eslint-plugin-next')); assert.equal(r('fast-glob/package.json').name,'@alp/next-root-glob'); assert.deepEqual(r('./utils/get-root-dirs').getRootDirs({cwd:process.cwd(),settings:{next:{rootDir:'vendor/next-root-glob'}}}),['vendor/next-root-glob']); assert.deepEqual(r('fast-glob').globSync('/',{onlyDirectories:true}),['/']);"
       - run: npm run lint
       - run: npm run test:unit
+      - run: npm run build:lab-range-tools
+      - name: Build read-only retained-lab privacy operator (no AWS calls)
+        run: node scripts/build-lab-privacy-inventory.mjs
+      - name: Build qualification-only schema upgrade operator (no AWS calls or migration)
+        run: node scripts/build-aws-qualification-schema-upgrade.mjs
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
       - name: AWS identity, invitation, and consent safety gate
@@ -39,18 +179,59 @@ jobs:
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
+      - name: Build and validate independent voice deployment candidate (no deployment)
+        run: |
+          node scripts/build-aws-owned-voice.mjs
+          cfn-lint dist/aws-clinical-core/owned-voice/template.json
+      - name: Build and validate independent lab processing candidate (no deployment)
+        run: |
+          node scripts/build-aws-owned-lab.mjs
+          cfn-lint dist/aws-clinical-core/owned-lab/template.json
       - name: Build the authenticated API Lambda artifact
         run: npm run build:aws-authenticated-api
       - name: Build governed catalog and deployment artifacts
         run: |
           npm run build:aws-governed-catalog-api
           npm run build:aws-deployment-tools
+          npm run build:aws-chat-transcription
+          node scripts/build-aws-personal-storage.mjs
+          node scripts/build-aws-privacy-operations.mjs
+          cfn-lint dist/aws-clinical-core/privacy-operations/template.json
+          cfn-lint dist/aws-clinical-core/personal-storage/disabled-template.json dist/aws-clinical-core/personal-storage/template.json
+          npm run check:aws-chat-transcription
+      - name: Qualification target runner (syntax and pre-network name refusals, no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-runner.ps1
+      - name: Initial qualification deployment capacity and retained-resource preflight (no AWS calls)
+        run: npm run test:qualification-create-preflight
+      - name: Test read-only retained-log recovery planner
+        run: npm run test:qualification-log-recovery
+      - name: Isolated qualification foundation remains synthetic infrastructure only
+        run: |
+          npm run build:aws-qualification-foundation
+          npm run test:aws-qualification-foundation
+          cfn-lint dist/aws-clinical-core/qualification-foundation/template.json
+      - name: Hosted acceptance runners bind to the qualification target (no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-acceptance-runners.ps1
+      - name: Build and validate the six recording candidates (no deployment)
+        run: |
+          for mode in "" --capture --cleanup-review --cleanup-execution --transcription --drafting; do node scripts/build-aws-recording-authority.mjs $mode; done
+          cfn-lint dist/aws-clinical-core/recording-authority/template.json dist/aws-clinical-core/recording-capture/template.json dist/aws-clinical-core/recording-cleanup-review/template.json dist/aws-clinical-core/recording-cleanup-execution/template.json dist/aws-clinical-core/recording-transcription/template.json dist/aws-clinical-core/recording-drafting/template.json
+      - name: Qualification parameter examples match their templates
+        run: npm run check:aws-qualification-parameters
+      - name: Qualification target example is a valid shape and is refused as a run target
+        run: npm run check:aws-qualification-target
+      - name: Qualification capacity preflight refuses insufficient or unknown limits (no AWS calls)
+        run: npm run test:aws-qualification-capacity
       - name: AWS production provider-removal and foundation gates
         run: |
           npm run check:aws-data-plane-migration
           npm run check:aws-desktop-compatibility-contract
           npm run check:aws-desktop-operation-inventory
+          npm run check:aws-core-launch-scope
           npm run check:aws-production-clinical-core
+          npm run check:aws-covered-entity-coverage
           npm run check:aws-production-clinical-api
           npm run check:aws-production-closed-boundary-exercise
           npm run check:aws-production-pitr-recovery-exercise
@@ -58,12 +239,24 @@ jobs:
           npm run build:aws-production-rollback-acceptance
           npm run build:aws-production-clinical-core-verifier
           npm run build:aws-production-migration-operator
+          npm run build:aws-model-vendor-authority-operator
+          npm run build:aws-covered-entity-deletion-operator
           npm run build:aws-production-foundation
           npm run check:aws-production-foundation
           npm run test:aws-production-foundation
           npm run test:aws-production-readiness
           npm run check:aws-production-container
           npm run check:aws-production-readiness-workload
+          npm run check:aws-provider-configuration
+          npm run test:aws-provider-configuration
+          npm run check:aws-application-rollback
+          npm run test:aws-load-qualification
+          npm run qualify:load-plan
+          npm run test:release-record
+      - name: Credential-free security qualification (source evidence, not a hosted test)
+        run: |
+          npm run build:security-qualification
+          npm run qualify:security
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition
@@ -94,6 +287,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       - name: Honest refusals against a DOWN backend (no process started — that is the point)
         run: |
@@ -107,6 +301,13 @@ jobs:
   e2e-live-fixture:
     name: Browser suite (live mode vs contract fixture)
     runs-on: ubuntu-latest
+    # Sharded because one `next dev` server degrades across a 300-test battery: by the end it carries several GiB of
+    # heap and a request's effect can miss any reasonable budget. Each shard boots its own stub and dev server, which
+    # the suites already allow — every spec resets the fixture backend in beforeAll, so any subset runs in any order.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -115,8 +316,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       - name: Run every live suite against the committed contract fixture
+        env:
+          # Full single-process suite: reserve >=4 GiB for Chromium, OS and
+          # native allocations. The config refuses undersized/cgroup runners.
+          E2E_DEV_HEAP_MB: "10240"
+          E2E_RECORDING_DIAGNOSTICS: "1"
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
@@ -130,7 +337,15 @@ jobs:
           CLINICAL_DEMO_EMAIL=demo@local \
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
-          npm run test:e2e -- live-
+          npm run test:e2e -- live- --trace retain-on-failure --shard=${{ matrix.shard }}/3
+      - name: Preserve synthetic contract-fixture failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-live-fixture-failures-shard-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server
@@ -149,6 +364,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       # This job runs `next dev` (E2E_DEV_SERVER=1), not `next start`.
       # `next start` forces NODE_ENV=production, which the deployed-runtime
       # detector treats as a deployment signal, and a deployed runtime is
@@ -187,6 +403,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers,
       # AND CLINICAL_CONTRACT_FIXTURE=1. The point of the job is that none
@@ -223,6 +440,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       # The counterpart to e2e-copilot-readiness. Identical governed
       # records — registry kind `synthetic_fixture`, activation
@@ -268,6 +486,7 @@ jobs:
         run: npm ci
       - if: steps.gate.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - if: steps.gate.outputs.run == 'true'
         run: npm run build:clinical
       - if: steps.gate.outputs.run == 'true'

@@ -8,6 +8,7 @@
   "aws_baa_status": "pending-organization-acceptance",
   "aws_account_id": "000000000000",
   "aws_region": "us-east-2",
+  "retention_schedule_evidence_sha256": "",
   "budget_alert_email": "replace@example.com",
   "allowed_client_origins": [
     "http://localhost:3000",

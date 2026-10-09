@@ -15,3 +15,9 @@ const actions = r.TranscriptionRole.Properties.Policies.flatMap((p) => p.PolicyD
 fail(actions.includes("s3:DeleteObject") && actions.includes("transcribe:DeleteTranscriptionJob"), "ephemeral deletion permissions required");
 fail(!actions.some((action) => action === "s3:*" || action === "transcribe:*"), "wildcard data actions refused");
 console.log("AWS chat transcription gate passed: synthetic-only, JWT-bound, encrypted, ephemeral, and PHI-disabled.");
+for (const name of ["VoiceStartRoute", "VoiceStatusRoute", "VoiceCancelRoute"]) fail(r[name].Properties.AuthorizationType === "JWT", "durable routes require JWT");
+fail(r.VoiceJobTable.Properties.SSESpecification.SSEType === "KMS", "encrypted job ledger required");
+fail(r.VoiceSweepRule.Properties.ScheduleExpression === "rate(1 minute)", "background cleanup required");
+fail(r.VoiceJobFunction.Properties.Environment.Variables.PHI_ALLOWED === "false", "durable voice stays PHI-disabled");
+fail(r.VoiceJobTable.Properties.TimeToLiveSpecification.AttributeName === "expiresAt", "cleanup ledger TTL required");
+console.log("Durable voice gate passed: encrypted ownership ledger, authenticated status/cancel and scheduled cleanup.");

@@ -1,9 +1,43 @@
-import { describe, expect, test } from "vitest";
-import { buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { describe, expect, it, test } from "vitest";
+import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, SUPPLEMENT_CONSIDERATION_RULESET_VERSION, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
 describe("synthetic AWS functional lab rules", () => {
+  test('retains explicit noncatalog line measurements without manufacturing functional limits',()=>{
+    const values=[['ALT',24,'U/L','7-56'],['Ferritin',410,'ng/mL','30-400'],['MPO',3645,'pmol/L','0-599.9'],
+      ['Homocysteine',14,'umol/L','0-15'],['Vitamin B12',550,'pg/mL','200-900'],['WBC',5.4,'x10^9/L','4-11']];
+    const rows=normalizeExtractedLabLines({lines:values.map(([name,value,unit,range])=>({text:`${name} ${value} ${unit} Reference ${range}`,confidence:99,page:1,documentId}))});
+    expect(rows).toHaveLength(values.length);
+    values.forEach(([name,value,unit],index)=>expect(rows[index]).toMatchObject({canonicalName:name,value,unit:String(unit).toLowerCase(),documentId,
+      functionalMin:null,functionalMax:null,sourceId:null,sourceVersion:null}));
+  });
+
+  test('generic lines do not promote identifiers, dates, dosing text or unsupported units into labs',()=>{
+    const lines=['Patient ID 104 mg/dL Reference 70-99','Specimen date 2026 ng/mL Reference 1-3000',
+      'Dose Vitamin D 10000 IU Reference 1-20000','Reference 24 U/L Reference 7-56','Page 2 ratio Reference 1-9',
+      'Unknown 12 widgets Reference 1-20','Specimen date: 2026-09-01','Take Iron 65 mg/dL'];
+    expect(normalizeExtractedLabLines({lines:lines.map(text=>({text,confidence:99,page:1,documentId}))})).toEqual([]);
+  });
+
+  test('retains explicit unfamiliar measurements without a reference interval, keeping ranges unknown',()=>{
+    const extracted={lines:[{text:'ALT 24 U/L',confidence:99,page:1,documentId}]};
+    expect(normalizeExtractedLabLines(extracted)[0]).toMatchObject({canonicalName:'ALT',value:24,unit:'u/l',labMin:null,labMax:null,functionalMin:null,functionalMax:null});
+    expect(()=>assertExactExtractedMeasurements({lines:[{text:'Ferritin >1500 ng/mL',confidence:99,page:1,documentId}]})).toThrow('qualified_measurement_requires_review');
+  });
+
+  test.each(['Ferritin >1500 ng/mL Reference 30-400','MPO >=3000 pmol/L Reference 0-599.9','ALT <5 U/L Reference 7-56'])(
+    'qualified unknown measurement %s requires review rather than disappearing',text=>{
+      const extracted={lines:[{text,confidence:99,page:1,documentId}]};
+      expect(normalizeExtractedLabLines(extracted)).toEqual([]);
+      expect(()=>assertExactExtractedMeasurements(extracted)).toThrow('qualified_measurement_requires_review');
+    });
+
+  test('generic line values preserve zero and a one-sided printed reference without treating its bound as the result',()=>{
+    const extracted={lines:[{text:'Synthetic Marker 0 ng/mL Reference <10',confidence:99,page:2,documentId}]};
+    expect(()=>assertExactExtractedMeasurements(extracted)).not.toThrow();
+    expect(normalizeExtractedLabLines(extracted)[0]).toMatchObject({value:0,labMin:null,labMax:10,functionalMin:null,functionalMax:null,page:2});
+  });
   test("normalizes supported markers with governed range provenance", () => {
     const biomarkers = normalizeExtractedLabLines({ lines: [
       { text: "Glucose 104 mg/dL Reference 70-99", confidence: 99, page: 1, documentId },
@@ -15,6 +49,7 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers.map((row) => row.canonicalName)).toEqual(["Glucose", "Hemoglobin A1c", "TSH"]);
     expect(biomarkers.every((row) => row.sourceVersion === "synthetic-functional-ranges/1")).toBe(true);
     expect(biomarkers[0]).toMatchObject({ value: 104, unit: "mg/dl", labMin: 70, labMax: 99 });
+    expect(biomarkers[1]).toMatchObject({ value: 5.7, unit: "%" });
   });
 
   test("classifies functional ranges deterministically", () => {
@@ -75,6 +110,56 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers).toHaveLength(1);
     expect(biomarkers[0].canonicalName).toBe("Valid Marker");
     expect(biomarkers.every((row) => row.canonicalName.length > 0)).toBe(true);
+  });
+
+  test("numbers within analyte names are not results and missing units are not invented", () => {
+    const biomarkers = normalizeExtractedLabLines({ lines: [
+      { text: "Free T3 3.2 pg/mL Reference 2.0-4.4", confidence: 99, page: 1, documentId },
+      { text: "Free T4 1.2 ng/dL Reference 0.8-1.8", confidence: 99, page: 1, documentId },
+      { text: "Vitamin D, 25-Hydroxy 29 ng/mL Reference 30-100", confidence: 99, page: 1, documentId },
+      { text: "Glucose 5.2 mmol/L Reference 3.9-5.5", confidence: 99, page: 1, documentId },
+      { text: "TSH 3.4 Reference 0.4-4.5", confidence: 99, page: 1, documentId },
+    ] });
+    expect(biomarkers.map(row => row.value)).toEqual([3.2, 1.2, 29, 5.2, 3.4]);
+    expect(biomarkers[3]).toMatchObject({ unit: "mmol/l", functionalMin: null, functionalMax: null, sourceId: null });
+    expect(biomarkers[4]).toMatchObject({ unit: "not reported", functionalMin: null, functionalMax: null });
+  });
+
+  test("ratio and derived-marker names do not inherit an unrelated analyte range", () => {
+    const rows = normalizeStructuredLabBiomarkers([
+      { markerId: "ratio", canonicalName: "LDL Cholesterol / HDL ratio", value: 2.1, unit: "ratio", labMin: null, labMax: 3.5 },
+      { markerId: "glucose", canonicalName: "Glucose", value: 5.2, unit: "mmol/L", labMin: 3.9, labMax: 5.5 },
+    ], documentId);
+    expect(rows[0]).toMatchObject({ canonicalName: "LDL Cholesterol / HDL ratio", functionalMin: null });
+    expect(rows[1]).toMatchObject({ value: 5.2, unit: "mmol/l", functionalMin: null });
+  });
+
+  test("does not convert censored results into exact numeric measurements", () => {
+    expect(normalizeExtractedLabTables({ lines: [], tableRows: [{ documentId, page: 1, cells: [
+      { text: "Glucose", column: 1, confidence: 99 }, { text: ">500", column: 2, confidence: 99 },
+      { text: "mg/dL", column: 3, confidence: 99 },
+    ] }] })).toEqual([]);
+  });
+
+  test("a censored measurement stops plan synthesis rather than disappearing silently", () => {
+    expect(() => assertExactExtractedMeasurements({ lines: [{ text: "Glucose >500 mg/dL", confidence: 99, page: 1, documentId }] })).toThrow("qualified_measurement_requires_review");
+    expect(() => assertExactExtractedMeasurements({ lines: [{ text: "Glucose 90 mg/dL Reference <100", confidence: 99, page: 1, documentId }] })).not.toThrow();
+  });
+
+  test("keeps clinically meaningful parenthetical analyte names", () => {
+    const rows = normalizeExtractedLabTables({ lines: [], tableRows: [{ documentId, page: 1, cells: [
+      { text: "Lipoprotein(a)", column: 1, confidence: 99 }, { text: "42", column: 2, confidence: 99 }, { text: "nmol/L", column: 3, confidence: 99 },
+    ] }] });
+    expect(rows[0]).toMatchObject({ canonicalName: "Lipoprotein(a)", unit: "nmol/l" });
+  });
+
+  test("reviewed status never invents a normal result or arithmetic critical threshold", () => {
+    const row = { canonicalName: "Fictional", reportedName: "Fictional", value: 40, unit: "widgets", labMin: null, labMax: null,
+      functionalMin: null, functionalMax: null, sourceId: null, sourceVersion: null, population: null, confidence: 1, documentId, page: 1 };
+    expect(reviewedMeasurementStatus(row)).toBe("unclassified");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 10, functionalMax: 20 })).toBe("suboptimal");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 10, functionalMax: 20, criticalAbove: 30 })).toBe("critical");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 30, functionalMax: 50, labMax: 35 })).toBe("suboptimal");
   });
 
   test("rebuilds governed ranges from saved measured biomarkers without claiming document verification", () => {
@@ -152,7 +237,7 @@ describe("synthetic AWS functional lab rules", () => {
       { canonicalName: "Iron", value: 128, unit: "ug/dL", labMin: 59, labMax: 158 },
       { canonicalName: "Fasting Insulin", value: 10.7, unit: "uIU/mL", labMin: 2.6, labMax: 24.9 },
       { canonicalName: "HOMA-IR", value: 2.3, unit: "ratio", labMin: 0.7, labMax: 2 },
-    ].map((row, index) => ({
+    ].map((row) => ({
       ...row,
       reportedName: row.canonicalName,
       functionalMin: null,
@@ -218,5 +303,42 @@ describe("synthetic AWS functional lab rules", () => {
     ]);
     expect(output.recommendations).toEqual([]);
     expect(output.citations).toEqual([]);
+  });
+});
+
+// A clinician reviewing the basis of a recommendation has to be able to name the basis. Every consideration therefore
+// carries the rule table's version, the rule's own version and its key, and the evidence citation names a dated source
+// rather than "current", so an output can be traced to an exact artefact rather than to a moving target.
+describe("recommendation provenance", () => {
+  const low = [{ canonicalName: "Vitamin D", value: 12, unit: "ng/mL", labMin: 30, labMax: 100, functionalMin: 40, functionalMax: 80 }];
+  it("stamps the ruleset, the rule and its version on every consideration", () => {
+    const { recommendations, citations } = buildMeasuredSupplementConsiderations(low);
+    expect(recommendations).toHaveLength(1);
+    expect(recommendations[0]).toMatchObject({
+      rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION,
+      ruleKey: "vitamin-d",
+      ruleVersion: "vitamin-d/1",
+      dose: null,
+      productId: null,
+      interactionReview: "required_before_starting",
+      recommendationStatus: "suggested",
+    });
+    expect(citations[0].sourceVersion).toBe("nih-ods-health-professional/2026-09");
+    expect(citations[0].sourceVersion).not.toMatch(/current/);
+  });
+  it("gives every rule a version, so no rule can fire without one", () => {
+    const seen = new Set<string>();
+    for (const marker of [
+      { canonicalName: "Vitamin D", value: 12, unit: "ng/mL", labMin: 30, labMax: 100 },
+      { canonicalName: "Vitamin B12", value: 100, unit: "pg/mL", labMin: 200, labMax: 900 },
+      { canonicalName: "Folate", value: 2, unit: "ng/mL", labMin: 3, labMax: 20 },
+      { canonicalName: "Ferritin", value: 5, unit: "ng/mL", labMin: 30, labMax: 300 },
+    ]) {
+      for (const recommendation of buildMeasuredSupplementConsiderations([marker]).recommendations) {
+        expect(recommendation.ruleVersion, recommendation.ruleKey).toMatch(/^[a-z0-9-]+\/\d+$/);
+        seen.add(recommendation.ruleKey);
+      }
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(3);
   });
 });

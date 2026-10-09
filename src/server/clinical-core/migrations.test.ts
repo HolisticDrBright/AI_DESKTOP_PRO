@@ -43,8 +43,63 @@ afterEach(() => {
 
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
-    const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(29);
+    const current = loadClinicalCoreMigrations();
+    expect(current).toHaveLength(47);
+    expect(current.at(-1)).toMatchObject({version:'20261007010000',name:'synthetic_care_erasure_intents',
+      sha256:'4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec'});
+    // Preserve all predecessor assertions against their explicit historical view.
+    const migrations = current.slice(0,46);
+    expect(migrations).toHaveLength(46);
+    expect(migrations.at(-1)).toMatchObject({version:"20261006040000",name:"synthetic_care_erasure_recovery"});
+    expect(migrations.at(-1)!.sql).toContain("create table clinical_core.care_data_erasure_requests");
+    expect(migrations.at(-1)!.sql).toContain("revoke all on function clinical_core.care_data_erase(jsonb) from clinical_core_api;");
+    expect(migrations.at(-2)).toMatchObject({version:"20260930200000",name:"synthetic_consult_contact_retention"});
+    expect(migrations.at(-2)!.sql).toContain("create table clinical_core.consult_retention_settings");
+    expect(migrations.at(-2)!.sql).toContain("create or replace function clinical_private.consult_purge_refusal");
+    expect(migrations.at(-2)!.sql).toContain("create or replace function clinical_core.consult_contact_retention");
+    expect(migrations.at(-2)!.sql).toContain("'contact_purged','retention_window_set'");
+    expect(migrations.at(-3)).toMatchObject({version:"20260930190000",name:"synthetic_practice_outcome_ledger"});
+    expect(migrations.at(-3)!.sql).toContain("create table clinical_core.outcome_observations");
+    expect(migrations.at(-3)!.sql).toContain("create or replace function clinical_private.outcome_age_band");
+    expect(migrations.at(-3)!.sql).toContain("create or replace function clinical_core.outcome_report");
+    expect(migrations.at(-3)!.sql).toContain("'research_n_of_1','research_practice_outcomes'");
+    expect(migrations.at(-4)).toMatchObject({version:"20260930180000",name:"synthetic_protocol_cart_compilation"});
+    expect(migrations.at(-4)!.sql).toContain("create table clinical_core.protocol_cart_manifests");
+    expect(migrations.at(-4)!.sql).toContain("create or replace function clinical_private.cart_exclusion_reason");
+    expect(migrations.at(-4)!.sql).toContain("create or replace function clinical_core.protocol_cart_workforce");
+    expect(migrations.at(-5)).toMatchObject({version:"20260930170000",name:"synthetic_note_templates_and_house_style"});
+    expect(migrations.at(-5)!.sql).toContain("create table clinical_core.note_template_versions");
+    expect(migrations.at(-5)!.sql).toContain("create table clinical_core.practice_note_styles");
+    expect(migrations.at(-5)!.sql).toContain("create or replace function clinical_core.note_drafting_context");
+    expect(migrations.at(-6)).toMatchObject({version:"20260930160000",name:"synthetic_clinical_disputes_and_revisions"});
+    expect(migrations.at(-6)!.sql).toContain("create table clinical_core.clinical_disputes");
+    expect(migrations.at(-6)!.sql).toContain("create table clinical_core.content_revision_notices");
+    expect(migrations.at(-6)!.sql).toContain("create or replace function clinical_core.clinical_dispute_workforce");
+    expect(migrations.at(-7)).toMatchObject({version:"20260930150000",name:"synthetic_intake_data_lifecycle"});
+    expect(migrations.at(-7)!.sql).toContain("'intake_packets','intake_responses','signatures','consult_requests'");
+    expect(migrations.at(-7)!.sql).toContain("create or replace function clinical_private.consult_audit_guard");
+    expect(migrations.at(-8)).toMatchObject({version:"20260930140000",name:"synthetic_intake_forms_and_signatures"});
+    expect(migrations.at(-8)!.sql).toContain("create table clinical_core.document_signatures");
+    expect(migrations.at(-8)!.sql).toContain("create or replace function clinical_core.intake_packet_consumer");
+    expect(migrations.at(-9)).toMatchObject({version:"20260930130000",name:"synthetic_public_consult_requests"});
+    expect(migrations.at(-9)!.sql).toContain("create table clinical_core.consult_links");
+    expect(migrations.at(-9)!.sql).toContain("create or replace function clinical_core.consult_intake_public");
+    expect(migrations.at(-10)).toMatchObject({version:"20260930120000",name:"synthetic_external_busy_booking"});
+    expect(migrations.at(-10)!.sql).toContain("create table clinical_core.external_calendar_busy_blocks");
+    expect(migrations.at(-10)!.sql).toContain("create or replace function clinical_core.book_appointment");
+    expect(migrations.at(-11)).toMatchObject({version:"20260930110000",name:"synthetic_care_data_lifecycle"});
+    expect(migrations.at(-11)!.sql).toContain("create or replace function clinical_core.care_data_export");
+    expect(migrations.at(-11)!.sql).toContain("create or replace function clinical_core.care_data_erase");
+    expect(migrations.at(-12)).toMatchObject({version:"20260930100000",name:"synthetic_external_calendar_connections"});
+    expect(migrations.at(-12)!.sql).toContain("create or replace function clinical_core.external_calendar_request");
+    expect(migrations.at(-12)!.sql).toContain("create table clinical_core.external_calendar_connections");
+    expect(migrations.at(-13)).toMatchObject({version:"20260929120000",name:"synthetic_program_assignments"});
+    expect(migrations.at(-13)!.sql).toContain("create function clinical_core.program_assignment_request");
+    expect(migrations.at(-13)!.sql).toContain("create function clinical_private.program_review");
+    expect(migrations.at(-14)).toMatchObject({version:"20260929110000",name:"synthetic_care_message_settlement"});
+    expect(migrations.at(-14)!.sql).toContain("create function clinical_core.care_message_settle");
+    expect(migrations.at(-15)).toMatchObject({version:"20260929100000",name:"synthetic_care_message_receipts"});
+    expect(migrations.at(-15)!.sql).toContain("create function clinical_core.care_message_receipt");
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -225,14 +280,17 @@ describe("AWS clinical-core migration runner", () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000", "20260903070000", "20260903163000", "20260903170000", "20260903180000", "20260903200000", "20260903201000", "20260903202000", "20260903210000", "20260903211000", "20260904090000"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000", "20260903070000", "20260903163000", "20260903170000", "20260903180000", "20260903200000", "20260903201000", "20260903202000", "20260903210000", "20260903211000", "20260904090000", "20260916080000", "20260929090000", "20260929100000", "20260929110000", "20260929120000", "20260930100000", "20260930110000", "20260930120000", "20260930130000", "20260930140000", "20260930150000", "20260930160000", "20260930170000", "20260930180000", "20260930190000", "20260930200000", "20261006040000", "20261007010000"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");
     expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(true);
     expect(db.calls.at(-1)!.sql).toContain("insert into clinical_core.schema_migrations");
-    expect(db.calls.some((call) => call.sql === loadClinicalCoreMigrations()[0]!.sql)).toBe(false);
+    // Load the comparison once, not every migration file for every SQL call.
+    // Preserve the split-statement assertion without filesystem-dependent timeouts.
+    const firstMigrationSql = loadClinicalCoreMigrations()[0]!.sql;
+    expect(db.calls.some((call) => call.sql === firstMigrationSql)).toBe(false);
     expect(db.calls.filter((call) => call.sql.startsWith("create table clinical_core.")).length).toBeGreaterThan(5);
   }, 15_000);
 

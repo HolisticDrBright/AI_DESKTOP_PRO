@@ -1,0 +1,180 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Count-only transactional SES alarms; actions disabled until recipient confirmation and review",
+  "Parameters": {
+    "ConfigurationSetName": {
+      "Type": "String",
+      "Default": "alp-transactional",
+      "AllowedValues": ["alp-transactional"]
+    },
+    "SourceCommit": {
+      "Type": "String",
+      "AllowedPattern": "^[a-f0-9]{40}$"
+    },
+    "EnableAlarmActions": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["false", "true"]
+    },
+    "AlertReviewSha256": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-f0-9]{64}$"
+    },
+    "ResponderConfirmationSha256": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-f0-9]{64}$"
+    },
+    "BounceCountThreshold": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1
+    },
+    "ComplaintCountThreshold": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1
+    },
+    "RejectCountThreshold": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1
+    }
+  },
+  "Conditions": {
+    "ActionsReviewed": {
+      "Fn::And": [
+        { "Fn::Equals": [{ "Ref": "EnableAlarmActions" }, "true"] },
+        { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "AlertReviewSha256" }, ""] }] },
+        { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ResponderConfirmationSha256" }, ""] }] }
+      ]
+    }
+  },
+  "Rules": {
+    "AlarmActivationRequiresReview": {
+      "RuleCondition": { "Fn::Equals": [{ "Ref": "EnableAlarmActions" }, "true"] },
+      "Assertions": [
+        {
+          "Assert": { "Fn::Equals": [{ "Ref": "ConfigurationSetName" }, "alp-transactional"] },
+          "AssertDescription": "Only the reviewed transactional SES configuration set may activate alarms"
+        },
+        {
+          "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "AlertReviewSha256" }, ""] }] },
+          "AssertDescription": "A real alert threshold and recipient review is required"
+        },
+        {
+          "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ResponderConfirmationSha256" }, ""] }] },
+          "AssertDescription": "Confirmed primary and backup responder evidence is required"
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "CountOnlyAlarmTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "alp-ses-count-only-alarms",
+        "DisplayName": "ALP SES count-only alarms",
+        "Tags": [{ "Key": "DataScope", "Value": "count-only-no-recipient-data" }]
+      }
+    },
+    "CountOnlyAlarmTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [{ "Ref": "CountOnlyAlarmTopic" }],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "OwnerManagement",
+              "Effect": "Allow",
+              "Principal": { "AWS": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" } },
+              "Action": "sns:*",
+              "Resource": { "Ref": "CountOnlyAlarmTopic" }
+            },
+            {
+              "Sid": "ExactCountAlarmsPublishOnly",
+              "Effect": "Allow",
+              "Principal": { "Service": "cloudwatch.amazonaws.com" },
+              "Action": "sns:Publish",
+              "Resource": { "Ref": "CountOnlyAlarmTopic" },
+              "Condition": {
+                "StringEquals": { "aws:SourceAccount": { "Ref": "AWS::AccountId" } },
+                "ArnEquals": {
+                  "aws:SourceArn": [
+                    { "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:alp-ses-transactional-bounce-count" },
+                    { "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:alp-ses-transactional-complaint-count" },
+                    { "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:alp-ses-transactional-reject-count" }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "BounceCountAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "alp-ses-transactional-bounce-count",
+        "AlarmDescription": "Count-only transactional SES hard bounces; no recipient addresses",
+        "Namespace": "AWS/SES",
+        "MetricName": "Bounce",
+        "Dimensions": [{ "Name": "ses:configuration-set", "Value": { "Ref": "ConfigurationSetName" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": { "Ref": "BounceCountThreshold" },
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": { "Fn::If": ["ActionsReviewed", true, false] },
+        "AlarmActions": [{ "Ref": "CountOnlyAlarmTopic" }]
+      }
+    },
+    "ComplaintCountAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "alp-ses-transactional-complaint-count",
+        "AlarmDescription": "Count-only transactional SES complaints; no recipient addresses",
+        "Namespace": "AWS/SES",
+        "MetricName": "Complaint",
+        "Dimensions": [{ "Name": "ses:configuration-set", "Value": { "Ref": "ConfigurationSetName" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": { "Ref": "ComplaintCountThreshold" },
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": { "Fn::If": ["ActionsReviewed", true, false] },
+        "AlarmActions": [{ "Ref": "CountOnlyAlarmTopic" }]
+      }
+    },
+    "RejectCountAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "alp-ses-transactional-reject-count",
+        "AlarmDescription": "Count-only transactional SES rejects; no recipient addresses",
+        "Namespace": "AWS/SES",
+        "MetricName": "Reject",
+        "Dimensions": [{ "Name": "ses:configuration-set", "Value": { "Ref": "ConfigurationSetName" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": { "Ref": "RejectCountThreshold" },
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": { "Fn::If": ["ActionsReviewed", true, false] },
+        "AlarmActions": [{ "Ref": "CountOnlyAlarmTopic" }]
+      }
+    }
+  },
+  "Outputs": {
+    "CountOnlyTopicArn": { "Value": { "Ref": "CountOnlyAlarmTopic" } },
+    "AlarmActionsEnabled": { "Value": { "Ref": "EnableAlarmActions" } },
+    "SourceCommit": { "Value": { "Ref": "SourceCommit" } }
+  }
+}

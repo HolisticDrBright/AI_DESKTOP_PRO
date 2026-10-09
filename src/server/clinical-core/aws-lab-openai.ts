@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
 import { buildDirectionalLabContext } from "./aws-lab-directional-context";
+import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
+import {KNOWLEDGE_MODEL_BOUNDARY,assertKnowledgeCitations,type KnowledgeContext} from './reviewed-knowledge';
+import { assertModelCallsPermitted, MODEL_VENDOR_AUTHORITY_FIELD, parseModelVendorAuthority, phiAllowedFromEnvironment } from "./model-vendor-authority";
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -84,6 +87,7 @@ export type LabPlanTask = {
 };
 
 export type LabAiSynthesis = {
+  reviewedKnowledge?:KnowledgeContext|null;
   summary: string;
   uncertainty: string;
   priorityActions: string[];
@@ -306,9 +310,17 @@ function required(name: string): string {
   return value;
 }
 
-export function parseOpenAISecret(secretString: string): string {
+/**
+ * The only way any path obtains the vendor key, so the authority to call the vendor is checked here and nowhere else.
+ * A key is returned only when a call may be sent right now; otherwise this throws a ModelVendorAuthorityRefusal whose
+ * category names why. Nothing caches the result, so revoking the authority in the secret stops the next call.
+ */
+export function parseOpenAISecret(secretString: string, phiAllowed = phiAllowedFromEnvironment()): string {
   const trimmed = secretString.trim();
-  if (trimmed.startsWith("sk-") && trimmed.length >= 24) return trimmed;
+  if (trimmed.startsWith("sk-") && trimmed.length >= 24) {
+    assertModelCallsPermitted({ authority: null, phiAllowed });
+    return trimmed;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
@@ -317,16 +329,19 @@ export function parseOpenAISecret(secretString: string): string {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("openai_secret_malformed");
   const record = parsed as Record<string, unknown>;
-  const allowed = new Set(["OPENAI_API_KEY", "apiKey", LEGACY_SECRET_FIELD]);
+  const allowed = new Set(["OPENAI_API_KEY", "apiKey", LEGACY_SECRET_FIELD, MODEL_VENDOR_AUTHORITY_FIELD]);
   if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("openai_secret_malformed");
   const candidate = record.OPENAI_API_KEY ?? record.apiKey ?? record[LEGACY_SECRET_FIELD];
   if (typeof candidate !== "string" || !candidate.startsWith("sk-") || candidate.length < 24) {
     throw new Error("openai_secret_malformed");
   }
+  const authority = MODEL_VENDOR_AUTHORITY_FIELD in record ? parseModelVendorAuthority(record[MODEL_VENDOR_AUTHORITY_FIELD]) : null;
+  assertModelCallsPermitted({ authority, phiAllowed });
   return candidate;
 }
 
 export function buildLabSynthesisRequest(input: {
+  reviewedKnowledge?:KnowledgeContext|null;
   model: string;
   biomarkers: LabSynthesisBiomarker[];
   jobId: string;
@@ -342,11 +357,12 @@ export function buildLabSynthesisRequest(input: {
     relationshipGroups: directionalContext.relationshipGroups,
     patientReportedContext: input.patientContext ?? null,
     activeProtocol: input.activeProtocol ?? null,
+    reviewedKnowledge: input.reviewedKnowledge ?? null,
   };
   return {
     model: input.model,
     input: [
-      { role: "system", content: SYSTEM_INSTRUCTION },
+      { role: "system", content: `${SYSTEM_INSTRUCTION}\n${KNOWLEDGE_MODEL_BOUNDARY}` },
       { role: "user", content: JSON.stringify(payload) },
     ],
     text: {
@@ -520,7 +536,8 @@ export async function synthesizeLabWithOpenAI(input: {
   activeProtocol?: LongitudinalContext["activeProtocol"];
 }): Promise<LabAiSynthesis> {
   const model = required("LAB_OPENAI_MODEL");
-  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext, activeProtocol: input.activeProtocol });
+  const reviewedKnowledge=await loadReviewedKnowledge({biomarkerNames:input.biomarkers.map(b=>b.canonicalName)});
+  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext, activeProtocol: input.activeProtocol,reviewedKnowledge });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -546,7 +563,7 @@ export async function synthesizeLabWithOpenAI(input: {
     if (!response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new Error("openai_content_type_refused");
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new Error("openai_response_malformed"); }
-    return parseLabSynthesisResponse({
+    const result=parseLabSynthesisResponse({
       response: parsed,
       expectedModel: model,
       allowedBiomarkerIds: new Set(input.biomarkers.map((row) => row.biomarkerId)),
@@ -555,6 +572,8 @@ export async function synthesizeLabWithOpenAI(input: {
       allowedRelationshipGroups: new Map(buildDirectionalLabContext(input.biomarkers).relationshipGroups
         .slice(0, 6).map((row) => [row.groupId, new Set(row.biomarkerIds)])),
     });
+    assertKnowledgeCitations(JSON.stringify(result),reviewedKnowledge);
+    return {...result,reviewedKnowledge};
   } catch (error) {
     if (controller.signal.aborted) throw Object.assign(new Error("openai_timeout"), { category: "provider_unavailable" });
     const message = error instanceof Error ? error.message : "";

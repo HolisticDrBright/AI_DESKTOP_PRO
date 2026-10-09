@@ -2,7 +2,7 @@
 
 /**
  * Care Plan (MOCK): active protocols with review/approval state. Supplement
- * details live in the supplements workspace; nutrition in the Passio-bounded
+ * details live in the supplements workspace; nutrition in the food-database-bounded
  * nutrition adapter. Approval flows reuse the shared action/audit layer.
  */
 import type { Tone } from "./types";

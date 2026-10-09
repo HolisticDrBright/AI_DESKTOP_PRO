@@ -10,6 +10,13 @@ describe("hosted Desktop runtime image", () => {
   );
   const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf("FROM "));
 
+  it("excludes browser-test configs together with their excluded support files", () => {
+    const ignored = readFileSync(resolve(process.cwd(), ".dockerignore"), "utf8").split(/\r?\n/);
+    expect(ignored).toContain("e2e");
+    expect(ignored).toContain("playwright*.ts");
+    for (const localOnly of ["dist", "graphify-out", "*.dpapi*"]) expect(ignored).toContain(localOnly);
+  });
+
   it("uses a nonroot distroless Node runtime", () => {
     expect(runtimeStage).toContain("gcr.io/distroless/nodejs22-debian12:nonroot AS runtime");
     expect(runtimeStage).toContain('CMD ["app-runner-server.mjs"]');

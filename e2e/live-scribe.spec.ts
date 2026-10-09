@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { resetBackend } from "./support/backend";
+import { EXPECT_TIMEOUT_MS } from "./support/budgets";
 
 /**
  * LIVE-MODE consent-gated recording + AI scribe (Milestone 1). Skipped unless
@@ -34,7 +35,7 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(resetBackend);
 
 const PATIENT_URL = "/patients/aaaaaaaa-1111-2222-3333-444444444401/chart";
-const pageReadyTimeout = process.env.E2E_DEV_SERVER === "1" ? 20_000 : 5_000;
+const pageReadyTimeout = EXPECT_TIMEOUT_MS;
 
 /** Start a FRESH encounter (no appointment → a new encounter every time). */
 async function openNewEncounter(page: Page): Promise<void> {
@@ -52,7 +53,7 @@ async function addParticipant(page: Page, name: string, kind: string): Promise<v
   // The local dev server compiles this API route on first use. The input is
   // cleared only after the write succeeds; the participant appears only
   // after the authoritative server list is read back.
-  const persistedTimeout = process.env.E2E_DEV_SERVER === "1" ? 20_000 : 5_000;
+  const persistedTimeout = EXPECT_TIMEOUT_MS;
   await expect(nameInput).toHaveValue("", { timeout: persistedTimeout });
   await expect(page.getByText(name)).toBeVisible({ timeout: persistedTimeout });
 }
@@ -73,6 +74,71 @@ async function consentEveryone(page: Page, scopes: string[]): Promise<void> {
 }
 
 const phase = (page: Page) => page.getByTestId("recording-status");
+
+async function probeMicrophones(page:Page){
+  await page.addInitScript(()=>{
+    const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const probe=window as unknown as {__captureStreams:MediaStream[]};probe.__captureStreams=[];
+    navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);probe.__captureStreams.push(stream);return stream;};
+  });
+}
+async function microphonesStopped(page:Page){
+  await expect.poll(()=>page.evaluate(()=>{
+    const streams=(window as unknown as {__captureStreams:MediaStream[]}).__captureStreams;
+    return streams.length>0&&streams.every(s=>s.getTracks().every(t=>t.readyState==='ended'));
+  })).toBe(true);
+}
+
+test('uncertain recording start stops the microphone and recovers without replaying begin',async({page},testInfo)=>{
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await probeMicrophones(page);await openNewEncounter(page);await consentEveryone(page,['recording','transcription']);
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let starts=0;
+  await page.route('**/api/live/scribe/recording',async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    starts++;const response=await route.fetch(); // Commit once, withhold the response.
+    await held;await route.fulfill({response}).catch(()=>{});
+  });
+  try{
+    await page.getByTestId('start-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','starting');
+    await expect(phase(page)).toHaveAttribute('data-phase','unconfirmed',{timeout:12000});
+    await microphonesStopped(page);expect(starts).toBe(1);
+    await page.getByTestId('recording-status').scrollIntoViewIfNeeded();
+    await page.screenshot({path:testInfo.outputPath('recording-unconfirmed.png')});
+    expect(errors).toEqual([]);
+    await expect(page.getByTestId('start-recording')).toHaveCount(0);
+    await page.getByTestId('check-recording-start').click();
+    await expect(page.getByTestId('recover-recording')).toBeVisible();
+    release();await page.unroute('**/api/live/scribe/recording');
+    await page.getByTestId('recover-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','recording');
+    await page.waitForTimeout(1600);await page.getByTestId('stop-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','transcript_ready');
+    expect(starts).toBe(1);
+  }finally{release();}
+});
+
+test('cancelled preparation closes the microphone and permits only a status check before manual retry',async({page})=>{
+  await probeMicrophones(page);await openNewEncounter(page);await consentEveryone(page,['recording']);
+  let attempted!:()=>void;const requestSeen=new Promise<void>(resolve=>{attempted=resolve;});
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let starts=0;
+  await page.route('**/api/live/scribe/recording',async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    starts++;attempted();await held;await route.abort().catch(()=>{}); // No server mutation.
+  });
+  try{
+    await page.getByTestId('start-recording').click();await requestSeen;
+    await page.getByTestId('cancel-recording-start').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','unconfirmed');await microphonesStopped(page);
+    expect(starts).toBe(1);await expect(page.getByTestId('start-recording')).toHaveCount(0);
+    release();await page.unroute('**/api/live/scribe/recording');
+    await page.getByTestId('check-recording-start').click();
+    await expect(phase(page)).toContainText('No active recording was found');
+    await expect(page.getByTestId('start-recording')).toBeEnabled();
+    // There is no implicit replay when status becomes available.
+    expect(starts).toBe(1);
+  }finally{release();}
+});
 
 test("milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit", async ({
   page,
@@ -130,7 +196,7 @@ test("milestone workflow: consent → record → pause/resume → transcribe →
 
   // ---- stop → upload (single-use completion token) → transcribe ----
   await page.getByTestId("stop-recording").click();
-  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: EXPECT_TIMEOUT_MS });
   await expect(page.getByTestId("transcript-section")).toBeVisible();
   await expect(page.getByTestId("segment-1")).toContainText("one eighteen over seventy six");
   await expect(page.getByTestId("segment-1")).toContainText("raw ASR");
@@ -182,7 +248,7 @@ test("milestone workflow: consent → record → pause/resume → transcribe →
 
   // ---- durable, VERIFIED deletion (retry visible, proof retained) ----
   await page.getByTestId("request-deletion").click();
-  await expect(page.getByTestId("deletion-verified")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("deletion-verified")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
   await expect(page.getByTestId("deletion-verified")).toContainText("Audio deleted and verified");
 
   // ---- audit: the clinical timeline shows the chart chain; the recording's
@@ -238,7 +304,7 @@ test("consent withdrawn mid-recording stops capture immediately (active revocati
 
   // The captured audio can still be deleted through the verified workflow.
   await page.getByTestId("request-deletion").click();
-  await expect(page.getByTestId("deletion-verified")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("deletion-verified")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 });
 
 test("a late participant join pauses capture until they are identified and consent", async ({ page }) => {
@@ -248,7 +314,7 @@ test("a late participant join pauses capture until they are identified and conse
   await expect(phase(page)).toHaveAttribute("data-phase", "recording", { timeout: 10_000 });
 
   await addParticipant(page, "Walk-in Caregiver", "caregiver");
-  await expect(phase(page)).toHaveAttribute("data-phase", "paused", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "paused", { timeout: EXPECT_TIMEOUT_MS });
   await expect(phase(page)).toContainText("new participant must be identified and consent");
 
   // Resume refuses until the caregiver consents; then it recovers.
@@ -258,10 +324,25 @@ test("a late participant join pauses capture until they are identified and conse
   await page.getByTestId("resume-recording").click();
   await expect(phase(page)).toHaveAttribute("data-phase", "recording", { timeout: 10_000 });
   await page.getByTestId("stop-recording").click();
-  await expect(phase(page)).toHaveAttribute("data-phase", "processing", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "processing", { timeout: EXPECT_TIMEOUT_MS });
 });
 
-test("network interruption buffers locally and recovers without losing the recording", async ({ page }) => {
+for (const interruption of ["network interruption", "stalled upload"] as const) {
+test(`${interruption} buffers locally and recovers without losing the recording`, async ({ page }) => {
+  // Keep interception installed throughout: unroute racing an in-flight retry
+  // can strand Chromium's intercepted request instead of restoring the network.
+  let offline = false;
+  let held = false;
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/live/scribe/chunk", async route => {
+    if (offline && interruption === "stalled upload" && !held) {
+      held = true;
+      await blocked; // No fixture write occurs; simulate a hung transport.
+      await route.abort().catch(() => {}); // Already aborted by the app deadline.
+    } else if (offline) await route.abort();
+    else await route.continue();
+  });
   await openNewEncounter(page);
   await consentEveryone(page, ["recording", "transcription"]);
   await page.getByTestId("start-recording").click();
@@ -269,16 +350,18 @@ test("network interruption buffers locally and recovers without losing the recor
   await page.waitForTimeout(1800);
 
   // Kill the chunk route: the recorder keeps capturing, chunks buffer locally.
-  await page.route("**/api/live/scribe/chunk", (route) => route.abort());
+  offline = true;
   await expect(phase(page)).toHaveAttribute("data-phase", "reconnecting", { timeout: 15_000 });
   await expect(phase(page)).toContainText("retrying upload");
-  await page.unroute("**/api/live/scribe/chunk");
+  offline = false;
   await expect(phase(page)).toHaveAttribute("data-phase", "recording", { timeout: 15_000 });
+  release();
 
   // Everything buffered arrives; the workflow completes normally.
   await page.getByTestId("stop-recording").click();
-  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: EXPECT_TIMEOUT_MS });
 });
+}
 
 test("microphone loss mid-recording pauses with an unmistakable status", async ({ page }) => {
   await page.addInitScript(() => {
@@ -303,7 +386,7 @@ test("microphone loss mid-recording pauses with an unmistakable status", async (
 
   // What was captured is still completable.
   await page.getByTestId("stop-recording").click();
-  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: EXPECT_TIMEOUT_MS });
 });
 
 test("refresh mid-recording recovers the interrupted capture from the server", async ({ page }) => {
@@ -323,7 +406,7 @@ test("refresh mid-recording recovers the interrupted capture from the server", a
   await expect(phase(page)).toHaveAttribute("data-phase", "recording", { timeout: 10_000 });
   await page.waitForTimeout(1600);
   await page.getByTestId("stop-recording").click();
-  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: 20_000 });
+  await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: EXPECT_TIMEOUT_MS });
 });
 
 test("a second tab cannot start a competing capture for the same encounter", async ({ page, context }) => {

@@ -1,0 +1,817 @@
+{
+  "contract": "synthetic-care-post-parent-routing-evidence/1",
+  "scope": "post-parent-existing-cancellation-routing-only",
+  "accepted": {
+    "contract": "synthetic-care-post-parent-routing-rehearsal/1",
+    "scope": "post-parent-existing-cancellation-routing-only",
+    "execution": "synthetic-staging",
+    "account": "588966314750",
+    "retainedVersion": "1",
+    "baselineDatabase": {
+      "liveCount": 47,
+      "sourceCount": 46,
+      "tableCount": 88,
+      "rows": 23985,
+      "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+      "liveLedger": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "referenceLedger": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "originalRows": 23980,
+      "originalDataSha256": "bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55"
+    },
+    "transportWitness": {
+      "restored": {
+        "integration": {
+          "ConnectionType": "INTERNET",
+          "IntegrationId": "2k0pka6",
+          "IntegrationMethod": "POST",
+          "IntegrationType": "AWS_PROXY",
+          "IntegrationUri": "arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity",
+          "PayloadFormatVersion": "2.0",
+          "TimeoutInMillis": 30000
+        },
+        "otherIntegrationsSha256": "fd452e4f2836dec2606cb8c96be4a338573addd50acfe110acc4fe985bef5277",
+        "stage": {
+          "AccessLogSettings": {
+            "DestinationArn": "arn:aws:logs:us-east-2:588966314750:log-group:/ai-clinical-core/synthetic-staging/api-access",
+            "Format": "{\"requestId\":\"$context.requestId\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"responseLength\":\"$context.responseLength\"}"
+          },
+          "AutoDeploy": true,
+          "CreatedDate": "2026-08-12T19:41:06+00:00",
+          "DefaultRouteSettings": {
+            "DetailedMetricsEnabled": true,
+            "ThrottlingBurstLimit": 20,
+            "ThrottlingRateLimit": 10
+          },
+          "DeploymentId": "lztzr5",
+          "LastDeploymentStatusMessage": "Successfully deployed stage with deployment ID 'lztzr5'",
+          "LastUpdatedDate": "2026-10-07T20:00:54+00:00",
+          "RouteSettings": {},
+          "StageName": "$default",
+          "StageVariables": {},
+          "Tags": {
+            "aws:cloudformation:stack-name": "ai-clinical-core-synthetic-staging",
+            "DataClassification": "synthetic_only",
+            "Environment": "synthetic-staging",
+            "aws:cloudformation:logical-id": "ClinicalApiStage",
+            "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging/b5c4daf0-9685-11f1-8a52-0aaf591c50c1"
+          }
+        },
+        "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+        "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+        "revisionId": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+        "policy": null,
+        "latestPolicySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47"
+      },
+      "originalDeployment": "fso85o",
+      "retainedDeployment": "zxoyba",
+      "returnedDeployment": "lztzr5"
+    },
+    "metricWitness": {
+      "start": 1791403140000,
+      "end": 1791403380000,
+      "minimum": 25,
+      "response": {
+        "Label": "Invocations",
+        "Datapoints": [
+          {
+            "Timestamp": "2026-10-07T12:59:00-07:00",
+            "Sum": 21,
+            "Unit": "Count"
+          },
+          {
+            "Timestamp": "2026-10-07T13:00:00-07:00",
+            "Sum": 4,
+            "Unit": "Count"
+          }
+        ]
+      }
+    },
+    "verdict": "pass",
+    "observations": {
+      "baseline": [
+        {
+          "persona": "regular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46U1gJpCYcEMnw=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46VEjj3iYcEMuQ=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46VOjfbiYcEM5A=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46VajGYiYcEMtQ=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46VrjgVCYcEMgQ=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46Vtjy7iYcEMbg=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46Vzjf1iYcEMdQ=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46V2j2LiYcEMbg=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46WHjzHiYcEM5A=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46WKi_PCYcEMGA=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46WLgXGCYcEMTg=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46WPjhAiYcEMKg=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46Wkgo7iYcEMXA=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46WogHICYcEMuQ=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46WshcGCYcEMWg=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46WxjbMiYcEMWA=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46XIj1VCYcEMKg=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46XQgw6CYcEMYg=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46XZgh8CYcEM9g=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46XdgBtCYcEMYw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+          "requestId": "E46YvhRGCYcEMKA=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f8755c3d8e20da46e862c38ca1b4c716bf7ce9a3cc10957a17959061bf596441"
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+          "requestId": "E46Z5hUiiYcEMbg=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f75b2067f0a113c3bcaa3f1ea91b81ed7fd27d040d907d24c2ad91fba3a271ea"
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+          "requestId": "E46bLhiwCYcEMgQ=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "1e5e6d06cdfd069288c914478227d158319dd8be1fd13cd2f5a0239a778b9353"
+        },
+        {
+          "persona": "perimenopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+          "requestId": "E46caiZ-iYcEN6w=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "c15f98f6ac1ed1b8373b04e37207398e7b98249328e45266ed5a1712757a215d"
+        },
+        {
+          "persona": "menopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+          "requestId": "E46dziHiCYcEMZw=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "28c13a25b920ed4cad819b799e9bfda45198b235dcd3d77a972ac4206ea6870c"
+        }
+      ],
+      "retained": [
+        {
+          "persona": "regular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46qxgEJiYcEMgg=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46q9hoLCYcEJhg=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46q_j8yiYcEMRw=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46rHgP1iYcEJlg=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46rXj9IiYcEMgQ=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46rch47CYcEJ-A=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46rfgAGiYcEMgQ=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46rjgbIiYcEJUA=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46r3g1iCYcEMQQ=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46sAgQJCYcEJ7w=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46sChnMCYcEMSQ=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46sIiI2iYcEJiw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46sggNFCYcEMMA=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46spiF0iYcEJuQ=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46srgSUiYcEMKg=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46sxiViCYcEJJw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E46s9j-RiYcEMmg=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E46tChLpiYcEJOQ=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E46tGj06CYcEMGA=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E46tIg6NCYcEK7g=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+          "requestId": "E46uEhPDiYcEJRQ=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f8755c3d8e20da46e862c38ca1b4c716bf7ce9a3cc10957a17959061bf596441"
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+          "requestId": "E46vNin4iYcEJ1g=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f75b2067f0a113c3bcaa3f1ea91b81ed7fd27d040d907d24c2ad91fba3a271ea"
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+          "requestId": "E46wahBwiYcEJ1w=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "1e5e6d06cdfd069288c914478227d158319dd8be1fd13cd2f5a0239a778b9353"
+        },
+        {
+          "persona": "perimenopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+          "requestId": "E46xcjAjiYcEJUA=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "c15f98f6ac1ed1b8373b04e37207398e7b98249328e45266ed5a1712757a215d"
+        },
+        {
+          "persona": "menopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+          "requestId": "E46ycj6uCYcEJmQ=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "28c13a25b920ed4cad819b799e9bfda45198b235dcd3d77a972ac4206ea6870c"
+        }
+      ],
+      "returned": [
+        {
+          "persona": "regular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E4666jaAiYcEJZw=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E467LjSzCYcEPig=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E467MjOoiYcEJOQ=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E467TgbxCYcEPXw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E467fhp_iYcEJMw=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E467gjfmCYcEPvw=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E467ij39CYcEJ1g=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E467piKMiYcEPSw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E468IjegiYcEJUA=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E468RhLKCYcEQjQ=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E468SgXcCYcEJKw=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E468ZhYtCYcEP2w=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E468ojriiYcEJUA=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E468vjfECYcEPJA=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E468xjc2iYcEKSw=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "perimenopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E4685iM8iYcEPxw=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "posture",
+          "status": 200,
+          "requestId": "E469OjqqiYcEJRQ=",
+          "bodySha256": "29f9e42e5e114521434b14144ec36cf9224ec4d3a8ebf2a75920c78a1ff1de94",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "legacy_erase_refused",
+          "status": 400,
+          "requestId": "E469WgJtiYcEP8Q=",
+          "bodySha256": "fa85b5944e928b34856a3334c8abb8610d30a2d63018ae9daeb2be825c0f2d85",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "care_export",
+          "status": 200,
+          "requestId": "E469YhgZCYcEJhg=",
+          "bodySha256": "3496a4b4beca991ab59906d1b97c4712194cf37518eb58474f211c389e18e9ca",
+          "verified": true
+        },
+        {
+          "persona": "menopause",
+          "case": "erasure_history",
+          "status": 200,
+          "requestId": "E469ihgYCYcEPdg=",
+          "bodySha256": "84367de583a59b1b32f2b25e8b0b27b643e444cad9f5c2cf61da1d7c7c63dae2",
+          "verified": true
+        },
+        {
+          "persona": "regular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+          "requestId": "E46-kg8tiYcEPaQ=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f8755c3d8e20da46e862c38ca1b4c716bf7ce9a3cc10957a17959061bf596441"
+        },
+        {
+          "persona": "hormonal_contraception",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+          "requestId": "E46_VjJCCYcEPxw=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "f75b2067f0a113c3bcaa3f1ea91b81ed7fd27d040d907d24c2ad91fba3a271ea"
+        },
+        {
+          "persona": "irregular_cycle",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+          "requestId": "E47AKgCfCYcEQKQ=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "1e5e6d06cdfd069288c914478227d158319dd8be1fd13cd2f5a0239a778b9353"
+        },
+        {
+          "persona": "perimenopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+          "requestId": "E47A3gLNiYcEPSw=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "c15f98f6ac1ed1b8373b04e37207398e7b98249328e45266ed5a1712757a215d"
+        },
+        {
+          "persona": "menopause",
+          "case": "existing_cancelled_receipt",
+          "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+          "requestId": "E47BtjMUiYcEPRA=",
+          "status": 200,
+          "outcome": "cancelled",
+          "verified": true,
+          "bodySha256": "28c13a25b920ed4cad819b799e9bfda45198b235dcd3d77a972ac4206ea6870c"
+        }
+      ]
+    },
+    "events": [
+      {
+        "stage": "preflight",
+        "at": "2026-10-07T19:56:50.182Z"
+      },
+      {
+        "stage": "permission_admitted",
+        "at": "2026-10-07T19:58:42.360Z"
+      },
+      {
+        "stage": "switch_admitted",
+        "at": "2026-10-07T19:59:08.288Z"
+      },
+      {
+        "stage": "retained_cases_verified",
+        "at": "2026-10-07T20:00:50.725Z",
+        "deploymentId": "zxoyba",
+        "caseCount": 25
+      },
+      {
+        "stage": "return_admitted",
+        "at": "2026-10-07T20:00:50.726Z"
+      },
+      {
+        "stage": "return_cases_and_metric_verified",
+        "at": "2026-10-07T20:02:06.450Z",
+        "deploymentId": "lztzr5",
+        "caseCount": 25
+      },
+      {
+        "stage": "routing_and_permission_restored",
+        "at": "2026-10-07T20:02:56.087Z"
+      },
+      {
+        "stage": "completed",
+        "at": "2026-10-07T20:04:49.273Z"
+      }
+    ],
+    "functionalRoutingRecoveryVerified": true,
+    "returnToCandidateVerified": true,
+    "temporaryPermissionRemoved": true,
+    "originalRoutingRestored": true,
+    "awsMutationPerformed": true,
+    "schemaChanged": false,
+    "afterUpgradeVerified": true,
+    "terminalReceiptRecoveryVerified": true,
+    "erasedOutcomeVerified": false,
+    "lostReplyErasureVerified": false,
+    "upgradeAuthorized": false,
+    "fullJourneyAcceptance": false,
+    "physicalDeviceAcceptance": false,
+    "phiAllowed": false,
+    "paidMobileBuildStarted": false,
+    "startedAt": "2026-10-07T19:55:09.803Z",
+    "completedAt": "2026-10-07T20:04:49.274Z",
+    "harness": {
+      "commit": "5efc2c135e3f3c0b3826a672907dfa278776d368",
+      "clean": true,
+      "files": 1616,
+      "sha256": "fec2aea218fe46b88d5c2569b420d02890327a936fc7c1a3bf33b73468f07294"
+    },
+    "observedAt": "2026-10-07T20:04:50.270Z",
+    "sourceRebuiltNow": false,
+    "immutableReviewedArtifactVerified": true,
+    "operatorJournal": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-routing\\235a48a11d6cb0b7c80a3b88c77f66ac.events.jsonl"
+  },
+  "priorFindings": [
+    {
+      "runId": "521696272cdefc2522e04c7f672ea002",
+      "sourceCommit": "2066b0328fda9340d3fdb79ad0ae28059425efa4",
+      "terminalExitCode": 1,
+      "code": "synthetic_care_release_refused:version_preflight_schema_upgrade_failed_transaction_start",
+      "failurePhase": "before_permission_admission",
+      "causeVerified": false,
+      "journalRecorded": false,
+      "acceptance": false,
+      "readOnlyFollowup": {
+        "databaseName": "clinical_core",
+        "numberOfRecordsUpdated": 0,
+        "lambdaRevision": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+        "lambdaCodeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=",
+        "integrationUri": "arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity",
+        "retainedPermissionAbsent": true
+      }
+    }
+  ],
+  "qualificationEvidence": false,
+  "activationEvidence": false,
+  "phiAllowed": false
+}

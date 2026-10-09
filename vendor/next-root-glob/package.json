@@ -1,0 +1,11 @@
+{
+  "name": "@alp/next-root-glob",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bounded directory-only globSync adapter for the pinned Next 15.5.25 lint root resolver; not a general fast-glob replacement",
+  "type": "commonjs",
+  "main": "index.cjs",
+  "files": ["index.cjs"],
+  "dependencies": {"tinyglobby": "0.2.17"},
+  "engines": {"node": ">=22.0.0"}
+}

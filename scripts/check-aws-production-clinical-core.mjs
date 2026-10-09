@@ -16,7 +16,94 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 49, "expected thirteen transformed migrations and thirty-six production overlays");
+assert(manifest.migrations.length === 106, "expected ten transformed migrations and ninety-six production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260920120000_production_owned_correction_lists.sql'), "correction lists overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920130000_production_owned_privacy_export_recovery.sql'), "export recovery overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920140000_production_owned_privacy_export_settlement.sql'), "export settlement overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920150000_production_owned_privacy_export_retention_ops.sql'), "export retention operations overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920160000_production_owned_correction_entry_lists.sql'), "correction entry lists overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920170000_production_owned_disputes.sql'), "owner disputes overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260921010000_production_owned_privacy_export_part_sizes.sql'), "export part-size overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260922010000_production_record_source_regime.sql'), "record source-regime overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260928010000_production_owned_privacy_export_discovery.sql'), "owner export discovery overlay missing");
+assert(manifest.migrations[103]?.file === '20261006010000_production_care_messaging.sql', "historical care messaging overlay must remain migration 104");
+assert(manifest.migrations[104]?.file === '20261006020000_production_care_connections.sql', "historical care connection overlay must remain migration 105");
+assert(manifest.migrations.at(-1)?.file === '20261006030000_production_care_claim_recovery.sql', "care claim recovery overlay must be last");
+const connectionSql = readFileSync(path.join(directory, '20261006020000_production_care_connections.sql'), 'utf8');
+assert(createHash('sha256').update(connectionSql).digest('hex') === '0ade0879e0a5b5468461249d8dd39ffd8ea64fa51860e21af6a55cfc256642c5',
+  "canonical connection SQL must preserve the reviewed candidate bytes");
+const predecessorLedger = createHash('sha256').update(manifest.migrations.slice(0, 104).map(({ version, file }) =>
+  `${version}:${createHash('sha256').update(readFileSync(path.join(directory, file), 'utf8')).digest('hex')}`).join('\n')).digest('hex');
+assert(predecessorLedger === '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0',
+  "the complete historical 104-migration ledger must remain unchanged");
+const ledgerFor = count => createHash('sha256').update(manifest.migrations.slice(0, count).map(({ version, file }) =>
+  `${version}:${createHash('sha256').update(readFileSync(path.join(directory, file), 'utf8')).digest('hex')}`).join('\n')).digest('hex');
+assert(ledgerFor(105) === '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743',
+  "the complete historical 105-migration ledger must remain unchanged");
+assert(ledgerFor(106) === '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
+  "canonical recovery release must contain the exact registered 106-migration ledger");
+const recoverySql = readFileSync(path.join(directory, '20261006030000_production_care_claim_recovery.sql'), 'utf8');
+assert(createHash('sha256').update(recoverySql).digest('hex') === '033ea35ff3d8932a7b3ca13ee9968f072fbe33e7311a2ad010d8cad80b6f0ca8',
+  "canonical recovery SQL must preserve the exact rehearsed overlay bytes");
+assert(connectionSql.includes('care_consent_texts force row level security')
+  && connectionSql.includes('care_consent_texts_immutable')
+  && connectionSql.includes('care_consent_release_serialized'), "connection consent safeguards missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920110000_production_owned_privacy_export_jobs.sql'), "privacy export jobs overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920100000_production_recording_processing_retention.sql'), "recording processing retention overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920090000_production_recording_object_intents.sql'), "recording object intents overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920080000_production_owned_correction_paths.sql'), "correction path overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920070000_production_recording_artifact_reconciliation.sql'), "recording artifact reconciliation overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920060000_production_owned_privacy_request_paging.sql'), "privacy request paging overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920050000_production_owned_correction_request_content.sql'), "correction request content overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920040000_production_recording_drafting.sql'), "recording drafting overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920030000_production_recording_transcription_artifacts.sql'), "transcription artifact cleanup overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920020000_production_recording_workspace_finished.sql'), "recording workspace finished-capture overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260920010000_production_recording_transcription.sql'), "recording transcription overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260919030000_production_owned_record_tombstones.sql'), "record tombstone listing overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260919020000_production_owned_identity_deletion.sql'), "identity deletion overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260919010000_production_external_privacy_purge.sql'), "external privacy purge overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917210000_production_owned_processing_authorization.sql'), "processing closure checkpoint missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917200000_production_owned_deletion_write_fence.sql'), "account deletion write fence missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917190000_production_owned_diet_preferences.sql'), "diet preferences overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260918010000_production_owned_lab_analyses.sql'), "lab analyses publication overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917180000_production_recording_cleanup_review.sql'), "recording cleanup review overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917170000_production_recording_cleanup_rechecks.sql'),
+  "recording cleanup rechecks overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917160000_production_recording_cleanup_attempts.sql'),
+  "recording cleanup attempts overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917150000_production_recording_cleanup_authority.sql'),
+  "recording cleanup authority overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917140000_production_recording_cleanup_intents.sql'),
+  "recording cleanup intent overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917120000_production_recording_reconciliation.sql'),
+  "recording reconciliation overlay missing");
+assert(manifest.migrations.some(entry => entry.file === '20260917110000_production_recording_qualified_start.sql'),
+  "missing storage-qualified recording start");
+assert(manifest.migrations.some(entry => entry.file === '20260917100000_production_recording_lifecycle.sql'),
+  "missing recording recovery and explicit inventory-bound disposition");
+assert(manifest.migrations.some(entry => entry.file === '20260917090000_production_recording_segments.sql'),
+  "missing consent-bound durable segment reservations and receipts");
+assert(manifest.migrations.some(entry => entry.file === '20260917080000_production_recording_workspace.sql'),
+  "missing recording consent workspace and retry-safe roster");
+assert(manifest.migrations.some(entry => entry.file === '20260917070000_production_encounter_recording_authority.sql'),
+  "missing encounter recording authority");
+assert(manifest.migrations.some(entry => entry.file === '20260917060000_production_external_privacy_inventory.sql'),
+  "missing request-bound retained-job inventory");
+assert(manifest.migrations.some(entry => entry.file === '20260917050000_production_external_deletion_guard.sql'),
+  "missing owner-locked external deletion guard");
+assert(manifest.migrations.some(entry => entry.file === '20260917040000_production_reviewed_personal_purge.sql'),
+  "missing preview-bound personal purge");
+assert(manifest.migrations.some(entry => entry.file === '20260917030000_production_privacy_operator_queue.sql'),
+  "missing scoped workforce privacy queue");
+assert(manifest.migrations.some(entry => entry.file === '20260917020000_production_owned_correction_resolution.sql'),
+  "revision-bound correction resolution must be included in the production artifact");
+assert(manifest.migrations.some(entry => entry.file === '20260917010000_production_privacy_fulfillment_safety.sql'),
+  "privacy fulfillment safety must be included in the production artifact");
+assert(manifest.migrations.some(entry => entry.version === '20260916070000'
+  && entry.file === '20260916070000_production_owned_deletion_hold_guard.sql'),
+  "per-record legal-hold guard must be included in the production artifact");
+assert(!manifest.migrations.some(entry => ['20260821049000', '20260821049500', '20260821049700'].includes(entry.version)),
+  "synthetic chat/family/directory variants must not shadow the dedicated production contracts");
 assert(!manifest.migrations.some((entry) => entry.file.includes("synthetic_patient_directory_create")),
   "synthetic-only patient creation must never enter the production migration artifact");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
@@ -32,6 +119,13 @@ for (const entry of manifest.migrations) {
   assert(sql.trim().length > 0, `${entry.file} is empty`);
   combined += `\n${sql}`;
 }
+assert((combined.match(/create table clinical_core\.patient_relationships\s*\(/gi) ?? []).length === 1,
+  "family relationships must have exactly one authoritative table definition");
+assert(!/^\+--/m.test(combined), "a patch marker was included as SQL");
+for(const marker of ['owned_external_inventory_items force row level security','open_owned_external_inventory',
+  'append_owned_external_inventory',"'completeAccountInventory',false","'requiresReconciliation',true",
+  "'privacy_request.inventory'"])
+  assert(combined.includes(marker),`missing retained-inventory invariant ${marker}`);
 
 for (const [pattern, description] of [
   [/synthetic/i, "production artifact contains a synthetic marker"],
@@ -49,6 +143,8 @@ for (const marker of [
   "clinical_private.assert_production_context",
   "clinical_core.create_patient_profile",
   "clinical_core.review_biomarker",
+  "clinical_private.guard_owned_record_deletion_hold",
+  "create trigger owned_record_deletion_hold_guard before insert on clinical_core.owned_consumer_record_versions",
   "'patient.created'",
   "'lab_observation.reviewed'",
 ]) assert(combined.includes(marker), `missing production invariant ${marker}`);
@@ -56,6 +152,9 @@ for (const marker of [
 const topLevelSql = combined.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "");
 assert(!/insert\s+into\s+clinical_core\.(organizations|persons|identities|organization_memberships|patient_records)\b/i
   .test(topLevelSql), "production migrations must not seed organization, identity, membership, or patient rows");
+assert(!/insert\s+into\s+clinical_core\.(consent_artifacts|consent_grants|care_consent_texts)\b/i.test(
+  connectionSql.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+  "connection migration must not seed approval, copy or patient consent rows");
 
 const overlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821050000_production_patient_directory.sql"), "utf8");

@@ -105,6 +105,7 @@ export interface PatientObservationEnvelope {
   observationId: string;
   patientId: string;
   kind: ObservationKind;
+  /** "passio" is retained only for observations ingested before the vendor was retired. */
   source: "junction" | "passio" | "patient_entry";
   observedAt: string;
   receivedAt: string;

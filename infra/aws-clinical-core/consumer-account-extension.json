@@ -5,6 +5,7 @@
   "Parameters": {
     "EnvironmentName": { "Type": "String", "AllowedValues": ["synthetic-staging", "production-clinical"] },
     "Boundary": { "Type": "String", "AllowedValues": ["synthetic", "production"] },
+    "AccountActivation": { "Type": "String", "Default": "blocked", "AllowedValues": ["blocked", "approved"] },
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
@@ -17,6 +18,16 @@
     "TermsVersion": { "Type": "String", "Default": "terms-2026-08", "AllowedPattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
     "PrivacyVersion": { "Type": "String", "Default": "privacy-2026-08", "AllowedPattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
   },
+  "Rules": {
+    "MatchedBoundary": { "Assertions": [{ "Assert": { "Fn::Or": [
+      { "Fn::And": [{ "Fn::Equals": [{ "Ref": "Boundary" }, "synthetic"] }, { "Fn::Equals": [{ "Ref": "EnvironmentName" }, "synthetic-staging"] }] },
+      { "Fn::And": [{ "Fn::Equals": [{ "Ref": "Boundary" }, "production"] }, { "Fn::Equals": [{ "Ref": "EnvironmentName" }, "production-clinical"] }] }
+    ] }, "AssertDescription": "Identity boundary must match the selected environment." }] }
+  },
+  "Conditions": {
+    "ProductionBoundary": { "Fn::Equals": [{ "Ref": "Boundary" }, "production"] },
+    "AccountAccessAllowed": { "Fn::Or": [{ "Fn::Equals": [{ "Ref": "Boundary" }, "synthetic"] }, { "Fn::Equals": [{ "Ref": "AccountActivation" }, "approved"] }] }
+  },
   "Resources": {
     "ConsumerRegistrationClient": {
       "Type": "AWS::Cognito::UserPoolClient",
@@ -27,8 +38,8 @@
         "PreventUserExistenceErrors": "ENABLED",
         "EnableTokenRevocation": true,
         "ExplicitAuthFlows": ["ALLOW_REFRESH_TOKEN_AUTH"],
-        "ReadAttributes": ["email", "email_verified", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"],
-        "WriteAttributes": ["email", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"]
+        "ReadAttributes": { "Fn::If": ["ProductionBoundary", ["email", "email_verified", "custom:person_id", "custom:organization_id", "custom:production_bound"], ["email", "email_verified", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"]] },
+        "WriteAttributes": { "Fn::If": ["ProductionBoundary", ["email", "custom:person_id", "custom:organization_id", "custom:production_bound"], ["email", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"]] }
       }
     },
     "ConsumerAccountLogGroup": {
@@ -41,15 +52,15 @@
       "Properties": {
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
-          { "PolicyName": "RegistrationBootstrapDatabase", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["rds-data:BeginTransaction", "rds-data:ExecuteStatement", "rds-data:CommitTransaction", "rds-data:RollbackTransaction"], "Resource": { "Ref": "DatabaseClusterArn" } }] } },
-          { "PolicyName": "RegistrationBootstrapCredential", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Fn::If": ["AccountAccessAllowed", { "PolicyName": "RegistrationBootstrapDatabase", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["rds-data:BeginTransaction", "rds-data:ExecuteStatement", "rds-data:CommitTransaction", "rds-data:RollbackTransaction"], "Resource": { "Ref": "DatabaseClusterArn" } }] } }, { "Ref": "AWS::NoValue" }] },
+          { "Fn::If": ["AccountAccessAllowed", { "PolicyName": "RegistrationBootstrapCredential", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
             { "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "DatabaseSecretArn" } },
             { "Effect": "Allow", "Action": "kms:Decrypt", "Resource": { "Ref": "ClinicalCoreKeyArn" }, "Condition": { "StringEquals": { "kms:ViaService": { "Fn::Sub": "secretsmanager.${AWS::Region}.${AWS::URLSuffix}" } } } }
-          ] } },
-          { "PolicyName": "ConfirmedUserLookupOnly", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          ] } }, { "Ref": "AWS::NoValue" }] },
+          { "Fn::If": ["AccountAccessAllowed", { "PolicyName": "ConfirmedUserLookupOnly", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
             { "Effect": "Allow", "Action": "cognito-idp:AdminGetUser", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}" } },
-            { "Effect": "Allow", "Action": "cognito-idp:DescribeUserPoolClient", "Resource": "*" }
-          ] } },
+            { "Effect": "Allow", "Action": "cognito-idp:DescribeUserPoolClient", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}" } }
+          ] } }, { "Ref": "AWS::NoValue" }] },
           { "PolicyName": "BoundedRegistrationLogging", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["ConsumerAccountLogGroup", "Arn"] } }] } }
         ]
       }
@@ -64,18 +75,22 @@
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
         "Environment": { "Variables": {
           "CONSUMER_USER_POOL_ID": { "Ref": "ConsumerUserPoolId" }, "CONSUMER_USER_POOL_CLIENT_ID": { "Ref": "ConsumerRegistrationClient" },
+          "CONSUMER_AUTH_CLIENT_ID": { "Ref": "ConsumerUserPoolClientId" }, "CONSUMER_ACCOUNT_ACTIVATION": { "Ref": "AccountActivation" },
           "CONSUMER_ACCOUNT_BOUNDARY": { "Ref": "Boundary" }, "CONSUMER_TERMS_VERSION": { "Ref": "TermsVersion" }, "CONSUMER_PRIVACY_VERSION": { "Ref": "PrivacyVersion" },
           "CLINICAL_DATABASE_CLUSTER_ARN": { "Ref": "DatabaseClusterArn" }, "CLINICAL_DATABASE_SECRET_ARN": { "Ref": "DatabaseSecretArn" }, "CLINICAL_DATABASE_NAME": { "Ref": "DatabaseName" }
         } }
       }
     },
     "ConsumerAccountIntegration": { "Type": "AWS::ApiGatewayV2::Integration", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["ConsumerAccountFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 15000 } },
+    "AccountAuthorizer": { "Type": "AWS::ApiGatewayV2::Authorizer", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "IdentitySource": ["$request.header.Authorization"], "Name": "consumer-account", "JwtConfiguration": { "Audience": [{ "Ref": "ConsumerUserPoolClientId" }], "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.amazonaws.com/${ConsumerUserPoolId}" } } } },
+    "BootstrapRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/account/bootstrap", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "AccountAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "RegisterRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/public/consumer/register", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "ConfirmRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/public/consumer/registration/confirm", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "ResendRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/public/consumer/registration/resend", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "RecoveryRequestRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/public/consumer/recovery/request", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "RecoveryConfirmRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/public/consumer/recovery/confirm", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${ConsumerAccountIntegration}" } } },
     "InvokePermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "ConsumerAccountFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/public/consumer/*" } } },
+    "BootstrapPermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "ConsumerAccountFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/consumer/account/bootstrap" } } },
     "ErrorAlarm": { "Type": "AWS::CloudWatch::Alarm", "Properties": { "Namespace": "AWS/Lambda", "MetricName": "Errors", "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ConsumerAccountFunction" } }], "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 1, "ComparisonOperator": "GreaterThanOrEqualToThreshold", "TreatMissingData": "notBreaching" } }
   },
   "Outputs": {

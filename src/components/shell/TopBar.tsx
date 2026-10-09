@@ -127,7 +127,7 @@ export function TopBar() {
             </span>
             <span className="text-left leading-[1.25]">
               <span className="block text-[12.5px] font-semibold text-ink">Account</span>
-              <span className="block text-[10.5px] text-subtle">Signed-in practitioner</span>
+              <span className="block text-[10.5px] text-subtle">Session &amp; organization</span>
             </span>
             <ChevronDown size={13} strokeWidth={2} className="text-faint" aria-hidden />
           </button>
@@ -136,6 +136,7 @@ export function TopBar() {
         {({ close }) => (
           <>
             <PopoverHeader title="Account" note="Session & organization" />
+            <Link href="/login" onClick={close} className={menuLink}>Practitioner sign-in</Link>
             <Link href="/settings" onClick={close} className={menuLink}>Settings &amp; session</Link>
             <Link href="/audit-log" onClick={close} className={menuLink}>Audit log</Link>
             <span className="flex border-t border-hairline px-[13px] py-[9px]">

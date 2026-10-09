@@ -1016,8 +1016,8 @@ export const api = {
     copilotDraft: async (input: { planVersionId: string; patientId: string }) =>
       liveClient.nutritionCopilotDraft(input),
     /**
-     * LIVE: the Passio and copilot boundaries' real state.
-     * `liveRequestExecuted` is false until a Passio request has ACTUALLY run —
+     * LIVE: the food-database (retired Passio) and copilot boundaries' real state.
+     * `liveRequestExecuted` is false until a food-database request has ACTUALLY run —
      * configuration alone is never presented as proof the integration works.
      */
     providerStatus: async () => liveClient.nutritionProviderStatus(),

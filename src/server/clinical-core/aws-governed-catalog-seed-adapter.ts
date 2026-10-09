@@ -5,6 +5,7 @@ if (typeof window !== "undefined") {
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { reconcileLabelServingConflict } from "./catalog-label-reconciliation";
 import {
   GOVERNED_CATALOG_CONTRACT,
   catalogSha256,
@@ -69,6 +70,14 @@ export function loadAndAdaptGovernedCatalogSourcePackage(options: {
     if (recordCount(file, records) !== expected.records) invalid();
     return [file, records];
   })) as SourceFiles;
+  const decisionMetadata = sourceManifest.files?.["catalog_decisions.json"];
+  if (decisionMetadata) {
+    const bytes = readFileSync(resolve(directory, "catalog_decisions.json"));
+    if (!matchesPinnedTextHash(bytes, decisionMetadata.sha256)) throw new GovernedCatalogSourcePackageError("source_package_hash_mismatch");
+    const decisions = parseJson(bytes);
+    if (!Array.isArray(decisions) || decisions.length !== decisionMetadata.records) invalid();
+    files["catalog_decisions.json"] = decisions;
+  }
   return adaptGovernedCatalogSourcePackage({
     sourceManifest,
     manifestFileSha256,
@@ -86,6 +95,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
   if (!isRecord(input.sourceManifest) || !SHA256.test(input.manifestFileSha256)
     || !["synthetic-staging", "production-clinical"].includes(input.targetEnvironment)) invalid();
   const sourceManifest = input.sourceManifest as SourceManifest;
+  const releaseVersion = sourceRecordVersion(sourceManifest.release?.version);
   if (sourceManifest.package !== "ai-longevity-pro-v2-governed-catalog"
     || !["1.0.0", "1.1.0"].includes(sourceManifest.schemaVersion ?? "")) invalid();
   for (const file of SOURCE_FILES) {
@@ -139,16 +149,21 @@ export function adaptGovernedCatalogSourcePackage(input: {
   }
   const labelsById = new Map(labels.map((row) => [row.id, row]));
   const crosscheckById = new Map(crosscheck.records.map((row) => [row.id, row]));
+  const decisions = input.files["catalog_decisions.json"] ?? [];
+  if (!Array.isArray(decisions)) invalid();
+  const reconciled = new Map(labels.map(label => [label.id,
+    reconcileLabelServingConflict(label, crosscheckById.get(label.id), decisions)]));
+  if (releaseVersion === 1 && [...reconciled.values()].some(row => row.evidence)) invalid();
 
   const adaptedProducts = products.map((source): CatalogProductSeed => {
     const stableId = productStableId(source.id);
     const restricted = source.access !== "open";
     const label = labelsById.get(source.id);
     const labelCrosscheck = crosscheckById.get(source.id);
-    const labelReview = labelReviewState(label, labelCrosscheck);
+    const labelReview = labelReviewState(label, labelCrosscheck, reconciled.get(source.id)?.unresolved);
     const base = {
       stableId,
-      version: 1,
+      version: releaseVersion,
       displayName: source.name,
       productType: productType(source.productType),
       accessTier: restricted ? "practitioner_gated" as const : "open" as const,
@@ -180,7 +195,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
     const restricted = source.access !== "open";
     const base = {
       stableId: offerStableId(source.id),
-      version: 1,
+      version: releaseVersion,
       productStableId: productStableId(source.id),
       destinationUrl: source.affiliate.url,
       trackingMetadata: compactObject({
@@ -200,14 +215,14 @@ export function adaptGovernedCatalogSourcePackage(input: {
     const labelCrosscheck = crosscheckById.get(label.id)!;
     const base = {
       stableId: productLabelStableId(label.id),
-      version: 1,
+      version: releaseVersion,
       productStableId: productStableId(label.id),
       labelFound: label.labelFound,
       physicalLabelRequired: Boolean(label.phase9f?.physicalLabelRequired) || labelCrosscheck.physicalLabelRequired,
-      substantiveConflict: labelCrosscheck.verdict === "substantive_conflict",
+      substantiveConflict: reconciled.get(label.id)!.unresolved,
       practitionerDecisionRequired: Boolean(label.practitionerDecisionRequired),
       labelPayload: safeLabelEvidence(label),
-      crosscheckPayload: labelCrosscheck,
+      crosscheckPayload: { ...labelCrosscheck, reconciliation: reconciled.get(label.id)!.evidence },
       sourceRefs: [packageRef, `label-research:${label.phase9f?.prhId ?? labelCrosscheck.prhId ?? label.id}`],
     };
     return { ...base, contentSha256: catalogSha256(productLabelContentForHash(base)) };
@@ -219,7 +234,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
       .sort((left, right) => left.id.localeCompare(right.id));
     const base = {
       stableId: protocolStableId(source.id),
-      version: positiveInteger(Number(source.version)) ? Number(source.version) : 1,
+      version: releaseVersion === 1 && positiveInteger(Number(source.version)) ? Number(source.version) : releaseVersion,
       title: source.name,
       summary: JSON.stringify({
         goal: source.goal,
@@ -261,7 +276,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
   const safetyRules = rules.map((source): CatalogSafetyRuleSeed => {
     const base = {
       stableId: safetyRuleStableId(source.id),
-      version: 1,
+      version: releaseVersion,
       severity: source.severity,
       blocksRecommendation: source.blocksRecommendation.toLowerCase() === "yes",
       rulePayload: {
@@ -281,7 +296,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
     if (source.url && !safeHttpsUrl(source.url)) invalid();
     const base = {
       stableId: knowledgeSourceStableId(source.code),
-      version: 1,
+      version: releaseVersion,
       citation: source.citation,
       publisher: source.publisher,
       evidenceLevel: source.evidenceLevel,
@@ -298,7 +313,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
   const base = {
     contractVersion: GOVERNED_CATALOG_CONTRACT,
     sourcePackageId: `${sourceManifest.package}.${input.manifestFileSha256.slice(0, 16)}`,
-    sourcePackageVersion: 1,
+    sourcePackageVersion: releaseVersion,
     targetEnvironment: input.targetEnvironment,
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
@@ -316,12 +331,25 @@ export function adaptGovernedCatalogSourcePackage(input: {
 }
 
 type SourceManifest = {
+  release?: { version?: string };
   package?: string;
   schemaVersion?: string;
-  files?: Partial<Record<typeof SOURCE_FILES[number], { records: number; sha256: string }>>;
+  files?: Partial<Record<typeof SOURCE_FILES[number] | "catalog_decisions.json", { records: number; sha256: string }>>;
 };
 
+// Existing v1.0/v1.1 imports used record version 1. Preserve them. New frozen
+// editions receive monotonic versions rather than colliding with immutable rows.
+export function sourceRecordVersion(version: unknown): number {
+  if (version === undefined || version === "1.0.0" || version === "1.1.0") return 1;
+  if (typeof version !== "string" || !/^[1-9]\.(0|[1-9]\d?)\.(0|[1-9]\d?)$/.test(version)) invalid();
+  const [major, minor, patch] = (version as string).split(".").map(Number) as [number, number, number];
+  if (major === 1 && minor < 2) invalid();
+  // Reserve the last digit for derived releases, inside the DB's <=1,000,000 cap.
+  return major * 100_000 + minor * 1_000 + patch * 10;
+}
+
 export type SourceFiles = {
+  "catalog_decisions.json"?: unknown[];
   "products.json": unknown[];
   "protocols.json": unknown[];
   "protocol_steps.json": unknown[];
@@ -587,12 +615,12 @@ function safeLabelEvidence(label: SourceLabel, crosscheck?: SourceLabelCrosschec
   });
 }
 
-function labelReviewState(label?: SourceLabel, crosscheck?: SourceLabelCrosscheckRecord) {
+function labelReviewState(label?: SourceLabel, crosscheck?: SourceLabelCrosscheckRecord, unresolved?: boolean) {
   const reasons = new Set<string>();
   if (!label) reasons.add("label_evidence_missing");
   if (label && !label.labelFound) reasons.add("label_not_found");
   if (label?.phase9f?.physicalLabelRequired || crosscheck?.physicalLabelRequired) reasons.add("physical_label_required");
-  if (label?.practitionerDecisionRequired || crosscheck?.verdict === "substantive_conflict") reasons.add("substantive_conflict");
+  if (label?.practitionerDecisionRequired || (unresolved ?? crosscheck?.verdict === "substantive_conflict")) reasons.add("substantive_conflict");
   if (label?.labelSourceUrl && !safeHttpsUrl(label.labelSourceUrl)) reasons.add("label_source_url_invalid");
   if (label?.phase9f?.officialProductUrl && !safeHttpsUrl(label.phase9f.officialProductUrl)) reasons.add("official_product_url_invalid");
   return { approvalBlocked: reasons.size > 0, reasons: [...reasons].sort() };

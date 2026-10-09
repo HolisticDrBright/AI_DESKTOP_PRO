@@ -10,6 +10,7 @@ export const handler = createTelehealthHandler({
   remindersEnabled: required("REMINDERS_ENABLED") === "true", reminderSender: process.env.REMINDER_SENDER?.trim() ?? "",
   reminderConfigurationSet: process.env.REMINDER_CONFIGURATION_SET?.trim() ?? "", reminderScheduleGroup: process.env.REMINDER_SCHEDULE_GROUP?.trim() ?? "",
   reminderSchedulerRoleArn: process.env.REMINDER_SCHEDULER_ROLE_ARN?.trim() ?? "", reminderTargetArn: process.env.REMINDER_TARGET_ARN?.trim() ?? "",
+  reminderEventsTopicArn: process.env.REMINDER_EVENTS_TOPIC_ARN?.trim() ?? "",
   stripeTestEnabled: required("STRIPE_TEST_ENABLED") === "true", stripeSecretArn: process.env.STRIPE_SECRET_ARN?.trim() ?? "",
   stripeSuccessUrl: process.env.STRIPE_SUCCESS_URL?.trim() ?? "", stripeCancelUrl: process.env.STRIPE_CANCEL_URL?.trim() ?? "",
 });

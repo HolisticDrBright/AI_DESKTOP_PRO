@@ -1,4 +1,5 @@
 "use client";
+import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 import { useState } from "react";
 import { shouldShowOrgSwitcher } from "./org-switcher-visibility";
@@ -26,6 +27,7 @@ export function OrgSwitcher({
 
   const onChange = async (organizationId: string) => {
     if (!organizationId || organizationId === activeOrgId || working) return;
+    announceWorkforceSessionChange();
     setWorking(true);
     setError("");
     try {

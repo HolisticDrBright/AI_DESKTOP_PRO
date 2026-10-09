@@ -30,7 +30,11 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 30, "extension must expose exactly thirty authenticated routes");
+  assert(errors, routeEntries.length === 55, "extension must expose exactly fifty-five routes");
+  assert(errors, extension.Outputs?.RoutesEnabled?.Value === String(routeEntries.length), "route-count output must report the actual source routes");
+  // Exactly one route on this API is unauthenticated, and it is named here rather than
+  // inferred. A second one appearing without this list changing is the failure this guards.
+  const PUBLIC_ROUTES = new Set(["POST /clinical-core/public/consult-intake"]);
   const expectedRoutes = new Set([
     "GET /clinical-core/workforce/posture",
     "GET /clinical-core/consumer/posture",
@@ -41,6 +45,9 @@ export function validateAuthenticatedApi(foundation, extension) {
     "POST /clinical-core/workforce/consents/revoke",
     "POST /clinical-core/consumer/consents/revoke",
     "POST /clinical-core/consumer/labs/import",
+    "POST /clinical-core/consumer/labs/specimen-context",
+    "GET /clinical-core/consumer/labs/specimen-context",
+    "GET /clinical-core/workforce/labs/specimen-context",
     "GET /clinical-core/consumer/connection",
     "GET /clinical-core/consumer/consent-artifact",
     "GET /clinical-core/workforce/lab-imports",
@@ -62,10 +69,40 @@ export function validateAuthenticatedApi(foundation, extension) {
     "GET /clinical-core/consumer/chat-context",
     "POST /clinical-core/consumer/chat",
     "POST /clinical-core/workforce/chat",
+    "POST /clinical-core/consumer/messages",
+    "POST /clinical-core/workforce/messages",
+    "POST /clinical-core/consumer/programs",
+    "POST /clinical-core/workforce/programs",
+    "POST /clinical-core/workforce/calendar-connection",
+    "POST /clinical-core/consumer/care-data",
+    "POST /clinical-core/workforce/consult-links",
+    "POST /clinical-core/workforce/consult-requests",
+    "POST /clinical-core/workforce/intake-forms",
+    "POST /clinical-core/workforce/intake-packets",
+    "POST /clinical-core/consumer/intake-packets",
+    "POST /clinical-core/public/consult-intake",
+    "POST /clinical-core/workforce/disputes",
+    "POST /clinical-core/consumer/disputes",
+    "POST /clinical-core/workforce/content-revisions",
+    "POST /clinical-core/consumer/content-revisions",
+    "POST /clinical-core/workforce/note-templates",
+    "POST /clinical-core/workforce/note-drafting-context",
+    "POST /clinical-core/workforce/protocol-carts",
+    "POST /clinical-core/workforce/outcome-ledger",
+    "POST /clinical-core/workforce/outcome-report",
+    "POST /clinical-core/workforce/consult-retention",
   ]);
   for (const [logicalId, route] of routeEntries) {
     assert(errors, expectedRoutes.delete(route.Properties?.RouteKey), `${logicalId} route is unexpected or duplicated`);
-    assert(errors, route.Properties?.AuthorizationType === "JWT" && route.Properties?.AuthorizerId, `${logicalId} must use a JWT authorizer`);
+    if (PUBLIC_ROUTES.has(route.Properties?.RouteKey)) {
+      // A visitor asking for a first appointment has no account to authenticate with. What
+      // makes it safe is the narrowness of what it reaches, not an authorizer, so the one
+      // thing asserted here is that it carries no authorizer at all rather than a broken one.
+      assert(errors, route.Properties?.AuthorizationType === "NONE" && !route.Properties?.AuthorizerId,
+        `${logicalId} must be declared unauthenticated, with no authorizer attached`);
+    } else {
+      assert(errors, route.Properties?.AuthorizationType === "JWT" && route.Properties?.AuthorizerId, `${logicalId} must use a JWT authorizer`);
+    }
   }
   assert(errors, expectedRoutes.size === 0, "one or more required routes are missing");
 
@@ -78,7 +115,8 @@ export function validateAuthenticatedApi(foundation, extension) {
 
   const fn = resources.IdentityApiFunction?.Properties;
   assert(errors, fn?.Runtime === "nodejs22.x" && fn?.Architectures?.[0] === "arm64", "Lambda runtime must be bounded and cost-efficient");
-  assert(errors, fn?.Timeout === 15 && fn?.MemorySize === 256 && !("ReservedConcurrentExecutions" in fn), "Lambda resource bounds must remain account-compatible");
+  assert(errors, fn?.Timeout === 29 && fn?.MemorySize === 256 && !("ReservedConcurrentExecutions" in fn), "Lambda resource bounds must remain account-compatible");
+  assert(errors, resources.IdentityApiIntegration?.Properties?.TimeoutInMillis === 30000, "HTTP integration must allow the bounded Aurora resume window");
   assert(errors, !fn?.VpcConfig, "Data API Lambda must not create NAT/VPC networking cost");
   const env = fn?.Environment?.Variables ?? {};
   assert(errors, Object.keys(env).sort().join(",") === [

@@ -1,6 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 import { ClinicalCoreAdapterError, type AwsSyntheticIdentityConsentAdapter } from "./aws-identity-consent";
 import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-identity-api";
+import type { LabSpecimenTransfer } from "../../contracts/labSpecimenTransfer";
+import { isProductionPilotRouteAllowed, isProductionPilotConsentScopeAllowed } from "./production-pilot-policy";
+import { ClinicalStateError } from "./aws-clinical-state";
+import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase,type ClinicalCoreTransaction} from './database';
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -11,6 +15,44 @@ const WORKFORCE_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_
 const CONSUMER_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer";
 const WORKFORCE_AUD = "workforceclient000000000000";
 const CONSUMER_AUD = "consumerclient0000000000000";
+
+describe('synthetic erasure intent recovery API source routing',()=>{
+ function setup(data:unknown){
+  const query=vi.fn(async()=>({rows:[{data}]}));
+  const database:ClinicalCoreDatabase={transaction:work=>work({query:query as ClinicalCoreTransaction['query']})};
+  const run=createAwsIdentityApiHandler({database,adapter:adapter(),configuration:{workforceIssuer:WORKFORCE_ISSUER,
+   workforceAudience:WORKFORCE_AUD,consumerIssuer:CONSUMER_ISSUER,consumerAudience:CONSUMER_AUD}});
+  return {run,query};
+ }
+ test('routes exact preparation and bounded discovery through the existing authenticated consumer route',async()=>{
+  for(const [body,data,fn] of [
+   [{action:'prepare_erasure',requestId:ARTIFACT,scope:'domain'},
+    {action:'prepare_erasure',requestId:ARTIFACT,scope:'domain',outcome:'prepared',receipt:null},'care_data_prepare_erasure'],
+   [{action:'discover_erasure_requests',limit:50},{action:'discover_erasure_requests',items:[],next:null,
+    legacyUncorrelatedErasureCount:0,coverage:'committed_owner_records_not_global_clearance'},'care_data_discover_erasures'],
+  ] as const){
+   const t=setup(data),result=await t.run(event('POST /clinical-core/consumer/care-data','consumer',body,{exp:Date.now()/1000+60}));
+   expect(result.statusCode).toBe(200);expect(JSON.parse(result.body)).toEqual({data});
+   expect(t.query).toHaveBeenCalledWith(`select clinical_core.${fn}($1::jsonb) as data`,[JSON.stringify(body)]);
+  }
+ });
+ test('refuses expired/workforce claims and body ownership overrides before recovery SQL',async()=>{
+  const input={action:'prepare_erasure',requestId:ARTIFACT,scope:'domain'};
+  for(const e of [event('POST /clinical-core/consumer/care-data','consumer',input,{exp:1}),
+   event('POST /clinical-core/consumer/care-data','workforce',input,{exp:Date.now()/1000+60}),
+   event('POST /clinical-core/consumer/care-data','consumer',{...input,ownerId:PERSON},{exp:Date.now()/1000+60})]){
+   const t=setup({});expect([400,403]).toContain((await t.run(e)).statusCode);expect(t.query).not.toHaveBeenCalled();
+  }
+ });
+ test('a malformed recovery response is service-unavailable, not success',async()=>{
+  const t=setup({action:'discover_erasure_requests',items:[],next:null,legacyUncorrelatedErasureCount:0,coverage:'account_clear'});
+  expect((await t.run(event('POST /clinical-core/consumer/care-data','consumer',{action:'discover_erasure_requests'},{exp:Date.now()/1000+60}))).statusCode).toBe(503);
+ });
+ test('an uninstalled or unavailable recovery schema is not reported as a successful read or invalid sign-in',async()=>{
+  const t=setup({});t.query.mockRejectedValue(new ClinicalCoreDatabaseRejection('operation_refused'));
+  expect((await t.run(event('POST /clinical-core/consumer/care-data','consumer',{action:'discover_erasure_requests'},{exp:Date.now()/1000+60}))).statusCode).toBe(503);
+ });
+});
 
 function adapter(): AwsSyntheticIdentityConsentAdapter {
   return {
@@ -56,6 +98,111 @@ function handler(service = adapter()) {
     }),
   };
 }
+
+describe('synthetic patient-to-practitioner messaging API',()=>{
+ function setup(){
+  const query=vi.fn(async()=>({rows:[{data:{action:'list',threads:[],nextBefore:null}}]}));
+  const database:ClinicalCoreDatabase={transaction:work=>work({query:query as ClinicalCoreTransaction['query']})};
+  const run=createAwsIdentityApiHandler({database,adapter:adapter(),configuration:{
+   workforceIssuer:WORKFORCE_ISSUER,workforceAudience:WORKFORCE_AUD,consumerIssuer:CONSUMER_ISSUER,consumerAudience:CONSUMER_AUD}});
+  return {run,query};
+ }
+ test.each(['consumer','workforce'] as const)('accepts %s only with current authenticated claims',async pool=>{
+  const t=setup(),e=event('POST /clinical-core/'+pool+'/messages',pool,{action:'list'},{exp:Math.floor(Date.now()/1000)+60});
+  expect((await t.run(e)).statusCode).toBe(200);
+  expect(t.query).toHaveBeenCalledWith('select clinical_core.care_message_request($1::jsonb) as data',['{"action":"list"}']);
+ });
+ test.each([undefined,0,1,'invalid'])('rejects absent or expired expiry %s before database',async exp=>{
+  const t=setup();expect((await t.run(event('POST /clinical-core/consumer/messages','consumer',{action:'list'},{exp}))).statusCode).toBe(403);
+  expect(t.query).not.toHaveBeenCalled();
+ });
+ test('routes consumer receipts, refuses workforce and rejects mismatched database receipts',async()=>{
+  const t=setup(),input={action:'receipt',requestId:ARTIFACT,connectionId:CONNECTION};
+  const receipt={...input,status:'unresolved'};
+  t.query.mockResolvedValue({rows:[{data:receipt}]} as never);
+  const accepted=await t.run(event('POST /clinical-core/consumer/messages','consumer',input,{exp:Date.now()/1000+60}));
+  expect(accepted.statusCode).toBe(200);expect(JSON.parse(accepted.body)).toEqual({data:receipt});
+  expect(t.query).toHaveBeenCalledWith('select clinical_core.care_message_receipt($1::jsonb) as data',[JSON.stringify(input)]);
+  t.query.mockClear();
+  expect((await t.run(event('POST /clinical-core/workforce/messages','workforce',input,{exp:Date.now()/1000+60}))).statusCode).toBe(403);
+  expect(t.query).not.toHaveBeenCalled();
+  t.query.mockResolvedValue({rows:[{data:{...receipt,connectionId:PATIENT}}]} as never);
+  const mismatch=await t.run(event('POST /clinical-core/consumer/messages','consumer',input,{exp:Date.now()/1000+60}));
+  expect(mismatch.statusCode).toBe(503);expect(mismatch.body).not.toContain(PATIENT);
+ });
+ test('rejects wrong identity pool and supplied sender',async()=>{
+  const t=setup();
+  expect((await t.run(event('POST /clinical-core/workforce/messages','consumer',{action:'list'},{exp:Date.now()/1000+60}))).statusCode).toBe(403);
+  expect((await t.run(event('POST /clinical-core/consumer/messages','consumer',{action:'list',sender:PERSON},{exp:Date.now()/1000+60}))).statusCode).toBe(400);
+  expect(t.query).not.toHaveBeenCalled();
+ });
+});
+
+describe("separately consented specimen-context API", () => {
+  const post = "POST /clinical-core/consumer/labs/specimen-context";
+  const read = (pool: string) => `GET /clinical-core/${pool}/labs/specimen-context`;
+  const payload = (): LabSpecimenTransfer => ({ version: 'lab-specimen-context/1', connectionId: CONNECTION,
+    labEventId: PATIENT, labPayloadSha256: 'a'.repeat(64), requestId: ARTIFACT, expectedRevision: 0,
+    consentVersion: 1, reproductiveConsentVersion: null,
+    context: { source: 'patient_reported', verification: 'unverified', recordedAt: '2026-01-03T00:00:00Z',
+      observedOn: '2026-01-02', ageAtDraw: { value: 35, unit: 'years' }, sex: null, assayId: null,
+      pregnancyStatus: null, cyclePhase: null, reproductiveStage: null, contraception: null, pregnancyTrimester: null } });
+  function setup() {
+    const state = { getConsumerConnection: vi.fn(), importLabResult: vi.fn(), reviewLabResult: vi.fn(),
+      listLabImports: vi.fn(), listPatientLabObservations: vi.fn(), listDesktopPatients: vi.fn(), listDesktopLabDocuments: vi.fn(),
+      importLabSpecimenContext: vi.fn(async () => ({ version: 'lab-specimen-receipt/1' as const, contextId: CONNECTION,
+        labEventId: PATIENT, requestId: ARTIFACT, revision: 1, payloadSha256: 'b'.repeat(64),
+        receivedAt: '2026-01-03T00:00:00Z', duplicate: false })),
+      getLabSpecimenContext: vi.fn(async () => null) };
+    const run = createAwsIdentityApiHandler({ adapter: adapter(), clinicalStateAdapter: state,
+      configuration: { workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD } });
+    return { run, state };
+  }
+  test('accepts only the bounded consumer contract, preserving nulls and unverified provenance', async () => {
+    const t = setup(), p = payload();
+    expect((await t.run(event(post, 'consumer', p))).statusCode).toBe(202);
+    expect(t.state.importLabSpecimenContext).toHaveBeenCalledWith(expect.objectContaining({
+      actorPersonId: PERSON, organizationId: ORG, identityPool: 'consumer', purpose: 'clinical_data', containsPhi: false }), p);
+  });
+  test.each(['extra field', 'reproductive without consent', 'claim verified', 'bad event'])('refuses %s before database calls', async kind => {
+    const t = setup(), p = payload();
+    if (kind === 'reproductive without consent') p.context.cyclePhase = 'luteal';
+    if (kind === 'claim verified') Object.assign(p.context, { verification: 'verified' });
+    if (kind === 'bad event') p.labEventId = 'not-an-event';
+    if (kind === 'extra field') Object.assign(p.context, { dateOfBirth: '1991-01-02' });
+    expect((await t.run(event(post, 'consumer', p))).statusCode).toBe(400);
+    expect(t.state.importLabSpecimenContext).not.toHaveBeenCalled();
+  });
+  test('rejects wrong identity pool and unsigned requests before dispatch', async () => {
+    const t = setup();
+    expect((await t.run(event(post, 'workforce', payload()))).statusCode).toBe(403);
+    const missing = event(post, 'consumer', payload()); missing.requestContext = {};
+    expect((await t.run(missing)).statusCode).toBe(403);
+    expect(t.state.importLabSpecimenContext).not.toHaveBeenCalled();
+  });
+  test.each(['consumer', 'workforce'] as const)('binds %s reads and refuses a body or invalid event', async pool => {
+    const t = setup(), request = event(read(pool), pool, {}); request.body = undefined;
+    request.queryStringParameters = { eventId: PATIENT };
+    const response = await t.run(request);
+    expect(response.statusCode).toBe(200); expect(response.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(response.body)).toEqual({ data: null });
+    expect(t.state.getLabSpecimenContext).toHaveBeenCalledWith(expect.objectContaining({ identityPool: pool, organizationId: ORG }), PATIENT);
+    request.body = '{}'; expect((await t.run(request)).statusCode).toBe(400);
+    request.body = undefined; request.queryStringParameters.eventId = 'bad';
+    expect((await t.run(request)).statusCode).toBe(400); expect(t.state.getLabSpecimenContext).toHaveBeenCalledOnce();
+  });
+  test('keeps new routes and consent outside both existing production pilot approvals', () => {
+    for (const route of [post, read('consumer'), read('workforce')]) expect(isProductionPilotRouteAllowed(route)).toBe(false);
+    for (const scope of ['lab_intake_only', 'lab_intake_wearables_cycle_ai'] as const)
+      expect(isProductionPilotConsentScopeAllowed(scope, 'lab_specimen_context')).toBe(false);
+  });
+  test.each(['specimen_context_conflict','specimen_consent_required'] as const)('returns actionable %s, not a retryable service outage',async category=>{
+    const t=setup();t.state.importLabSpecimenContext.mockRejectedValue(new ClinicalStateError(category));
+    const response=await t.run(event(post,'consumer',payload()));
+    expect(response.statusCode).toBe(409);expect(JSON.parse(response.body)).toEqual({error:category});
+  });
+});
 
 describe("authenticated synthetic identity API", () => {
   test("returns the current approved consent artifact without its document body", async () => {

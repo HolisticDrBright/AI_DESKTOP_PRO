@@ -32,6 +32,13 @@ const observation = (
 });
 
 describe("lab workspace mapping", () => {
+  test("binds context lookup only to the latest result's exact import event",()=>{
+    const event="60000000-0000-4000-8000-000000000001";
+    expect(buildLabMarkers([observation({import_event_id:event})])[0].labImportEventId).toBe(event);
+    expect(buildLabMarkers([observation({import_event_id:"provider:external:event"})])[0].labImportEventId).toBeUndefined();
+    expect(buildLabMarkers([observation({import_event_id:event,observed_at:"2025-01-01"}),
+      observation({id:"newer"})])[0].labImportEventId).toBeUndefined();
+  });
   test("keeps an unrecorded extraction confidence unknown", () => {
     expect(normalizeConfidence(null)).toEqual({ value: null, band: "unknown" });
     const [marker] = buildLabMarkers([observation({ confidence: null })]);

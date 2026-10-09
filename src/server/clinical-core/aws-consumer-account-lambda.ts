@@ -50,6 +50,13 @@ async function secretHash(username: string): Promise<string> {
 }
 
 const provider: ConsumerAccountProvider = {
+  async getConfirmedIdentity(subject) {
+    try {
+      const user = await cognito.send(new AdminGetUserCommand({ UserPoolId: poolId, Username: subject }));
+      if (user.UserStatus !== "CONFIRMED" || user.Enabled !== true) throw new ConsumerAccountProviderError("confirmation_invalid");
+      return claims(user.UserAttributes ?? []);
+    } catch (error) { throw providerError(error); }
+  },
   async register(input) {
     try {
       await cognito.send(new SignUpCommand({
@@ -73,17 +80,14 @@ const provider: ConsumerAccountProvider = {
   },
   async confirm(input) {
     try {
-      try {
-        await cognito.send(new ConfirmSignUpCommand({
+      await cognito.send(new ConfirmSignUpCommand({
           ClientId: clientId,
           Username: input.email,
           SecretHash: await secretHash(input.email),
           ConfirmationCode: input.code,
-        }));
-      } catch (error) {
-        if (errorName(error) !== "NotAuthorizedException") throw error;
-      }
+      }));
       const user = await cognito.send(new AdminGetUserCommand({ UserPoolId: poolId, Username: input.email }));
+      if (user.UserStatus !== "CONFIRMED" || user.Enabled !== true) throw new ConsumerAccountProviderError("confirmation_invalid");
       return claims(user.UserAttributes ?? []);
     } catch (error) {
       throw providerError(error);
@@ -118,7 +122,7 @@ function claims(attributes: Array<{ Name?: string; Value?: string }>): Registrat
   const correctBoundary = boundary === "synthetic"
     ? values["custom:synthetic_attested"] === "true" && values["custom:production_bound"] !== "true"
     : values["custom:production_bound"] === "true" && values["custom:synthetic_attested"] !== "true";
-  if (!correctBoundary) throw new ConsumerAccountProviderError("confirmation_invalid");
+  if (!correctBoundary || values.email_verified !== "true") throw new ConsumerAccountProviderError("confirmation_invalid");
   return { subject, personId, organizationId };
 }
 
@@ -128,6 +132,7 @@ function errorName(error: unknown): string {
 }
 
 function providerError(error: unknown): ConsumerAccountProviderError {
+  if (error instanceof ConsumerAccountProviderError) return error;
   const name = errorName(error);
   if (name === "UsernameExistsException") return new ConsumerAccountProviderError("already_exists");
   if (["CodeMismatchException", "ExpiredCodeException", "UserNotFoundException", "NotAuthorizedException"].includes(name)) {
@@ -151,5 +156,8 @@ export const handler = createConsumerAccountApiHandler({
     boundary,
     termsVersion: required("CONSUMER_TERMS_VERSION"),
     privacyVersion: required("CONSUMER_PRIVACY_VERSION"),
+    activationState: process.env.CONSUMER_ACCOUNT_ACTIVATION === "approved" ? "approved" : "blocked",
+    consumerIssuer: `https://cognito-idp.${process.env.AWS_REGION}.amazonaws.com/${poolId}`,
+    consumerAudience: process.env.CONSUMER_AUTH_CLIENT_ID,
   },
 });

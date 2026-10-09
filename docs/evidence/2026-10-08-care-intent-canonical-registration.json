@@ -1,0 +1,109 @@
+{
+  "contract": "care-intent-canonical-registration-evidence/1",
+  "classification": "hosted_read_only_registration_not_release_acceptance",
+  "inspection": {
+    "contract": "care-intent-canonical-registration-inspection/1",
+    "execution": "synthetic-staging",
+    "canonicalRegistered": true,
+    "alreadyApplied": true,
+    "sourceMigrationCount": 47,
+    "liveMigrationCount": 48,
+    "sourceLedgerSha256": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+    "liveLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+    "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+    "historicalAliasPreserved": true,
+    "historicalInspection": {
+      "contract": "care-erasure-intent-upgrade/1",
+      "command": "inspect",
+      "execution": "synthetic-staging",
+      "phiAllowed": false,
+      "observedMigrationCount": 48,
+      "sourceMigrationCount": 47,
+      "tableCount": 89,
+      "rowCount": 23985,
+      "dataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+      "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+      "dataPreserved": true,
+      "schemaPreserved": true,
+      "applied": false,
+      "alreadyApplied": true,
+      "rolledBack": false,
+      "originalDataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+      "originalRowCount": 23985,
+      "completeDataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+      "completeRowCount": 23985,
+      "intentRowCount": 0,
+      "fromLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "toLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "canonicalRegistered": false,
+      "hostedAcceptance": false,
+      "recoveryAcceptance": false,
+      "activationApproved": false
+    },
+    "schemaReplayPerformed": false,
+    "ledgerRewritePerformed": false,
+    "apiDeploymentPerformed": false,
+    "erasureAccepted": false,
+    "releaseAccepted": false,
+    "physicalDeviceAcceptance": false,
+    "activationApproved": false,
+    "phiAllowed": false,
+    "operatorSource": {
+      "sourceCommit": "3904899822a8833e63633fc58a0e3d2437ac6322",
+      "clean": true
+    },
+    "awsAccountId": "588966314750",
+    "foundation": "ai-clinical-core-synthetic-staging",
+    "observedAt": "2026-10-08T03:12:17.984Z",
+    "repeatedReadbackVerified": true,
+    "reportIsNotAuthority": true
+  },
+  "executable": {
+    "sourceCommit": "3904899822a8833e63633fc58a0e3d2437ac6322",
+    "clean": true,
+    "sha256": "fde642cb6c1e7cffbd3ac9643e96af2f16df4e196f8d00b997723b5048955747",
+    "independentlyRehashed": true
+  },
+  "comparison": {
+    "previousEvidence": "docs/evidence/2026-10-08-care-intent-successor-reconciliation.json",
+    "originalDataUnchanged": true,
+    "completeDataUnchanged": true,
+    "preservedSchemaUnchanged": true
+  },
+  "verification": {
+    "fullDesktop": {
+      "files": 342,
+      "passed": 4314,
+      "skipped": 11,
+      "durationSeconds": 265.12,
+      "command": "npm run test:unit"
+    },
+    "finalRegistrationAndLogging": {
+      "files": 2,
+      "passed": 8
+    },
+    "careScriptTests": {
+      "passed": 249
+    },
+    "typecheck": true,
+    "lint": true,
+    "ciYaml": true,
+    "graph": {
+      "nodes": 13713,
+      "edges": 29020,
+      "communities": 931,
+      "astOnly": true,
+      "noConcurrentFullDatabaseRun": true
+    }
+  },
+  "limitations": {
+    "apiArtifactDeployedByThisRun": false,
+    "fullErasureRecoveryAccepted": false,
+    "matchedReleaseAccepted": false,
+    "physicalDeviceAccepted": false,
+    "paidMobileBuildStarted": false,
+    "phiAllowed": false,
+    "reportMayAuthorizeFutureRun": false
+  }
+}

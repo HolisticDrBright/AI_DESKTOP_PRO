@@ -26,6 +26,18 @@ function json(body: unknown, status = 200) {
 }
 
 describe("Fullscript server boundary", () => {
+  test("refuses an OAuth redirect that cannot reach the callback handler", () => {
+    for (const redirect of [
+      "https://desktop.example.test",
+      "https://desktop.example.test/integrations",
+      "https://desktop.example.test/api/live/fullscript/oauth/callback/",
+      "https://desktop.example.test/api/live/fullscript/oauth/callback?unexpected=value",
+    ]) {
+      expect(() => readFullscriptConfiguration({
+        ...configurationEnv(), FULLSCRIPT_REDIRECT_URI: redirect,
+      }), redirect).toThrow();
+    }
+  });
   test("returns OAuth users to the configured public Desktop origin behind a reverse proxy", () => {
     expect(fullscriptIntegrationReturnUrl(
       "https://0.0.0.0:3000/api/live/fullscript/oauth/callback",

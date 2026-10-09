@@ -4,8 +4,11 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
+import { RDSDataClient } from "@aws-sdk/client-rds-data";
 import { loadClinicalCoreMigrations } from "./migrations";
-import { applyProductionClinicalCoreMigrations, ProductionClinicalCoreMigrationError } from "./production-migrations";
+import { assertOperatorAssumedRole, profileForOperatorAccount } from "./operator-aws-principal";
+import { applyProductionClinicalCoreMigrations, inspectProductionClinicalCoreMigrations, ProductionClinicalCoreMigrationError } from "./production-migrations";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 
 const CLUSTER_ARN = /^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:(\d{12}):cluster:[A-Za-z0-9-]{1,63}$/;
@@ -18,7 +21,10 @@ function required(name: string): string {
 }
 
 async function run() {
-  if (process.argv[2] !== "apply"
+  const command = process.argv[2];
+  // `inspect` is read-only and runs under the same account and PHI boundary as `apply`: it reports the applied, missing,
+  // mismatched and unknown versions so the missing subset is known before anything is applied.
+  if ((command !== "apply" && command !== "inspect")
     || required("PHI_ALLOWED") !== "false"
     || required("CONFIRM_PRODUCTION_SCHEMA_ONLY") !== "true") {
     throw new Error("activation_boundary_refused");
@@ -32,13 +38,22 @@ async function run() {
   }
   const databaseName = required("CLINICAL_DATABASE_NAME");
   const region = required("AWS_REGION");
+  const profile = profileForOperatorAccount(expectedAccountId);
+  assertOperatorAssumedRole(profile, expectedAccountId, region);
   const directory = process.env.CLINICAL_PRODUCTION_MIGRATIONS?.trim()
     || path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations");
   const migrations = loadClinicalCoreMigrations(directory);
   const database = createRdsDataAdministrativeDatabase(
     { clusterArn, secretArn, databaseName, region },
     { purpose: "reviewed_production_schema_migration" },
+    new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 }),
   );
+  if (command === "inspect") {
+    const inspection = await inspectProductionClinicalCoreMigrations(database, migrations);
+    console.log(JSON.stringify({ mode: "production_schema_inspection_read_only", ...inspection, safeToApply: inspection.mismatched.length === 0 && inspection.unknown.length === 0 }));
+    if (inspection.mismatched.length || inspection.unknown.length) process.exitCode = 2;
+    return;
+  }
   const result = await applyProductionClinicalCoreMigrations(database, migrations);
   const releaseHash = createHash("sha256")
     .update(migrations.map((migration) => `${migration.version}:${migration.sha256}`).join("\n"))

@@ -1,0 +1,130 @@
+[
+  {
+    "ParameterKey": "ApiId",
+    "ParameterValue": "abcdefghij"
+  },
+  {
+    "ParameterKey": "ConsumerIssuer",
+    "ParameterValue": "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_REPLACEconsumer"
+  },
+  {
+    "ParameterKey": "ConsumerAudience",
+    "ParameterValue": "replaceconsumerappclientid0001"
+  },
+  {
+    "ParameterKey": "CodeBucket",
+    "ParameterValue": "ai-clinical-core-code-588966314750"
+  },
+  {
+    "ParameterKey": "CodeKey",
+    "ParameterValue": "qualification/personal-storage/index.zip"
+  },
+  {
+    "ParameterKey": "PhiAllowed",
+    "ParameterValue": "false"
+  },
+  {
+    "ParameterKey": "Activation",
+    "ParameterValue": "blocked"
+  },
+  {
+    "ParameterKey": "ActivationEvidenceSha256",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "DatabaseReviewSha256",
+    "ParameterValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  {
+    "ParameterKey": "AllowedScopes",
+    "ParameterValue": "forms_checkins,symptoms_adherence,nutrition,protocols_supplements,wearables,reproductive_health,ai_context,lab_history,voice_transcription"
+  },
+  {
+    "ParameterKey": "DatabaseClusterArn",
+    "ParameterValue": "arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa"
+  },
+  {
+    "ParameterKey": "DatabaseSecretArn",
+    "ParameterValue": "arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-replace-with-secret-suffix"
+  },
+  {
+    "ParameterKey": "DatabaseName",
+    "ParameterValue": "clinical_core_qualification"
+  },
+  {
+    "ParameterKey": "SecretKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "ParameterKey": "LogsKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/22222222-2222-4222-8222-222222222222"
+  },
+  {
+    "ParameterKey": "AlarmTopicArn",
+    "ParameterValue": "arn:aws:sns:us-east-2:588966314750:ai-clinical-core-qualification-alarms"
+  },
+  {
+    "ParameterKey": "CodeVersion",
+    "ParameterValue": "REPLACE_WITH_S3_OBJECT_VERSION"
+  },
+  {
+    "ParameterKey": "SourceCommit",
+    "ParameterValue": "0000000000000000000000000000000000000000"
+  },
+  {
+    "ParameterKey": "ExportBucketName",
+    "ParameterValue": "ai-clinical-core-qualification-personal-exports"
+  },
+  {
+    "ParameterKey": "ExportKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/44444444-4444-4444-8444-444444444444"
+  },
+  {
+    "ParameterKey": "ExportReviewSha256",
+    "ParameterValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  {
+    "ParameterKey": "ExportLabJobTableArn",
+    "ParameterValue": "arn:aws:dynamodb:us-east-2:588966314750:table/replace-with-lab-job-table"
+  },
+  {
+    "ParameterKey": "ExportLabDocumentBucketName",
+    "ParameterValue": "ai-clinical-core-qualification-lab-documents"
+  },
+  {
+    "ParameterKey": "ExportLabKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/66666666-6666-4666-8666-666666666666"
+  },
+  {
+    "ParameterKey": "ExportVoiceJobTableArn",
+    "ParameterValue": "arn:aws:dynamodb:us-east-2:588966314750:table/replace-with-voice-job-table"
+  },
+  {
+    "ParameterKey": "ExportTranscriptionBucketName",
+    "ParameterValue": "ai-clinical-core-qualification-transcription"
+  },
+  {
+    "ParameterKey": "ExportVoiceKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/77777777-7777-4777-8777-777777777777"
+  },
+  {
+    "ParameterKey": "CrossStoreExportReviewSha256",
+    "ParameterValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  {
+    "ParameterKey": "QualificationExecution",
+    "ParameterValue": "enabled"
+  },
+  {
+    "ParameterKey": "QualificationReviewSha256",
+    "ParameterValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  {
+    "ParameterKey": "QualificationAccountId",
+    "ParameterValue": "588966314750"
+  },
+  {
+    "ParameterKey": "QualificationIdentitySubjects",
+    "ParameterValue": "replace-with-consumer-cognito-sub,replace-with-workforce-cognito-sub"
+  }
+]

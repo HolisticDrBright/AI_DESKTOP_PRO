@@ -1,3 +1,5 @@
+import { localReturnPath } from "@/lib/local-return-path";
+
 const MISSING_ORGANIZATION_MESSAGE = "No organization selected.";
 
 export function isMissingOrganizationMessage(message: string): boolean {
@@ -6,6 +8,5 @@ export function isMissingOrganizationMessage(message: string): boolean {
 
 /** Keep the post-recovery redirect on this application. */
 export function safeOrganizationRecoveryPath(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/patients";
-  return value;
+  return localReturnPath(value, "/patients");
 }

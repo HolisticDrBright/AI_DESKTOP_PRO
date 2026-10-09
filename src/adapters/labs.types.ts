@@ -49,6 +49,8 @@ export interface SourcePreview {
 
 export interface BiomarkerMarker {
   id: string;
+  /** Exact governed import event, not the provider's external event identifier. */
+  labImportEventId?: string;
   name: string;
   unit: string;
   current: number;

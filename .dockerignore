@@ -2,6 +2,9 @@
 .github
 .next
 node_modules
+dist
+graphify-out
+*.dpapi*
 test-results
 playwright-report
 private-import
@@ -9,5 +12,6 @@ private-import
 !.env.example
 docs
 e2e
+playwright*.ts
 supabase
 *.log

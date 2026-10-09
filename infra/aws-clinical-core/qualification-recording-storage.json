@@ -1,0 +1,101 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Empty fictional-only recording storage for isolated qualification; no capture release or PHI authority",
+  "Parameters": {
+    "SourceCommit": {
+      "Type": "String",
+      "AllowedPattern": "^[a-f0-9]{40}$"
+    },
+    "RecordingKmsKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:kms:us-east-2:588966314750:key/[a-f0-9-]{36}$"
+    },
+    "PhiAllowed": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["false"]
+    }
+  },
+  "Resources": {
+    "RecordingBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": { "Fn::Sub": "alp-qualification-recordings-${AWS::AccountId}-${AWS::Region}" },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "ObjectLockEnabled": true,
+        "ObjectLockConfiguration": { "ObjectLockEnabled": "Enabled" },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [{
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "aws:kms",
+              "KMSMasterKeyID": { "Ref": "RecordingKmsKeyArn" }
+            },
+            "BucketKeyEnabled": true
+          }]
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": "qualification" },
+          { "Key": "DataScope", "Value": "fictional-audio-only" },
+          { "Key": "PhiAllowed", "Value": "false" }
+        ]
+      }
+    },
+    "RecordingBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "RecordingBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::GetAtt": ["RecordingBucket", "Arn"] },
+                { "Fn::Sub": "${RecordingBucket.Arn}/*" }
+              ],
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            },
+            {
+              "Sid": "DenyUnencryptedObjectWrites",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${RecordingBucket.Arn}/*" },
+              "Condition": { "StringNotEquals": { "s3:x-amz-server-side-encryption": "aws:kms" } }
+            },
+            {
+              "Sid": "DenyWrongObjectKey",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${RecordingBucket.Arn}/*" },
+              "Condition": {
+                "StringNotEquals": {
+                  "s3:x-amz-server-side-encryption-aws-kms-key-id": { "Ref": "RecordingKmsKeyArn" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "RecordingBucketName": { "Value": { "Ref": "RecordingBucket" } },
+    "RecordingKmsKeyArn": { "Value": { "Ref": "RecordingKmsKeyArn" } },
+    "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } },
+    "SourceCommit": { "Value": { "Ref": "SourceCommit" } }
+  }
+}

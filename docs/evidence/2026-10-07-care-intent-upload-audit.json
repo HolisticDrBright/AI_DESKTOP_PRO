@@ -1,0 +1,578 @@
+{
+  "contract": "care-intent-upload-and-projection-audit-evidence/1",
+  "scope": "exact-upload-and-read-only-proposal-finding-not-deployment",
+  "account": "588966314750",
+  "region": "us-east-2",
+  "candidateSource": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+  "mobileSource": "70e1196ef24b18a0fef64ec1495d4f42e47b4da6",
+  "guardRepairSource": "16fc482412c79899d038a09366280ee236da93dd",
+  "artifactUploadVerified": true,
+  "proposalQualified": false,
+  "preliminaryRunnerExitCode": 0,
+  "preliminaryRunnerSuccessOverruled": true,
+  "preliminaryRunId": "f44672d485c10c74b28f82397f5a4d1b",
+  "finding": {
+    "contract": "synthetic-care-intent-projection-finding/1",
+    "observedAt": "2026-10-07T21:30:13.854Z",
+    "scope": "live-proposal-shape-negative-only",
+    "operatorSource": {
+      "commit": "16fc482412c79899d038a09366280ee236da93dd",
+      "clean": true,
+      "files": 1624,
+      "sha256": "e368c0e4d8d1be28a1d389e0cc8cbfbf3340c58494739c23c5ea89a7825f4dee"
+    },
+    "caller": {
+      "UserId": "AROAYSIJAYL7P2QYJ5B4D:botocore-session-1791408042",
+      "Account": "588966314750",
+      "Arn": "arn:aws:sts::588966314750:assumed-role/OrganizationAccountAccessRole/botocore-session-1791408042"
+    },
+    "uploaded": {
+      "contract": "synthetic-care-intent-upload/1",
+      "observedAt": "2026-10-07T21:17:45.809Z",
+      "runId": "f44672d485c10c74b28f82397f5a4d1b",
+      "journal": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-intent-release\\bad6ee1b12c2f2c11538f962b880e67a00013176\\70e1196ef24b18a0fef64ec1495d4f42e47b4da6\\uploads\\f44672d485c10c74b28f82397f5a4d1b.events.jsonl",
+      "execution": "synthetic-staging",
+      "account": "588966314750",
+      "region": "us-east-2",
+      "desktop": {
+        "commit": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+        "clean": true,
+        "files": 1624,
+        "sha256": "06cc2125e0dc7c7c9b3fb15a67ce34ef1acf452a79ec09ebd761488658bf6830"
+      },
+      "mobile": {
+        "source": {
+          "commit": "70e1196ef24b18a0fef64ec1495d4f42e47b4da6",
+          "clean": true,
+          "files": 911,
+          "sha256": "6d7a4949257679d1c40f0ff9f963cc6a6c42b81da3eff7f5ff869a5ce283ac31"
+        },
+        "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+        "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+        "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+        "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+        "built": false,
+        "deviceVerified": false,
+        "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+        "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+      },
+      "preparation": {
+        "contract": "synthetic-care-intent-preparation/1",
+        "observedAt": "2026-10-07T21:17:22.577Z",
+        "execution": "synthetic-staging",
+        "account": "588966314750",
+        "region": "us-east-2",
+        "desktop": {
+          "commit": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+          "clean": true,
+          "files": 1624,
+          "sha256": "06cc2125e0dc7c7c9b3fb15a67ce34ef1acf452a79ec09ebd761488658bf6830"
+        },
+        "mobile": {
+          "source": {
+            "commit": "70e1196ef24b18a0fef64ec1495d4f42e47b4da6",
+            "clean": true,
+            "files": 911,
+            "sha256": "6d7a4949257679d1c40f0ff9f963cc6a6c42b81da3eff7f5ff869a5ce283ac31"
+          },
+          "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+          "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+          "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+          "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+          "built": false,
+          "deviceVerified": false,
+          "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+          "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+        },
+        "candidateZipSha256": "f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4",
+        "predecessor": {
+          "desktop": "5b6f8aa45347d33757ac9bfb34658e2e09daefd3",
+          "mobile": "11197e527a1ffc9317513837087e347531076957",
+          "zip": "644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db",
+          "version": "hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh",
+          "bytes": 1818387,
+          "codeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs="
+        },
+        "control": {
+          "revision": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+          "codeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=",
+          "templateSha256": "dfd973cb9ba14323bc25f64219a91ce1ace63f5dd88e1b496ee25513bdad5dc2",
+          "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+          "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+          "integrationsSha256": "710df282b74213710e8e538f74422b86f6f2f6ab48c2bf74fa59b7d8bc2b6a60",
+          "stageSha256": "f74821cb020d0b2372bffde59f2111e77ef5d38ec75ec89710adbae09c6d443a",
+          "policySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47",
+          "roleSha256": "8904bb47ebff513f08239504338591ce66a3b810be383420ae817c4567842d68",
+          "routeCount": 51,
+          "iamVerified": true,
+          "loggingVerified": true,
+          "phiAllowed": false
+        },
+        "database": {
+          "contract": "care-erasure-intent-upgrade/1",
+          "command": "inspect",
+          "execution": "synthetic-staging",
+          "phiAllowed": false,
+          "observedMigrationCount": 47,
+          "sourceMigrationCount": 46,
+          "tableCount": 88,
+          "rowCount": 23985,
+          "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+          "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+          "dataPreserved": true,
+          "schemaPreserved": true,
+          "applied": false,
+          "alreadyApplied": false,
+          "rolledBack": false,
+          "fromLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+          "toLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+          "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+          "canonicalRegistered": false,
+          "hostedAcceptance": false,
+          "recoveryAcceptance": false,
+          "activationApproved": false,
+          "operatorSource": {
+            "sourceCommit": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+            "clean": true
+          },
+          "awsAccountId": "588966314750",
+          "foundation": "ai-clinical-core-synthetic-staging",
+          "rollbackReadback": false,
+          "lastingUpgradeAvailable": false,
+          "apiDeploymentPerformed": false,
+          "recoveryDrillPerformed": false,
+          "acceptance": false,
+          "phiActivation": false
+        },
+        "predecessorExactVersionReadback": true,
+        "sourceRebuiltNow": true,
+        "awsMutationPerformed": false,
+        "candidateUploaded": false,
+        "deployed": false,
+        "schemaChanged": false,
+        "canonicalRegistered": false,
+        "freshCompatibleRecoveryPerformed": false,
+        "lastingSchemaUpgradeAuthorized": false,
+        "hostedAcceptance": false,
+        "paidMobileBuildStarted": false,
+        "phiAllowed": false
+      },
+      "artifact": {
+        "bucket": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7",
+        "key": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip",
+        "versionId": "HnpS459pQKnmIKSos9_SE4_3IRtVeiLF",
+        "sha256": "f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4",
+        "bytes": 1826076,
+        "reused": false,
+        "encryption": "aws:kms",
+        "kmsKeyArn": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900",
+        "exactVersionReadbackVerified": true
+      },
+      "candidateUploaded": true,
+      "awsMutationPerformed": true,
+      "deployed": false,
+      "schemaChanged": false,
+      "canonicalRegistered": false,
+      "freshCompatibleRecoveryPerformed": false,
+      "hostedAcceptance": false,
+      "paidMobileBuildStarted": false,
+      "phiAllowed": false
+    },
+    "proposal": {
+      "contract": "synthetic-care-intent-code-change/1",
+      "observedAt": "2026-10-07T21:21:57.195Z",
+      "execution": "synthetic-staging",
+      "account": "588966314750",
+      "region": "us-east-2",
+      "desktop": {
+        "commit": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+        "clean": true,
+        "files": 1624,
+        "sha256": "06cc2125e0dc7c7c9b3fb15a67ce34ef1acf452a79ec09ebd761488658bf6830"
+      },
+      "mobile": {
+        "source": {
+          "commit": "70e1196ef24b18a0fef64ec1495d4f42e47b4da6",
+          "clean": true,
+          "files": 911,
+          "sha256": "6d7a4949257679d1c40f0ff9f963cc6a6c42b81da3eff7f5ff869a5ce283ac31"
+        },
+        "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+        "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+        "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+        "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+        "built": false,
+        "deviceVerified": false,
+        "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+        "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+      },
+      "artifact": {
+        "bucket": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7",
+        "key": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip",
+        "versionId": "HnpS459pQKnmIKSos9_SE4_3IRtVeiLF",
+        "sha256": "f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4",
+        "bytes": 1826076,
+        "reused": false,
+        "encryption": "aws:kms",
+        "kmsKeyArn": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900",
+        "exactVersionReadbackVerified": true
+      },
+      "stackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+      "changeSetId": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/care-intent-87b7ec66e0246ac34e985e498787b1f4/d34c7d67-ab7e-47a7-bd11-901ad94594ef",
+      "changeSetName": "care-intent-87b7ec66e0246ac34e985e498787b1f4",
+      "templateSha256": "bb9a4ec61636a8ff87d263c8b26616dd860730d0bdb306c814f9455a65eea323",
+      "changeSetCreated": true,
+      "reused": false,
+      "verifiedChange": "one existing Lambda Code property only",
+      "changeSetExecutionStatus": "AVAILABLE",
+      "deployed": false,
+      "schemaChanged": false,
+      "canonicalRegistered": false,
+      "freshCompatibleRecoveryPerformed": false,
+      "hostedAcceptance": false,
+      "paidMobileBuildStarted": false,
+      "phiAllowed": false
+    },
+    "summary": {
+      "ChangeSetName": "care-intent-87b7ec66e0246ac34e985e498787b1f4",
+      "ChangeSetId": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/care-intent-87b7ec66e0246ac34e985e498787b1f4/d34c7d67-ab7e-47a7-bd11-901ad94594ef",
+      "StackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+      "StackName": "ai-clinical-core-synthetic-staging-authenticated-api",
+      "Description": "Synthetic intent code only bad6ee1b12c2f2c11538f962b880e67a00013176; PHI off; no schema change",
+      "Parameters": [
+        {
+          "ParameterKey": "ConsumerUserPoolId",
+          "ParameterValue": "us-east-2_nYngyyYGE"
+        },
+        {
+          "ParameterKey": "ClinicalCoreKeyArn",
+          "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900"
+        },
+        {
+          "ParameterKey": "DatabaseSecretArn",
+          "ParameterValue": "****"
+        },
+        {
+          "ParameterKey": "LambdaCodeKey",
+          "ParameterValue": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip"
+        },
+        {
+          "ParameterKey": "DatabaseName",
+          "ParameterValue": "clinical_core"
+        },
+        {
+          "ParameterKey": "ConsumerUserPoolClientId",
+          "ParameterValue": "72aksm2dm4nf03l8d9nrp2dbh0"
+        },
+        {
+          "ParameterKey": "ClinicalApiId",
+          "ParameterValue": "wxv734oi12"
+        },
+        {
+          "ParameterKey": "WorkforceUserPoolClientId",
+          "ParameterValue": "4s7jgr4o8sqdq7cvo9gmq96e2h"
+        },
+        {
+          "ParameterKey": "LambdaCodeBucket",
+          "ParameterValue": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7"
+        },
+        {
+          "ParameterKey": "WorkforceUserPoolId",
+          "ParameterValue": "us-east-2_ueGlFRbNB"
+        },
+        {
+          "ParameterKey": "DatabaseClusterArn",
+          "ParameterValue": "arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa"
+        }
+      ],
+      "CreationTime": "2026-10-07T21:21:36.475000+00:00",
+      "ExecutionStatus": "AVAILABLE",
+      "Status": "CREATE_COMPLETE",
+      "NotificationARNs": [],
+      "RollbackConfiguration": {},
+      "Capabilities": [
+        "CAPABILITY_IAM"
+      ],
+      "Changes": [
+        {
+          "Type": "Resource",
+          "ResourceChange": {
+            "Action": "Modify",
+            "LogicalResourceId": "IdentityApiFunction",
+            "PhysicalResourceId": "wxv734oi12-synthetic-identity",
+            "ResourceType": "AWS::Lambda::Function",
+            "Replacement": "False",
+            "Scope": [
+              "Properties"
+            ],
+            "Details": [
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "Code",
+                  "RequiresRecreation": "Never"
+                },
+                "Evaluation": "Dynamic",
+                "ChangeSource": "DirectModification"
+              },
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "Code",
+                  "RequiresRecreation": "Never"
+                },
+                "Evaluation": "Static",
+                "ChangeSource": "ParameterReference",
+                "CausingEntity": "LambdaCodeKey"
+              }
+            ]
+          }
+        },
+        {
+          "Type": "Resource",
+          "ResourceChange": {
+            "Action": "Modify",
+            "LogicalResourceId": "IdentityApiIntegration",
+            "PhysicalResourceId": "2k0pka6",
+            "ResourceType": "AWS::ApiGatewayV2::Integration",
+            "Replacement": "False",
+            "Scope": [
+              "Properties"
+            ],
+            "Details": [
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "IntegrationUri",
+                  "RequiresRecreation": "Never"
+                },
+                "Evaluation": "Dynamic",
+                "ChangeSource": "ResourceAttribute",
+                "CausingEntity": "IdentityApiFunction.Arn"
+              }
+            ]
+          }
+        }
+      ],
+      "IncludeNestedStacks": false,
+      "DeploymentConfig": {
+        "Mode": "STANDARD",
+        "DisableRollback": false
+      }
+    },
+    "detailed": {
+      "ChangeSetName": "care-intent-87b7ec66e0246ac34e985e498787b1f4",
+      "ChangeSetId": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/care-intent-87b7ec66e0246ac34e985e498787b1f4/d34c7d67-ab7e-47a7-bd11-901ad94594ef",
+      "StackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+      "StackName": "ai-clinical-core-synthetic-staging-authenticated-api",
+      "Description": "Synthetic intent code only bad6ee1b12c2f2c11538f962b880e67a00013176; PHI off; no schema change",
+      "Parameters": [
+        {
+          "ParameterKey": "ConsumerUserPoolId",
+          "ParameterValue": "us-east-2_nYngyyYGE"
+        },
+        {
+          "ParameterKey": "ClinicalCoreKeyArn",
+          "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900"
+        },
+        {
+          "ParameterKey": "DatabaseSecretArn",
+          "ParameterValue": "****"
+        },
+        {
+          "ParameterKey": "LambdaCodeKey",
+          "ParameterValue": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip"
+        },
+        {
+          "ParameterKey": "DatabaseName",
+          "ParameterValue": "clinical_core"
+        },
+        {
+          "ParameterKey": "ConsumerUserPoolClientId",
+          "ParameterValue": "72aksm2dm4nf03l8d9nrp2dbh0"
+        },
+        {
+          "ParameterKey": "ClinicalApiId",
+          "ParameterValue": "wxv734oi12"
+        },
+        {
+          "ParameterKey": "WorkforceUserPoolClientId",
+          "ParameterValue": "4s7jgr4o8sqdq7cvo9gmq96e2h"
+        },
+        {
+          "ParameterKey": "LambdaCodeBucket",
+          "ParameterValue": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7"
+        },
+        {
+          "ParameterKey": "WorkforceUserPoolId",
+          "ParameterValue": "us-east-2_ueGlFRbNB"
+        },
+        {
+          "ParameterKey": "DatabaseClusterArn",
+          "ParameterValue": "arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa"
+        }
+      ],
+      "CreationTime": "2026-10-07T21:21:36.475000+00:00",
+      "ExecutionStatus": "AVAILABLE",
+      "Status": "CREATE_COMPLETE",
+      "NotificationARNs": [],
+      "RollbackConfiguration": {},
+      "Capabilities": [
+        "CAPABILITY_IAM"
+      ],
+      "Changes": [
+        {
+          "Type": "Resource",
+          "ResourceChange": {
+            "Action": "Modify",
+            "LogicalResourceId": "IdentityApiFunction",
+            "PhysicalResourceId": "wxv734oi12-synthetic-identity",
+            "ResourceType": "AWS::Lambda::Function",
+            "Replacement": "False",
+            "Scope": [
+              "Properties"
+            ],
+            "Details": [
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "Code",
+                  "RequiresRecreation": "Never",
+                  "Path": "/Properties/Code/S3ObjectVersion",
+                  "BeforeValue": "hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh",
+                  "AfterValue": "HnpS459pQKnmIKSos9_SE4_3IRtVeiLF",
+                  "AttributeChangeType": "Modify"
+                },
+                "Evaluation": "Static",
+                "ChangeSource": "DirectModification"
+              },
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "Code",
+                  "RequiresRecreation": "Never",
+                  "Path": "/Properties/Code/S3Key",
+                  "BeforeValue": "clinical-core/authenticated-api/care-release/5b6f8aa45347d33757ac9bfb34658e2e09daefd3/644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db.zip",
+                  "AfterValue": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip",
+                  "AttributeChangeType": "Modify"
+                },
+                "Evaluation": "Dynamic",
+                "ChangeSource": "DirectModification"
+              },
+              {
+                "Target": {
+                  "Attribute": "Properties",
+                  "Name": "Code",
+                  "RequiresRecreation": "Never",
+                  "Path": "/Properties/Code/S3Key",
+                  "BeforeValue": "clinical-core/authenticated-api/care-release/5b6f8aa45347d33757ac9bfb34658e2e09daefd3/644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db.zip",
+                  "AfterValue": "clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip",
+                  "AttributeChangeType": "Modify"
+                },
+                "Evaluation": "Static",
+                "ChangeSource": "ParameterReference",
+                "CausingEntity": "LambdaCodeKey"
+              }
+            ],
+            "BeforeContext": "{\"Properties\":{\"Role\":\"arn:aws:iam::588966314750:role/ai-clinical-core-synthetic-staging--IdentityApiRole-61aB1Wq31aa7\",\"FunctionName\":\"wxv734oi12-synthetic-identity\",\"MemorySize\":\"256\",\"Runtime\":\"nodejs22.x\",\"Timeout\":\"29\",\"LoggingConfig\":{\"LogFormat\":\"JSON\",\"ApplicationLogLevel\":\"WARN\",\"LogGroup\":\"/ai-clinical-core/synthetic-staging/identity-api\",\"SystemLogLevel\":\"WARN\"},\"Handler\":\"index.handler\",\"Environment\":{\"Variables\":{\"CLINICAL_DATABASE_SECRET_ARN\":\"****\",\"CLINICAL_WORKFORCE_ISSUER\":\"https://cognito-idp.us-east-2.amazonaws.com/us-east-2_ueGlFRbNB\",\"CLINICAL_WORKFORCE_AUDIENCE\":\"4s7jgr4o8sqdq7cvo9gmq96e2h\",\"CLINICAL_CONSUMER_AUDIENCE\":\"72aksm2dm4nf03l8d9nrp2dbh0\",\"CLINICAL_DATABASE_CLUSTER_ARN\":\"arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa\",\"CLINICAL_DATABASE_NAME\":\"clinical_core\",\"CLINICAL_CONSUMER_ISSUER\":\"https://cognito-idp.us-east-2.amazonaws.com/us-east-2_nYngyyYGE\"}},\"Code\":{\"S3ObjectVersion\":\"hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh\",\"S3Bucket\":\"ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7\",\"S3Key\":\"clinical-core/authenticated-api/care-release/5b6f8aa45347d33757ac9bfb34658e2e09daefd3/644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db.zip\"},\"Architectures\":[\"arm64\"]}}",
+            "AfterContext": "{\"Properties\":{\"Role\":\"arn:aws:iam::588966314750:role/ai-clinical-core-synthetic-staging--IdentityApiRole-61aB1Wq31aa7\",\"FunctionName\":\"wxv734oi12-synthetic-identity\",\"MemorySize\":\"256\",\"Runtime\":\"nodejs22.x\",\"Timeout\":\"29\",\"LoggingConfig\":{\"LogFormat\":\"JSON\",\"ApplicationLogLevel\":\"WARN\",\"LogGroup\":\"/ai-clinical-core/synthetic-staging/identity-api\",\"SystemLogLevel\":\"WARN\"},\"Handler\":\"index.handler\",\"Environment\":{\"Variables\":{\"CLINICAL_DATABASE_SECRET_ARN\":\"****\",\"CLINICAL_WORKFORCE_ISSUER\":\"https://cognito-idp.us-east-2.amazonaws.com/us-east-2_ueGlFRbNB\",\"CLINICAL_WORKFORCE_AUDIENCE\":\"4s7jgr4o8sqdq7cvo9gmq96e2h\",\"CLINICAL_CONSUMER_AUDIENCE\":\"72aksm2dm4nf03l8d9nrp2dbh0\",\"CLINICAL_DATABASE_CLUSTER_ARN\":\"arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa\",\"CLINICAL_DATABASE_NAME\":\"clinical_core\",\"CLINICAL_CONSUMER_ISSUER\":\"https://cognito-idp.us-east-2.amazonaws.com/us-east-2_nYngyyYGE\"}},\"Code\":{\"S3ObjectVersion\":\"HnpS459pQKnmIKSos9_SE4_3IRtVeiLF\",\"S3Bucket\":\"ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7\",\"S3Key\":\"clinical-core/authenticated-api/care-intent-release/bad6ee1b12c2f2c11538f962b880e67a00013176/f403e76ce993af3919ba54a30f1642a156570c9c51c93015b8a36466ccc3d2f4.zip\"},\"Architectures\":[\"arm64\"]}}"
+          }
+        }
+      ],
+      "IncludeNestedStacks": false,
+      "DeploymentConfig": {
+        "Mode": "STANDARD",
+        "DisableRollback": false
+      }
+    },
+    "actualTemplateSha256": "bb9a4ec61636a8ff87d263c8b26616dd860730d0bdb306c814f9455a65eea323",
+    "verdict": "refused",
+    "code": "synthetic_care_intent_release_refused:proposal_projection_scope",
+    "priorProposalSuccessOverruled": true,
+    "awsMutationPerformed": false,
+    "deployed": false,
+    "schemaChanged": false,
+    "hostedAcceptance": false,
+    "phiAllowed": false,
+    "paidMobileBuildStarted": false
+  },
+  "independentPostRunReadback": {
+    "command": "node dist/aws-clinical-core/care-erasure-intent-operator/index.cjs inspect",
+    "exitCode": 0,
+    "inspectionArtifactSourceCommit": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+    "observedAfterProposal": true,
+    "observedMigrationCount": 47,
+    "sourceMigrationCount": 46,
+    "tableCount": 88,
+    "rowCount": 23985,
+    "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+    "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+    "applied": false,
+    "canonicalRegistered": false,
+    "hostedAcceptance": false,
+    "liveLambda": {
+      "CodeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=",
+      "RevisionId": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+      "State": "Active",
+      "LastUpdateStatus": "Successful"
+    },
+    "operatorLockPresent": false
+  },
+  "localVerification": {
+    "fullDesktop": {
+      "source": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+      "exitCode": 0,
+      "files": 341,
+      "passed": 4305,
+      "skipped": 11,
+      "durationSeconds": 379.61
+    },
+    "uploadProposalNegatives": {
+      "source": "16fc482412c79899d038a09366280ee236da93dd",
+      "passed": 7,
+      "failed": 0
+    },
+    "artifactNegatives": {
+      "source": "16fc482412c79899d038a09366280ee236da93dd",
+      "passed": 8,
+      "failed": 0
+    },
+    "parentReleaseRecovery": {
+      "source": "16fc482412c79899d038a09366280ee236da93dd",
+      "passed": 88,
+      "failed": 0
+    },
+    "workflowNegatives": {
+      "source": "bad6ee1b12c2f2c11538f962b880e67a00013176",
+      "passed": 2,
+      "failed": 0
+    },
+    "typecheck": "passed at bad6ee1 and after projection repair at 16fc482",
+    "focusedLint": "passed before and after projection repair",
+    "hostedCiAtCandidate": {
+      "runs": [
+        37688303049,
+        37688296296
+      ],
+      "status": "queued at observation; not a pass"
+    }
+  },
+  "remaining": [
+    "Resolve and qualify the CloudFormation resource projection dependency without hiding it or silently relaxing the gate",
+    "Exact code deployment with independent runtime readback and compatibility checks",
+    "Retain intent-compatible handler and run fresh real routing/recovery evidence",
+    "Source-bound in-lock preserving intent continuation with rollback and independent readback; deliberate canonical registration",
+    "Fictional prepared/erased/cancelled, lost-reply, second-session discovery, isolation, concurrency and replay journeys",
+    "All six original scopes, matched releases, provider/store acceptance, physical devices and separate policy/agreement/PHI reviews"
+  ],
+  "deployed": false,
+  "schemaChanged": false,
+  "canonicalRegistered": false,
+  "hostedAcceptance": false,
+  "allSixPhasesComplete": false,
+  "commercialReady": false,
+  "phiReady": false,
+  "phiAllowed": false,
+  "paidMobileBuildStarted": false,
+  "evidenceIsReplayAuthority": false
+}

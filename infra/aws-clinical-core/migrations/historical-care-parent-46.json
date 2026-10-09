@@ -1,0 +1,225 @@
+{
+  "contract_version": "clinical-core-migrations/1",
+  "migrations": [
+    {
+      "version": "20260812010000",
+      "file": "20260812010000_synthetic_identity_consent.sql"
+    },
+    {
+      "version": "20260812220000",
+      "file": "20260812220000_identity_function_column_qualification.sql"
+    },
+    {
+      "version": "20260821010000",
+      "file": "20260821010000_governed_synthetic_lab_import.sql"
+    },
+    {
+      "version": "20260821020000",
+      "file": "20260821020000_consumer_connection_posture.sql"
+    },
+    {
+      "version": "20260821030000",
+      "file": "20260821030000_consumer_clinical_records_privacy.sql"
+    },
+    {
+      "version": "20260821040000",
+      "file": "20260821040000_desktop_compatibility_boundary.sql"
+    },
+    {
+      "version": "20260821045000",
+      "file": "20260821045000_consumer_health_intake_records.sql"
+    },
+    {
+      "version": "20260821046000",
+      "file": "20260821046000_consumer_wearable_records.sql"
+    },
+    {
+      "version": "20260821047000",
+      "file": "20260821047000_self_service_consumer_identity.sql"
+    },
+    {
+      "version": "20260821048000",
+      "file": "20260821048000_reproductive_health_consent.sql"
+    },
+    {
+      "version": "20260821049000",
+      "file": "20260821049000_patient_chat_context.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260821049500",
+      "file": "20260821049500_consumer_family_access.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260821049700",
+      "file": "20260821049700_synthetic_workforce_organization_directory.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260821049800",
+      "file": "20260821049800_synthetic_patient_directory_create.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260821049900",
+      "file": "20260821049900_synthetic_patient_directory_request_repair.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903010000",
+      "file": "20260903010000_synthetic_wearable_consent_artifact.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903020000",
+      "file": "20260903020000_synthetic_patient_app_intake_read.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903030000",
+      "file": "20260903030000_register_synthetic_patient_app_intake.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903060000",
+      "file": "20260903060000_synthetic_workforce_identity_aliases.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903070000",
+      "file": "20260903070000_governed_patient_chat.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903163000",
+      "file": "20260903163000_synthetic_desktop_calendar.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903170000",
+      "file": "20260903170000_register_synthetic_desktop_calendar.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903180000",
+      "file": "20260903180000_synthetic_patient_app_lab_ranges.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903200000",
+      "file": "20260903200000_synthetic_desktop_programs_inbox.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903201000",
+      "file": "20260903201000_register_synthetic_desktop_programs_inbox.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903202000",
+      "file": "20260903202000_synthetic_desktop_programs_inbox_handler_hashes.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903210000",
+      "file": "20260903210000_synthetic_review_billing_workspaces.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903211000",
+      "file": "20260903211000_register_synthetic_review_billing.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260904090000",
+      "file": "20260904090000_independent_consumer_chat_context.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260916080000",
+      "file": "20260916080000_synthetic_lab_specimen_context.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260929090000",
+      "file": "20260929090000_synthetic_care_messages.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260929100000",
+      "file": "20260929100000_synthetic_care_message_receipts.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260929110000",
+      "file": "20260929110000_synthetic_care_message_settlement.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260929120000",
+      "file": "20260929120000_synthetic_program_assignments.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930100000",
+      "file": "20260930100000_synthetic_external_calendar_connections.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930110000",
+      "file": "20260930110000_synthetic_care_data_lifecycle.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930120000",
+      "file": "20260930120000_synthetic_external_busy_booking.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930130000",
+      "file": "20260930130000_synthetic_public_consult_requests.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930140000",
+      "file": "20260930140000_synthetic_intake_forms_and_signatures.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930150000",
+      "file": "20260930150000_synthetic_intake_data_lifecycle.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930160000",
+      "file": "20260930160000_synthetic_clinical_disputes_and_revisions.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930170000",
+      "file": "20260930170000_synthetic_note_templates_and_house_style.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930180000",
+      "file": "20260930180000_synthetic_protocol_cart_compilation.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930190000",
+      "file": "20260930190000_synthetic_practice_outcome_ledger.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930200000",
+      "file": "20260930200000_synthetic_consult_contact_retention.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20261006040000",
+      "file": "20261006040000_synthetic_care_erasure_recovery.sql",
+      "production_transform": false
+    }
+  ]
+}

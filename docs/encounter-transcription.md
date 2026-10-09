@@ -1,0 +1,201 @@
+# Encounter transcription authority — September 20, 2026
+
+Transcription is the first processing step after a finished recording, and the recording
+authority previously declared it unavailable. Migration 83
+(`20260920010000_production_recording_transcription.sql`) adds a separately released,
+consent-bound transcription layer that reuses the recording grants, holds and cleanup
+intents rather than trusting the caller or the provider.
+
+## Database
+
+- `recording_transcription_releases`: a reviewed release per organization with a hashed
+  `aws_transcribe` configuration (region, language), approval and expiry. Every operation
+  re-verifies the release the deployment was built with; the caller cannot pick one.
+- `recording_transcription_jobs`: one open job per recording. `request_recording_transcription`
+  is idempotent on the command ID and refuses a recording that is not closed with a `finish`
+  disposition, has reserved segments, has a discard or consent-revoked cleanup intent, has an
+  expired deletion deadline or belongs to a patient under a legal hold. It requires
+  `recording_grants_for_scope(..., 'transcription', ...)` and pins the segment inventory hash
+  and the grant identifiers it relied on.
+- `recording_transcripts`: immutable versions (`provider` or `correction`) holding the object
+  key, SHA-256, byte and word counts and a supersedes link. Text never enters the database.
+- `recording_transcription_events`: append-only timeline for requested, processing, completed,
+  failed and corrected.
+- `complete_recording_transcription` re-checks the grants that authorized the job. If consent
+  was withdrawn while the provider worked, it records a failed job and returns the failure
+  instead of raising, so the outcome is durable and no transcript row is created.
+- `correct_recording_transcript` appends a version with a reason; identical content is a
+  conflict and a held patient is refused. `get_recording_transcript_object` and
+  `get_recording_transcription_media` are the only functions that return storage
+  coordinates, and only inside the owning organization.
+
+## Runtime (`recording-transcription.ts`, `recording-transcription-api.ts`)
+
+One workforce route, `POST /clinical-core/workforce/encounter-recording/transcription`, with
+five operations: `request`, `advance`, `list`, `correct` and `read`. Every call runs under
+gateway-verified workforce identity and is authorized again inside the database. The
+processor performs one bounded step per `advance`: it reassembles the recording from stored
+segments, verifying each segment's length and digest against the inventory (a 256 MiB cap
+and strict sequence order), re-reads job authority after the reads, writes the media object
+create-only under the organization's recording prefix, then starts the provider job. A later
+`advance` polls the provider, parses only the documented result shape, stores `transcript-v1.txt`
+and completes the job with its digest. Provider failure becomes a failed job with a bounded
+code, never a transcript. `read` verifies the stored bytes against the recorded digest before
+returning text, which is never listed, logged or cached. Corrections write a new immutable
+object and version.
+
+Activation follows the recording pattern: PHI activation plus transcription, provider and
+storage review hashes, a release UUID and the workforce/database reviews. Without them the
+built handler returns 503 and never loads the SDK runtime. The reviewed IAM policy allows
+scoped RDS Data, secret, S3 get/put (create-only, KMS-conditioned) on the organization prefix
+and only `transcribe:StartTranscriptionJob` and `GetTranscriptionJob` on `alp-*` job names:
+no list, delete, wildcard or drafting-provider permission.
+
+## Encounter page (`AwsRecordingTranscriptionPanel`)
+
+Migration 84 (`20260920020000_production_recording_workspace_finished.sql`) extends the
+consent workspace with `finishedCaptures`: closed recordings with a finish disposition, no
+discard or consent-revoked cleanup intent and an unexpired deletion deadline, newest first
+and bounded to twenty, each with its content type, segment count and the latest open or
+completed transcription job. No token, object key, bucket or text is included. An authority
+built before this migration omits the key and the page reads it as none.
+
+The panel mounts below audio capture once the workspace is loaded. Each finished recording
+gets a page-owned review (`aws-recording-transcription.ts`): load status, request (a fresh
+command ID; an uncertain outcome keeps that exact request and blocks other steps until it is
+retried), advance one step, open a version, and correct the latest version with a reason.
+Text lives only in page memory while open and is dropped on correction, conflict, dispose or
+when the panel is unavailable. The browser calls the same-origin proxy
+`/api/live/scribe/transcription`, which uses only the request-scoped workforce cookie,
+refuses cross-origin writes, queries, encodings, unknown operations and bodies over the
+correction bound, and forwards to the separately configured
+`RECORDING_TRANSCRIPTION_AWS_API_ORIGIN`. Responses are validated against the strict contract,
+correlated to the requested recording, command or transcript, and must declare AI drafting
+unavailable. Upstream detail is never forwarded or logged. A recording finished on this page
+triggers a notice to reload the workspace; the page never assumes the server state.
+
+## Hold-aware cleanup of transcription objects (migration 85)
+
+Cleanup previously listed only the capture session's audio prefix, so assembled media, the
+provider's result document and every transcript version would have outlived the recording.
+Migration 85 (`20260920030000_production_recording_transcription_artifacts.sql`) adds
+`recording_transcription_artifacts`: every object the processor writes (media, transcript
+versions) or reads back (the provider's `provider.json`) is registered by the owning workforce
+actor with its exact object version, SHA-256 and size before the step returns. Keys must sit
+under the job's transcription prefix with the kind's file name; a transcript artifact must
+match its version row; replays are no-ops and any other difference is a conflict. Media and
+transcript objects are written create-only with a full-object SHA-256 checksum and
+`recording-id`, `job-id` and `artifact-kind` metadata. A store that cannot name the version it
+wrote or read is refused, because such an object could never be verified for deletion.
+
+Cleanup admission (`admit_recording_cleanup`) now returns `transcriptionInventory` and its
+digest next to the audio inventory, waits while a job is requested or processing, and the
+same patient and owner holds apply. An actionable cleanup intent (discard, consent revoked or
+an arrived retention deadline) cancels open jobs, so the processor's next step finds a
+cancelled job and cannot write. The bounded worker lists the whole recording prefix, treats
+every key as either an inventoried segment or a registered artifact and stops on anything
+else, verifies artifacts by exact version, size, KMS key, checksum and metadata (the
+provider-written document by version and size, with its checksum when S3 reports one),
+re-reads holds and retention before each delete, prepares artifact attempts through
+`prepare_recording_cleanup_artifact_attempt` and refuses to delete when either inventory
+changed during the pass. Reviewed cleanup IAM already covers the recording prefix, so no
+template changed.
+
+Backups and provider-side copies remain outside this layer; a registration that fails after
+an object was written is repaired by reconciliation (migrations 89 and 91 below).
+
+## Retention after processing-consent withdrawal (migration 92)
+
+Enforced default policy, recorded in
+`20260920100000_production_recording_processing_retention.sql` (a different policy needs a
+new migration, not a flag): when any participant withdraws transcription or AI-drafting
+consent for a recording that has a transcription or drafting job, every processing object
+derived under that consent (assembled media, provider output, transcript objects,
+proposed-note objects and declared orphans) is scheduled for hold-aware deletion now, and
+open jobs are cancelled at once, so a provider result arriving afterwards is refused rather
+than stored. Audio segments keep the recording's own retention: they are governed by
+recording consent and the capture deadline. Database rows (digests, versions, events) stay
+as the immutable record that processing happened and what was deleted.
+
+Mechanics: the cleanup intent gains a `scope` (`recording` or `processing`) and the reason
+`processing_consent_revoked`; the scope narrows to processing only from a future retention
+deadline and widens back to the whole recording on discard or recording-consent withdrawal,
+never the other way. Admission carries `scope` and `audioActionable` (true for a whole
+recording intent, or for a processing intent once the capture deadline has arrived); the
+worker deletes only transcription and drafting objects while audio is not actionable and
+stops an attempt if either flag changes mid-pass. Admission now waits only for open
+reservations, since a stored segment is immutable.
+
+Status, not receipt: `recording_processing_deletion_status` (cleanup-review action
+`processing`, shown on the cleanup review page) reports registered objects, acknowledged
+exact-version deletions, holds, unknown outcomes, unattempted objects, declared objects with
+no registration, open jobs, and states plainly that the provider copy is not verifiable (no
+delete permission is granted) and backups are not covered. `processingObjectsDeleted` is
+true only when every registered object has an acknowledged deletion, nothing declared is
+unregistered and no job is open; it never claims audio, provider or backup deletion.
+
+## Reconciliation of unregistered objects (migration 89)
+
+A crash between an object write and its registration would leave cleanup refusing an
+unknown key indefinitely, with no way to repair it. Migration 89
+(`20260920070000_production_recording_artifact_reconciliation.sql`) adds an owner-locked
+listing of the objects a recording's transcription and drafting jobs are expected to have
+written (assembled media per job, provider output once a provider job was started,
+transcript versions and proposed notes with rows) minus those already registered. The
+media store gains a bounded `head`; after every `advance` step, and through an explicit
+`reconcile` on the transcription processor, each expected object that exists is registered
+with its exact version and size, its digest from the S3 full-object checksum or from a
+bounded read when the provider wrote it, and skipped when it does not exist. A size or
+digest that contradicts the database row is refused. Nothing is written or deleted.
+Migration 91 below extends this to objects whose result row was never created.
+
+## Retry safety, declared objects and orphans (migration 91)
+
+An independent audit on September 20 reproduced three failures that migration 89 did not
+cover: a retry after the assembled media was written but the provider start failed stopped
+on `conflict`; a retry after the transcript was written but the database completion failed
+stopped the same way; and a first job whose only object was media could not be reconciled
+because reconciliation looked storage coordinates up through a transcript that did not exist.
+Migration 91 (`20260920090000_production_recording_object_intents.sql`) and the processor
+changes repair them without weakening any check:
+
+- **Declared before written.** `declare_recording_object` records the job, kind, key and,
+  when known, the exact digest and size of every object the processor is about to write or
+  is about to ask the provider to write. Declarations are owner-scoped, prefix-checked,
+  idempotent on the key, immutable, and refused when a digest changes.
+- **Create-only put that tolerates its own retry.** `putOnce` heads the key first; an
+  existing object with the same digest is reused with its stored version, a different
+  digest is `conflict`, and only an absent key is written (create-only). The provider is
+  looked up by its exact job name (`find`) before a start, so an uncertain earlier start is
+  resumed rather than duplicated.
+- **Orphans.** `list_unregistered_recording_objects` now unions declared intents that have no
+  result row (flag `declared: true`). `register_recording_orphan_artifact` registers such an
+  object under the `orphan` kind (media and provider output keep their kinds) after verifying
+  version, size and digest against the declaration, refusing keys with result rows, so
+  hold-aware cleanup removes it. The cleanup worker treats an orphan like any other artifact:
+  exact version, verified digest, no listing beyond the recording prefix.
+- **Storage without a transcript.** `get_recording_storage` returns the capture's storage
+  release under the owner lock, so `reconcile` works on a recording whose jobs never produced
+  a transcript. `reconcile` is now an explicit workforce operation on both routes.
+
+The three audit cases run as `Codex audit recovery regressions` in
+`recording-transcription.test.ts`; PGlite tests cover declaration rules, orphan listing and
+registration, the result-row refusal and storage lookup.
+
+## Evidence and what remains
+
+Local only: PGlite tests exercise request gating, idempotency, consent, release refusal,
+completion, immutability, consent withdrawal during processing, holds and corrections; unit
+tests cover assembly verification, oversized media, provider failure, malformed results,
+correction rules, database category mapping and API status mapping; the infrastructure test
+builds `npm run build:aws-recording-transcription` and executes the blocked handler without
+AWS credentials. No hosted migration, provider call, activation or PHI has occurred. Review-only
+AI drafting from a transcript version is documented in `docs/encounter-drafting.md`;
+transcript retention across backups and provider-side copies is not covered. The encounter panel runs in a real Chromium under `e2e/aws-recording-transcription.spec.ts`
+(CI job `e2e-aws-recording-consent`, every proxy answered by contract-exact fictional
+responses): request, advance, open, correction textarea refresh and the new version, a fresh
+request after a terminal failure (`Request transcription again`, keyboard-activated), text
+dropped on authorization loss with no raw refusal detail rendered, and the real proxy's cookie
+refusal. No provider or hosted run has exercised it. The page controller drops opened transcript text
+whenever a refresh is refused for authorization (`forbidden`, `unauthenticated`), currency
+(`conflict`) or absence (`not_found`); only transient failures keep it on screen.

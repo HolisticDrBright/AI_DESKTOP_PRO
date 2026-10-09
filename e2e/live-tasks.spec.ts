@@ -359,8 +359,9 @@ test("practitioner sign-in and sign-out work via httpOnly cookie session", async
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  // Redirects home on success; the session endpoint reflects the cookie session.
-  await page.waitForURL("**/");
+  // The home route redirects to Today. A full-document login correctly follows
+  // that redirect; do not wait for the intermediate root URL to remain loaded.
+  await expect(page).toHaveURL(/\/today$/);
   const session = await page.evaluate(() =>
     fetch("/api/auth/session").then((r) => r.json()),
   );
@@ -390,7 +391,7 @@ test("org members: roster, account linking, honest guards, confirmed removal (ad
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   await page.goto("/settings");
   const card = page.getByTestId("org-members-card");
@@ -445,7 +446,7 @@ test("org substitution: a forged organization id is refused and the session org 
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   // The org id is browser input here — the server must validate it against
   // the caller's OWN memberships, not trust it.
@@ -478,7 +479,7 @@ test("a signed-in user with no active memberships gets honest states, never tena
   await page.getByLabel("Email").fill("no-orgs@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
   expect(session?.data?.signedIn).toBe(true);
@@ -503,7 +504,7 @@ test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-
   await page.getByLabel("Email").fill("dual-org@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   // Safe default: exactly-one-or-first membership auto-selected at sign-in.
   const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
@@ -549,8 +550,32 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   const block = page.getByRole("button", { name: /Fixture Patient/ }).first();
   await block.waitFor();
   await block.click();
+  // Capture the real server response before delivering it to the browser.
+  // Native document navigation can evict a response body from Chromium's
+  // Network domain before response.json() reads it (CI35258991975). Relay the
+  // original POST exactly once; do not manufacture an encounter or its result.
+  let acceptOpening!: (value: { status: number; body: { data: { encounterId: string } } }) => void;
+  let refuseOpening!: (error: unknown) => void;
+  const opening = new Promise<{ status: number; body: { data: { encounterId: string } } }>((resolve, reject) => {
+    acceptOpening = resolve; refuseOpening = reject;
+  });
+  let openingPosts = 0;
+  await page.route("**/api/live/emr/encounter", async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    openingPosts++;
+    try {
+      const response = await route.fetch({ maxRedirects: 0, maxRetries: 0 });
+      acceptOpening({ status: response.status(), body: await response.json() });
+      await route.fulfill({ response });
+    } catch (error) { refuseOpening(error); await route.abort(); }
+  });
   await page.getByRole("button", { name: "Open encounter" }).click();
-  await page.waitForURL("**/encounter/**");
+  const opened = await opening;
+  expect(opened.status, 'appointment-to-encounter POST must succeed').toBe(200);
+  const openedBody = opened.body;
+  expect(openedBody.data.encounterId).toMatch(/^[0-9a-f-]{36}$/i);
+  await expect(page).toHaveURL(new RegExp(`/encounter/${openedBody.data.encounterId}$`));
+  expect(openingPosts, 'one browser action must create at most one encounter').toBe(1);
   const encounterUrl = page.url();
   await expect(page.getByTestId("encounter-status")).toHaveText("In progress");
 
@@ -627,7 +652,7 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await page.getByLabel("Email").fill("no-orgs@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
   await page.goto(encounterUrl);
   await expect(
     page.getByText(/isn.t available|not available|access denied/i).first(),

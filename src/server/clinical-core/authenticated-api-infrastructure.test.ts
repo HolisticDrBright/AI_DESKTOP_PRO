@@ -25,14 +25,46 @@ describe("authenticated synthetic API infrastructure", () => {
     }
   });
 
-  test("all clinical routes are JWT-authenticated and the Lambda is tightly bounded", () => {
+  test("every clinical route but the declared public one is JWT-authenticated, and the Lambda is tightly bounded", () => {
     const resources = JSON.parse(readFileSync(extensionPath, "utf8")).Resources;
     const routes = Object.values(resources).filter((resource: unknown) => (resource as { Type: string }).Type === "AWS::ApiGatewayV2::Route") as Array<{ Properties: Record<string, unknown> }>;
-    expect(routes).toHaveLength(30);
+    expect(routes).toHaveLength(55);
+    expect(routes.map(route=>route.Properties.RouteKey)).toEqual(expect.arrayContaining([
+      "POST /clinical-core/consumer/messages",
+      "POST /clinical-core/workforce/messages",
+      "POST /clinical-core/consumer/programs",
+      "POST /clinical-core/workforce/programs",
+      "POST /clinical-core/consumer/labs/specimen-context",
+      "GET /clinical-core/consumer/labs/specimen-context",
+      "GET /clinical-core/workforce/labs/specimen-context",
+      "POST /clinical-core/workforce/consult-links",
+      "POST /clinical-core/workforce/consult-requests",
+      "POST /clinical-core/workforce/intake-forms",
+      "POST /clinical-core/workforce/intake-packets",
+      "POST /clinical-core/consumer/intake-packets",
+      "POST /clinical-core/workforce/disputes",
+      "POST /clinical-core/consumer/disputes",
+      "POST /clinical-core/workforce/content-revisions",
+      "POST /clinical-core/workforce/note-templates",
+      "POST /clinical-core/workforce/note-drafting-context",
+      "POST /clinical-core/workforce/protocol-carts",
+      "POST /clinical-core/workforce/outcome-ledger",
+      "POST /clinical-core/workforce/outcome-report",
+      "POST /clinical-core/workforce/consult-retention",
+      "POST /clinical-core/consumer/content-revisions",
+    ]));
     expect(routes.map((route) => route.Properties.RouteKey))
       .toContain("POST /clinical-core/workforce/data-compatibility");
-    expect(routes.every((route) => route.Properties.AuthorizationType === "JWT")).toBe(true);
-    expect(resources.IdentityApiFunction.Properties).toMatchObject({ Timeout: 15, MemorySize: 256 });
+    // One route is unauthenticated by design, because a stranger asking for a first
+    // appointment has no account yet. It is asserted by name, and asserted to be the only
+    // one, so a second unauthenticated route cannot appear unnoticed.
+    const unauthenticated = routes.filter((route) => route.Properties.AuthorizationType !== "JWT");
+    expect(unauthenticated.map((route) => route.Properties.RouteKey))
+      .toEqual(["POST /clinical-core/public/consult-intake"]);
+    expect(unauthenticated[0].Properties.AuthorizationType).toBe("NONE");
+    expect(unauthenticated[0].Properties).not.toHaveProperty("AuthorizerId");
+    expect(resources.IdentityApiFunction.Properties).toMatchObject({ Timeout: 29, MemorySize: 256 });
+    expect(resources.IdentityApiIntegration.Properties.TimeoutInMillis).toBe(30000);
     expect(resources.IdentityApiFunction.Properties.FunctionName)
       .toEqual({ "Fn::Sub": "${ClinicalApiId}-synthetic-identity" });
     expect(resources.IdentityApiFunction.Properties).not.toHaveProperty("ReservedConcurrentExecutions");

@@ -1,0 +1,162 @@
+{
+  "account": "588966314750",
+  "region": "us-east-2",
+  "database": "clinical_core",
+  "newMigration": {
+    "sha256": "779d879e6058827b46570927ac0de162f8e93d35c326cea59d0d229e4a2b01bd",
+    "version": "20260929090000",
+    "file": "20260929090000_synthetic_care_messages.sql"
+  },
+  "history": [
+    {
+      "version": "20260812010000",
+      "name": "synthetic_identity_consent",
+      "sha256": "c4ca967352bce6c678249336ef410fe7de4216d123a0d3da06a467379780c445"
+    },
+    {
+      "version": "20260812220000",
+      "name": "identity_function_column_qualification",
+      "sha256": "9c1616b0d4cba3ff1d2d0f3f3ddc618c706cd8fc96a8835a15b5be13725aa31f"
+    },
+    {
+      "version": "20260821010000",
+      "name": "governed_synthetic_lab_import",
+      "sha256": "ed25afdeacfec2bad9722ab1dcff50265a185207f799207c87dc55b19223bb5d"
+    },
+    {
+      "version": "20260821020000",
+      "name": "consumer_connection_posture",
+      "sha256": "e275d1e97c89e5cd1506d6d7cb5934d247b462c2c0c973189d0ccc9b714a7e11"
+    },
+    {
+      "version": "20260821030000",
+      "name": "consumer_clinical_records_privacy",
+      "sha256": "fc68819de3b476134dfa6feeb4bb440cc3b544bf6a90286ed0461668a9d76f10"
+    },
+    {
+      "version": "20260821040000",
+      "name": "desktop_compatibility_boundary",
+      "sha256": "747b2f4f8d3bc9882e545f15e96d9ee3a58b4d441c61ee3de9770b9124f9cb59"
+    },
+    {
+      "version": "20260821045000",
+      "name": "consumer_health_intake_records",
+      "sha256": "a02d4922c3828e9e1c262f90142de34457f0c3a616e0c4654778608c672d3397"
+    },
+    {
+      "version": "20260821046000",
+      "name": "consumer_wearable_records",
+      "sha256": "ab71e04203d835232d7a903f3127e5d0c75f24a4320d65a36dc657ef8a57ca71"
+    },
+    {
+      "version": "20260821047000",
+      "name": "self_service_consumer_identity",
+      "sha256": "013e1d6e96b887e46d9e799172bd82f60fa3de9e3de592d2ae92911e437ce0ac"
+    },
+    {
+      "version": "20260821048000",
+      "name": "reproductive_health_consent",
+      "sha256": "829ca3e6eb725f1780ebf20bd864c82676e9b7b88a7f88dd51e248cc51e8480c"
+    },
+    {
+      "version": "20260821049000",
+      "name": "patient_chat_context",
+      "sha256": "a66e6d5052b02eea11826041023223a1bffdf778f8de9015a77c21770f370ce3"
+    },
+    {
+      "version": "20260821049500",
+      "name": "consumer_family_access",
+      "sha256": "f0248f1647583e10c9030988ee54def73601cc5ccb133088cde38f8607839543"
+    },
+    {
+      "version": "20260821049700",
+      "name": "synthetic_workforce_organization_directory",
+      "sha256": "edb1b9b49b81ad4bc098d2c9ebe448cfea7375f7d2ce0cc793119ed07253d551"
+    },
+    {
+      "version": "20260821049800",
+      "name": "synthetic_patient_directory_create",
+      "sha256": "48517ea5691301db86a6bb210b813a389878f62cad57b1063d76e68a66a4b24d"
+    },
+    {
+      "version": "20260821049900",
+      "name": "synthetic_patient_directory_request_repair",
+      "sha256": "cf710d84af5663c0a1468cf630ee3885d9bbfd161711feabb2f50afab0b97bd8"
+    },
+    {
+      "version": "20260902230000",
+      "name": "synthetic_workforce_organization_directory",
+      "sha256": "edb1b9b49b81ad4bc098d2c9ebe448cfea7375f7d2ce0cc793119ed07253d551"
+    },
+    {
+      "version": "20260903010000",
+      "name": "synthetic_wearable_consent_artifact",
+      "sha256": "e58c8117785788cb31c67239c1aab4538bf96772dfc54a0e5246d216ebed63ce"
+    },
+    {
+      "version": "20260903020000",
+      "name": "synthetic_patient_app_intake_read",
+      "sha256": "eb0331b88ab0a27666f5f865ed6e314e22a026d7d9959daa23c582f49aa2283a"
+    },
+    {
+      "version": "20260903030000",
+      "name": "register_synthetic_patient_app_intake",
+      "sha256": "a043ed128b2d2e05c007645693c59f04170e67602f06a8476b18e9abcbf5a4f3"
+    },
+    {
+      "version": "20260903060000",
+      "name": "synthetic_workforce_identity_aliases",
+      "sha256": "25216d882c493f907a06af457e5f0743908f8a7dd7193a5cf5a338ac7279d150"
+    },
+    {
+      "version": "20260903070000",
+      "name": "governed_patient_chat",
+      "sha256": "f1d8f85e33053e4faa822fc610ef9b0ecbeaf1cc98c6801af1bb96c1b576be81"
+    },
+    {
+      "version": "20260903163000",
+      "name": "synthetic_desktop_calendar",
+      "sha256": "2015d4abb664b0a96f09e0bc5f0183c42ef6ca57421636bcd386c0491d796b17"
+    },
+    {
+      "version": "20260903170000",
+      "name": "register_synthetic_desktop_calendar",
+      "sha256": "e532e9207ecee5693790c4c1c65f7b97b7ee69c9b58809db310c33970cae539c"
+    },
+    {
+      "version": "20260903180000",
+      "name": "synthetic_patient_app_lab_ranges",
+      "sha256": "012936e331b723d75cc73b333c5d623665240cc32f845abdd2c1c6583e5b3e02"
+    },
+    {
+      "version": "20260903200000",
+      "name": "synthetic_desktop_programs_inbox",
+      "sha256": "6ba42349af12e2deb2aa163fbca59ea168bababe4017a098ec88314f31a8b26f"
+    },
+    {
+      "version": "20260903201000",
+      "name": "register_synthetic_desktop_programs_inbox",
+      "sha256": "326129947686e1a7cb16ab0f48b3035c3f0dcf4d817bccd9c250d2319c4e83ef"
+    },
+    {
+      "version": "20260903202000",
+      "name": "synthetic_desktop_programs_inbox_handler_hashes",
+      "sha256": "aa2f525229f4de501318ae4cbb3bea6b60007e06c8017864206fc5fa9931f5e6"
+    },
+    {
+      "version": "20260903210000",
+      "name": "synthetic_review_billing_workspaces",
+      "sha256": "da988587ccf4cd59474bcfc3288b8415bf80b2ac5273b10ea5bfec76ccae8b7d"
+    },
+    {
+      "version": "20260903211000",
+      "name": "register_synthetic_review_billing",
+      "sha256": "e87552ef60db7d3a737ae73eda339ad34fc47484dbf7aad8c0882388bc8a4837"
+    },
+    {
+      "version": "20260904090000",
+      "name": "independent_consumer_chat_context",
+      "sha256": "3e6d7c232a09242f5346f4016d4941e90d42ac0c1d05a1619b7091e5b663288b"
+    }
+  ]
+}

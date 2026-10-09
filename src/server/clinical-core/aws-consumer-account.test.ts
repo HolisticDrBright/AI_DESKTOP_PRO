@@ -29,10 +29,30 @@ function event(routeKey: string, body: Record<string, unknown>) {
 }
 
 describe("consumer account API", () => {
+  test("refuses missing/minor eligibility before account creation in both environments", async () => {
+    for (const boundary of ["synthetic","production"] as const) {
+      const t=setup();
+      const run=createConsumerAccountApiHandler({provider:t.provider,database:{transaction:async work=>work({query:t.query})},
+        configuration:{boundary,activationState:"approved",termsVersion:"terms-2026-08",privacyVersion:"privacy-2026-08"}});
+      const body={email:"synthetic@example.invalid",password:"SyntheticOnly!27",acceptsTerms:true,acceptsPrivacy:true,
+        attestsSyntheticOnly:true,termsVersion:"terms-2026-08",privacyVersion:"privacy-2026-08"};
+      for(const patch of [{},{dateOfBirth:"2020-01-01",attestsAdult:true,registrationPolicy:"adult-self-service/1"},
+        {dateOfBirth:"2000-01-01",attestsAdult:false,registrationPolicy:"adult-self-service/1"}]){
+        const result=await run(event("POST /clinical-core/public/consumer/register",{...body,...patch}));
+        expect(result.statusCode).toBe(400);expect(JSON.parse(result.body).error).toBe("adult_registration_required");
+      }
+      expect(t.provider.register).not.toHaveBeenCalled();expect(t.query).not.toHaveBeenCalled();
+      const result=await run(event("POST /clinical-core/public/consumer/register",{...body,dateOfBirth:"2000-01-01",attestsAdult:true,registrationPolicy:"adult-self-service/1"}));
+      expect(result.statusCode).toBe(202);
+      expect(JSON.stringify(vi.mocked(t.provider.register).mock.calls)).not.toContain("dateOfBirth");
+      expect(result.body).not.toContain("2000-01-01");
+    }
+  });
   test("creates only server-bound synthetic registration requests", async () => {
     const { run, provider } = setup();
     const result = await run(event("POST /clinical-core/public/consumer/register", {
       email: "Person@Example.com", password: "StrongPassword!27",
+      dateOfBirth: "2000-01-01", attestsAdult: true, registrationPolicy: "adult-self-service/1",
       acceptsTerms: true, acceptsPrivacy: true, attestsSyntheticOnly: true,
       termsVersion: "terms-2026-08", privacyVersion: "privacy-2026-08",
     }));
@@ -73,6 +93,7 @@ describe("consumer account API", () => {
     const { run } = setup({ register: exists, resendConfirmation: error, requestPasswordReset: error });
     const registration = await run(event("POST /clinical-core/public/consumer/register", {
       email: "person@example.com", password: "StrongPassword!27", acceptsTerms: true, acceptsPrivacy: true,
+      dateOfBirth: "2000-01-01", attestsAdult: true, registrationPolicy: "adult-self-service/1",
       attestsSyntheticOnly: true, termsVersion: "terms-2026-08", privacyVersion: "privacy-2026-08",
     }));
     const resend = await run(event("POST /clinical-core/public/consumer/registration/resend", { email: "person@example.com" }));

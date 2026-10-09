@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import type { ClinicalCoreDatabase } from "./database";
 import type { ClinicalCoreMigration } from "./migrations";
+import { createHash } from "node:crypto";
 import { splitPostgresStatements } from "./migrations";
 
 export class ProductionClinicalCoreMigrationError extends Error {
@@ -16,6 +17,11 @@ export class ProductionClinicalCoreMigrationError extends Error {
     this.name = "ProductionClinicalCoreMigrationError";
   }
 }
+
+/** Application tables in clinical_core and clinical_audit (ledger excluded) after the full artifact. */
+export const PRODUCTION_APPLICATION_TABLE_COUNT = 130;
+/** Desktop contract functions the artifact must define. */
+export const PRODUCTION_CONTRACT_COUNT = 86;
 
 export type ProductionClinicalCoreMigrationResult = {
   applied: string[];
@@ -30,10 +36,60 @@ export type ProductionClinicalCoreMigrationResult = {
  * patient, consent, clinical, or provider rows may exist at this readiness
  * stage; that invariant is checked before the transaction can commit.
  */
+export type ProductionClinicalCoreMigrationInspection = {
+  /** Versions recorded in clinical_core.schema_migrations with the same hash as the artifact. */
+  applied: string[];
+  /** Artifact versions not yet recorded, in apply order: the subset a deployment must apply. */
+  missing: string[];
+  /** Recorded versions whose hash differs from the artifact: a deployment must stop, not apply. */
+  mismatched: Array<{ version: string; recorded: string; artifact: string }>;
+  /** Recorded versions the artifact no longer carries: unknown history, also a stop. */
+  unknown: string[];
+  ledgerPresent: boolean;
+  artifactReleaseHash: string;
+};
+/** Read-only comparison of the database's migration ledger against the built artifact. Nothing is created or applied;
+ * a database without the ledger table reports every artifact version as missing. */
+/** The release hash of a built production artifact: the one the operator's `inspect` prints, the qualification target
+ * manifest records, and the hosted harness reports carry. */
+export function productionArtifactReleaseHash(migrations: ClinicalCoreMigration[]): string {
+  return createHash("sha256").update(migrations.map((m) => `${m.version}:${m.sha256}`).join("\n")).digest("hex");
+}
+
+export async function inspectProductionClinicalCoreMigrations(
+  database: ClinicalCoreDatabase,
+  migrations: ClinicalCoreMigration[],
+): Promise<ProductionClinicalCoreMigrationInspection> {
+  const artifactReleaseHash = productionArtifactReleaseHash(migrations);
+  return database.transaction(async (tx) => {
+    const ledger = await tx.query<{ present: boolean }>("select to_regclass('clinical_core.schema_migrations') is not null as present");
+    const ledgerPresent = ledger.rows[0]?.present === true;
+    const existing = ledgerPresent ? await tx.query<{ version: string; sha256: string }>("select version, sha256 from clinical_core.schema_migrations order by version") : { rows: [] as Array<{ version: string; sha256: string }> };
+    const byVersion = new Map(existing.rows.map((row) => [row.version, row.sha256]));
+    const known = new Set(migrations.map((m) => m.version));
+    const applied: string[] = [], missing: string[] = [], mismatched: Array<{ version: string; recorded: string; artifact: string }> = [];
+    for (const migration of migrations) {
+      const recorded = byVersion.get(migration.version);
+      if (recorded === undefined) missing.push(migration.version);
+      else if (recorded === migration.sha256) applied.push(migration.version);
+      else mismatched.push({ version: migration.version, recorded, artifact: migration.sha256 });
+    }
+    const unknown = existing.rows.map((row) => row.version).filter((version) => !known.has(version));
+    return { applied, missing, mismatched, unknown, ledgerPresent, artifactReleaseHash };
+  });
+}
+
 export async function applyProductionClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
   migrations: ClinicalCoreMigration[],
 ): Promise<ProductionClinicalCoreMigrationResult> {
+  // Exact historical releases are still used by rollback/upgrade qualification.
+  // Counts alone cannot admit an altered predecessor artifact.
+  const release = productionArtifactReleaseHash(migrations);
+  const historical105 = release === '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743';
+  const historical104 = release === '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0';
+  const historical = ['d6b0a8a5d61c465f8e1db1181c52d6bf4d90db0b65068042d8ebf56358dd82b3',
+    '9bc30d04930816a523a7dc67b95944fba1d294dad4d71cf7585158fbc3a874aa'].includes(release);
   return database.transaction(async (tx) => {
     await tx.query("select pg_advisory_xact_lock(hashtext($1))", [
       "ai-desktop-pro:production-clinical-core-migrations",
@@ -115,8 +171,16 @@ export async function applyProductionClinicalCoreMigrations(
             'add_org_member','activate_my_memberships','list_my_patient_relationship_requests',
             'approve_patient_relationship','claim_patient_relationship_invitation',
             'list_my_delegated_patient_access','get_delegated_patient_records',
-            'revoke_my_patient_relationship','get_patient_chat_context'))::int as contract_count,
+            'revoke_my_patient_relationship','get_patient_chat_context',
+            'production_care_message_request','production_care_message_resolve','production_care_message_export',
+            'production_care_connection_request','production_care_claim_request'))::int as contract_count,
       (
+        ${historical || historical104 || historical105 ? '' : '(select count(*) from clinical_core.care_claim_requests) + (select count(*) from clinical_audit.care_claim_events) +'}
+        ${historical || historical104 ? '' : '(select count(*) from clinical_core.care_consent_texts) +'}
+        ${historical ? '' : `(select count(*) from clinical_core.care_message_thread_links)
+        + (select count(*) from clinical_core.care_message_receipts)
+        + (select count(*) from clinical_core.care_message_cancellations)
+        + (select count(*) from clinical_audit.care_message_access_events) +`}
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
         + (select count(*) from clinical_core.identities)
@@ -228,9 +292,23 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_callback_nonces)
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
         + (select count(*) from clinical_audit.patient_relationship_events)
+        + (select count(*) from clinical_private.recording_controls)
+        + (select count(*) from clinical_private.recording_consent_releases)
+        + (select count(*) from clinical_private.recording_participants)
+        + (select count(*) from clinical_private.recording_representative_authorities)
+        + (select count(*) from clinical_private.recording_consent_grants)
+        + (select count(*) from clinical_private.recording_consent_withdrawals)
+        + (select count(*) from clinical_private.recording_capture_releases)
+        + (select count(*) from clinical_private.encounter_captures)
+        + (select count(*) from clinical_private.recording_authority_events)
+        + (select count(*) from clinical_private.recording_participant_commands)
+        + (select count(*) from clinical_private.recording_access_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 81
+    // Real-artifact database tests verify current counts, zero seed rows and exact
+    // historical predecessors; no count-only historical exception is permitted.
+    if (!row || Number(row.table_count) !== (historical ? 123 : historical104 ? 127 : historical105 ? 128 : PRODUCTION_APPLICATION_TABLE_COUNT)
+      || Number(row.contract_count) !== (historical ? 81 : historical104 ? 84 : historical105 ? 85 : PRODUCTION_CONTRACT_COUNT)
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

@@ -2,6 +2,7 @@ if (typeof window !== "undefined") throw new Error("aws-daily-guidance-openai is
 
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { parseOpenAISecret } from "./aws-lab-openai";
+import { ModelVendorAuthorityRefusal } from "./model-vendor-authority";
 import {
   DAILY_GUIDANCE_EVIDENCE,
   DAILY_GUIDANCE_EVIDENCE_VERSION,
@@ -111,7 +112,9 @@ export function parseDailyGuidanceOpenAIResponse(input: { response: unknown; req
 async function apiKey(secretArn: string): Promise<string> {
   const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }));
   if (typeof response.SecretString !== "string") throw new DailyGuidanceError("provider_unavailable");
-  try { return parseOpenAISecret(response.SecretString); } catch { throw new DailyGuidanceError("provider_unavailable"); }
+  // A withdrawn vendor authority reads as an unavailable provider to the caller; the operator log keeps the reason.
+  try { return parseOpenAISecret(response.SecretString); }
+  catch (error) { if (error instanceof ModelVendorAuthorityRefusal) console.error(error.category); throw new DailyGuidanceError("provider_unavailable"); }
 }
 
 export async function generateDailyGuidanceWithOpenAI(input: { request: DailyGuidanceInput; model: string; secretArn: string }): Promise<DailyGuidanceResult> {

@@ -1,0 +1,120 @@
+{
+  "contract": "synthetic-care-intent-resumption-audit/1",
+  "execution": "synthetic-staging",
+  "account": "588966314750",
+  "region": "us-east-2",
+  "application": {
+    "desktop": "0e38c130fa212a7a418301b4b72094c649f8f2fe",
+    "mobile": "1488a3bf85aca5e2c9a7b8b5c7179e314397dc66",
+    "zipSha256": "f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216",
+    "bytes": 1826076
+  },
+  "operator": {
+    "desktop": "7399e59a99131e5701ea30f6306d8c89be88e6b8",
+    "mobile": "315e8deaa7e0e37d77c949dfefaadb595b605612",
+    "clean": true
+  },
+  "run": {
+    "runId": "bccd1492d8dae22401676387cdba66ec",
+    "parentRunId": "cc190186dd49bd98865d1f4da43e73e7",
+    "session": 27422,
+    "pid": 143700,
+    "exitCode": 1,
+    "startRecordedAt": "2026-10-08T01:39:31.609Z",
+    "terminalAt": "2026-10-08T01:53:19.138Z",
+    "finding": "synthetic_care_intent_release_refused:continuation_schema_postinspect",
+    "writeAdmitted": true,
+    "custodySettled": false
+  },
+  "recovery": {
+    "retainedVersion": "2",
+    "phaseCases": {
+      "baseline": 25,
+      "retained": 25,
+      "returned": 25
+    },
+    "preSchemaDenialCases": 20,
+    "uniqueGatewayRequestIds": 95,
+    "retainedBytesVerified": true,
+    "compatibleRoutingCompletedAt": "2026-10-08T01:48:44.307Z",
+    "routingAndPermissionRestoredAt": "2026-10-08T01:47:57.522Z",
+    "rawMetricResponseArchived": false
+  },
+  "schema": {
+    "commitAdmittedAt": "2026-10-08T01:52:38.312Z",
+    "lastingSuccessorObserved": true,
+    "sourceBeforeCount": 46,
+    "sourceAfterCount": 47,
+    "canonicalSourceCount": 46,
+    "liveBeforeCount": 47,
+    "liveAfterCount": 48,
+    "oldTables": 88,
+    "tables": 89,
+    "rows": 23985,
+    "intentRows": 0,
+    "oldDataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+    "wholeDataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+    "intentDataSha256": "718d61b61b711b10ee7f201b778aa482bc45730fcf96d40cb03432b90fbab5c9",
+    "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+    "liveBeforeSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+    "liveAfterSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+    "referenceSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+    "independentDiagnosticAt": "2026-10-08T01:57:12.192Z",
+    "independentReadOnlySnapshots": 2,
+    "originalRowsUnchanged": true,
+    "releasePostinspectionPassed": false
+  },
+  "transportReadback": {
+    "observedAt": "2026-10-08T01:58:56.702Z",
+    "latestRevision": "f0bb13e8-e726-4ea8-86d3-459e19106df0",
+    "stageDeployment": "4pvty5",
+    "integrationUri": "arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity",
+    "state": "Active",
+    "lastUpdateStatus": "Successful",
+    "retainedPolicy": null,
+    "scope": "narrow post-finding readback, not full release admission"
+  },
+  "custody": {
+    "originalLockSha256": "72757b3401472a40db201ec686d28f619d15767f23f553c30474ca6ef07e3f83",
+    "originalJournalSha256": "ed35fbb6f6803e235dfba80c6d1e839c97b96f18961f75e63d40b56ccc6e7121",
+    "resumptionLockSha256": "53d4e579ec83323df899bcaa2f3b69d4e6e78d859921f2737826bcc8a80362e4",
+    "resumptionJournalSha256": "a6cb52d7f5f3dd6d198871b8edf37f8120383c46f80c61f6d696084a4a71e0e4",
+    "originalLockRetained": true,
+    "resumptionLockRetained": true,
+    "journalArchive": "2026-10-08-care-intent-resumption.events.jsonl",
+    "archiveEncoding": "UTF-8, LF-normalized audit copy; original journal remains intact"
+  },
+  "finding": {
+    "cause": "Postinspection complete fingerprint includes the new empty intent table; continuation compared it against the predecessor's 88-table fingerprint.",
+    "repair": "Separate original-row and complete-row fingerprints from the same SQL snapshot; compare both successor complete fingerprints and refuse nonempty added table during release.",
+    "repairHostedVerified": false,
+    "noSchemaReplay": true
+  },
+  "localRepairVerification": {
+    "fullDesktopTestsBeforeReadOnlyProfile": 4309,
+    "fullDesktopSkippedTests": 11,
+    "fullDesktopFiles": 341,
+    "fullDesktopSeconds": 260.2,
+    "focusedSqlAndCommandTests": 38,
+    "finalReadOnlyAndRecoveryNodeTests": 43,
+    "typecheckPassed": true,
+    "focusedLintPassed": true,
+    "ciYamlParsed": true,
+    "earlierOperatorCiPassed": true,
+    "newSourceCiObserved": false,
+    "newReadOnlyProfileHostedVerified": false
+  },
+  "claims": {
+    "canonicalRegistered": false,
+    "fullJourneyAcceptance": false,
+    "preparedErasedJourneyVerified": false,
+    "lostReplyJourneyVerified": false,
+    "secondDeviceJourneyVerified": false,
+    "physicalDeviceAcceptance": false,
+    "phiAllowed": false,
+    "paidMobileBuildStarted": false,
+    "commercialReady": false,
+    "phiReady": false,
+    "reportIsNotAuthority": true
+  }
+}

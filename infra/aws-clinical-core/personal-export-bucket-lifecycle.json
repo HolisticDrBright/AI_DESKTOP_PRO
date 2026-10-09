@@ -1,0 +1,45 @@
+{
+  "_comment": "Defence-in-depth lifecycle for the dedicated personal-export bucket. The application removes copies with listing proof; these rules bound what a failed or never-run cleanup could leave behind. Apply with put-bucket-lifecycle-configuration by the bucket owner after review; record the review hash as ExportReviewSha256.",
+  "Rules": [
+    {
+      "ID": "personal-exports-abort-incomplete-multipart",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "personal-exports/"
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    },
+    {
+      "ID": "personal-exports-expire-noncurrent",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "personal-exports/"
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 1
+      }
+    },
+    {
+      "ID": "personal-exports-expire-current",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "personal-exports/"
+      },
+      "Expiration": {
+        "Days": 3
+      }
+    },
+    {
+      "ID": "personal-exports-remove-delete-markers",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "personal-exports/"
+      },
+      "Expiration": {
+        "ExpiredObjectDeleteMarker": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "contract": "synthetic-care-intent-postcommit-custody-retirement/1",
+  "runId": "b065dd1d15ce4412bad61e6801bc0c57",
+  "parentRunId": "cc190186dd49bd98865d1f4da43e73e7",
+  "secondaryRunId": "bccd1492d8dae22401676387cdba66ec",
+  "operatorCurrent": {
+    "desktop": {
+      "commit": "a13da56be2b50ab2e2b8db3988a48037a68f6814",
+      "clean": true,
+      "files": 1656,
+      "sha256": "5758f73401fd496a2cad277b86015c6c248401912cc5f54c9c4a185e690b12de"
+    },
+    "mobile": {
+      "source": {
+        "commit": "02eec56ee8528b5e3fa0fd63db6e6c342205fa28",
+        "clean": true,
+        "files": 911,
+        "sha256": "6f284292e467c46a898115fbb27b6dcac45939d504aa04fca65e0e3e05239f7e"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "migrations": {
+      "parent": {
+        "sourceBefore": "1da8cf4c3c8edfa1f3fc2d3230940c65eb33f1e0ad61f25582112c34766f3e22",
+        "sourceAfter": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+        "liveBefore": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+        "liveAfter": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+        "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+        "sourceCount": 46,
+        "liveBeforeCount": 46,
+        "liveAfterCount": 47,
+        "historicalAliasPreserved": true
+      },
+      "overlay": {
+        "version": "20261007010000",
+        "name": "synthetic_care_erasure_intents",
+        "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+      },
+      "overlayBytes": 9225,
+      "sourceBefore": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+      "sourceAfter": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+      "liveBefore": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "liveAfter": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "sourceBeforeCount": 46,
+      "sourceAfterCount": 47,
+      "liveBeforeCount": 47,
+      "liveAfterCount": 48,
+      "tablesBefore": 88,
+      "tablesAfter": 89,
+      "historicalAliasPreserved": true,
+      "canonicalRegistered": false
+    },
+    "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+  },
+  "archive": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-intent-release\\0e38c130fa212a7a418301b4b72094c649f8f2fe\\1488a3bf85aca5e2c9a7b8b5c7179e314397dc66\\resumptions\\b065dd1d15ce4412bad61e6801bc0c57.postcommit-custody",
+  "reconciledAt": "2026-10-08T02:35:19.083Z",
+  "exactOriginalCustodyArchived": true,
+  "originalLockRetired": true,
+  "secondaryLockRetired": true,
+  "outcome": "reconciled_committed_successor_not_release_acceptance",
+  "awsMutationPerformed": false,
+  "schemaChanged": false,
+  "freshRoutingRecoveryVerified": false,
+  "originalReleaseAccepted": false,
+  "erasureAccepted": false,
+  "canonicalRegistered": false,
+  "physicalDeviceAcceptance": false,
+  "phiAllowed": false,
+  "paidMobileBuildStarted": false,
+  "reportIsNotAuthority": true
+}

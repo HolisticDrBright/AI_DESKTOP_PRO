@@ -53,6 +53,7 @@ const PROVENANCE_TYPE_LABEL: Record<string, string> = {
   transcript: "Encounter transcript",
   differential_question: "Differential question",
   lens_evaluation: "Lens evaluation",
+  proposed_note: "AI-proposed text (reviewed before signing)",
 };
 
 /**

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "load-qualification-plan/1",
+  "target": "synthetic-staging",
+  "description": "Unauthenticated refusal-path load qualification. Every request must be refused; the plan measures that refusals stay fast and consistent under concurrency. No credential, PHI or authenticated traffic is involved.",
+  "originPattern": "^https://[a-z0-9]{10}\\.execute-api\\.us-east-2\\.amazonaws\\.com$",
+  "forbiddenOriginMarkers": ["production", "ailongevitypro.app"],
+  "scenarios": [
+    { "id": "unauthenticated_records_burst", "method": "GET", "path": "/clinical-core/consumer/personal/records?collection=wellness_profiles", "concurrency": 20, "requests": 200, "expectedStatuses": [401, 403, 503], "slo": { "p95Ms": 800, "maxErrorRate": 0 } },
+    { "id": "unauthenticated_lab_jobs_burst", "method": "GET", "path": "/clinical-core/consumer/labs/jobs", "concurrency": 20, "requests": 200, "expectedStatuses": [401, 403, 404, 503], "slo": { "p95Ms": 800, "maxErrorRate": 0 } },
+    { "id": "oversized_body_refusal", "method": "POST", "path": "/clinical-core/consumer/personal/records", "bodyBytes": 70000, "concurrency": 5, "requests": 25, "expectedStatuses": [400, 401, 403, 413, 503], "slo": { "p95Ms": 1500, "maxErrorRate": 0 } },
+    { "id": "unknown_route_probe", "method": "GET", "path": "/admin", "concurrency": 10, "requests": 50, "expectedStatuses": [401, 403, 404], "slo": { "p95Ms": 800, "maxErrorRate": 0 } }
+  ]
+}

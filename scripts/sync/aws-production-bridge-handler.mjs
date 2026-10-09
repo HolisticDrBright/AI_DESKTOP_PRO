@@ -68,7 +68,7 @@ function field(value, type) {
   return { stringValue: String(value) };
 }
 
-export function createAwsSyncRpc({ client = new RDSDataClient({}), clusterArn, secretArn, database }) {
+export function createAwsSyncRpc({ client = new RDSDataClient({ maxAttempts: 1 }), clusterArn, secretArn, database }) {
   const common = { resourceArn: clusterArn, secretArn, database };
   return async (name, args) => {
     const signature = RPC[name];

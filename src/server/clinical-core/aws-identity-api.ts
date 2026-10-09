@@ -3,6 +3,19 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash } from "node:crypto";
+import {createCareMessaging,CareMessageError} from './care-messaging';
+import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
+import {createExternalCalendarConnections,ExternalCalendarError} from './external-calendar-connections';
+import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
+import {createCareErasureRecovery} from './care-erasure-recovery';
+import {createPublicConsultIntake,createConsultLinkAdmin,createConsultRequestReview,ConsultRequestError} from './consult-requests';
+import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketConsumer,IntakeFormError} from './intake-forms';
+import {createDisputeConsumer,createDisputeWorkforce,createRevisionConsumer,createRevisionWorkforce,ClinicalDisputeError} from './clinical-disputes';
+import {createNoteTemplateAdmin,createNoteDraftingContext,NoteTemplateError} from './note-templates';
+import {createProtocolCartWorkforce,ProtocolCartError} from './protocol-carts';
+import {createOutcomeLedgerWorkforce,createOutcomeReport,PracticeOutcomeError} from './practice-outcomes';
+import {createConsultRetention,ConsultRetentionError} from './consult-retention';
+import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
   ClinicalCoreAdapterError,
@@ -98,14 +111,59 @@ type RouteDefinition = {
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
     | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
+    | "import_specimen_context" | "get_specimen_context"
     | "record_clinical" | "list_clinical" | "list_consent_history"
       | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility"
       | "list_family_requests" | "approve_family" | "claim_family"
       | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context"
-      | "consumer_chat" | "workforce_chat";
+      | "consumer_chat" | "workforce_chat" | "care_messages" | "program_assignments"
+      | "calendar_connection" | "care_data_lifecycle"
+      | "consult_links" | "consult_requests"
+      | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer"
+      | "disputes_workforce" | "disputes_consumer"
+      | "revisions_workforce" | "revisions_consumer"
+      | "note_templates" | "note_drafting_context" | "protocol_carts"
+      | "outcome_ledger" | "outcome_report" | "consult_retention";
 };
 
+/**
+ * The one route on this API that carries no identity.
+ *
+ * It is kept in its own table, and looked up before any claim is read, because a visitor
+ * asking a clinic for a first appointment has no account and cannot be given one first.
+ * Everything that makes that safe is elsewhere and is deliberately narrow: the database
+ * function it reaches can describe a link and add one request and nothing else, it derives
+ * the organization from the slug rather than from the caller, and it accepts only a sealed
+ * contact envelope — the plaintext name and address are sealed by the web tier before they
+ * ever arrive here, so this route cannot receive them.
+ */
+const PUBLIC_ROUTES: Readonly<Record<string,{operation:"consult_intake_public"}>> = {
+  "POST /clinical-core/public/consult-intake": {operation:"consult_intake_public"},
+};
+export const PUBLIC_IDENTITY_API_ROUTES = Object.keys(PUBLIC_ROUTES);
+
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
+  "POST /clinical-core/consumer/messages": {pool:"consumer",purpose:"clinical_data",operation:"care_messages"},
+  "POST /clinical-core/consumer/programs": {pool:"consumer",purpose:"clinical_data",operation:"program_assignments"},
+  "POST /clinical-core/workforce/programs": {pool:"workforce",purpose:"clinical_data",operation:"program_assignments"},
+  "POST /clinical-core/workforce/calendar-connection": {pool:"workforce",purpose:"clinical_data",operation:"calendar_connection"},
+  "POST /clinical-core/consumer/care-data": {pool:"consumer",purpose:"consent_management",operation:"care_data_lifecycle"},
+  "POST /clinical-core/workforce/consult-links": {pool:"workforce",purpose:"clinical_data",operation:"consult_links"},
+  "POST /clinical-core/workforce/consult-requests": {pool:"workforce",purpose:"clinical_data",operation:"consult_requests"},
+  "POST /clinical-core/workforce/intake-forms": {pool:"workforce",purpose:"clinical_data",operation:"intake_forms"},
+  "POST /clinical-core/workforce/intake-packets": {pool:"workforce",purpose:"clinical_data",operation:"intake_packets_workforce"},
+  "POST /clinical-core/consumer/intake-packets": {pool:"consumer",purpose:"clinical_data",operation:"intake_packets_consumer"},
+  "POST /clinical-core/workforce/disputes": {pool:"workforce",purpose:"clinical_data",operation:"disputes_workforce"},
+  "POST /clinical-core/consumer/disputes": {pool:"consumer",purpose:"clinical_data",operation:"disputes_consumer"},
+  "POST /clinical-core/workforce/content-revisions": {pool:"workforce",purpose:"clinical_data",operation:"revisions_workforce"},
+  "POST /clinical-core/consumer/content-revisions": {pool:"consumer",purpose:"clinical_data",operation:"revisions_consumer"},
+  "POST /clinical-core/workforce/consult-retention": {pool:"workforce",purpose:"clinical_data",operation:"consult_retention"},
+  "POST /clinical-core/workforce/outcome-ledger": {pool:"workforce",purpose:"clinical_data",operation:"outcome_ledger"},
+  "POST /clinical-core/workforce/outcome-report": {pool:"workforce",purpose:"clinical_data",operation:"outcome_report"},
+  "POST /clinical-core/workforce/protocol-carts": {pool:"workforce",purpose:"clinical_data",operation:"protocol_carts"},
+  "POST /clinical-core/workforce/note-templates": {pool:"workforce",purpose:"clinical_data",operation:"note_templates"},
+  "POST /clinical-core/workforce/note-drafting-context": {pool:"workforce",purpose:"clinical_data",operation:"note_drafting_context"},
+  "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
   "POST /clinical-core/workforce/invitations": { pool: "workforce", purpose: "identity_link", operation: "issue" },
@@ -116,6 +174,9 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/consents/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke" },
   "GET /clinical-core/consumer/consent-artifact": { pool: "consumer", purpose: "consent_management", operation: "get_consent_artifact" },
   "POST /clinical-core/consumer/labs/import": { pool: "consumer", purpose: "clinical_data", operation: "import_lab" },
+  "POST /clinical-core/consumer/labs/specimen-context": {pool:"consumer",purpose:"clinical_data",operation:"import_specimen_context"},
+  "GET /clinical-core/consumer/labs/specimen-context": {pool:"consumer",purpose:"clinical_data",operation:"get_specimen_context"},
+  "GET /clinical-core/workforce/labs/specimen-context": {pool:"workforce",purpose:"clinical_data",operation:"get_specimen_context"},
   "GET /clinical-core/consumer/connection": { pool: "consumer", purpose: "clinical_data", operation: "get_connection" },
   "GET /clinical-core/workforce/lab-imports": { pool: "workforce", purpose: "clinical_data", operation: "list_lab_imports" },
   "POST /clinical-core/workforce/lab-imports/review": { pool: "workforce", purpose: "clinical_data", operation: "review_lab" },
@@ -238,10 +299,41 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const patientChatAdapter = input.patientChatAdapter
     ?? (input.database ? createAwsPatientChatAdapter<Context>(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
+  const careMessaging=input.database ? createCareMessaging(input.database) : undefined;
+  const programAssignments=input.database ? createProgramAssignments(input.database) : undefined;
+  const calendarConnections=input.database ? createExternalCalendarConnections(input.database) : undefined;
+  const careDataLifecycle=input.database ? createCareDataLifecycle(input.database) : undefined;
+  const careErasureRecovery=input.database ? createCareErasureRecovery(input.database) : undefined;
+  const publicConsultIntake=input.database ? createPublicConsultIntake(input.database) : undefined;
+  const consultLinks=input.database ? createConsultLinkAdmin(input.database) : undefined;
+  const consultRequests=input.database ? createConsultRequestReview(input.database) : undefined;
+  const intakeForms=input.database ? createIntakeFormAdmin(input.database) : undefined;
+  const intakePacketsWorkforce=input.database ? createIntakePacketWorkforce(input.database) : undefined;
+  const intakePacketsConsumer=input.database ? createIntakePacketConsumer(input.database) : undefined;
+  const disputesWorkforce=input.database ? createDisputeWorkforce(input.database) : undefined;
+  const disputesConsumer=input.database ? createDisputeConsumer(input.database) : undefined;
+  const revisionsWorkforce=input.database ? createRevisionWorkforce(input.database) : undefined;
+  const revisionsConsumer=input.database ? createRevisionConsumer(input.database) : undefined;
+  const noteTemplates=input.database ? createNoteTemplateAdmin(input.database) : undefined;
+  const noteDraftingContext=input.database ? createNoteDraftingContext(input.database) : undefined;
+  const protocolCarts=input.database ? createProtocolCartWorkforce(input.database) : undefined;
+  const outcomeLedger=input.database ? createOutcomeLedgerWorkforce(input.database) : undefined;
+  const outcomeReport=input.database ? createOutcomeReport(input.database) : undefined;
+  const consultRetention=input.database ? createConsultRetention(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     try {
+      // Looked up first, and answered without reading a claim: there is no identity on this
+      // path, so anything that assumed one would either throw or invent one.
+      const open = event.routeKey ? PUBLIC_ROUTES[event.routeKey] : undefined;
+      if (open) {
+        if (input.boundary !== "synthetic") return response(403, { error: "pilot_scope_refused" });
+        if (input.productionPilot) return response(403, { error: "pilot_scope_refused" });
+        if (!publicConsultIntake) return response(503, { error: "service_unavailable" });
+        if (Object.keys(event.queryStringParameters ?? {}).length) return response(400, { error: "request_invalid" });
+        return response(200, { data: await publicConsultIntake(parseBody(event)) });
+      }
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
       if (input.productionPilot && !isProductionPilotRouteAllowed(event.routeKey)) {
@@ -268,6 +360,130 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       }
       if (["consumer_chat", "workforce_chat"].includes(route.operation) && !patientChatAdapter) {
         throw new Error("patient_chat_adapter_required");
+      }
+      if (route.operation === "program_assignments") {
+        // Same posture as messaging: synthetic boundary only, live JWT only, and no
+        // query string, so nothing can be smuggled past the body contract.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!programAssignments)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await programAssignments(context,parseBody(event))});
+      }
+      if (route.operation === "care_data_lifecycle") {
+        // The owner's own export and erasure for the messaging and program domains.
+        // Synthetic boundary only, like the domains themselves.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!careDataLifecycle)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        const body=parseBody(event);
+        if(body.action==='prepare_erasure'||body.action==='discover_erasure_requests'){
+          if(!careErasureRecovery)return response(503,{error:'service_unavailable'});
+          return response(200,{data:await careErasureRecovery(context,body)});
+        }
+        return response(200,{data:await careDataLifecycle(context,body)});
+      }
+      if (route.operation === "disputes_workforce" || route.operation === "disputes_consumer"
+        || route.operation === "revisions_workforce" || route.operation === "revisions_consumer") {
+        // Same posture as the other domains on this boundary: synthetic only, a live JWT, and
+        // no query string around the body contract.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "disputes_workforce" ? disputesWorkforce
+          : route.operation === "disputes_consumer" ? disputesConsumer
+            : route.operation === "revisions_workforce" ? revisionsWorkforce : revisionsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "consult_retention") {
+        // Erasing an enquirer's contact details, and the policy that decides when. Same posture
+        // as the rest of this boundary: synthetic only, a live JWT, no query string.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!consultRetention)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await consultRetention(context,parseBody(event))});
+      }
+      if (route.operation === "outcome_ledger" || route.operation === "outcome_report") {
+        // Counts, not records. Same posture as the rest of this boundary.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "outcome_ledger" ? outcomeLedger : outcomeReport;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "protocol_carts") {
+        // Practice configuration compiled from a published protocol; no patient is named. Same
+        // posture as the rest of this boundary: synthetic only, a live JWT, no query string.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!protocolCarts)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await protocolCarts(context,parseBody(event))});
+      }
+      if (route.operation === "note_templates" || route.operation === "note_drafting_context") {
+        // Practice configuration rather than patient data, but on the same boundary and with
+        // the same posture: synthetic only, a live JWT, and no query string around the body.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "note_templates" ? noteTemplates : noteDraftingContext;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "consult_links" || route.operation === "consult_requests"
+        || route.operation === "intake_forms" || route.operation === "intake_packets_workforce"
+        || route.operation === "intake_packets_consumer") {
+        // Same posture as the other domains added on this boundary: synthetic only, a live
+        // JWT, and no query string around the body contract.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "consult_links" ? consultLinks
+          : route.operation === "consult_requests" ? consultRequests
+            : route.operation === "intake_forms" ? intakeForms
+              : route.operation === "intake_packets_workforce" ? intakePacketsWorkforce : intakePacketsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "calendar_connection") {
+        // Same posture as programs and messaging: synthetic boundary only, live JWT only,
+        // and no query string, so nothing reaches the body contract around it.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!calendarConnections)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await calendarConnections(context,parseBody(event))});
+      }
+      if (route.operation === "care_messages") {
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!careMessaging)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await careMessaging(context,parseBody(event))});
       }
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -312,6 +528,12 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (route.operation === "get_connection") {
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, { data: await clinicalStateAdapter!.getConsumerConnection(context) });
+      }
+      if(route.operation==="get_specimen_context"){
+        if(event.body||!clinicalStateAdapter?.getLabSpecimenContext)throw new IdentityApiError("request_invalid");
+        const eventId=event.queryStringParameters?.eventId??"";
+        if(!UUID.test(eventId))throw new IdentityApiError("request_invalid");
+        return response(200,{data:await clinicalStateAdapter.getLabSpecimenContext(context,eventId)});
       }
       if (route.operation === "list_labs") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -464,6 +686,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         case "import_lab": {
           return response(202, { data: await clinicalStateAdapter!.importLabResult(context, parseLabImport(body)) });
         }
+        case "import_specimen_context": {
+          const parsed=labSpecimenTransferSchema.safeParse(body);
+          if(!parsed.success||!clinicalStateAdapter?.importLabSpecimenContext)throw new IdentityApiError("request_invalid");
+          return response(202,{data:await clinicalStateAdapter.importLabSpecimenContext(context,parsed.data)});
+        }
         case "review_lab": {
           exactKeys(body, ["eventId", "decision", "note"], ["eventId", "decision"]);
           const decision = requiredString(body, "decision");
@@ -547,7 +774,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       }
       if (error instanceof ClinicalStateError) {
         const status = error.category === "clinical_state_refused" ? 403
-          : error.category === "database_unavailable" ? 503 : 400;
+          : error.category === "database_unavailable" ? 503
+            : error.category === "specimen_context_conflict" || error.category === "specimen_consent_required" ? 409 : 400;
         return response(status, { error: error.category });
       }
       if (error instanceof ConsumerClinicalError) {
@@ -569,6 +797,51 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const status = error.category === "chat_context_refused" ? 403
           : error.category === "consent_required" ? 409 : 503;
         return response(status, { error: error.category });
+      }
+      if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
+        ||error instanceof CareDataError) {
+        return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+      }
+      if(error instanceof ConsultRetentionError) {
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
+      }
+      if(error instanceof PracticeOutcomeError) {
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="consent_required"?409
+            :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
+      }
+      if(error instanceof ProtocolCartError) {
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
+      }
+      if(error instanceof NoteTemplateError) {
+        // A stale digest is a 409 the screen retries after re-reading; everything else is the
+        // same vocabulary as the other domains on this boundary.
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="digest_stale"?409
+            :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
+      }
+      if(error instanceof ClinicalDisputeError) {
+        const status=error.category==="identity_refused"?403
+          :error.category==="operation_refused"?403
+            :error.category==="consent_required"||error.category==="conflict"?409
+              :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
+      }
+      if(error instanceof ConsultRequestError||error instanceof IntakeFormError) {
+        // An unavailable link, an unpublished form and an absent packet are all
+        // `operation_refused`: one status for all of them, so a caller cannot use the
+        // status to tell which clinics or forms exist.
+        const status=error.category==="identity_refused"?403
+          :error.category==="operation_refused"?403
+            :error.category==="consent_required"||error.category==="conflict"?409
+              :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
       }
       if (error instanceof PatientChatError) {
         const status = error.category === "chat_refused" ? 403
@@ -624,6 +897,7 @@ function desktopLabObservation(row: Record<string, unknown>): Record<string, unk
     : {};
   return {
     id: row.observation_id,
+    import_event_id: typeof row.import_event_id === "string" && UUID.test(row.import_event_id) ? row.import_event_id : null,
     biomarker_definition_id: null,
     canonical_name: row.marker_name,
     biological_system: null,

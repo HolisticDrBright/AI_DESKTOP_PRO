@@ -122,6 +122,9 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
   const [inbox, setInbox] = useState<LiveInbox | null>(null);
   const [inboxError, setInboxError] = useState<string | null>(null);
   const [filters, setFilters] = useState<LiveInboxFilters>({});
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+  const listRequestRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(initialThreadId ?? null);
   const [thread, setThread] = useState<LiveConversation | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -147,11 +150,17 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
   const [attachName, setAttachName] = useState("");
 
   const loadInbox = useCallback(async (f: LiveInboxFilters) => {
+    // A late read receipt/action must not request the filters from an older
+    // render, and an older list response must never replace the current one.
+    if (f !== filtersRef.current) return;
+    const request = ++listRequestRef.current;
+    const current = () => request === listRequestRef.current && f === filtersRef.current;
     setInboxError(null);
     try {
-      setInbox(await api.inbox.list(f));
+      const next = await api.inbox.list(f);
+      if (current()) setInbox(next);
     } catch (e) {
-      setInboxError(errText(e));
+      if (current()) setInboxError(errText(e));
     }
   }, []);
 
@@ -174,13 +183,11 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
       }
       // Read receipts are explicit but automatic on open; idempotent.
       const read = await api.inbox.markRead(id);
-      if ((read.markedRead ?? 0) > 0) void loadInbox(filters);
+      if ((read.markedRead ?? 0) > 0) void loadInbox(filtersRef.current);
     } catch (e) {
       setThreadError(errText(e));
     }
-    // filters intentionally read at call time for the unread refresh only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadInbox]);
 
   useEffect(() => {
     void loadInbox(filters);
@@ -191,6 +198,7 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
   useEffect(
     () => () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      listRequestRef.current++;
     },
     [],
   );
@@ -226,7 +234,7 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
       const res = await fn();
       announce(res.message);
       if (selectedId) await loadThread(selectedId);
-      if (refreshList) await loadInbox(filters);
+      if (refreshList) await loadInbox(filtersRef.current);
     } catch (e) {
       announce(errText(e));
     } finally {

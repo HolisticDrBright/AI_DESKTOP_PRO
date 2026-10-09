@@ -20,6 +20,34 @@ const CLINICAL_ENV = [
   "PHI_ALLOWED",
 ];
 
+/**
+ * Credentials a demo build must not hold. Mirrored from the gate on purpose: the
+ * test asserts the list, it does not import it.
+ *
+ * The clean-demo case has to clear these explicitly. A developer machine, a CI
+ * runner or this repository's own cloud environment may export a real
+ * `CLINICAL_SUPABASE_ANON_KEY`, and an inherited credential made the clean case
+ * fail for the right reason in the wrong test. Clearing them here removes the
+ * contamination without softening the gate — the case below still proves that a
+ * demo build holding credentials is rejected.
+ */
+const FORBIDDEN_DEMO_ENV = [
+  "CLINICAL_SUPABASE_URL",
+  "CLINICAL_SUPABASE_ANON_KEY",
+  "CLINICAL_SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "TRPC_BASE_URL",
+  "CLINICAL_DEMO_EMAIL",
+  "CLINICAL_DEMO_PASSWORD",
+  "CLINICAL_AWS_API_ORIGIN",
+  "CLINICAL_AWS_WORKFORCE_USER_POOL_ID",
+  "CLINICAL_AWS_WORKFORCE_CLIENT_ID",
+  "AWS_CLINICAL_ADAPTER_READY",
+  "PHI_ALLOWED",
+  "STRIPE_SECRET_KEY",
+  "OPENAI_API_KEY",
+];
+
 function configureAwsClinicalBoundary() {
   vi.stubEnv("CLINICAL_AWS_REGION", "us-east-2");
   vi.stubEnv("CLINICAL_AWS_API_ORIGIN", "https://clinical-api.example.test");
@@ -90,7 +118,7 @@ describe("clinical edition configuration gate", () => {
 
 describe("demo edition credential gate", () => {
   test("a clean demo deployment passes", async () => {
-    for (const name of CLINICAL_ENV) vi.stubEnv(name, "");
+    for (const name of [...CLINICAL_ENV, ...FORBIDDEN_DEMO_ENV]) vi.stubEnv(name, "");
     const gate = await loadGate("demo");
 
     const report = gate.inspectEditionConfig();

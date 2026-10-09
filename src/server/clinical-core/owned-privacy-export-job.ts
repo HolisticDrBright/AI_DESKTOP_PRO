@@ -1,0 +1,474 @@
+if(typeof window!=='undefined')throw new Error('owned-privacy-export-job is server-only');
+import {createHash} from 'node:crypto';
+import type {ProductionClinicalRequestContext} from './aws-identity-consent';
+import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreTransaction} from './database';
+import {OwnedStorageError} from './owned-consumer-records';
+import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy-export';
+import {CROSS_STORE_CONSISTENCY,type CrossStoreExportReader,type CrossStoreExportSection} from './aws-cross-store-export-reader';
+
+/** Large personal-storage exports packaged server-side in owner-authorized,
+ * bounded passes (migrations 20260920110000 and 20260920130000). A pass runs
+ * only while the owner is authenticated and polling: it reads a bounded number
+ * of snapshot pages, uploads one encrypted object part (or a staging object
+ * when fewer than a part's worth of rows arrived), records the cursor, and
+ * returns. The download is a short-lived signed link for the exact ready
+ * version, issued only to a freshly signed-in owner. Coverage is the inline
+ * export's; this is not a complete account export and never claims to be.
+ *
+ * Failure boundaries (independent recheck, September 20, 2026): the upload id
+ * is recorded before any part is sent; a job whose parts are all recorded is
+ * recovered from what the store holds, never by sending an empty part; a job
+ * past its deadline fails in a committed transition; and nothing is certified
+ * deleted until a listing under the job's key shows no upload and no version.
+ *
+ * Second recheck (migration 20260920140000): the recovered or completed object
+ * is accepted only when its S3 composite checksum equals the one derived from
+ * the recorded part digests; every storage request of a pass is aborted at the
+ * lease boundary and a finished job is certified deleted only once its last
+ * lease is a settlement window old, so a request admitted before cancellation
+ * cannot land after the certificate. */
+export const PRIVACY_EXPORT_JOB_CONTRACT='personal-storage-export-job/1';
+export type PrivacyExportObjectStorage={bucket:string;region:string;kmsKeyArn:string;expectedBucketOwner:string};
+export interface PrivacyExportStore {
+  createUpload(s:PrivacyExportObjectStorage,key:string,signal:AbortSignal):Promise<{uploadId:string}>;
+  uploadPart(s:PrivacyExportObjectStorage,key:string,uploadId:string,partNumber:number,body:Uint8Array,sha256Hex:string,signal:AbortSignal):Promise<{etag:string}>;
+  completeUpload(s:PrivacyExportObjectStorage,key:string,uploadId:string,parts:{partNumber:number;etag:string;sha256Hex:string}[],signal:AbortSignal):Promise<{version:string;checksum:string}>;
+  abortUpload(s:PrivacyExportObjectStorage,key:string,uploadId:string,signal:AbortSignal):Promise<void>;
+  put(s:PrivacyExportObjectStorage,key:string,body:Uint8Array,sha256Hex:string,signal:AbortSignal):Promise<{version:string}>;
+  get(s:PrivacyExportObjectStorage,key:string,version:string,maxBytes:number,signal:AbortSignal):Promise<Uint8Array>;
+  /** Metadata for one version. The checksum is requested only when `checksum` is set: reading an SSE-KMS checksum needs the key. */
+  head(s:PrivacyExportObjectStorage,key:string,version:string,signal:AbortSignal,options?:{checksum:boolean}):Promise<{exists:boolean;bytes?:number;encryption?:string;kmsKeyArn?:string;checksum?:string}|null>;
+  deleteVersion(s:PrivacyExportObjectStorage,key:string,version:string,signal:AbortSignal):Promise<void>;
+  signDownload(s:PrivacyExportObjectStorage,key:string,version:string,seconds:number,fileName:string,signal:AbortSignal):Promise<string>;
+  /** Every open multipart upload whose key starts with the prefix (a job's key is unique to it). */
+  listUploads(s:PrivacyExportObjectStorage,keyPrefix:string,signal:AbortSignal):Promise<{key:string;uploadId:string}[]>;
+  /** Every object version and delete marker whose key starts with the prefix. */
+  listVersions(s:PrivacyExportObjectStorage,keyPrefix:string,signal:AbortSignal):Promise<{key:string;version:string;bytes:number|null;deleteMarker:boolean}[]>;
+}
+export type PrivacyExportJobStatus='requested'|'running'|'ready'|'failed'|'cancelled'|'expired';
+/** Retention vocabulary (migration 20260920150000): where the copy is in its life, separately from the job status.
+ * `retained_under_hold` is defined for completeness and never produced under the current policy (see docs). */
+export type PrivacyExportRetentionState='packaging'|'downloadable'|'cleanup_pending'|'removal_recorded'|'removal_verified'|'retained_under_hold';
+const RETENTION:PrivacyExportRetentionState[]=['packaging','downloadable','cleanup_pending','removal_recorded','removal_verified','retained_under_hold'];
+export type PrivacyExportJobView={contract:typeof PRIVACY_EXPORT_JOB_CONTRACT;jobId:string;status:PrivacyExportJobStatus;
+  asOf:string;requestedAt:string;readyAt:string|null;expiresAt:string;recordCount:number;consentCount:number;exportedRecords:number;exportedConsents:number;
+  parts:number;bytesWritten:number;byteLength:number|null;objectChecksum:string|null;failureCode:string|null;objectDeleted:boolean;version:number;
+  retention:PrivacyExportRetentionState;coverage:PrivacyExportCoverage};
+export type PrivacyExportCoverage={completeAccountExport:false;included:string[];excluded:string[];crossStore:{labs:'included'|'not_configured';voice:'included'|'not_configured';consistency:typeof CROSS_STORE_CONSISTENCY}};
+export type ExportSection='records'|'consents'|'labs'|'voice'|'done';
+const SECTIONS:ExportSection[]=['records','consents','labs','voice','done'];
+/** What the prepared copy will hold, decided by which external stores this deployment names for the export reader. */
+export function privacyExportCoverage(crossStore?:CrossStoreExportReader):PrivacyExportCoverage{
+  const labs=crossStore?.configured('labs')?'included':'not_configured',voice=crossStore?.configured('voice')?'included':'not_configured';
+  const included=[...PERSONAL_EXPORT_COVERAGE.included,...(labs==='included'?['lab_processing_jobs_and_documents']:[]),...(voice==='included'?['chat_and_voice_transcripts']:[])];
+  // Store sections are read live, item by item, at packaging time; only records and consents come from the one snapshot.
+  return {completeAccountExport:false,included,excluded:PERSONAL_EXPORT_COVERAGE.excluded.filter(e=>!included.includes(e)),crossStore:{labs,voice,consistency:CROSS_STORE_CONSISTENCY}};
+}
+type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const STATUSES:PrivacyExportJobStatus[]=['requested','running','ready','failed','cancelled','expired'];
+export const PRIVACY_EXPORT_PART_BYTES=5*1024*1024, PRIVACY_EXPORT_MAX_BYTES=2*1024*1024*1024, PRIVACY_EXPORT_DOWNLOAD_SECONDS=300, PRIVACY_EXPORT_FRESH_AUTH_MS=5*60_000;
+const sha256=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex');
+/** S3's composite checksum for a multipart object: base64(sha256(concat(raw part digests)))-partCount. The recorded
+ * part digests therefore fix exactly one acceptable object checksum. */
+export type PrivacyExportDownload={jobId:string;url:string;expiresInSeconds:number;byteLength:number;objectChecksum:string;
+  /** Each part's size and SHA-256 (hex) in order: split the delivered bytes by size, hash each part, and the composite of those digests must equal objectChecksum. */
+  parts:Array<{partNumber:number;bytes:number;sha256:string}>};
+/** The recorded part digests and sizes as the receiver's verification list, or null when they do not account for the object. */
+export function exportParts(sha256s:unknown,sizes:unknown,byteLength:number,objectChecksum:string):PrivacyExportDownload['parts']|null{
+  if(!Array.isArray(sha256s)||!Array.isArray(sizes)||sha256s.length!==sizes.length||sha256s.length<1||sha256s.length>10_000)return null;
+  const parts:PrivacyExportDownload['parts']=[];let total=0;
+  for(let i=0;i<sha256s.length;i++){
+    const sha256=sha256s[i],bytes=Number(sizes[i]);
+    if(typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256)||!Number.isSafeInteger(bytes)||bytes<1)return null;
+    parts.push({partNumber:i+1,bytes,sha256});total+=bytes;
+  }
+  if(total!==byteLength||compositeChecksum(parts.map(p=>p.sha256))!==objectChecksum)return null;
+  return parts;
+}
+export const compositeChecksum=(partSha256Hex:string[])=>createHash('sha256').update(Buffer.concat(partSha256Hex.map(h=>Buffer.from(h,'hex')))).digest('base64')+'-'+partSha256Hex.length;
+const COMPOSITE=/^[A-Za-z0-9+/]{43}=-[1-9][0-9]{0,4}$/;
+function invalid():never{throw new OwnedStorageError('request_invalid');}
+function unavailable():never{throw new OwnedStorageError('storage_unavailable');}
+function object(raw:unknown):Record<string,unknown>{try{const v=typeof raw==='string'?JSON.parse(raw):raw;if(!v||typeof v!=='object'||Array.isArray(v))unavailable();return v;}catch{unavailable();}}
+const date=(v:unknown)=>typeof v==='string'&&v.length<=40&&Number.isFinite(Date.parse(v));
+const count=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
+const version=(v:unknown)=>typeof v==='string'&&v.length>=1&&v.length<=1024&&v!=='null';
+/** Owner ids never appear in object keys; the prefix is the owner's digest. */
+export const privacyExportPrefix=(ownerId:string)=>`personal-exports/${createHash('sha256').update(ownerId).digest('hex')}/`;
+const staging=(key:string)=>`${key}.staging`;
+
+function viewWith(raw:unknown,coverage:PrivacyExportCoverage=privacyExportCoverage()):PrivacyExportJobView{
+  const v=object(raw);
+  if(!UUID.test(String(v.jobId))||!STATUSES.includes(v.status as PrivacyExportJobStatus)||!date(v.asOf)||!date(v.requestedAt)
+    ||!date(v.expiresAt)||(v.readyAt!==null&&!date(v.readyAt))||!count(v.recordCount)||!count(v.consentCount)||!count(v.exportedRecords)||!count(v.exportedConsents)
+    ||!count(v.parts)||!count(v.bytesWritten)||(v.byteLength!==null&&!count(v.byteLength))||(v.objectChecksum!==null&&typeof v.objectChecksum!=='string')
+    ||(v.failureCode!==null&&typeof v.failureCode!=='string')||typeof v.objectDeleted!=='boolean'||!count(v.version)||!RETENTION.includes(v.retention as PrivacyExportRetentionState))unavailable();
+  return {contract:PRIVACY_EXPORT_JOB_CONTRACT,jobId:v.jobId as string,status:v.status as PrivacyExportJobStatus,asOf:v.asOf as string,requestedAt:v.requestedAt as string,
+    readyAt:(v.readyAt as string|null),expiresAt:v.expiresAt as string,recordCount:v.recordCount as number,consentCount:v.consentCount as number,
+    exportedRecords:v.exportedRecords as number,exportedConsents:v.exportedConsents as number,parts:v.parts as number,bytesWritten:v.bytesWritten as number,
+    byteLength:v.byteLength as number|null,objectChecksum:v.objectChecksum as string|null,failureCode:v.failureCode as string|null,objectDeleted:v.objectDeleted,
+    version:v.version as number,retention:v.retention as PrivacyExportRetentionState,coverage};
+}
+async function call<T=unknown>(tx:ClinicalCoreTransaction,sql:string,args:unknown[]){const r=await tx.query<{result:T}>(sql,args);if(r.rows.length!==1)unavailable();return r.rows[0].result;}
+function items(listed:unknown):Record<string,unknown>[]{const v=typeof listed==='string'?JSON.parse(listed):listed;if(!Array.isArray(v))unavailable();return v.map(object);}
+
+/** Removes everything the store still holds under one job's key and proves it.
+ * Open uploads are found by listing, not only from the recorded id (an upload
+ * whose creation response was lost is never recorded); versions are found the
+ * same way. The store's refusal or a lingering upload or version leaves the job
+ * pending: nothing is certified from the absence of an error. */
+async function removeJobObjects(store:PrivacyExportStore,storage:PrivacyExportObjectStorage,key:string,recorded:{stagingVersion:unknown;objectVersion:unknown},signal:AbortSignal):Promise<void>{
+  const owned=(k:string)=>k===key||k===staging(key);
+  const uploads=(await store.listUploads(storage,key,signal)).filter(u=>owned(u.key));
+  for(const u of uploads)await store.abortUpload(storage,u.key,u.uploadId,signal);
+  const targets=new Map<string,{key:string;version:string}>();
+  for(const v of (await store.listVersions(storage,key,signal)).filter(v=>owned(v.key)))targets.set(v.key+'\n'+v.version,{key:v.key,version:v.version});
+  for(const [k,v] of [[staging(key),recorded.stagingVersion],[key,recorded.objectVersion]] as [string,unknown][])if(version(v))targets.set(k+'\n'+v,{key:k,version:v as string});
+  for(const t of targets.values())await store.deleteVersion(storage,t.key,t.version,signal);
+  // Proof is the listing alone: it needs no key material and a denied listing throws rather than reading as absence.
+  if((await store.listUploads(storage,key,signal)).some(u=>owned(u.key)))unavailable();
+  if((await store.listVersions(storage,key,signal)).some(v=>owned(v.key)))unavailable();
+}
+/** True when the store still holds anything under the job's key: the reconciliation question after a certificate. */
+async function anythingRemains(store:PrivacyExportStore,storage:PrivacyExportObjectStorage,key:string,signal:AbortSignal):Promise<boolean>{
+  const owned=(k:string)=>k===key||k===staging(key);
+  if((await store.listUploads(storage,key,signal)).some(u=>owned(u.key)))return true;
+  return (await store.listVersions(storage,key,signal)).some(v=>owned(v.key));
+}
+/** A finished job may still have an admitted writer until its last lease is a settlement window old; it is not certifiable before then. */
+const settled=(item:Record<string,unknown>)=>item.settled===true;
+const errorLabel=(error:unknown)=>(error instanceof OwnedStorageError?error.code:error instanceof Error&&error.name&&error.name!=='Error'?error.name:'storage_failure').slice(0,120);
+export type PrivacyExportCleanupOutcome='deleted'|'pending'|'deferred';
+export type PrivacyExportRetentionItem={jobId:string;status:PrivacyExportJobStatus;outcome:PrivacyExportCleanupOutcome};
+export type PrivacyExportReconcileItem={jobId:string;status:PrivacyExportJobStatus;outcome:'confirmed'|'reopened'|'pending'};
+/** The SQL surface a cleanup authority exposes; the owner, the assigned operator and the retention service differ only here. */
+type CleanupAuthority={
+  list:(tx:ClinicalCoreTransaction,limit:number)=>Promise<unknown>;
+  certify:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number)=>Promise<unknown>;
+  defer:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number,error:string)=>Promise<unknown>;
+  listReconcile:(tx:ClinicalCoreTransaction,limit:number)=>Promise<unknown>;
+  reconcile:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number,reappeared:boolean)=>Promise<unknown>;
+  /** The owner's own listing carries no ownerId; the key prefix is checked against the actor instead. */
+  ownerOf:(context:ProductionClinicalRequestContext,item:Record<string,unknown>)=>string;
+};
+async function runCleanup(run:Run,authority:CleanupAuthority,store:PrivacyExportStore,storage:PrivacyExportObjectStorage,
+  context:ProductionClinicalRequestContext,limit:number,signal:AbortSignal):Promise<PrivacyExportRetentionItem[]>{
+  const listed=items(await run(context,tx=>authority.list(tx,limit)));
+  if(listed.length>limit)unavailable();
+  const out:PrivacyExportRetentionItem[]=[];
+  for(const item of listed){
+    const jobId=String(item.jobId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus,ownerId=authority.ownerOf(context,item);
+    if(!UUID.test(jobId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
+    if(item.due===false){out.push({jobId,status,outcome:'deferred'});continue;} // backing off after an earlier failure; no store call
+    if(signal.aborted||!settled(item)){out.push({jobId,status,outcome:'pending'});continue;}
+    try{
+      await removeJobObjects(store,storage,key,{stagingVersion:item.stagingVersion,objectVersion:item.objectVersion},signal);
+      const receipt=object(await run(context,tx=>authority.certify(tx,ownerId,jobId,item.version as number)));
+      if(receipt.jobId!==jobId||receipt.objectDeleted!==true)unavailable();
+      out.push({jobId,status,outcome:'deleted'});
+    }catch(error){
+      if(error instanceof OwnedStorageError&&error.code==='owner_required')throw error;
+      // The failure is recorded with backoff so this job cannot starve the others; a lost record just leaves it due again.
+      let deferred=false;
+      try{await run(context,tx=>authority.defer(tx,ownerId,jobId,item.version as number,errorLabel(error)));deferred=true;}catch{/* next listing */}
+      out.push({jobId,status,outcome:deferred?'deferred':'pending'});
+    }
+  }
+  return out;
+}
+/** After a certificate: list the key again once the settlement window has passed, and daily for thirty days. Anything found reopens the obligation. */
+async function runReconcile(run:Run,authority:CleanupAuthority,store:PrivacyExportStore,storage:PrivacyExportObjectStorage,
+  context:ProductionClinicalRequestContext,limit:number,signal:AbortSignal):Promise<PrivacyExportReconcileItem[]>{
+  const listed=items(await run(context,tx=>authority.listReconcile(tx,limit)));
+  if(listed.length>limit)unavailable();
+  const out:PrivacyExportReconcileItem[]=[];
+  for(const item of listed){
+    const jobId=String(item.jobId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus,ownerId=authority.ownerOf(context,item);
+    if(!UUID.test(jobId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
+    if(signal.aborted){out.push({jobId,status,outcome:'pending'});continue;}
+    try{
+      const reappeared=await anythingRemains(store,storage,key,signal);
+      const receipt=object(await run(context,tx=>authority.reconcile(tx,ownerId,jobId,item.version as number,reappeared)));
+      if(receipt.jobId!==jobId)unavailable();
+      out.push({jobId,status,outcome:reappeared?'reopened':'confirmed'});
+    }catch(error){
+      if(error instanceof OwnedStorageError&&error.code==='owner_required')throw error;
+      out.push({jobId,status,outcome:'pending'});
+    }
+  }
+  return out;
+}
+const summary=<T extends {outcome:string}>(items:T[])=>Object.fromEntries(['deleted','pending','deferred','confirmed','reopened'].map(k=>[k,items.filter(i=>i.outcome===k).length])) as Record<'deleted'|'pending'|'deferred'|'confirmed'|'reopened',number>;
+
+export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number;crossStore?:CrossStoreExportReader}){
+  const crossStore=delivery.crossStore,coverage=privacyExportCoverage(crossStore);
+  const view=(raw:unknown)=>viewWith(raw,coverage);
+  const now=()=>delivery.now?.()??Date.now(), partBytes=delivery.partBytes??PRIVACY_EXPORT_PART_BYTES, {store,storage}=delivery;
+  if(!Number.isSafeInteger(partBytes)||partBytes<1024||partBytes>PRIVACY_EXPORT_PART_BYTES)throw new Error('privacy_export_part_bytes_invalid');
+  const reader=createOwnedPrivacyExport(run);
+  const jobInput=(input:unknown):string=>{if(!input||typeof input!=='object'||Object.keys(input).join(',')!=='jobId'||!UUID.test((input as {jobId:string}).jobId))invalid();return (input as {jobId:string}).jobId;};
+  const complete=(context:ProductionClinicalRequestContext,jobId:string,version:number,objectVersion:string,checksum:string)=>
+    run(context,tx=>call(tx,'select clinical_core.complete_owned_privacy_export_job($1,$2::bigint,$3,$4) as result',[clinicalUuid(jobId),version,objectVersion,checksum])).then(view);
+  /** The stored version must be the reviewed key's, the recorded length, and carry exactly the checksum the recorded parts fix. */
+  const ownerAuthority:CleanupAuthority={
+    list:tx=>call(tx,'select clinical_core.list_owned_privacy_export_cleanup() as result',[]),
+    certify:(tx,_owner,jobId,v)=>call(tx,'select clinical_core.record_owned_privacy_export_object_deleted($1,$2::bigint) as result',[clinicalUuid(jobId),v]),
+    defer:(tx,_owner,jobId,v,error)=>call(tx,'select clinical_core.record_owned_privacy_export_cleanup_attempt($1,$2::bigint,$3) as result',[clinicalUuid(jobId),v,error]),
+    listReconcile:tx=>call(tx,'select clinical_core.list_owned_privacy_export_reconcile() as result',[]),
+    reconcile:(tx,_owner,jobId,v,reappeared)=>call(tx,'select clinical_core.reconcile_owned_privacy_export($1,$2::bigint,$3::boolean) as result',[clinicalUuid(jobId),v,reappeared]),
+    ownerOf:context=>context.actorPersonId,
+  };
+  const verified=async(key:string,objectVersion:string,bytes:number,checksum:string,signal:AbortSignal)=>{
+    const head=await store.head(storage,key,objectVersion,signal,{checksum:true});
+    if(!head?.exists||head.encryption!=='aws:kms'||head.kmsKeyArn!==storage.kmsKeyArn||head.bytes!==bytes)unavailable();
+    return head.checksum===checksum;
+  };
+  return {
+    async requestPrivacyExportJob(context:ProductionClinicalRequestContext,input:{requestId:string}):Promise<PrivacyExportJobView&{replayed:boolean}>{
+      if(!input||typeof input!=='object'||Object.keys(input).join(',')!=='requestId'||!UUID.test(input.requestId))invalid();
+      return run(context,async tx=>{
+        const raw=object(await call(tx,'select clinical_core.request_owned_privacy_export_job($1,$2) as result',[clinicalUuid(input.requestId),privacyExportPrefix(context.actorPersonId)]));
+        if(typeof raw.replayed!=='boolean')unavailable();
+        return {...view(raw),replayed:raw.replayed as boolean};
+      });
+    },
+    /** Explicit discovery, including a finished copy whose cleanup is still pending.
+     * No caller-chosen owner or job ID; never starts work or returns storage keys. */
+    async findLatestPrivacyExportJob(context:ProductionClinicalRequestContext):Promise<{contract:'personal-storage-export-current/1';job:PrivacyExportJobView|null}>{
+      return run(context,async tx=>{
+        const raw=await call(tx,'select clinical_core.find_latest_owned_privacy_export_job() as result',[]);
+        return {contract:'personal-storage-export-current/1',job:raw===null?null:view(raw)};
+      });
+    },
+    async getPrivacyExportJob(context:ProductionClinicalRequestContext,input:{jobId:string}):Promise<PrivacyExportJobView>{
+      const jobId=jobInput(input);
+      return run(context,async tx=>view(await call(tx,'select clinical_core.get_owned_privacy_export_job($1) as result',[clinicalUuid(jobId)])));
+    },
+    /** One bounded pass, then the job view. Runs only under the owner's own identity; nothing continues after the caller leaves. */
+    async advancePrivacyExportJob(context:ProductionClinicalRequestContext,input:{jobId:string},budgetMs:number,signal:AbortSignal):Promise<PrivacyExportJobView>{
+      const jobId=jobInput(input);
+      if(!Number.isSafeInteger(budgetMs)||budgetMs<500||budgetMs>20000)invalid();
+      const deadline=now()+budgetMs,leaseSeconds=Math.min(60,Math.ceil(budgetMs/1000)+10);
+      const lease=object(await run(context,tx=>call(tx,'select clinical_core.lease_owned_privacy_export_pass($1,$2::integer) as result',[clinicalUuid(jobId),leaseSeconds])));
+      // The deadline transition is committed by the lease call itself; the caller sees the failed job on its next read.
+      if(lease.leased===false)throw new OwnedStorageError('conflict');
+      if(lease.leased!==true)unavailable();
+      const state={exportId:String(lease.exportId),asOf:String(lease.asOf),recordCount:lease.recordCount as number,consentCount:lease.consentCount as number,
+        key:String(lease.objectKey),uploadId:(lease.uploadId as string|null),section:String(lease.section) as ExportSection,
+        cursor:(lease.cursor as {cursor:string|null}|null)?.cursor??null,
+        // Cross-store progress travels in the cursor object: how many lab and voice items the document already holds.
+        crossCounts:{labs:count((lease.cursor as {labs?:unknown}|null)?.labs)?(lease.cursor as {labs:number}).labs:0,voice:count((lease.cursor as {voice?:unknown}|null)?.voice)?(lease.cursor as {voice:number}).voice:0},
+        parts:lease.parts as number,partSha256s:lease.partSha256s as string[],partEtags:lease.partEtags as string[],
+        bytesWritten:lease.bytesWritten as number,exportedRecords:lease.exportedRecords as number,exportedConsents:lease.exportedConsents as number,
+        stagingVersion:(lease.stagingVersion as string|null),version:lease.version as number};
+      if(!UUID.test(state.exportId)||!date(state.asOf)||!count(state.recordCount)||!count(state.consentCount)||!state.key.startsWith(privacyExportPrefix(context.actorPersonId))
+        ||!SECTIONS.includes(state.section)||!count(state.parts)||!Array.isArray(state.partSha256s)||!Array.isArray(state.partEtags)
+        ||state.partSha256s.length!==state.parts||state.partEtags.length!==state.parts||!count(state.version)||!count(state.bytesWritten)
+        ||(state.uploadId!==null&&!version(state.uploadId))||(state.stagingVersion!==null&&!version(state.stagingVersion)))unavailable();
+      // Failing from inside the pass names the held version: this pass is the only admitted writer and has finished, so its lease is released.
+      let held=state.version;
+      const fail=async(code:string)=>{try{await run(context,tx=>call(tx,'select clinical_core.fail_owned_privacy_export_job($1,$2,$3::bigint) as result',[clinicalUuid(jobId),code,held]));}catch{/* the lease settles; the next poll sees the state */}};
+      const recordedParts=()=>state.partSha256s.map((sha,i)=>({partNumber:i+1,etag:state.partEtags[i],sha256Hex:sha}));
+      // Every storage request of this pass ends at the lease boundary, so the settlement window measured from lease_until
+      // bounds when an aborted request could still land. The caller's own signal still applies.
+      const callerSignal=signal;
+      signal=AbortSignal.any([callerSignal,AbortSignal.timeout(Math.max(1000,leaseSeconds*1000-1500))]);
+      try{
+        if(state.section==='done'){
+          // Every part is recorded. Either the store already holds the completed object (the completion receipt was
+          // interrupted) or the upload is still open; an empty part is never sent to a completed upload.
+          if(state.parts<1){await fail('object_missing');return this.getPrivacyExportJob(context,input);}
+          const expected=compositeChecksum(state.partSha256s);
+          const versions=(await store.listVersions(storage,state.key,signal)).filter(v=>v.key===state.key);
+          const live=versions.filter(v=>!v.deleteMarker);
+          if(live.length===1&&versions.length===1){
+            // Same length is not the same object: the checksum must be the one the recorded part digests fix.
+            const head=await store.head(storage,state.key,live[0].version,signal,{checksum:true});
+            if(head?.exists&&head.encryption==='aws:kms'&&head.kmsKeyArn===storage.kmsKeyArn&&head.bytes===state.bytesWritten&&head.checksum===expected)
+              return await complete(context,jobId,state.version,live[0].version,expected);
+            await fail('object_mismatch');return this.getPrivacyExportJob(context,input);
+          }
+          if(versions.length===0&&state.uploadId){
+            const completed=await store.completeUpload(storage,state.key,state.uploadId,recordedParts(),signal);
+            if(!version(completed.version))unavailable();
+            if(completed.checksum!==expected||!(await verified(state.key,completed.version,state.bytesWritten,expected,signal))){await fail('object_mismatch');return this.getPrivacyExportJob(context,input);}
+            return await complete(context,jobId,state.version,completed.version,expected);
+          }
+          await fail(versions.length===0?'object_missing':'object_ambiguous');return this.getPrivacyExportJob(context,input);
+        }
+        // Resume the pending text from the staging object, or start the document.
+        const chunks:string[]=[];let bytes=0;
+        const push=(text:string)=>{chunks.push(text);bytes+=Buffer.byteLength(text,'utf8');};
+        if(state.stagingVersion){
+          const pending=await store.get(storage,staging(state.key),state.stagingVersion,partBytes+1024*1024,signal);
+          chunks.push(Buffer.from(pending).toString('utf8'));bytes=pending.byteLength;
+        }else if(state.parts===0&&state.exportedRecords===0&&state.exportedConsents===0&&state.section==='records'){
+          push(JSON.stringify({contract:PRIVACY_EXPORT_JOB_CONTRACT,manifest:{version:'personal-storage-export/1',exportId:state.exportId,asOf:state.asOf,
+            recordCount:state.recordCount,consentCount:state.consentCount,coverage}}).slice(0,-1)+',"records":[');
+        }
+        let section:ExportSection=state.section,cursor=state.cursor,records=state.exportedRecords,consents=state.exportedConsents;
+        const crossCounts={...state.crossCounts};
+        // After consents come the external stores this deployment names, in order; an unconfigured store is skipped and the
+        // coverage statement written at the start already says so.
+        const following=(current:ExportSection):ExportSection=>{
+          const next=SECTIONS[SECTIONS.indexOf(current)+1];
+          return (next==='labs'||next==='voice')&&!crossStore?.configured(next)?following(next):next;
+        };
+        const open=(next:ExportSection)=>{if(next==='done')push(']}');else push(`],"${next}":[`);};
+        while(section!=='done'&&now()<deadline&&!signal.aborted&&bytes<partBytes){
+          if(section==='labs'||section==='voice'){
+            const page=await crossStore!.read(context,section as CrossStoreExportSection,cursor,signal);
+            for(const item of page.items){push((crossCounts[section]>0?',':'')+JSON.stringify(item));crossCounts[section]++;}
+            if(page.nextCursor){cursor=page.nextCursor;continue;}
+            const next=following(section);section=next;cursor=null;open(next);continue;
+          }
+          const page=await reader.readPrivacyExport(context,{exportId:state.exportId,section,limit:100,...(cursor?{cursor}:{})});
+          for(const item of page.items){
+            const seen=section==='records'?records:consents;
+            push((seen>0?',':'')+JSON.stringify(item));
+            if(section==='records')records++;else consents++;
+          }
+          if(page.nextCursor){cursor=page.nextCursor;continue;}
+          if(section==='records'){
+            if(records!==state.recordCount)unavailable();
+            section='consents';cursor=null;push('],"consents":[');
+          }else{
+            if(consents!==state.consentCount)unavailable();
+            const next=following('consents');section=next;cursor=null;open(next);
+          }
+        }
+        if(bytes>PRIVACY_EXPORT_MAX_BYTES-state.bytesWritten){await fail('export_too_large');return this.getPrivacyExportJob(context,input);}
+        const body=Buffer.from(chunks.join(''),'utf8');
+        let leased=state.version,uploadId=state.uploadId,partSha:string|null=null,partEtag:string|null=null,partBytesWritten:number|null=null,stagingVersion:string|null=null;
+        const partReady=section==='done'||body.byteLength>=partBytes;
+        if(partReady){
+          if(!uploadId){
+            // The id is on record under the same lease before any part is sent, so a part failure leaves a known upload.
+            uploadId=(await store.createUpload(storage,state.key,signal)).uploadId;
+            if(!version(uploadId))unavailable();
+            const receipt=object(await run(context,tx=>call(tx,'select clinical_core.record_owned_privacy_export_upload($1,$2::bigint,$3) as result',[clinicalUuid(jobId),leased,uploadId])));
+            if(receipt.uploadId!==uploadId||!count(receipt.version))unavailable();
+            leased=receipt.version as number;held=leased;
+          }
+          partSha=sha256(body);
+          partEtag=(await store.uploadPart(storage,state.key,uploadId,state.parts+1,body,partSha,signal)).etag;
+          partBytesWritten=body.byteLength;
+        }else{
+          stagingVersion=(await store.put(storage,staging(state.key),body,sha256(body),signal)).version;
+          if(!version(stagingVersion))unavailable();
+        }
+        const recorded=view(await run(context,tx=>call(tx,'select clinical_core.record_owned_privacy_export_pass($1,$2::bigint,$3,$4,$5,$6::bigint,$7,$8,$9::jsonb,$10::bigint,$11::bigint) as result',
+          [clinicalUuid(jobId),leased,uploadId,partSha,partEtag,partBytesWritten,stagingVersion,section,JSON.stringify({cursor,...crossCounts}),records,consents])));
+        // The old staging object is superseded either way; removal is best effort here and proven by the cleanup pass.
+        if(state.stagingVersion){try{await store.deleteVersion(storage,staging(state.key),state.stagingVersion,signal);}catch{/* cleanup pass */}}
+        if(partReady&&section==='done'){
+          held=recorded.version;
+          const expected=compositeChecksum([...state.partSha256s,partSha!]);
+          const completed=await store.completeUpload(storage,state.key,uploadId!,[...recordedParts(),{partNumber:state.parts+1,etag:partEtag!,sha256Hex:partSha!}],signal);
+          if(!version(completed.version))unavailable();
+          if(completed.checksum!==expected||!(await verified(state.key,completed.version,state.bytesWritten+body.byteLength,expected,signal))){await fail('object_mismatch');return this.getPrivacyExportJob(context,input);}
+          return await complete(context,jobId,recorded.version,completed.version,expected);
+        }
+        return recorded;
+      }catch(error){
+        // A storage or database hiccup leaves the job running: the lease lapses and the next poll resumes from the
+        // last recorded state (or recovers the completed object). Only bounded conditions fail the job.
+        if(error instanceof OwnedStorageError)throw error;
+        throw new OwnedStorageError('storage_unavailable');
+      }
+    },
+    async cancelPrivacyExportJob(context:ProductionClinicalRequestContext,input:{jobId:string}):Promise<PrivacyExportJobView>{
+      const jobId=jobInput(input);
+      return run(context,async tx=>view(await call(tx,'select clinical_core.cancel_owned_privacy_export_job($1) as result',[clinicalUuid(jobId)])));
+    },
+    /** A signed link for the exact ready version. `authTime` is the token's sign-in time: only a fresh sign-in may download. */
+    async issuePrivacyExportDownload(context:ProductionClinicalRequestContext,input:{jobId:string},authTimeMs:number,signal:AbortSignal):Promise<PrivacyExportDownload>{
+      const jobId=jobInput(input);
+      if(!Number.isFinite(authTimeMs)||now()-authTimeMs>PRIVACY_EXPORT_FRESH_AUTH_MS||authTimeMs>now()+60_000)throw new OwnedStorageError('owner_required');
+      const issued=object(await run(context,tx=>call(tx,'select clinical_core.issue_owned_privacy_export_download($1) as result',[clinicalUuid(jobId)])));
+      if(issued.jobId!==jobId||typeof issued.objectKey!=='string'||!issued.objectKey.startsWith(privacyExportPrefix(context.actorPersonId))
+        ||!version(issued.objectVersion)||typeof issued.objectChecksum!=='string'||!COMPOSITE.test(issued.objectChecksum)||!count(issued.byteLength))unavailable();
+      // The part digests and sizes let the receiver verify the delivered bytes with S3's composite semantics: they must
+      // account for every byte and reproduce the recorded composite before the link is issued.
+      const parts=exportParts(issued.partSha256s,issued.partBytes,issued.byteLength as number,issued.objectChecksum);
+      if(!parts)unavailable();
+      if(!(await verified(issued.objectKey,issued.objectVersion as string,issued.byteLength as number,issued.objectChecksum,signal)))unavailable();
+      const url=await store.signDownload(storage,issued.objectKey,issued.objectVersion as string,PRIVACY_EXPORT_DOWNLOAD_SECONDS,'alp-personal-storage-copy.json',signal);
+      if(!/^https:\/\//.test(url))unavailable();
+      return {jobId,url,expiresInSeconds:PRIVACY_EXPORT_DOWNLOAD_SECONDS,byteLength:issued.byteLength as number,objectChecksum:issued.objectChecksum,parts};
+    },
+    /** Removes the owner's own finished jobs' objects and open uploads, certifying each only after the store lists nothing under its
+     * key and no pass could still be writing (settlement); an unsettled or failed job counts as remaining and failures back off. */
+    async cleanupPrivacyExportJobs(context:ProductionClinicalRequestContext,signal:AbortSignal):Promise<{cleaned:number;remaining:number}>{
+      const out=await runCleanup(run,ownerAuthority,store,storage,context,1000,signal);
+      const s=summary(out);return {cleaned:s.deleted,remaining:s.pending+s.deferred};
+    },
+    /** Re-checks the owner's certified jobs after the settlement window; a copy or upload that reappeared reopens its cleanup. */
+    async reconcilePrivacyExportJobs(context:ProductionClinicalRequestContext,signal:AbortSignal):Promise<{confirmed:number;reopened:number;pending:number}>{
+      const out=await runReconcile(run,ownerAuthority,store,storage,context,1000,signal);
+      const s=summary(out);return {confirmed:s.confirmed,reopened:s.reopened,pending:s.pending};
+    },
+  };
+}
+
+export type PrivacyExportBacklog={packaging:number;downloadable:number;downloadExpired:number;cleanupPending:number;settling:number;deferred:number;
+  removalRecorded:number;removalVerified:number;reconcileDue:number;reopened:number;retainedUnderHold:number;oldestOverdueSeconds:number;
+  oldestPendingSince:string|null;measuredAt:string;scope:'assigned_owners'|'all_owners'};
+/** Retention passes that do not depend on the owner (migrations 20260920130000 and
+ * 20260920150000). `operator`: the assigned privacy operator over the owners of a
+ * live assignment, including closed accounts. `retention_service`: the scheduled
+ * sweep over every owner, refused unless a reviewed release row names the
+ * calling workforce identity as the retention service. Both remove with the same
+ * listing proof as the owner's pass, defer failures with backoff, certify under
+ * the owner lock, reconcile certified jobs after the settlement window, and read
+ * a backlog. Nothing here reads export content. */
+export function createPrivacyExportRetention(rawRun:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage},authority:'operator'|'retention_service'='operator'){
+  const {store,storage}=delivery;
+  // Database rejections become the same vocabulary the owner path uses; other errors (e.g. an API layer's own) pass through.
+  const run:Run=(context,work)=>rawRun(context,work).catch(error=>{
+    if(error instanceof ClinicalCoreDatabaseRejection){
+      if(error.category==='identity_refused'||error.category==='operation_refused')throw new OwnedStorageError('owner_required');
+      if(error.category==='conflict'||error.category==='request_invalid')throw new OwnedStorageError(error.category);
+      throw new OwnedStorageError('storage_unavailable');
+    }
+    throw error;
+  });
+  const fn=authority==='operator'?{list:'list_privacy_export_cleanup_for_operator',certify:'record_privacy_export_object_deleted_by_operator',defer:'defer_privacy_export_cleanup_by_operator',
+      listReconcile:'list_privacy_export_reconcile_for_operator',reconcile:'reconcile_privacy_export_by_operator',backlog:'privacy_export_backlog_for_operator',maxItems:10}
+    :{list:'list_privacy_export_cleanup_for_retention',certify:'record_privacy_export_object_deleted_by_retention',defer:'defer_privacy_export_cleanup_by_retention',
+      listReconcile:'list_privacy_export_reconcile_for_retention',reconcile:'reconcile_privacy_export_by_retention',backlog:'privacy_export_backlog_for_retention',maxItems:100};
+  const sql:CleanupAuthority={
+    list:(tx,limit)=>call(tx,`select clinical_private.${fn.list}($1::integer) as result`,[limit]),
+    certify:(tx,owner,jobId,v)=>call(tx,`select clinical_private.${fn.certify}($1,$2,$3::bigint) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v]),
+    defer:(tx,owner,jobId,v,error)=>call(tx,`select clinical_private.${fn.defer}($1,$2,$3::bigint,$4) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v,error]),
+    listReconcile:(tx,limit)=>call(tx,`select clinical_private.${fn.listReconcile}($1::integer) as result`,[limit]),
+    reconcile:(tx,owner,jobId,v,reappeared)=>call(tx,`select clinical_private.${fn.reconcile}($1,$2,$3::bigint,$4::boolean) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v,reappeared]),
+    ownerOf:(_context,item)=>{const owner=String(item.ownerId);if(!UUID.test(owner))unavailable();return owner;},
+  };
+  const guard=(context:ProductionClinicalRequestContext,maxItems:number)=>{
+    if(!Number.isSafeInteger(maxItems)||maxItems<1||maxItems>fn.maxItems)invalid();
+    if(context.identityPool!=='workforce'||context.purpose!=='consent_management')throw new OwnedStorageError('owner_required');
+  };
+  return {
+    authority,
+    async cleanupAssignedPrivacyExports(context:ProductionClinicalRequestContext,maxItems:number,signal:AbortSignal):Promise<{cleaned:number;remaining:number;deferred:number;items:PrivacyExportRetentionItem[]}>{
+      guard(context,maxItems);
+      const out=await runCleanup(run,sql,store,storage,context,maxItems,signal);
+      const s=summary(out);return {cleaned:s.deleted,remaining:s.pending+s.deferred,deferred:s.deferred,items:out};
+    },
+    async reconcilePrivacyExports(context:ProductionClinicalRequestContext,maxItems:number,signal:AbortSignal):Promise<{confirmed:number;reopened:number;pending:number;items:PrivacyExportReconcileItem[]}>{
+      guard(context,maxItems);
+      const out=await runReconcile(run,sql,store,storage,context,maxItems,signal);
+      const s=summary(out);return {confirmed:s.confirmed,reopened:s.reopened,pending:s.pending,items:out};
+    },
+    async privacyExportBacklog(context:ProductionClinicalRequestContext):Promise<PrivacyExportBacklog>{
+      guard(context,1);
+      const b=object(await run(context,tx=>call(tx,`select clinical_private.${fn.backlog}() as result`,[])));
+      const n=['packaging','downloadable','downloadExpired','cleanupPending','settling','deferred','removalRecorded','removalVerified','reconcileDue','reopened','retainedUnderHold','oldestOverdueSeconds'] as const;
+      for(const k of n)if(!count(b[k]))unavailable();
+      if((b.oldestPendingSince!==null&&!date(b.oldestPendingSince))||!date(b.measuredAt)||!['assigned_owners','all_owners'].includes(String(b.scope)))unavailable();
+      return {...Object.fromEntries(n.map(k=>[k,b[k] as number])),oldestPendingSince:b.oldestPendingSince as string|null,measuredAt:b.measuredAt as string,scope:b.scope as PrivacyExportBacklog['scope']} as PrivacyExportBacklog;
+    },
+  };
+}

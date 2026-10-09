@@ -43,6 +43,8 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     expect(JSON.stringify(body)).toContain("find those markers case-insensitively");
     expect(JSON.stringify(body)).toContain("Do not substitute unrelated markers");
     expect(JSON.stringify(body)).toContain("does not require practitioner approval or escalation");
+    expect(JSON.stringify(body)).toContain("personalPlan is consumer-saved, unverified history");
+    expect(JSON.stringify(body)).toContain("Payment or practitioner access is never evidence of clinical approval");
   });
 
   it("refuses model substitution and unsafe dose or peptide directives", () => {
