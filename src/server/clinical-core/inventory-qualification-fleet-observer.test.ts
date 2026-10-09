@@ -3,11 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 // Orchestration unit doubles only. No fictional transport report is hosted
 // evidence. Each real component's AWS response/digest tests run separately.
 const state = vi.hoisted(() => ({ prepare: vi.fn(), build: vi.fn(), artifact: vi.fn(), ledgerFactory: vi.fn(), ledger: vi.fn(),
-  foundation: vi.fn(), database: vi.fn(), stack: vi.fn(), service: vi.fn(), code: vi.fn(), api: vi.fn(), guard: vi.fn(), dispose: vi.fn() }));
+  foundation: vi.fn(), database: vi.fn(), identity: vi.fn(), stack: vi.fn(), service: vi.fn(), code: vi.fn(), api: vi.fn(), guard: vi.fn(), dispose: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFileSync: state.build }));
 vi.mock('./inventory-qualification-configuration', () => ({ prepareInventoryQualificationConfiguration: state.prepare }));
 vi.mock('./inventory-qualification-foundation-observer', () => ({ observeInventoryFoundation: state.foundation }));
 vi.mock('./inventory-qualification-database-dependency', () => ({ observeInventoryDatabaseDependency: state.database }));
+vi.mock('./inventory-qualification-identity-dependency', () => ({ observeInventoryIdentityDependency: state.identity }));
 vi.mock('./inventory-qualification-stack-observer', () => ({ observeInventoryStackDeclarations: state.stack }));
 vi.mock('./inventory-qualification-service-observer', () => ({ observeInventoryCandidateServices: state.service }));
 vi.mock('./inventory-qualification-code-observer', () => ({ observeInventoryCodeVersion: state.code }));
@@ -24,7 +25,10 @@ function fixture() {
       ({ file: `fictional-${n}-${p}.zip` })) }));
   return { source, artifacts: { source, manifestSha256: 'c'.repeat(64), candidates: candidates.map(c => ({ candidate: c.candidate })) },
     target: { target: { foundationStackName: 'fictional-foundation', databaseClusterArn: 'fictional-cluster', databaseSecretArn: 'fictional-secret',
-      databaseName: 'clinical_core_qualification', apiId: 'fictional-api', apiOrigin: 'fictional-origin', exportBucket: 'fictional-exports' },
+      databaseName: 'clinical_core_qualification', apiId: 'fictional-api', apiOrigin: 'fictional-origin', exportBucket: 'fictional-exports',
+      identitySubjects: { consumer: 'fictional-consumer', foreignConsumer: 'fictional-foreign', workforce: 'fictional-workforce' } },
+    identity: { consumerIssuer: 'fictional-consumer-issuer', consumerAudience: 'fictional-consumer-client',
+      workforceIssuer: 'fictional-workforce-issuer', workforceAudience: 'fictional-workforce-client' }, organizationId: 'fictional-org',
     artifactBucket: 'fictional-code', candidates }, targetSha256: 'd'.repeat(64), assertUnchanged: state.guard, dispose: state.dispose };
 }
 beforeEach(() => {
@@ -33,6 +37,7 @@ beforeEach(() => {
   state.artifact.mockReturnValue('fictional-exact-107-ledger'); state.ledgerFactory.mockReturnValue(state.ledger);
   state.foundation.mockResolvedValue({ foundationStackId: 'fictional-foundation-stack-id', observationSha256: 'fictional-foundation-digest' });
   state.database.mockResolvedValue({ observationSha256: 'fictional-database-digest' });
+  state.identity.mockResolvedValue({ observationSha256: 'fictional-identity-digest' });
   state.ledger.mockResolvedValue({ rows: 107, rolledBack: true });
   state.stack.mockImplementation(async c => ({ candidate: c.candidate, snapshot: { stackId: c.stackName, resources: [], outputs: {} } }));
   state.service.mockImplementation(async (_snapshot, c) => ({ candidate: c.candidate, observationSha256: `fictional-${c.candidate}` }));
@@ -47,7 +52,7 @@ it('rebuilds migration bytes, reads all twelve candidates and thirteen versions 
   expect(state.build.mock.calls[0][1]).toEqual(['scripts/build-adopted-plan-inventory-candidate.mjs', '--json']);
   expect(state.artifact).toHaveBeenCalledWith({ fictional: true });
   expect(state.ledgerFactory).toHaveBeenCalledWith('fictional-exact-107-ledger');
-  for (const reader of [state.foundation, state.database, state.ledger, state.api]) expect(reader).toHaveBeenCalledTimes(2);
+  for (const reader of [state.foundation, state.database, state.identity, state.ledger, state.api]) expect(reader).toHaveBeenCalledTimes(2);
   expect(state.stack).toHaveBeenCalledTimes(24); expect(state.service).toHaveBeenCalledTimes(24); expect(state.code).toHaveBeenCalledTimes(26);
   expect(state.code.mock.calls.every(call => call.length === 3 && call[1] === source.sourceCommit)).toBe(true);
   expect(state.service.mock.calls.every(call => call.length === 3 && call[0].stackId === call[1].stackName
@@ -58,6 +63,7 @@ it('rebuilds migration bytes, reads all twelve candidates and thirteen versions 
   }
   expect(result).toMatchObject({ status: 'not_completed', passes: 2, candidates: 12, packages: 13,
     observedResourcePlane: true, successorLedgerObserved: true, liveFleetVerified: false, acceptance: false,
+    identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: true,
     identityDependenciesVerified: false, networkVerified: false, providerDependenciesVerified: false,
     humanReviewsVerified: false, phiAllowed: false, mutations: false });
   expect(result.observationSha256).toMatch(/^[a-f0-9]{64}$/); expect(state.dispose).toHaveBeenCalledTimes(1);
@@ -68,6 +74,9 @@ it('passes exact shared foundation/database bindings rather than environment ove
   expect(state.ledger).toHaveBeenCalledWith({ DatabaseName: 'clinical_core_qualification',
     DatabaseClusterArn: 'fictional-cluster', DatabaseSecretArn: 'fictional-secret' });
   expect(state.database).toHaveBeenCalledWith({ databaseClusterArn: 'fictional-cluster', databaseSecretArn: 'fictional-secret', secretKmsKeyArn: 'fictional-customer-key' });
+  expect(state.identity).toHaveBeenCalledWith({ identity: fixture().target.identity, organizationId: 'fictional-org',
+    subjects: fixture().target.target.identitySubjects });
+  expect(state.identity.mock.calls.every(c => c.length === 1)).toBe(true);
   expect(state.foundation).toHaveBeenCalledWith({ foundationStackName: 'fictional-foundation', databaseClusterArn: 'fictional-cluster',
     databaseSecretArn: 'fictional-secret', apiId: 'fictional-api', apiOrigin: 'fictional-origin', artifactBucket: 'fictional-code', exportBucket: 'fictional-exports' });
   expect(result.phiAllowed).toBe(false); expect(result.liveFleetVerified).toBe(false); expect(result.acceptance).toBe(false);
@@ -80,7 +89,7 @@ for (const keyMode of ['missing', 'conflicting']) it(`refuses ${keyMode} databas
   await expect(observeInventoryQualificationFleet(args)).rejects.toThrow('fleet_database_key_binding_refused');
   expect(state.foundation).not.toHaveBeenCalled(); expect(state.dispose).toHaveBeenCalledTimes(1);
 });
-for (const stage of ['build', 'artifact', 'guard', 'foundation', 'database', 'ledger', 'stack', 'service', 'code', 'api'] as const)
+for (const stage of ['build', 'artifact', 'guard', 'foundation', 'database', 'identity', 'ledger', 'stack', 'service', 'code', 'api'] as const)
   it(`refuses failed ${stage}, never retries and disposes only its owned temporary build`, async () => {
     state[stage].mockImplementationOnce(() => { throw Error(`fictional_${stage}_failure`); });
     await expect(observeInventoryQualificationFleet(args)).rejects.toThrow(`fictional_${stage}_failure`);
@@ -91,7 +100,7 @@ it('malformed migration output refuses before AWS or a ledger transaction', asyn
   await expect(observeInventoryQualificationFleet(args)).rejects.toThrow('inventory_ledger_artifact_refused');
   expect(state.foundation).not.toHaveBeenCalled(); expect(state.ledger).not.toHaveBeenCalled();
 });
-for (const component of ['foundation', 'database', 'ledger', 'api'] as const) it(`refuses cross-window ${component} drift`, async () => {
+for (const component of ['foundation', 'database', 'identity', 'ledger', 'api'] as const) it(`refuses cross-window ${component} drift`, async () => {
   state[component].mockResolvedValueOnce({ stable: 'initial', foundationStackId: 'fictional-foundation-stack-id' });
   state[component].mockResolvedValueOnce({ stable: 'changed', foundationStackId: 'fictional-foundation-stack-id' });
   await expect(observeInventoryQualificationFleet(args)).rejects.toThrow('fleet_observation_changed');
