@@ -4,7 +4,7 @@ import type { ClinicalCoreMigration } from './migrations';
 import { CARE_ERASURE_AWS, careErasureUpgradeFromAws, type CareErasureUpgradeConfiguration } from './care-erasure-schema-upgrade';
 import { CATALOG_FORWARD_UPGRADE, CatalogForwardUpgradeError, catalogForwardMapping, runCatalogForwardUpgrade } from './catalog-forward-upgrade';
 
-export type CatalogForwardInspectionBuild = { sourceCommit: string; clean: boolean };
+export type CatalogForwardInspectionBuild = { sourceCommit: string; clean: boolean; lastingApplyAvailable?: boolean };
 export type CatalogForwardInspectionDependencies = {
   observeCaller: () => unknown; observeFoundation: () => unknown;
   loadCore: () => ClinicalCoreMigration[]; loadReference: () => ClinicalCoreMigration[]; loadCandidate: () => ClinicalCoreMigration;

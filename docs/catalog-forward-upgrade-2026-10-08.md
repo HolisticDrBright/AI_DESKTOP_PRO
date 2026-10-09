@@ -2,6 +2,11 @@
 
 The catalog reader repair is source-verified, but the registered database still has the original two reference migrations. The pending upgrade replaces one purchase-link access policy so an old approved offer cannot authorize ordering a currently restricted or withdrawn product. Existing clinical approvals, separately approved purchase destinations, verification holds and historical rows stay unchanged. This is synthetic-only engineering, not commercial or PHI activation.
 
+The current separately bound preserving-apply source workflow is described in
+[Catalog preserving apply workflow](catalog-preserving-apply-2026-10-08.md).
+It requires fresh rollback and lock-race qualification under custody before a
+lasting apply; it has not run hosted. Historical checkpoints below remain unchanged.
+
 ## Release mapping
 
 | Artifact | Identity |

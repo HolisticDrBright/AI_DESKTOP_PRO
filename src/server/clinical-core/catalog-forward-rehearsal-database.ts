@@ -10,16 +10,18 @@ import { createCareErasureOperatorClient } from './care-erasure-operator-client'
 import { executeCatalogForwardRollback } from './catalog-forward-rehearsal-command';
 import { executeCatalogForwardInspectionCommand } from './catalog-forward-inspection-command';
 import { executeCatalogLockAdmission } from './catalog-lock-admission';
+import { executeCatalogForwardApply, assertCatalogForwardApplyReadback } from './catalog-forward-apply-command';
 
 declare const __CATALOG_FORWARD_BUILD__: CatalogForwardInspectionBuild;
 declare const __CATALOG_FORWARD_CORE__: ClinicalCoreMigration[];
 declare const __CATALOG_FORWARD_REFERENCE__: ClinicalCoreMigration[];
 declare const __CATALOG_FORWARD_CANDIDATE__: ClinicalCoreMigration;
-// Deliberately no executable CLI and no lasting-upgrade export.
+// No executable CLI. The separate apply bundle is admitted only by the
+// custodied public wrapper, which must first qualify rollback and the lock race.
 async function executeDatabase(sourceCommit: string, custody: {
   verify: () => void; record: (stage: string, observationSha256: string) => void;
 }, inspect: boolean, lock?: { record: (stage: string, details: Record<string, unknown>) => void;
-  persistFixture: (fixture: { stableId: string; original: string; changed: string }) => void }) {
+  persistFixture: (fixture: { stableId: string; original: string; changed: string }) => void }, apply = false) {
   if (sourceCommit !== __CATALOG_FORWARD_BUILD__.sourceCommit) throw new Error('catalog_forward_source_mismatch');
   const clients: RDSDataClient[] = [];
   const aws = (args: string[]) => {
@@ -47,7 +49,8 @@ async function executeDatabase(sourceCommit: string, custody: {
         databaseName: configuration.databaseName, region: configuration.region }, { purpose: 'reviewed_synthetic_migration' }, transport.client);
     },
   };
-  try { return lock ? await executeCatalogLockAdmission(__CATALOG_FORWARD_BUILD__, { ...dependencies, ...lock })
+  try { return apply ? await executeCatalogForwardApply(__CATALOG_FORWARD_BUILD__, dependencies)
+    : lock ? await executeCatalogLockAdmission(__CATALOG_FORWARD_BUILD__, { ...dependencies, ...lock })
     : inspect ? await executeCatalogForwardInspectionCommand(['inspect'], __CATALOG_FORWARD_BUILD__, dependencies)
     : await executeCatalogForwardRollback(__CATALOG_FORWARD_BUILD__, dependencies);
   } finally { clients.forEach(client => client.destroy()); }
@@ -56,3 +59,9 @@ export const inspectCatalogForwardDatabase = (sourceCommit: string, custody: Par
 export const rehearseCatalogForwardDatabase = (sourceCommit: string, custody: Parameters<typeof executeDatabase>[1]) => executeDatabase(sourceCommit, custody, false);
 export const qualifyCatalogLockDatabase = (sourceCommit: string, custody: Parameters<typeof executeDatabase>[1],
   lock: NonNullable<Parameters<typeof executeDatabase>[3]>) => executeDatabase(sourceCommit, custody, false, lock);
+/** Only emitted in the separately bound apply bundle. */
+export const applyCatalogForwardDatabase = (sourceCommit: string, custody: Parameters<typeof executeDatabase>[1]) => {
+  if (!__CATALOG_FORWARD_BUILD__.lastingApplyAvailable) throw new Error('catalog_forward_apply_bundle_required');
+  return executeDatabase(sourceCommit, custody, false, undefined, true);
+};
+export { assertCatalogForwardApplyReadback };
