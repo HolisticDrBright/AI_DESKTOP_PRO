@@ -152,6 +152,15 @@ export const CARE_CATALOG_REGISTERED_DATABASE=Object.freeze({
 });
 export function verifyCareRegisteredDatabase(r,current,started,now){
  assertCareRegisteredCurrent(current);const h=r?.catalogInspection,t=Date.parse(r?.observedAt);
+ const fields=['contract','execution','canonicalRegistered','alreadyApplied','sourceMigrationCount','liveMigrationCount',
+  'sourceLedgerSha256','liveLedgerSha256','referenceLedgerSha256','referenceMigrationCount','historicalReferenceCount',
+  'historicalReferenceSha256','historicalAliasPreserved','catalogInspection','schemaReplayPerformed','ledgerRewritePerformed',
+  'apiDeploymentPerformed','erasureAccepted','releaseAccepted','physicalDeviceAcceptance','activationApproved','phiAllowed',
+  'operatorSource','awsAccountId','foundation','observedAt','repeatedReadbackVerified','reportIsNotAuthority'];
+ // This read-only contract has no optional approval/acceptance extension. Even a
+ // false unknown flag is refused instead of being carried into release evidence.
+ check(r&&typeof r==='object'&&!Array.isArray(r)
+  &&canonical(Object.keys(r).sort())===canonical(fields.sort()),'database_boundary');
  check(Number.isFinite(started)&&Number.isFinite(now)&&Number.isFinite(t)&&t>=started&&t<=now&&now-t<=300000,'database_freshness');
  check(r?.contract==='care-catalog-canonical-registration-inspection/1'&&r.execution==='synthetic-staging'
   &&r.canonicalRegistered===true&&r.alreadyApplied===true&&r.sourceMigrationCount===47&&r.liveMigrationCount===48

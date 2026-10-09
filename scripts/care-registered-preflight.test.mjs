@@ -164,6 +164,20 @@ test('historical reference2 report cannot become current by relabeling its contr
   const r=clone(f.db);change(r);assert.throws(()=>verifyCareRegisteredDatabase(r,f.current,f.now(),f.now()));
  }
 });
+test('current registration refuses every extra outer authority claim or missing contract field',()=>{
+ const f=fixture();verifyCareRegisteredDatabase(f.db,f.current,f.now(),f.now());
+ for(const key of ['hostedAcceptance','productionApproved','matchedReleaseAccepted','deployAuthorized','schemaChanged','phiActivation','unknown']){
+  for(const value of [true,false,null]){
+   const r=clone(f.db);r[key]=value;
+   assert.throws(()=>verifyCareRegisteredDatabase(r,f.current,f.now(),f.now()),/database_boundary/,key+':'+value);
+  }
+ }
+ for(const key of Object.keys(f.db)){
+  const r=clone(f.db);delete r[key];
+  assert.throws(()=>verifyCareRegisteredDatabase(r,f.current,f.now(),f.now()),undefined,key);
+ }
+});
+
 test('complete fictional observation port requires independent rebuild and two live reads but certifies no deployment or acceptance',async()=>{
  const f=fixture(),result=await run(f);
  assert.equal(result.liveTargetObserved,true);assert.equal(result.repeatedReadbackVerified,true);
