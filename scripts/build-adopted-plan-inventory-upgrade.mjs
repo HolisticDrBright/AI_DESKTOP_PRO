@@ -19,13 +19,19 @@ await build({ entryPoints: ['src/server/clinical-core/adopted-plan-inventory-sch
   bundle: true, platform: 'node', target: 'node22', format: 'cjs', minify: false, sourcemap: false, legalComments: 'none', treeShaking: true,
   define: { __ADOPTED_INVENTORY_UPGRADE_BUILD__: JSON.stringify({ sourceCommit, clean }),
     __ADOPTED_INVENTORY_MIGRATIONS__: JSON.stringify(migrations) } });
+await build({ entryPoints: ['src/server/clinical-core/adopted-plan-inventory-interruption-worker.ts'], outfile: `${out}/interruption-worker.cjs`,
+  bundle: true, platform: 'node', target: 'node22', format: 'cjs', minify: false, sourcemap: false, legalComments: 'none', treeShaking: true,
+  define: { __ADOPTED_INVENTORY_UPGRADE_BUILD__: JSON.stringify({ sourceCommit, clean }),
+    __ADOPTED_INVENTORY_MIGRATIONS__: JSON.stringify(migrations) } });
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({
   contract: 'adopted-plan-inventory-upgrade-build/1', sourceCommit, clean,
   operatorSha256: sha(readFileSync(`${out}/index.cjs`)), embeddedMigrationCount: migrations.length,
+  interruptionWorkerSha256: sha(readFileSync(`${out}/interruption-worker.cjs`)),
   fromReleaseSha256: artifact.candidate.parentMigrationReleaseSha256, toReleaseSha256: artifact.candidate.migrationReleaseSha256,
   execution: 'qualification_only', phiAllowed: false, activation: 'blocked', migrationPerformed: false,
   mandatoryRollbackRehearsal: true, postRehearsalPrestateRecheck: true, automaticWriteRetry: false,
   durableNativeCustody: true, sharedOperatorNamespace: true, readOnlyInterruptionReconciliation: true,
   reconciliationRequiresMigrationLocks: true, hostedRecoveryQualified: false,
+  interruptionWorkerScope: 'instrumented_real_core_and_ports_before_write_and_precommit_only',
 }, null, 2) + '\n');
 console.log(`Built separate inventory upgrade operator. Clean source: ${clean}. No AWS call or migration performed.`);

@@ -37,10 +37,15 @@ describe('actual bundled inventory upgrade operator, no AWS requests', () => {
     // The application migration loader, unlike those bundled SDK internals,
     // must not read SQL or manifests from the working directory or environment.
     const operator = readFileSync('src/server/clinical-core/adopted-plan-inventory-schema-upgrade-operator.ts', 'utf8');
-    expect(operator).toContain('loadMigrations: () => __ADOPTED_INVENTORY_MIGRATIONS__');
+    expect(operator).toContain('createNativeInventoryUpgradeDependencies(__filename, () => __ADOPTED_INVENTORY_MIGRATIONS__)');
     expect(operator).not.toMatch(/readFile|node:fs|process\.env|loadMigrations\s*:\s*[^\n]*resolve\(/);
-    expect(operator).toContain('root: INVENTORY_OPERATOR_SHARED_ROOT, operatorFile: __filename');
-    expect(operator).toContain('withInventoryOperatorFence(database, work)');
+    const nativePorts = readFileSync('src/server/clinical-core/adopted-plan-inventory-native-ports.ts', 'utf8');
+    expect(nativePorts).toContain('root: INVENTORY_OPERATOR_SHARED_ROOT, operatorFile');
+    expect(nativePorts).toContain('withInventoryOperatorFence(database, work)');
+    expect(nativePorts).toContain("endpoint: INVENTORY_RDS_ENDPOINT, maxAttempts: 1");
+    expect(nativePorts).toContain('AbortSignal.timeout(INVENTORY_RDS_REQUEST_DEADLINE_MS)');
+    expect(manifest.interruptionWorkerSha256).toBe(createHash('sha256').update(readFileSync(resolve(out, 'interruption-worker.cjs'))).digest('hex'));
+    expect(manifest.interruptionWorkerScope).toBe('instrumented_real_core_and_ports_before_write_and_precommit_only');
     expect(bundle).toContain('inventory-upgrade-reconciliation.lock');
   });
   it('refuses every override before observing AWS even from an unrelated directory', () => {
@@ -61,6 +66,14 @@ describe('actual bundled inventory upgrade operator, no AWS requests', () => {
       const r = spawnSync(process.execPath, ['scripts/build-adopted-plan-inventory-upgrade.mjs', ...args],
         { encoding: 'utf8', timeout: 10000 });
       expect(r.status).toBe(1); expect(r.stderr).toContain('adopted_inventory_upgrade_argument_invalid');
+    }
+  });
+  it('compiled interruption worker refuses non-IPC invocation before AWS, even with the fictional confirmation', () => {
+    for (const mode of ['before-write', 'precommit', 'reconcile']) {
+      const r = spawnSync(process.execPath, [resolve(out, 'interruption-worker.cjs'), mode, '--confirm-fictional-inventory-interruption'], {
+        cwd: tmpdir(), encoding: 'utf8', timeout: 10000, env: { ...process.env, PATH: '', AWS_PROFILE: 'not-an-authority' },
+      });
+      expect(r.error).toBeUndefined(); expect(r.status).toBe(1); expect(r.stdout.trim()).toBe(''); expect(r.stderr.trim()).toBe('');
     }
   });
 });
