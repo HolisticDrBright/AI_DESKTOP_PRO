@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { fullscriptSupplementDraftInput } from './protocol-draft';
 
 export type FullscriptEnvironment = "sandbox_us" | "production_us";
 
@@ -288,12 +289,54 @@ function parseToken(value: unknown): FullscriptToken {
 }
 
 export class FullscriptApiClient {
+  private readonly configuration: FullscriptConfiguration;
+  private readonly grantedScopes: ReadonlySet<string>;
   constructor(
-    private readonly configuration: FullscriptConfiguration,
+    configuration: FullscriptConfiguration,
     private readonly accessToken: string,
     private readonly fetcher: typeof fetch = fetch,
+    scopes: readonly string[] = [],
   ) {
     if (!OPAQUE.test(accessToken)) throw new FullscriptUnavailableError();
+    const canonical = ENVIRONMENTS[configuration.environment];
+    if (!canonical || configuration.apiOrigin !== canonical.apiOrigin || configuration.authorizeUrl !== canonical.authorizeUrl)
+      throw new FullscriptUnavailableError();
+    this.configuration = Object.freeze({...configuration});
+    this.grantedScopes = new Set(scopes);
+  }
+
+  /** Transport only: callers still need a durable, authority-checked delivery
+   * intent. There is deliberately no public JSON action exposing this method. */
+  createSupplementDraft(input: unknown) {
+    this.assertSandboxDraftScope('clinic:write');
+    const parsed = fullscriptSupplementDraftInput.safeParse(input);
+    if (!parsed.success) throw new FullscriptUnavailableError();
+    const value = parsed.data;
+    return this.request('POST', `/clinic/patients/${safeId(value.fullscriptPatientId)}/treatment_plans`, {
+      practitioner_id: safeId(value.practitionerId), state: 'draft',
+      send_to_patient: false, skip_email_notification: true,
+      metadata: {id: value.idempotencyKey}, partner_order_id: value.idempotencyKey,
+      recommendations: value.recommendations.map(row => ({
+        variant_id: safeId(row.variantId), units_to_purchase: row.unitsToPurchase,
+        dosage: {additional_info: row.instructions},
+      })),
+    }, undefined, {'idempotency-key': value.idempotencyKey});
+  }
+
+  retrieveTreatmentPlan(id: string) {
+    this.assertSandboxDraftScope('clinic:read');
+    return this.request('GET', `/clinic/treatment_plans/${safeId(id)}`);
+  }
+
+  findTreatmentPlanByMetadata(idempotencyKey: string) {
+    this.assertSandboxDraftScope('clinic:read');
+    if (!/^alp-cart-[a-f0-9]{64}$/.test(idempotencyKey)) throw new FullscriptUnavailableError();
+    return this.request('GET', '/clinic/metadata', undefined, {id: idempotencyKey, type: 'treatment_plan'});
+  }
+
+  private assertSandboxDraftScope(scope: string) {
+    if (this.configuration.environment !== 'sandbox_us' || !this.grantedScopes.has(scope))
+      throw new FullscriptUnavailableError();
   }
 
   searchProducts(query: string) {

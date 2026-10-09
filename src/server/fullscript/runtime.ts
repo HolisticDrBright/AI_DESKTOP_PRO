@@ -79,5 +79,5 @@ export async function connectedFullscriptClient(session: RequestSession): Promis
     connection = { ...connection, ...refreshed };
     await store.put(connection);
   }
-  return { client: new FullscriptApiClient(configuration, connection.accessToken), connection };
+  return { client: new FullscriptApiClient(configuration, connection.accessToken, fetch, connection.scope), connection };
 }
