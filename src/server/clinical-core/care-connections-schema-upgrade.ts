@@ -159,7 +159,9 @@ export async function runCareConnectionsSchemaUpgrade(database: ClinicalCoreData
   try {
     return await database.transaction(async tx => {
       stage = 'transaction_settings';
-      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level repeatable read');
+      // Writer snapshots must see commits admitted during a table-lock wait.
+      // Complete table/ledger locks keep the post-admission witness stable.
+      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
       await tx.query("set local lock_timeout='5s'"); await tx.query("set local statement_timeout='30s'");
       await tx.query('set local row_security=off'); // Refuse filtered fingerprints, not grant RLS bypass.
       stage = 'database_identity';
@@ -175,6 +177,9 @@ export async function runCareConnectionsSchemaUpgrade(database: ClinicalCoreData
       if (command !== 'inspect') {
         stage = 'writer_locks';
         await tx.query(`lock table ${[...beforeTables.tables.map(qualified), LEDGER].sort().join(',')} in share row exclusive mode`);
+        stage = 'writer_history';
+        if (await history(tx, migrations) !== count) fail('history_refused');
+        stage = 'writer_inventory';
         if (JSON.stringify(await inventory(tx, count)) !== JSON.stringify(beforeTables)) fail('inventory_refused');
       }
       stage = 'before_fingerprint'; const before = await fingerprint(tx, beforeTables.tables);
@@ -210,7 +215,7 @@ export async function runCareConnectionsSchemaUpgrade(database: ClinicalCoreData
         || inspected.dataSha256 !== error.result.dataSha256 || inspected.rowCount !== error.result.rowCount) fail('verification_failed');
       return { ...inspected, command: 'rehearse', rolledBack: true };
     }
-    if (error instanceof CareConnectionsUpgradeError) throw error;
+    if (error instanceof CareConnectionsUpgradeError) throw new CareConnectionsUpgradeError(error.category, error.stage ?? stage);
     throw new CareConnectionsUpgradeError('upgrade_failed', stage);
   }
 }

@@ -82,15 +82,18 @@ async function history(tx: ClinicalCoreTransaction, migrations: ClinicalCoreMigr
 
 /** Separate from the empty installer. Atomic, exact 102->103 transition; never clears
  * fixtures, edits an old ledger row, starts services or activates any provider. */
-export async function runQualificationSchemaUpgrade(database: ClinicalCoreDatabase, migrations: ClinicalCoreMigration[],
-  configuration: QualificationUpgradeConfiguration, command: 'inspect' | 'upgrade') {
+export async function runQualificationSchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
+  suppliedConfiguration: QualificationUpgradeConfiguration, command: 'inspect' | 'upgrade') {
+  // Capture the reviewed inputs before any awaited transport can mutate them.
+  const migrations = suppliedMigrations.map(m => ({ ...m })), configuration = { ...suppliedConfiguration };
   assertQualificationUpgrade(configuration, migrations);
   if (command !== 'inspect' && command !== 'upgrade') fail('boundary_refused');
   let stage = 'transaction_start';
   try {
     return await database.transaction(async tx => {
       stage = 'transaction_settings';
-      if (command === 'inspect') await tx.query('set transaction isolation level repeatable read read only');
+      // Do not inherit a changed server default for mutable admission.
+      await tx.query(command === 'inspect' ? 'set transaction isolation level repeatable read read only' : 'set transaction isolation level read committed');
       await tx.query("set local lock_timeout='5s'");
       await tx.query("set local statement_timeout='30s'");
       // Fail instead of silently fingerprinting an RLS-filtered subset. This setting

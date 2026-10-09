@@ -78,6 +78,31 @@ describe('exact preserving synthetic staging erasure successor', () => {
       applied: false, tableCount: 87, dataSha256: before.dataSha256, rowCount: before.rowCount });
     await predecessor();
   });
+  it('uses fresh writer statement snapshots while retaining read-only inspector snapshots', async () => {
+    const queries: string[] = [];
+    await expect(run('upgrade', database(async s => {
+      queries.push(s);
+      if (s.startsWith('lock table ')) throw Error('fictional stop before mutation');
+    }))).rejects.toMatchObject({ category: 'upgrade_failed', stage: 'writer_locks' });
+    expect(queries[0]).toBe('set transaction isolation level read committed');
+    expect(queries.some(s => /^(create|alter|insert|update|delete)/i.test(s))).toBe(false);
+    await predecessor();
+  });
+  it.each(['clinical_core.schema_migrations', 'clinical_reference.schema_migrations'])
+    ('refuses %s drift at lock admission before successor DDL', async table => {
+      const queries: string[] = [];
+      const changed = database(async (s, tx) => {
+        queries.push(s);
+        // PGlite executes the real changed ledger and rollback. This injection
+        // models admission-time drift, not an independently committed writer.
+        if (s.startsWith('lock table ')) await tx.query(`update ${table} set sha256=$1 where version=$2`,
+          ['f'.repeat(64), table.startsWith('clinical_core.') ? migrations[0].version : reference[0].version]);
+      });
+      await expect(run('upgrade', changed)).rejects.toMatchObject({ category: 'history_refused', stage: 'writer_history' });
+      expect(queries.some(s => /^(create|alter|insert|update|delete)/i.test(s))).toBe(false);
+      await predecessor();
+      expect((await run('inspect')).observedMigrationCount).toBe(46);
+    });
   it.each(['reverse', 'rotate', 'hosted-collation'])('accepts only the identical constraint set despite %s result ordering', async order => {
     const reordered: ClinicalCoreDatabase = { transaction: work => database().transaction(tx => work({ query: async <Row extends Record<string, unknown>>
       (s: string, p: readonly unknown[] = []) => {
