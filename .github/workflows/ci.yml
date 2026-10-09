@@ -81,6 +81,11 @@ jobs:
           npx vitest run --no-file-parallelism src/server/clinical-core/inventory-care-qualification.test.ts src/server/clinical-core/inventory-care-qualification.database.test.ts
           npm run test:inventory-care-qualification-artifact
           npm run build:inventory-care-qualification
+      - name: Complete 107 qualification artifacts (no AWS calls, deployment or approvals)
+        run: |
+          npx vitest run src/server/clinical-core/inventory-qualification-envelope.test.ts
+          npm run test:inventory-qualification-fleet
+          npm run build:inventory-qualification-fleet
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
@@ -94,6 +99,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
+          find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)
     runs-on: ubuntu-latest

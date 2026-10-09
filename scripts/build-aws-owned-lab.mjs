@@ -1,7 +1,10 @@
 import {build} from 'esbuild';
 import {qualificationConditions,qualificationEnvironment,qualificationParameters,qualificationRules} from './qualification-execution-template.mjs';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
-const out='dist/aws-clinical-core/owned-lab';mkdirSync(out,{recursive:true});
+import {resolve} from 'node:path';
+const args=process.argv.slice(2);
+if(args.length>1||args.length&&!/^--out-dir=.+$/.test(args[0]))throw Error('owned_lab_build_argument_invalid');
+const out=args.length?resolve(args[0].slice(10)):'dist/aws-clinical-core/owned-lab';mkdirSync(out,{recursive:true});
 await Promise.all([
   build({entryPoints:['src/server/clinical-core/owned-lab-api-lambda.ts'],outfile:`${out}/api/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none',logLevel:'warning'}),
   build({entryPoints:['src/server/clinical-core/owned-lab-worker-lambda.ts'],outfile:`${out}/worker/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none',logLevel:'warning'}),

@@ -1,7 +1,10 @@
 import {build} from 'esbuild';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {personalStorageCandidate} from './personal-storage-candidate.mjs';
-const out='dist/aws-clinical-core/personal-storage';mkdirSync(out,{recursive:true});
+import {resolve} from 'node:path';
+const args=process.argv.slice(2);
+if(args.length>1||args.length&&!/^--out-dir=.+$/.test(args[0]))throw Error('personal_storage_build_argument_invalid');
+const out=args.length?resolve(args[0].slice(10)):'dist/aws-clinical-core/personal-storage';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-consumer-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
 // Intentionally not an activation template. No data-plane IAM or credentials.
 const ref=name=>({Ref:name});const sub=value=>({'Fn::Sub':value});

@@ -1,7 +1,10 @@
 import {build} from 'esbuild';
 import {qualificationConditions,qualificationEnvironment,qualificationParameters,qualificationRules} from './qualification-execution-template.mjs';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
-const out='dist/aws-clinical-core/owned-voice';mkdirSync(out,{recursive:true});
+import {resolve} from 'node:path';
+const args=process.argv.slice(2);
+if(args.length>1||args.length&&!/^--out-dir=.+$/.test(args[0]))throw Error('owned_voice_build_argument_invalid');
+const out=args.length?resolve(args[0].slice(10)):'dist/aws-clinical-core/owned-voice';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-voice-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
 await build({entryPoints:['src/server/clinical-core/owned-voice-inventory-cli.ts'],outfile:`${out}/inventory.cjs`,bundle:true,platform:'node',target:'node22',format:'cjs',legalComments:'none'});
 // Reuse the proven durable provider infrastructure, not its identity/consent gate.

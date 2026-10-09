@@ -3,10 +3,11 @@
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { careMessagingZip } from './care-messaging-zip.mjs';
 import { inventoryCareTemplate, INVENTORY_PROFILE, INVENTORY_PARENT, INVENTORY_RELEASE } from './inventory-care-qualification-template.mjs';
+import { inventorySourceIdentity } from './inventory-qualification-source.mjs';
 const args = process.argv.slice(2);
 if (args.length > 1 || args.length && !/^--out-dir=.+$/.test(args[0])) throw Error('inventory_care_build_argument_refused');
 const out = resolve(args.length ? args[0].slice(10) : 'dist/aws-clinical-core/inventory-care-qualification');
@@ -15,23 +16,7 @@ const json = v => JSON.stringify(v, null, 2) + '\n';
 const execute = (script, flags = []) => execFileSync(process.execPath, [script, ...flags], {
   encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 30000,
 });
-const sourcePaths = ['src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.gitignore', '.github'];
-function sourceInputDigest() {
-  const names = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...sourcePaths],
-    { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).split('\0').filter(Boolean).sort();
-  const entries = [...new Set(names)].map(name => {
-    const before = lstatSync(name); if (!before.isFile() || before.isSymbolicLink()) throw Error('inventory_care_source_file_refused');
-    const bytes = readFileSync(name), after = lstatSync(name);
-    if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs
-      || bytes.length !== after.size) throw Error('inventory_care_build_source_changed');
-    return `${name}:${sha(bytes)}`;
-  });
-  return sha(entries.join('\n'));
-}
-const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
-  ...sourcePaths], { encoding: 'utf8' }).trim();
-const sourceInputSha256 = sourceInputDigest();
+const identity = inventorySourceIdentity(), { sourceCommit, sourceClean, sourceInputSha256 } = identity;
 const successor = JSON.parse(execute('scripts/build-adopted-plan-inventory-candidate.mjs', ['--json']));
 if (successor.candidate?.parentMigrationCount !== 106 || successor.candidate.parentMigrationReleaseSha256 !== INVENTORY_PARENT
   || successor.candidate.migrationCount !== 107 || successor.candidate.migrationReleaseSha256 !== INVENTORY_RELEASE
@@ -72,10 +57,7 @@ for (const kind of ['messaging', 'connections']) {
 }
 // Re-read the source identity after both compilers. A changing checkout is not
 // a coherent release even if its final dirty/clean flag happens to agree.
-if (execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== sourceCommit
-  || sourceInputDigest() !== sourceInputSha256
-  || (!execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
-    ...sourcePaths], { encoding: 'utf8' }).trim()) !== sourceClean) {
+if (JSON.stringify(inventorySourceIdentity()) !== JSON.stringify(identity)) {
   throw Error('inventory_care_build_source_changed');
 }
 writeFileSync(join(out, 'manifest.json'), json({ contract: 'inventory-care-qualification-build/1', sourceCommit, sourceClean, sourceInputSha256,
