@@ -45,6 +45,13 @@ unavailable until its separate design and review exist.
 
 ## Required runtime integration
 
+The new [canonical delivery service](fullscript-canonical-runtime-2026-10-09.md)
+now loads the provider release from current same-target SQL authority and joins
+that authority to the durable ledger and native credential adapter. It rechecks
+authority after credential observation, then rereads credential custody before
+transport. It remains unreleased; the HTTP identity/MFA/observed-target binding,
+privacy lifecycle and hosted qualification described below are still required.
+
 The provider release argument is an internal service input, not proof of approval.
 No route accepts it from a browser. The eventual handler must load it from current
 same-target canonical authority, verify the authenticated identity and MFA, observe

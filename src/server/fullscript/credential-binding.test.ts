@@ -49,6 +49,24 @@ const review=async()=>{
     clinicId:o.clinicId,tokenBindingSha256:o.tokenBindingSha256,scopes:[...FULLSCRIPT_DRAFT_SCOPES]};
 };
 describe('Observed Fullscript installation, not deployed approval or hosted acceptance',()=>{
+  it.each(['create','recover'])('refuses replaced credential custody during authority recheck before %s transport',async mode=>{
+    const r=await review();fetcher.mockClear();
+    const check=vi.fn(async()=>{saved={...saved!,installationId:'d1234567-1234-4123-8123-123456789012'};});
+    const p=createCredentialBoundFullscriptDraftProvider(session,r,check);
+    await expect(mode==='create'?p.create(input):p.findByMetadata(input.idempotencyKey)).rejects.toThrow('fullscript_delivery_refused');
+    expect(check).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledOnce();
+    expect(new URL(String(fetcher.mock.calls[0][0])).pathname).toBe('/api/clinic');
+  });
+  it.each(['create','recover'])('rechecks current authority after clinic observation before %s transport',async mode=>{
+    const r=await review();fetcher.mockClear();
+    const check=vi.fn(async()=>{throw new Error('fictional authority withdrawn');});
+    const p=createCredentialBoundFullscriptDraftProvider(session,r,check);
+    await expect(mode==='create'?p.create(input):p.findByMetadata(input.idempotencyKey))
+      .rejects.toThrow('fullscript_delivery_refused');
+    expect(check).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledOnce();
+    expect(String(fetcher.mock.calls[0][0])).toBe('https://api-us-snd.fullscript.io/api/clinic');
+    expect(fetcher.mock.calls[0][1]?.method).toBe('GET');
+  });
   it.each(['client','callback'])('refuses a current %s that differs from saved OAuth authorization before provider I/O',async mode=>{
     if(mode==='client')vi.stubEnv('FULLSCRIPT_CLIENT_ID','fictional-other-client-abcdefghijklmnopqrstuvwxyz');
     else vi.stubEnv('FULLSCRIPT_REDIRECT_URI','https://other.example.test/api/live/fullscript/oauth/callback');

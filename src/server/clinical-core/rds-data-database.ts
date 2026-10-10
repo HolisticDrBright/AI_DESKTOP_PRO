@@ -43,6 +43,16 @@ export function createRdsDataClinicalCoreDatabase(
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
 
+/** Dedicated unreleased Fullscript worker. No caller-selected role or
+ * administrative migration connection is exposed to request code. The role
+ * must already exist on the reviewed target; missing membership fails closed. */
+export function createRdsDataFullscriptDraftDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  return createRdsDataDatabase(configuration, client, "fullscript_draft_worker");
+}
+
 /** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
@@ -58,7 +68,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api",
+  assumeRole?: "clinical_core_api" | "fullscript_draft_worker",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {

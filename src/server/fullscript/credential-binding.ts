@@ -4,6 +4,7 @@ import {z} from 'zod';
 import type {RequestSession} from '../session';
 import {connectedFullscriptClient, fullscriptActor} from './runtime';
 import {createAwsFullscriptTokenStore, parseStoredFullscriptConnection} from './token-store';
+import type {StoredFullscriptConnection} from './token-store';
 import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 import {createFullscriptDraftProvider} from './draft-provider';
 import {DraftDeliveryRefused, type DraftDeliveryProvider} from './draft-delivery';
@@ -24,6 +25,13 @@ const clinicResponse=z.object({clinic:z.object({id:providerId}).passthrough()}).
 const guarded=async<T>(work:()=>Promise<T>):Promise<T>=>{
   try{return await work();}catch{throw new DraftDeliveryRefused();}
 };
+async function assertCredentialCustody(session:RequestSession,connection:StoredFullscriptConnection){
+  const store=createAwsFullscriptTokenStore();
+  if(!store)throw new DraftDeliveryRefused();
+  const actor=fullscriptActor(session),saved=await store.get(actor.actorKey,actor.organizationId);
+  if(!saved||JSON.stringify(parseStoredFullscriptConnection(saved,actor))
+    !==JSON.stringify(parseStoredFullscriptConnection(connection,actor)))throw new DraftDeliveryRefused();
+}
 
 /** Native observation, not review or target attestation. Hash one saved
  * installation, OAuth client, actor, clinic, owner and exact scope set. Exclude
@@ -49,11 +57,7 @@ async function observed(session:RequestSession){
     clinicId,resourceOwner:connection.resourceOwner,scopes:[...connection.scope].sort()};
   const tokenBindingSha256=createHash('sha256').update(JSON.stringify(binding),'utf8').digest('hex');
   // Reconnect/disconnect/rotation during clinic I/O invalidates this observation.
-  const store=createAwsFullscriptTokenStore();
-  if(!store)throw new DraftDeliveryRefused();
-  const actor=fullscriptActor(session),saved=await store.get(actor.actorKey,actor.organizationId);
-  if(!saved||JSON.stringify(parseStoredFullscriptConnection(saved,actor))
-    !==JSON.stringify(parseStoredFullscriptConnection(connection,actor)))throw new DraftDeliveryRefused();
+  await assertCredentialCustody(session,connection);
   return {client,connection,observation:{contract:'fullscript-installation-observation/1' as const,
     environment:'sandbox_us' as const,apiOrigin:configuration.apiOrigin,clinicId,tokenBindingSha256,
     scopes:[...connection.scope].sort()}};
@@ -69,7 +73,8 @@ export function observeFullscriptDraftInstallation(session:RequestSession){
  * this yet. Every operation reacquires credentials and observes clinic identity.
  * Production, staff delegation and patient-send are deliberately unavailable.
  */
-export function createCredentialBoundFullscriptDraftProvider(session:RequestSession,rawRelease:unknown):DraftDeliveryProvider{
+export function createCredentialBoundFullscriptDraftProvider(session:RequestSession,rawRelease:unknown,
+  beforeProviderRequest?:()=>Promise<void>):DraftDeliveryProvider{
   const principal={...session};
   let reviewed:z.infer<typeof release>;
   try{reviewed=release.parse(rawRelease);}catch{throw new DraftDeliveryRefused();}
@@ -84,8 +89,17 @@ export function createCredentialBoundFullscriptDraftProvider(session:RequestSess
     create:input=>guarded(async()=>{
       const result=await current();
       if(input.practitionerId!==result.connection.resourceOwner.id)throw new DraftDeliveryRefused();
+      // Credential observation performs I/O. Recheck same-target authority
+      // after it, immediately before handing the admitted intent to transport.
+      await beforeProviderRequest?.();
+      await assertCredentialCustody(principal,result.connection);
       return createFullscriptDraftProvider(result.client).create(input);
     }),
-    findByMetadata:key=>guarded(async()=>createFullscriptDraftProvider((await current()).client).findByMetadata(key)),
+    findByMetadata:key=>guarded(async()=>{
+      const result=await current();
+      await beforeProviderRequest?.();
+      await assertCredentialCustody(principal,result.connection);
+      return createFullscriptDraftProvider(result.client).findByMetadata(key);
+    }),
   };
 }
