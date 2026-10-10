@@ -21,7 +21,7 @@ import { z } from 'zod';
  *   append-only addendum; the original signed content never changes. A decline
  *   records the disagreement beside the record. This is not deletion.
  */
-export const CLINIC_RECORD_REQUEST_CONTRACT = 'clinic-record-requests/1' as const;
+export const CLINIC_RECORD_REQUEST_CONTRACT = 'clinic-record-requests/2' as const;
 export const CLINIC_RECORD_COPY_CONTRACT = 'clinic-record-copy/1' as const;
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -78,9 +78,17 @@ export const clinicRecordCopySummary = z.object({
   itemCount: z.number().int().min(0), byteTotal: z.number().int().min(0),
 }).strict();
 
+/**
+ * Wire form of one copy item (clinic-record-requests/2): the EXACT UTF-8 text
+ * the clinic digested at fulfilment, its digest and its byte length. A device
+ * hashes the received text before parsing it, so a decimal written 1.20 or
+ * 0.0000001 is verified and displayed as written; a re-serialized object is
+ * never what is hashed. Nothing structured travels beside the text.
+ */
 export const clinicRecordCopyItem = z.object({
   seq: z.number().int().min(1), recordKind: z.enum(['clinical_note', 'telehealth_visit', 'lab_observation']), recordId: uuid, revision,
-  payload: z.record(z.string(), z.unknown()), payloadSha256: hash, byteLength: z.number().int().min(1).max(49152),
+  payloadText: z.string().min(2).max(49152).refine((text) => text.startsWith('{') && text.endsWith('}')),
+  payloadSha256: hash, byteLength: z.number().int().min(1).max(49152),
 }).strict();
 
 const connection = z.object({ connectionId: uuid, patientRecordId: uuid, state: z.enum(['verified', 'paused']), verifiedAt: when.nullable(), version: z.number().int().min(0) }).strict();

@@ -68,11 +68,12 @@ retention duration, deletion guarantee or disclosure approval is invented.
 
 | Contract | Where |
 | --- | --- |
-| `clinic-record-requests/1` (consumer and workforce actions, response binding) | `src/contracts/clinicRecordRequests.ts`, mirrored in `expo/contracts/clinicRecordRequests.ts` |
+| `clinic-record-requests/2` (consumer and workforce actions, response binding; copy items as exact digested text) | `src/contracts/clinicRecordRequests.ts`, mirrored byte for byte in `expo/contracts/clinicRecordRequests.ts`; both repositories pin the hash (`scripts/clinic-records-contract-integrity.test.mjs`, `__tests__/clinic-records-contract-pins.test.ts`) |
 | `clinic-record-copy/1` (manifest) | same files; produced by `clinical_private.clinic_record_build_copy` |
 | `clinic-record-journal/1` (V2 encrypted pending-command journal) | `expo/lib/clinicRecords/clinicRecordJournal.ts` |
 | `clinic-records-source-candidate/1` (bundled handler + SQL + manifest) | `scripts/build-clinic-records-source-candidate.mjs` |
-| `clinic-record-privacy-candidate/1` (114-migration artifact) | `scripts/clinic-record-privacy-candidate.mjs` |
+| `clinic-record-privacy-candidate/2` (114-migration artifact; `/1` returned a re-serializable object and is superseded, never applied) | `scripts/clinic-record-privacy-candidate.mjs` |
+| `clinic-records-deployment/1` (compiled handler, deterministic zip, CloudFormation template, manifest) | `scripts/build-aws-clinic-records.mjs`, `src/server/clinical-core/clinic-records-deployment.ts`, `clinic-records-lambda.ts` |
 | `clinic-records-qualification-binding/1`, `clinic-records-qualification-report/1`, `clinic-records-qualification-cases/1` (Codex's synthetic hosted qualification: target binding, mandatory cases, report check) | `scripts/clinic-records-qualification-report.mjs` |
 
 Consumer actions: `overview`, `submit_copy`, `submit_correction`, `get`,
@@ -83,16 +84,38 @@ Consumer actions: `overview`, `submit_copy`, `submit_correction`, `get`,
 `POST /clinical-core/workforce/clinic-records` (workforce JWT, purpose
 `clinical_data`, sign-in within 15 minutes).
 
-## The forward candidate (114)
+## The exact-byte wire contract (recheck C2)
+
+A copy item travels as the EXACT UTF-8 text PostgreSQL digested at fulfilment
+(`payloadText`), its digest (`payloadSha256`) and its byte length
+(`byteLength`). The device checks the length and the digest of the received
+text before parsing it, and parses it with a number-preserving parser
+(`expo/lib/clinicRecords/jsonText.ts`), so `1.20` is verified and displayed as
+`1.20` and `0.0000001` never becomes `1e-7`. Nothing structured travels beside
+the text; a page with one bad item (wrong digest, wrong length, substituted or
+trailing text, duplicate key) is refused whole. The item table stores that text
+once (`payload_text`, checked to be a JSON object of exactly `byte_length`
+bytes). The fixture `src/contracts/fixtures/clinic-record-copy-lab-item.json`
+is what the real reader produced in embedded PostgreSQL for a decimal
+observation (1.20, reference 0.0000001–1000000.50, a 20-digit integer, Unicode);
+the database test regenerates and compares it, and the V2 client test replays
+it through the real transport (`AUDIT reads a valid decimal lab payload digested
+by PostgreSQL jsonb`).
+
+## The forward candidate (114, revision 2)
 
 `infra/aws-clinical-core/production-candidates/clinic-record-privacy.sql` →
-`20261010210000_production_clinic_record_privacy.sql`, built by
-`npm run build:clinic-record-privacy-candidate` on the EXACT 113
-telehealth-chart-lifecycle/3 candidate (parent pins: count 113, ledger
-`0abad35b…`, assembly `2cb4ca8c…`; this file's SHA-256 is pinned). It alters no
-historical migration, seeds nothing (no request, copy, release), and is not an
-instruction to apply. If Codex's `/4` chart candidate (`20261010190000`)
-replaces 113, the parent pin must be re-pointed and the file renumbered above it.
+`20261010230000_production_clinic_record_privacy.sql`, built by `npm run build:clinic-record-privacy-candidate` on the
+EXACT 113 telehealth-chart-lifecycle/3 candidate (parent pins: count 113, ledger
+`0abad35b…`, assembly `2cb4ca8c…`). SQL SHA-256 `70252a4917af58b10153760afa4405217b9dc28cc05d749c5a9f790d4cffc51a`,
+114 ledger `91da02f57bfe65fe4c44bf3e686b7e98cd160a3b85e1d80d9bf09a81f1af3731`, assembly
+`dcfb2f524154405303d30f07763eb75b34a8c8eee13ad9318b94ee81451504fc`. It alters no historical migration, seeds
+nothing (no request, copy, release), and is not an instruction to apply. The
+first revision (`20261010210000`, `clinic-record-privacy-candidate/1`) is
+superseded by this distinct version and hash; it was never applied anywhere.
+The candidate still depends on chart lifecycle `/3`: it cannot be deployed over
+the selected `/4` + Zoom-host + key-fence chain by changing a count; Codex
+supplies the selected parent and mapping before a combined release.
 
 The number 114 is this file's position above the pinned parent, not a reserved
 release slot: Codex's `zoom-host-authority-candidate/1` also proposes a 114 on a
@@ -117,6 +140,81 @@ register the two routes; deploy the handler (`createProductionClinicRecordsApi`
 with `disclosureReviewSha256`, `retentionReviewSha256`, `mfaReviewSha256`
 reviews, activation blocked, PHI off); classify the new refusal words in the
 hosted rejection mapping (`rds-data-database.ts` already does).
+
+## The deployment candidate (source only, blocked by default)
+
+`npm run build:aws-clinic-records` compiles `clinic-records-lambda.ts` with the
+build identity (source commit, clean flag, 114 ledger, candidate SQL hash, the
+dispatcher body hash) into `dist/aws-clinical-core/clinic-records/` and writes
+a deterministic `deployment.zip`, a `template.json` and
+`artifact-manifest.json` (`clinic-records-deployment/1`, `deploymentPerformed:
+false`, `registered: false`). The template registers the two routes on an
+existing API with SEPARATE JWT authorizers (consumer pool, workforce pool;
+`SeparateIdentities` rule), one `AWS::PROXY` integration, exact-resource
+`lambda:InvokeFunction` permissions per route, a role whose data policy exists
+only under the `Enabled` condition (RDS Data API on one cluster, one secret, KMS
+decrypt via Secrets Manager for that secret), a KMS-encrypted log group, two
+alarms, reserved concurrency 2, and the qualification profile shared by every
+candidate. Parameters `SourceCommit`, `MigrationReleaseSha256` and
+`ClinicRecordsExtensionSha256` admit only this build's values. Reviews
+(`DatabaseReviewSha256`, `WorkforceMfaReviewSha256`, `DisclosureReviewSha256`,
+`RetentionReviewSha256`) are hash-shaped parameters with no default; the
+runtime refuses to serve without all four, and no environment flag turns a
+missing review into approval.
+
+`clinic-records-deployment.ts` binds the runtime: the environment must repeat
+the build's commit, ledger and SQL hash, the activation stays `blocked`, the
+account, region, cluster, secret and database must match the mode (production
+account for production, `588966314750` + `clinical_core_qualification` for
+qualification), and a dirty build never serves. Before business SQL, every
+transaction verifies under `clinical_core_api` that the deployed dispatcher is
+the compiled one (body hash, security definer, empty search_path, executable
+by the API role and by nobody anonymous), that the five ledgers force row
+security and grant the API role nothing, and that the guard and append-only
+triggers exist; otherwise 503. `clinic-records-deployment.test.ts` proves this
+against the real 114 artifact.
+
+## The hosted qualification runner (source; Codex executes)
+
+`scripts/clinic-records-qualification-runner.mjs` executes the thirty cases
+against a target through two ports: `http` (the deployed routes) and `sql`
+(read-only readback as a privileged inspection principal). Every observation
+in the report comes from a real response or a real readback: replay counts,
+copy rows, manifest coverage, item digests, note signature rows before and
+after an addendum, audit rows, API-role privileges, triggers. Tokens come from
+Codex per fictional subject (`fresh`, `aged` 5–15 minutes, `stale` > 15
+minutes); the runner reads only their claims, refuses a token under another
+subject or outside its window, and never writes a token. The run verifies the
+ledger has 114 rows and that no release exists, executes the seventeen
+`before_release` cases, calls `awaitRelease` (Codex runs the owner-reviewed
+operator), verifies that exactly the bound fictional release now exists, and
+executes the thirteen `under_release` cases. A port failure or a window
+violation ends the run with an incomplete report that the evaluator refuses.
+`createHostedPorts` binds `fetch` to the qualification API origin and the RDS
+Data API to the qualification cluster (positional parameters rewritten to the
+Data API's named form). `clinic-records-qualification-runner.test.ts` runs the
+whole thing against the REAL artifact-bound handler over the real 114 schema in
+embedded PostgreSQL, with seven fictional subjects and two fictional clinics:
+all thirty cases observed, the release registered between phases, verdict
+`mandatory_cases_matched` with acceptance false.
+
+CLI: `node scripts/clinic-records-qualification-runner.mjs --binding=<json>
+--tokens=<json> --fixtures=<json> --target=<json> --out=<report.json>`, where
+`fixtures` names the signed note text and the draft text Codex seeded for
+patient A (used only to assert absence in responses) and `target` names
+`apiId`, `clusterArn`, `secretArn`, `database`.
+
+## Coverage declared honestly
+
+The copy covers signed notes with addenda, telehealth visit records through
+chart-transfer receipts, and accepted lab observations. Three clinic domains are
+NOT covered by this copy, and the manifest says so under `completeClinicRecord:
+false`: correspondence stays readable through the separately scoped care-message
+export under the immutable thread owner (a deliberate launch exclusion, not an
+owner approval); programs/protocols and intake/check-ins have no production
+reader at all today. These are disclosures of incomplete coverage, not proof of
+a complete clinic export. Integrating the care-message export into this copy is
+possible without new authority and is left as an owner decision.
 
 ## The qualification contract for Codex
 
@@ -178,13 +276,18 @@ template that registers them, are not in this branch (see the handoff).
 | Check | Result |
 | --- | --- |
 | `npm run test:clinic-record-privacy-candidate` | 19 pass (byte-exact parent, refusal matrix) |
-| `clinic-record-privacy.database.test.ts` (PGlite, real 114 artifact, `clinical_core_api` role, through the production adapters) | 6 pass: fail-closed without a release then fulfilment under a fictional partial release with an honest manifest; telehealth records without admission material, keyset paging with byte budget, digest cross-check against the device's canonical form; retained copy after pause/revoke/replacement and never to a new owner; two clinics, two same-clinic patients, roles and pools; decisions in both orders, replay, stale revision, withdrawal, supersession, append-only ledgers; corrections only against a disclosed revision, addendum appended, original unchanged, decline recorded |
+| `npm run test:clinic-records-contract-integrity` | 2 pass (contract and fixture hashes pinned in both repositories; text-only wire form) |
+| `npm run test:clinic-records-deployment` | 5 pass (blocked by default, binding refusals, reviews, bound dispatcher check against the real artifact) |
+| `npm run test:clinic-records-qualification-runner` | 3 pass (window and subject refusals, all 30 cases through the real handler and schema, release-present refusal) |
+| `npm run build:aws-clinic-records` | template, zip and manifest; `deploymentPerformed: false` |
+| `clinic-record-privacy.database.test.ts` (PGlite, real 114 artifact, `clinical_core_api` role, through the production adapters) | 7 pass (the seventh regenerates and compares the decimal fixture): fail-closed without a release then fulfilment under a fictional partial release with an honest manifest; telehealth records without admission material, keyset paging with byte budget, digest cross-check against the device's canonical form; retained copy after pause/revoke/replacement and never to a new owner; two clinics, two same-clinic patients, roles and pools; decisions in both orders, replay, stale revision, withdrawal, supersession, append-only ledgers; corrections only against a disclosed revision, addendum appended, original unchanged, decline recorded |
 | `production-clinic-records-api.test.ts` | 8 pass (off by default, fixture admission per pool, review gates, claim substitution, fresh sign-in windows, body bounds, decided code mapping) |
 | `rds-data-database.test.ts` | the eight new refusal words classified |
 | `npm run test:clinic-records-qualification-report` | 35 pass (case list shape, complete fictional report never accepted, 32 refusals, `--cases` output) |
 | `ClinicRecordRequestsView.render.test.ts` | 4 pass |
 | `e2e/live-clinic-records-ui.spec.ts` | see the handoff for the run result |
-| V2 `clinic-records-client`, `clinic-records-journal`, `clinic-data-center-screen` (mounted), `clinic-records-device-inventory` | 16 pass |
+| CI (`.github/workflows/ci.yml`, job "Care messaging database API…") | runs the candidate, qualification-report, contract-integrity, deployment and runner suites, both source builds and the embedded-database journeys |
+| V2 `clinic-records-client`, `clinic-records-json-text`, `clinic-records-contract-pins`, `clinic-records-journal`, `clinic-data-center-screen` (mounted; includes the three AUDIT diagnostics), `clinic-records-device-inventory` | see the handoff |
 | V2 full suite, typecheck, lint, hipaa-baseline, surface-disclosure, v2-capabilities | see the handoff |
 
 Embedded Postgres runs one transaction at a time: race orders are proven as

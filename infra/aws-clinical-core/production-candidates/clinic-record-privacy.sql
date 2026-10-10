@@ -31,6 +31,11 @@
 --      digest, bounded per item, read back by keyset under the owner's own
 --      identity. Reading does not depend on the connection still being active:
 --      a received clinic record is the owner's to re-read; nothing here erases.
+--      The wire form of an item is the exact UTF-8 text that was digested
+--      (payloadText, payloadSha256, byteLength): the device verifies the bytes
+--      it received before it parses them, and a decimal such as 1.20 or
+--      0.0000001 is displayed as written. (Revision 2 of this candidate; the
+--      first revision returned a re-serializable object and was never applied.)
 --
 --   4. clinical_private.clinic_disclosure_releases — the disclosure authority.
 --      Fulfilling a copy requires a live, reviewed release for this organization
@@ -182,9 +187,14 @@ create table clinical_core.clinic_record_copy_items (
   record_kind text not null check (record_kind in ('clinical_note','telehealth_visit','lab_observation')),
   record_id uuid not null,
   revision integer not null check (revision > 0),
-  payload jsonb not null check (jsonb_typeof(payload) = 'object'),
+  -- The exact UTF-8 text that was digested is what travels to the device: a
+  -- number such as 1.20 or 0.0000001 keeps its bytes, so the device hashes the
+  -- text it received, never a value it re-serialized. There is one
+  -- authoritative copy; nothing structured is stored beside it.
+  payload_text text not null check (jsonb_typeof(payload_text::jsonb) = 'object'),
   payload_sha256 text not null check (payload_sha256 ~ '^[0-9a-f]{64}$'),
   byte_length integer not null check (byte_length between 1 and 49152),
+  check (pg_catalog.octet_length(payload_text) = byte_length),
   primary key (copy_id, section, seq),
   unique (copy_id, record_kind, record_id)
 );
@@ -460,8 +470,8 @@ begin
       else
         _included:=_included+1;
       end if;
-      insert into clinical_core.clinic_record_copy_items(copy_id,section,seq,record_kind,record_id,revision,payload,payload_sha256,byte_length)
-        values(_copy,_s,_seq,_rec.record_kind,_rec.record_id,_rec.revision,_payload,
+      insert into clinical_core.clinic_record_copy_items(copy_id,section,seq,record_kind,record_id,revision,payload_text,payload_sha256,byte_length)
+        values(_copy,_s,_seq,_rec.record_kind,_rec.record_id,_rec.revision,_text,
           pg_catalog.encode(public.digest(pg_catalog.convert_to(_text,'UTF8'),'sha256'),'hex'),_bytes);
       _items:=_items+1; _total:=_total+_bytes;
     end loop;
@@ -633,7 +643,7 @@ begin
         and (_after is null or seq>(_after#>>'{}')::integer) order by seq limit _limit loop
       exit when _n>0 and _bytes+_item.byte_length>262144;
       _rows:=_rows||jsonb_build_object('seq',_item.seq,'recordKind',_item.record_kind,'recordId',_item.record_id,'revision',_item.revision,
-        'payload',_item.payload,'payloadSha256',_item.payload_sha256,'byteLength',_item.byte_length);
+        'payloadText',_item.payload_text,'payloadSha256',_item.payload_sha256,'byteLength',_item.byte_length);
       _bytes:=_bytes+_item.byte_length; _n:=_n+1;
     end loop;
     perform clinical_private.clinic_record_audit(_org,_actor,'clinic_record.copy_read',_r.id,_r.patient_record_id,'Clinic record copy page read','consent_management',

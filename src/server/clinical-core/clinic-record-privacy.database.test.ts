@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import { classifyDatabaseRejection } from './rds-data-database';
 import { createProductionClinicRecordsConsumer, createProductionClinicRecordsWorkforce, ClinicRecordError } from './production-clinic-records';
@@ -57,16 +58,12 @@ const refusal = async (promise: Promise<unknown>) => {
   return 'no_error';
 };
 const count = async (sql: string, args: unknown[] = []) => (await pg.query<{ n: number }>(`select count(*)::int n from ${sql}`, args)).rows[0].n;
-/** The device's reconstruction of PostgreSQL's jsonb text form (expo/lib/clinicRecords/awsClinicRecords.ts canonicalJson): sorted by key length then bytes, `": "` and `", "`. */
-function deviceCanonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map(deviceCanonicalJson).join(', ') + ']';
-  const keys = Object.keys(value as Record<string, unknown>).sort((a, b) => {
-    const la = Buffer.from(a, 'utf8'), lb = Buffer.from(b, 'utf8');
-    return la.length !== lb.length ? la.length - lb.length : Buffer.compare(la, lb);
-  });
-  return '{' + keys.map(k => JSON.stringify(k) + ': ' + deviceCanonicalJson((value as Record<string, unknown>)[k])).join(', ') + '}';
-}
+/** What the device does with a delivered item (expo/lib/clinicRecords/awsClinicRecords.ts): hash the received text, check its length, only then parse. */
+const verifyItem = (it: { payloadText: string; payloadSha256: string; byteLength: number }) => {
+  expect(sha(it.payloadText)).toBe(it.payloadSha256); expect(Buffer.byteLength(it.payloadText, 'utf8')).toBe(it.byteLength);
+  return JSON.parse(it.payloadText) as Record<string, unknown>;
+};
+const FIXTURE = 'src/contracts/fixtures/clinic-record-copy-lab-item.json';
 
 async function person(role: 'practitioner' | 'staff' | 'admin' | null, organization: string, pool: 'workforce' | 'consumer' = 'workforce') {
   const id = randomUUID();
@@ -134,7 +131,7 @@ beforeAll(async () => {
   const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true })) as Artifact;
   expect(artifact.manifest.migrations).toHaveLength(114);
-  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/1', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
+  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/2', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
   pg = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version, name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
   const admin: ClinicalCoreDatabase = { transaction: work => pg.transaction(tx => work({ query: (sql, parameters = []) => tx.query(sql, [...parameters]) })) };
@@ -201,7 +198,7 @@ describe('patient copy request → practitioner fulfilment → owner reads the s
     // The owner reads the snapshot: the signed note with its addendum, the reviewed observation; never the draft, the unreviewed row or the transfer.
     const notes = await asConsumer({ action: 'read_copy', requestId, section: 'signed_notes', limit: 10 });
     expect(notes).toMatchObject({ action: 'read_copy', requestId, section: 'signed_notes', next: null, items: [{ seq: 1, recordKind: 'clinical_note', recordId: signed, revision: 1 }] });
-    const note = notes.action === 'read_copy' ? notes.items[0].payload as Record<string, unknown> : {};
+    const note = notes.action === 'read_copy' ? verifyItem(notes.items[0]) : {};
     expect(note).toMatchObject({ noteId: signed, status: 'amended', version: 1, content: { text: 'Fictional signed narrative.' }, signedByPersonId: practitioner, addenda: [{ addendumId: addendum, referencedVersion: 1, reason: 'Fictional reason', content: 'Fictional addendum text', authorPersonId: practitioner }] });
     expect(JSON.stringify(notes)).not.toContain('DRAFT');
     const labs = await asConsumer({ action: 'read_copy', requestId, section: 'lab_observations', limit: 10 });
@@ -239,9 +236,9 @@ describe('patient copy request → practitioner fulfilment → owner reads the s
     const text = JSON.stringify([first, second]);
     for (const forbidden of ['admission', 'signature', 'secret', 'key_id', 'fictional-admission-key']) expect(text).not.toContain(forbidden);
     // The digest the clinic recorded is the digest a device recomputes from the delivered bytes: every item, both sections.
-    for (const page of [first, second, notesPage]) for (const it of page.action === 'read_copy' ? page.items : []) expect(sha(deviceCanonicalJson(it.payload)), it.recordId).toBe(it.payloadSha256);
+    for (const page of [first, second, notesPage]) for (const it of page.action === 'read_copy' ? page.items : []) verifyItem(it);
     expect(text).toContain('Fictional practitioner text');
-    expect((first.action === 'read_copy' ? first.items[0].payload : {}) as object).toMatchObject({ sourceNoteRevision: 2, chart: { noteVersion: 1, noteStatus: 'draft' } });
+    expect(first.action === 'read_copy' ? verifyItem(first.items[0]) : {}).toMatchObject({ sourceNoteRevision: 2, chart: { noteVersion: 1, noteStatus: 'draft' } });
     expect(await refusal(asConsumer({ action: 'read_copy', requestId, section: 'telehealth_visits', limit: 2, after: 99 }))).toBe('no_error'); // past the end: an empty page, not an error
     expect(await asConsumer({ action: 'read_copy', requestId, section: 'telehealth_visits', limit: 2, after: 99 })).toMatchObject({ items: [], next: null });
     // Byte budget: a page stops before exceeding 256 KiB once it holds one item.
@@ -409,5 +406,43 @@ describe('corrections: an owner request against a disclosed signed revision; cli
     const owner = await asConsumer({ action: 'get', requestId: second });
     expect(owner.action === 'get' && owner.events.map(e => e.action)).toEqual(['submitted', 'declined']);
     expect(await refusal(asConsumer({ ...correction, requestId: second, subjectId: other, reasonCode: 'missing_context', statement: 'Fictional: context missing.' }))).toBe('no_error'); // exact replay of a settled request is still the same row
+  });
+});
+
+describe('AUDIT exact-byte wire contract', () => {
+  it('AUDIT reads a valid decimal lab payload digested by PostgreSQL jsonb: the text travels as digested, and the committed fixture is byte-identical to what the reader produced', async () => {
+    // Fixed identities so the produced bytes are reproducible and can be pinned for the V2 client test.
+    const reviewer = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a', eventId = '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b', observation = '0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c';
+    await pg.query('insert into clinical_core.persons(id,subject_key) values($1,$2)', [reviewer, 'subject_fixture_reviewer']);
+    await pg.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'workforce','subject-fixture-reviewer',true)", [reviewer]);
+    await pg.query("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner')", [org, reviewer]);
+    const provider = (await pg.query<{ id: string }>("insert into clinical_core.sync_providers(organization_id,stable_id,contract_version,lab_contract_version,adapter_version,state,reviewed_by_person_id,reviewed_at) values($1,'fictional_lab','patient-sync/1','lab-result/1','1','active',$2,now()) returning id", [org, practitioner])).rows[0].id;
+    await pg.query(`insert into clinical_core.lab_import_events(id,organization_id,patient_record_id,connection_id,provider_id,provider_event_id,external_panel_id,external_marker_id,resource_version,panel_name,marker_name,value_numeric,unit,collected_at,occurred_at,payload_sha256,state,reviewed_at,reviewed_by_person_id)
+      values($1,$2,$3,$4,$5,'evt-fixture-decimal','panel-1','VitaminD','1','Vitamin panel','VitaminD',1.20,'ng/mL','2026-10-09T12:00:00Z','2026-10-09T12:00:00Z',$6,'accepted','2026-10-09T13:00:00Z',$7)`,
+      [eventId, org, patient, connection, provider, sha('fixture'), reviewer]);
+    await pg.query(`insert into clinical_core.lab_observations(id,organization_id,patient_record_id,import_event_id,panel_name,marker_name,value_numeric,unit,reference_min,reference_max,observed_at,review_status,provenance,reviewed_at,reviewed_by_person_id)
+      values($1,$2,$3,$4,'Vitamin panel','VitaminD',1.20,'ng/mL',0.0000001,1000000.50,'2026-10-09T12:00:00Z','accepted',$5::jsonb,'2026-10-09T13:00:00Z',$6)`,
+      // Hand-written JSON text: a JavaScript JSON.stringify would already have rounded these before PostgreSQL saw them.
+      [observation, org, patient, eventId, '{"source": "fictional_lab", "importEventId": "' + eventId + '", "unicode": "µg/L — fictional ✓", "nested": [1.50, [2.0e-7, "x"], {"n": 12345678901234567890}]}', reviewer]);
+    const requestId = randomUUID();
+    await asConsumer({ action: 'submit_copy', requestId, sections: ['lab_observations'] });
+    await fictionalRelease(org, ['lab_observations']);
+    await asWorkforce({ action: 'fulfill', ...decision(requestId, 1), sections: ['lab_observations'] });
+    const page = await asConsumer({ action: 'read_copy', requestId, section: 'lab_observations', limit: 10 });
+    if (page.action !== 'read_copy') throw new Error('page');
+    const item = page.items[0];
+    // The bytes PostgreSQL digested are the bytes delivered: decimals keep their scale and small numbers never become exponents.
+    expect(item.payloadText).toContain('"valueNumeric": 1.20'); expect(item.payloadText).toContain('"referenceMin": 0.0000001');
+    expect(item.payloadText).toContain('"referenceMax": 1000000.50'); expect(item.payloadText).toContain('12345678901234567890');
+    expect(item.payloadText).toContain('[1.50, [0.00000020, "x"]'); expect(item.payloadText).toContain('µg/L — fictional ✓');
+    const parsed = verifyItem(item);
+    expect(parsed).toMatchObject({ observationId: observation, markerName: 'VitaminD', unit: 'ng/mL', reviewedByPersonId: reviewer });
+    // The defect this guards against: a JavaScript round trip re-serializes 1.20 as 1.2 and 0.0000001 as 1e-7, so hashing a rebuilt object can never verify these bytes.
+    expect(JSON.stringify(JSON.parse(item.payloadText))).not.toContain('1.20');
+    expect(sha(JSON.stringify(JSON.parse(item.payloadText)))).not.toBe(item.payloadSha256);
+    const pinned = { recordKind: item.recordKind, recordId: item.recordId, revision: item.revision, payloadText: item.payloadText, payloadSha256: item.payloadSha256, byteLength: item.byteLength };
+    if (process.env.WRITE_CLINIC_RECORD_FIXTURE === '1') writeFileSync(FIXTURE, JSON.stringify(pinned, null, 2) + '\n');
+    // Byte-identical with the committed fixture that the V2 client test replays through the real transport (expo/contracts/fixtures).
+    expect(JSON.parse(readFileSync(FIXTURE, 'utf8'))).toEqual(pinned);
   });
 });

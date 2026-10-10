@@ -27,6 +27,16 @@ jobs:
           npm run check:aws-production-clinical-core
           npm run check:aws-covered-entity-coverage
           node --test scripts/covered-entity-disposition.test.mjs
+      - name: Clinic-record privacy candidate, qualification contract, contract mirror pins and embedded-database journeys (no AWS calls, registration or activation)
+        run: |
+          npm run test:clinic-record-privacy-candidate
+          npm run test:clinic-records-qualification-report
+          npm run test:clinic-records-contract-integrity
+          npm run test:clinic-records-deployment
+          npm run test:clinic-records-qualification-runner
+          npm run build:clinic-records-source-candidate
+          npm run build:aws-clinic-records
+          npx vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts src/server/clinical-core/production-clinic-records-api.test.ts src/server/clinical-core/clinic-records-deployment.test.ts
       - name: Fictional embedded database only; no AWS access or activation
         run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
       - name: Fullscript draft compiler transport and existing cart exclusions (fictional only)

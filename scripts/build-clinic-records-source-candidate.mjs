@@ -9,7 +9,7 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const candidate = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], {
   encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,
 }));
-if (candidate.candidate.contract !== 'clinic-record-privacy-candidate/1' || candidate.manifest.migrations.length !== 114) throw new Error('clinic_records_candidate_changed');
+if (candidate.candidate.contract !== 'clinic-record-privacy-candidate/2' || candidate.manifest.migrations.length !== 114) throw new Error('clinic_records_candidate_changed');
 const schema = candidate.files[candidate.manifest.migrations[113].file];
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',

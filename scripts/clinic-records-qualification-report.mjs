@@ -38,7 +38,8 @@ export const CLINIC_RECORDS_QUALIFICATION_CASES = Object.freeze([
   c('consumer_stale_signin_refused', 'before_release', 'consumer', 'patientA', 'submit_copy', { status: 401, error: 'reauth_required' }),
   c('consumer_revoked_link_refused', 'before_release', 'consumer', 'patientRevoked', 'submit_copy', { status: 403, error: 'connection_required' }),
   c('consumer_other_clinic_identity_refused', 'before_release', 'consumer', 'patientOtherClinic', 'overview', { status: 403, error: 'identity_refused' }),
-  c('workforce_other_clinic_identity_refused', 'before_release', 'workforce', 'practitionerOtherClinic', 'queue', { status: 403, error: 'identity_refused' }),
+  // A verified workforce identity of another organization is not this deployment's: the authority layer answers as it does for every foreign workforce token.
+  c('workforce_other_clinic_identity_refused', 'before_release', 'workforce', 'practitionerOtherClinic', 'queue', { status: 401, error: 'reauth_required' }),
   c('workforce_without_clinical_role_refused', 'before_release', 'workforce', 'staffWithoutClinicalRole', 'queue', { status: 403, error: 'identity_refused' }),
   c('workforce_malformed_body_refused', 'before_release', 'workforce', 'practitioner', 'queue', { status: 400, error: 'request_invalid' }),
   c('consumer_submit_copy', 'before_release', 'consumer', 'patientA', 'submit_copy', { status: 200, summary: { alreadyApplied: false, status: 'submitted' } }),
@@ -73,7 +74,7 @@ export const CLINIC_RECORDS_QUALIFICATION_CASES = Object.freeze([
 
 export function assertClinicRecordsQualificationBinding(binding, candidate) {
   const t = CLINIC_RECORDS_QUALIFICATION_TARGET;
-  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/1' || candidate.migrationCount !== t.migrationCount
+  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/2' || candidate.migrationCount !== t.migrationCount
     || candidate.extensionSha256 !== t.extensionSha256 || !hash.test(candidate.migrationReleaseSha256 ?? '') || candidate.activation !== 'blocked'
     || candidate.phiAllowed !== false || candidate.deployment !== 'not_deployed' || candidate.seededDisclosureReleases !== false
     || candidate.seededRequests !== false) refuse('candidate_refused');

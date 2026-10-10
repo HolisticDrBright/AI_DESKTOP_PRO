@@ -1,0 +1,8 @@
+{
+  "recordKind": "lab_observation",
+  "recordId": "0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c",
+  "revision": 1,
+  "payloadText": "{\"unit\": \"ng/mL\", \"panelName\": \"Vitamin panel\", \"markerName\": \"VitaminD\", \"observedAt\": \"2026-10-09T12:00:00+00:00\", \"provenance\": {\"nested\": [1.50, [0.00000020, \"x\"], {\"n\": 12345678901234567890}], \"source\": \"fictional_lab\", \"unicode\": \"µg/L — fictional ✓\", \"importEventId\": \"0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b\"}, \"reviewedAt\": \"2026-10-09T13:00:00+00:00\", \"referenceMax\": 1000000.50, \"referenceMin\": 0.0000001, \"valueNumeric\": 1.20, \"observationId\": \"0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c\", \"reviewedByPersonId\": \"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a\"}",
+  "payloadSha256": "0be02ba56724bf63c694d0d10cb75f67c27456da35273d695b78b2a5e4d47290",
+  "byteLength": 559
+}
