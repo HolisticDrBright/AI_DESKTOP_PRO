@@ -1,5 +1,6 @@
 import {beforeEach,describe,it,expect,vi} from 'vitest';
-import {generateKeyPairSync,sign} from 'node:crypto';
+import {createHash,generateKeyPairSync,sign} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {CognitoJwtVerifier} from 'aws-jwt-verify';
 import {createQualificationFullscriptApi,fullscriptQualificationTargetSchema,FULLSCRIPT_QUALIFICATION_ROUTES,FullscriptQualificationReauth,
  type FullscriptQualificationTarget,type FullscriptQualificationEvent,type FullscriptRequestIdentity} from './qualification-api';
@@ -8,13 +9,15 @@ import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from '../clinical-cor
 const now=Math.floor(Date.now()/1000)*1000,earlier=new Date(now-60_000);
 const org='11111111-1111-4111-8111-111111111111',person='22222222-2222-4222-8222-222222222222',id='33333333-3333-4333-8333-333333333333';
 const issuer='https://cognito-idp.us-east-2.amazonaws.com/';
+const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-fullscript-candidate.mjs','--json'],
+ {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
 const target:FullscriptQualificationTarget={execution:'qualification',account:'588966314750',region:'us-east-2',phiAllowed:false,activation:'blocked',
  reviewSha256:'a'.repeat(64),sourceCommit:'b'.repeat(40),apiId:'a123456789',functionArn:'arn:aws:lambda:us-east-2:588966314750:function:fictional-fullscript:1',
  codeSha256:Buffer.alloc(32,3).toString('base64'),clusterArn:'arn:aws:rds:us-east-2:588966314750:cluster:fictional',secretArn:'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-db',
  databaseName:'clinical_core_qualification',organizationId:org,consumerIssuer:issuer+'us-east-2_FictionalConsumer',consumerAudience:'c'.repeat(26),
  workforceIssuer:issuer+'us-east-2_FictionalWorkforce',workforceAudience:'w'.repeat(26),consumerSubjects:['fictional-consumer','fictional-consumer-2'],workforceSubjects:['fictional-workforce'],
- migrations:Array.from({length:110},(_,i)=>({version:String(20260000000000+i),name:i<107?'FICTIONAL_'+i:
-  ['production_fullscript_draft_ledger','production_canonical_protocol_carts','production_fullscript_canonical_authority'][i-107],sha256:'d'.repeat(64)}))};
+ migrations:artifact.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
+  sha256:createHash('sha256').update(artifact.files[m.file]).digest('hex')}))};
 const context={invokedFunctionArn:target.functionArn,functionVersion:'1'};
 function event(workforce=true,request:unknown={action:'read',id}):FullscriptQualificationEvent{return {
  routeKey:workforce?FULLSCRIPT_QUALIFICATION_ROUTES.workforce:FULLSCRIPT_QUALIFICATION_ROUTES.consumer,
@@ -80,7 +83,9 @@ describe('strict source-only qualification API',()=>{
  });
  it.each([{phiAllowed:true},{activation:'approved'},{account:'173535830222'},{databaseName:'clinical_core'},{functionArn:target.functionArn.replace(':1',':$LATEST')},
   {consumerSubjects:['fictional-workforce','fictional-consumer']},{migrations:[...target.migrations,target.migrations[0]]},
-  {migrations:target.migrations.slice(0,107)}])('rejects configuration %j',patch=>{
+  {migrations:target.migrations.slice(0,107)},
+  {migrations:target.migrations.map((m,i)=>i===0?{...m,name:'forged_history'}:m)},
+  {migrations:target.migrations.map((m,i)=>i===110?{...m,sha256:'e'.repeat(64)}:m)}])('rejects configuration %j',patch=>{
   expect(()=>api({...target,...patch})).toThrow();
  });
 });
