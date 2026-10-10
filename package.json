@@ -21,6 +21,7 @@
     "identify:telehealth-consent-configuration": "node dist/aws-clinical-core/telehealth-consent/configuration-identity.cjs",
     "build:fullscript-candidate": "node scripts/build-fullscript-candidate.mjs",
     "build:fullscript-upgrade": "node scripts/build-fullscript-upgrade.mjs",
+    "test:fullscript-native-owner-source": "node --test scripts/qualify-fullscript-native-owner.test.mjs",
     "build:telehealth-consent-upgrade": "node scripts/build-telehealth-consent-upgrade.mjs",
     "test:telehealth-consent-upgrade-artifact": "node --test scripts/telehealth-consent-upgrade-artifact.test.mjs",
     "test:telehealth-consent-copy-registration": "vitest run src/server/clinical-core/telehealth-consent-copy-command.test.ts src/server/clinical-core/telehealth-consent-copy-native-custody.test.ts src/server/clinical-core/telehealth-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-registration.database.test.ts --no-file-parallelism",
