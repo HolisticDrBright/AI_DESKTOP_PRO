@@ -68,6 +68,36 @@ Zoom accounts additionally needs the app review and user authorization described
 in [Zoom's SDK authorization requirements](https://developers.zoom.us/docs/meeting-sdk/auth/).
 The existing global host configuration is not a completed multi-clinic service.
 
+### October 10 provider host and meeting observation
+
+Before issuing a host SDK session, the boundary reads the configured user's
+profile from Zoom and requires an active canonical host ID in the configured
+Zoom account. An email configuration must match the returned profile email;
+an ID configuration must match the exact canonical ID. The `me` alias is not
+accepted. The current meeting must match that canonical host, the saved meeting
+number and instance UUID, a scheduled meeting type, an allowed live/waiting state
+and the saved actual password. Missing or changed fields refuse the session;
+a meeting number alone cannot establish host authority.
+
+ZAK is requested for the observed canonical host, not the email alias. Both
+profile and meeting are observed again after ZAK is obtained and before signing;
+deactivation, reassignment or an instance change withholds the session without
+claiming the existing meeting was deleted. These GET responses are bounded to
+64 KiB, reject redirects and share the SDK operation's 20-second deadline. Provider
+errors and payloads are not included in the refusal.
+
+The profile read needs the user-read permission documented in
+[Zoom's Get a user API](https://developers.zoom.us/docs/api/users/); the meeting
+read uses [Get a meeting](https://developers.zoom.us/docs/api/meetings/).
+No scope is granted automatically. Missing provider permissions fail closed.
+
+Repeated observations are not an atomic provider lock, and these checks do not
+connect the global Zoom host to a reviewed clinic/practitioner release. Creation,
+adoption, cancellation and recovery still need persistent host and secret-version
+bindings. Legacy visits without a known instance UUID, or with a changed password,
+need an explicitly authorized reconciliation path; they are not silently rebound.
+Live two-participant acceptance and the clinic-specific registry remain outstanding.
+
 ### October 9 summary-boundary repair
 
 Summary import requires a known visit instance UUID and an exact matching UUID
@@ -279,7 +309,7 @@ The Secrets Manager secret is one JSON object:
 | `sdkKey`, `sdkSecret` | the Meeting SDK app; the secret signs the short-lived (2 h) SDK JWT and never leaves the Lambda |
 
 Server-to-Server OAuth scopes the Lambda calls need: `meeting:write:admin`
-(create/update/delete), `meeting:read:admin`, `user:read:admin` (ZAK via
+(create/update/delete), `meeting:read:admin`, `user:read:admin` (active host profile and ZAK via
 `GET /users/{userId}/token?type=zak`), and the meeting-summary read scope
 (`meeting_summary:read:admin`). Meetings are created with the waiting room on,
 `join_before_host` off and `meeting_authentication` on. AI Companion meeting

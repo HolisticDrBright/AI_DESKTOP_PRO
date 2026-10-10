@@ -10,6 +10,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { boundedProviderJson } from "./bounded-provider-json";
 import { runZoomCredentialRequest, zoomCredentialsForRequest, zoomBearerToken } from "./zoom-credential-snapshot";
+import { observeZoomSdkHost } from "./zoom-host-observation";
 import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from "../../contracts/telehealthConsent";
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
 import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
@@ -1564,7 +1565,7 @@ async function startVisit(config: TelehealthConfiguration, actor: Actor, value: 
   if (withMeeting.status === "ended" || withMeeting.status === "ending") throw new TelehealthError("conflict");
   assertAssignedVisitHost(actor, await requireBindingAuthority(config, actor, withMeeting));
   await requireConsentAuthority(config, actor, withMeeting);
-  const session = await meetingSdkSession(config, withMeeting.providerMeetingId as string, withMeeting.passcode, hostDisplayName);
+  const session = await meetingSdkSession(config, withMeeting.providerMeetingId as string, withMeeting.providerMeetingUuid, withMeeting.passcode, hostDisplayName);
   assertAssignedVisitHost(actor, await requireBindingAuthority(config, actor, withMeeting));
   await requireConsentAuthority(config, actor, withMeeting);
   const saved = await saveVisit(config, { ...withMeeting, status: "in_visit", startedAt: withMeeting.startedAt ?? new Date().toISOString() }, withMeeting.version);
@@ -1782,12 +1783,16 @@ async function zoomMeetingSummary(config: TelehealthConfiguration, meetingId: st
  * the SDK signature (HS256 JWT over the SDK key/secret held in Secrets
  * Manager, 2-hour TTL) plus the host's ZAK. The SDK secret never leaves here.
  */
-async function meetingSdkSession(config: TelehealthConfiguration, meetingId: string, passcode: string | null, hostDisplayName: string) {
+async function meetingSdkSession(config: TelehealthConfiguration, meetingId: string, meetingUuid: string | null, passcode: string | null, hostDisplayName: string) {
   const signal = AbortSignal.timeout(20_000);
   const { accessToken, userId, credentials } = await zoomAccess(config, true, signal);
   const { sdkKey, sdkSecret } = credentials;
   if (!sdkKey || !sdkSecret) throw new TelehealthError("provider_unavailable");
-  const zakResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/token?type=zak`, { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
+  const observation = { accessToken, accountId: credentials.accountId, configuredUserId: userId, meetingId, meetingUuid, passcode };
+  let hostId: string;
+  try { hostId = await observeZoomSdkHost(observation, signal); }
+  catch { throw new TelehealthError("provider_unavailable"); }
+  const zakResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(hostId)}/token?type=zak`, { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
   if (!zakResponse.ok || zakResponse.status !== 200 || zakResponse.redirected) {
     try { await zakResponse.body?.cancel(); } catch { /* refusal retained */ }
     throw new TelehealthError("provider_unavailable");
@@ -1796,7 +1801,11 @@ async function meetingSdkSession(config: TelehealthConfiguration, meetingId: str
   try { zak = zoomBearerToken(await boundedProviderJson(zakResponse, 65_536), "token"); }
   catch { throw new TelehealthError("provider_unavailable"); }
   if (signal.aborted) throw new TelehealthError("provider_unavailable");
-  const meetingNumber = meetingId.replace(/\D/g, "");
+  // Obtaining ZAK is not an atomic host-authority check. Observe again before
+  // signing and refuse a changed/deactivated/reassigned host or instance.
+  try { if (await observeZoomSdkHost(observation, signal) !== hostId) throw new TelehealthError("provider_unavailable"); }
+  catch { throw new TelehealthError("provider_unavailable"); }
+  const meetingNumber = meetingId;
   if (!/^\d{9,12}$/.test(meetingNumber)) throw new TelehealthError("provider_unavailable");
   const issuedAt = Math.floor(Date.now() / 1000) - 30; const expiresAt = issuedAt + MEETING_SDK_SIGNATURE_TTL_SECONDS;
   const signature = signMeetingSdkJwt(sdkKey, sdkSecret, { appKey: sdkKey, sdkKey, mn: meetingNumber, role: 1, iat: issuedAt, exp: expiresAt, tokenExp: expiresAt });

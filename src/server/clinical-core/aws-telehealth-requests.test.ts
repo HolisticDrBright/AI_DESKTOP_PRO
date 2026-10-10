@@ -582,12 +582,13 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
     ["/clinical-core/workforce/data-compatibility", typeof options.calendar === "function" ? options.calendar : () => jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } })],
   ];
-  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
-  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
+  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, host_id: "zoom-host-id", type: 2, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
+  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "host" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["zoom.us/oauth/token", overrides.token ?? (() => jsonResponse(200, { access_token: "zoom-access" }))],
     [/\/users\/[^/]+\/meetings\?/, overrides.list ?? (() => jsonResponse(200, { meetings: [] }))],
     [/\/users\/[^/]+\/meetings$/, overrides.create ?? (() => jsonResponse(201, meetingBody(900000001)))],
     ["/token?type=zak", overrides.zak ?? (() => jsonResponse(200, { token: "zak-token" }))],
+    [/\/users\/[^/?]+$/, overrides.host ?? (() => jsonResponse(200, { id: "zoom-host-id", account_id: "acct", email: "host@example.test", status: "active" }))],
     [/\/meetings\/[^/]+\/status$/, overrides.end ?? (() => jsonResponse(204, {}))],
     [/\/meetings\/[^/?]+\/meeting_summary$/, overrides.summary ?? (() => jsonResponse(404, {}))],
     [/\/meetings\/[^/?]+$/, (url, init) => (init?.method === "DELETE" ? (overrides.delete ?? (() => jsonResponse(204, {})))(url, init) : (overrides.get ?? ((u: string) => jsonResponse(200, meetingBody(Number(/\/meetings\/(\d+)/.exec(u)?.[1] ?? "0")))))(url, init))],
@@ -878,18 +879,45 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- one meeting per visit, with the real password */
 
+  it.each([
+    { host_id: "another-host" }, { host_id: null }, { uuid: "another-instance" }, { uuid: null },
+    { id: 900000002 }, { type: 8 }, { status: "deleted" }, { password: "changed-password" },
+  ])("withholds SDK and ZAK when the current provider meeting differs from its saved authority %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ get: () => jsonResponse(200, meetingBody(900000001, mismatch)) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it.each([
+    { account_id: "another-account" }, { account_id: null }, { id: null }, { email: "another@example.test" },
+    { status: "inactive" }, { status: null },
+  ])("withholds SDK and ZAK when Zoom does not verify the configured active host/account %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: "acct", email: "host@example.test", status: "active", ...mismatch }) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
   it("keeps meeting lookup, create and SDK work on the same request-local credential snapshot", async () => {
     const first = { accountId: "account-first", clientId: "client-first", clientSecret: "secret-first", userId: "host-first@example.test", sdkKey: "sdk-first", sdkSecret: "sdk-secret-first" };
     secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify({ ...first, userId: "rotated@example.test", sdkKey: "sdk-rotated" }) });
-    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: first.accountId, email: first.userId, status: "active" }) })]);
     queueGet(visitRecord());
     const result = await start();
     expect(result.statusCode).toBe(200);
     expect(secretsSend).toHaveBeenCalledTimes(1);
     expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
     const hostCalls = calls.filter(call => call.url.includes("api.zoom.us/v2/users/"));
-    expect(hostCalls).toHaveLength(3);
-    expect(hostCalls.every(call => call.url.includes("host-first%40example.test"))).toBe(true);
+    expect(hostCalls).toHaveLength(5);
+    expect(hostCalls.filter(call => !call.url.includes("/token?type=zak")).every(call => call.url.includes("host-first%40example.test"))).toBe(true);
+    expect(hostCalls.find(call => call.url.includes("/token?type=zak"))?.url).toContain("/users/zoom-host-id/");
   });
 
   it("uses one credential snapshot for both the SDK signature and its host OAuth/ZAK", async () => {
@@ -897,7 +925,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     const rotated = { accountId: "account-rotated", clientId: "client-rotated", clientSecret: "secret-rotated", userId: "host-rotated@example.test", sdkKey: "sdk-rotated", sdkSecret: "sdk-secret-rotated" };
     secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify(rotated) });
     let oauthAuthorization = "";
-    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ token: (_url, init) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: first.accountId, email: first.userId, status: "active" }), token: (_url, init) => {
       oauthAuthorization = (init?.headers as Record<string, string>).authorization;
       return jsonResponse(200, { access_token: "first-access" });
     } })]);
@@ -906,10 +934,25 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
     expect(oauthAuthorization).toBe(`Basic ${Buffer.from("client-first:secret-first").toString("base64")}`);
-    expect(calls.find((call) => call.url.includes("/token?type=zak"))?.url).toContain("host-first%40example.test");
+    expect(calls.find((call) => call.url.includes("/token?type=zak"))?.url).toContain("/users/zoom-host-id/");
     expect(secretsSend).toHaveBeenCalledTimes(1);
     expect(result.body).not.toContain("sdk-secret-first");
     expect(result.body).not.toContain("secret-first");
+  });
+
+  it.each(["host", "meeting", "alias"] as const)("withholds the session if %s authority changes while ZAK is being obtained", async (stage) => {
+    let afterZak = false;
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({
+      host: () => jsonResponse(200, { id: afterZak && stage === "alias" ? "another-host" : "zoom-host-id", account_id: "acct", email: "host@example.test", status: afterZak && stage === "host" ? "inactive" : "active" }),
+      get: () => jsonResponse(200, meetingBody(900000001, afterZak && stage !== "host" ? { host_id: "another-host" } : {})),
+      zak: () => { afterZak = true; return jsonResponse(200, { token: "must-not-return-zak" }); },
+    })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(calls.filter(call => call.url.includes("/token?type=zak"))).toHaveLength(1);
+    expect(result.body).not.toContain("must-not-return-zak");
+    expect(writes).toHaveLength(0);
   });
 
   it("accepts bounded long OAuth and ZAK tokens rather than the unrelated 500-character general field limit", async () => {
