@@ -9,7 +9,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { projectTelehealthSchema, TELEHEALTH_SCHEMA_PROJECTION } from './telehealth-schema-projection.mjs';
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const root=fileURLToPath(new URL('../',import.meta.url));
-export async function compileTelehealthSchemaSource() {
+async function loadCompilationPlan() {
   const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-zoom-host-authority-candidate.mjs','--json'],
     {cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,timeout:60000,windowsHide:true}));
   if(artifact.candidate.contract!=='zoom-host-authority-candidate/1'||artifact.candidate.activation!=='blocked'||artifact.candidate.phiAllowed!==false
@@ -18,9 +18,11 @@ export async function compileTelehealthSchemaSource() {
     bundle:true,write:false,platform:'node',format:'esm',target:'node22',logLevel:'silent'});
   const installerBytes=installer.outputFiles[0].contents;
   const {applyProductionClinicalCoreMigrations}=await import('data:text/javascript;base64,'+Buffer.from(installerBytes).toString('base64'));
-  const db=new PGlite({extensions:{pgcrypto}}), snapshots=[];
   const migrations=artifact.manifest.migrations.map(row=>({version:row.version,name:row.file.slice(15,-4),sql:artifact.files[row.file],sha256:sha(artifact.files[row.file])}));
-  try {
+  return {artifact,installerBytes,applyProductionClinicalCoreMigrations,migrations};
+}
+async function compilePrefixes(db,plan) {
+    const {artifact,installerBytes,applyProductionClinicalCoreMigrations,migrations}=plan,snapshots=[];
     // Use the actual historical empty installer, including its ledger CHECK,
     // grants and verification. Never reproduce a weaker bootstrap by hand.
     const database={transaction:work=>db.transaction(tx=>work({query:(sql,args=[])=>tx.query(sql,[...args])}))};
@@ -43,5 +45,24 @@ export async function compileTelehealthSchemaSource() {
     return {contract:'telehealth-schema-source/1',sourceOnly:true,activation:'blocked',phiAllowed:false,
       installerBundleSha256:sha(installerBytes),projectionSqlSha256:sha(TELEHEALTH_SCHEMA_PROJECTION),
       postgresVersion:(await db.query('show server_version')).rows[0].server_version,snapshots};
-  } finally {await db.close();}
+}
+export async function compileTelehealthSchemaSource() {
+  const plan=await loadCompilationPlan(),db=new PGlite({extensions:{pgcrypto}});
+  try {return await compilePrefixes(db,plan);} finally {await db.close();}
+}
+
+/** Native source compilation is allowed only on a fresh, randomly named source
+ * database. This entry point cannot admit the AWS qualification/staging target
+ * and its output is not accepted by the existing 18.3 runtime inspector. */
+export async function compileTelehealthSchemaNativeSource(db) {
+  const identity=(await db.query("select current_database() database_name,current_user::text owner,current_setting('server_version') version")).rows;
+  if(identity.length!==1||!/^alp_source_[a-f0-9]{32}$/.test(identity[0].database_name)
+    ||identity[0].owner!=='postgres'||identity[0].version!=='17.7')throw Error('telehealth_native_source_identity_refused');
+  const existing=(await db.query(`select
+    (select count(*) from pg_namespace where nspname like 'clinical\\_%' escape '\\' or nspname in('commercial_reference','fullscript_delivery'))::int namespaces,
+    (select count(*) from pg_roles where rolname like 'clinical\\_%' escape '\\' or rolname like 'fullscript\\_%' escape '\\')::int roles,
+    (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind in('r','p','f','v','m','S'))::int public_relations`)).rows;
+  if(existing.length!==1||existing[0].namespaces!==0||existing[0].roles!==0||existing[0].public_relations!==0)
+    throw Error('telehealth_native_source_not_empty');
+  return compilePrefixes(db,await loadCompilationPlan());
 }

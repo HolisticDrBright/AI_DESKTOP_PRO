@@ -75,6 +75,11 @@ will correctly refuse this target, not silently normalize its owner or engine.
 
 ## Remaining implementation and approval
 
+The next [native source qualification increment](telehealth-native-source-qualification-2026-10-10.md)
+compiles these exact empty prefixes on local PostgreSQL 17.7 under `postgres`.
+It leaves this inspector's 18.3 pins unchanged and does not qualify the live
+`clinical_admin` owner or authorize a preserving upgrade.
+
 First settle the replacement 107-to-111 and 111-to-112 preserving operators on
 the existing exact target. The older approved 48fb320 operator refused before a
 write because of unsupported array transport. The 9d03cfc replacement changes
