@@ -40,6 +40,13 @@ jobs:
           npm run test:telehealth-consent-copy
           npm run test:telehealth-consent-copy-candidate
           npm run build:telehealth-consent-copy-candidate
+      - name: Separate patient consent Lambda and immutable blocked template (no AWS or approval)
+        run: |
+          npm run test:telehealth-consent-runtime
+          npm run test:telehealth-consent-deployment
+          npm run build:aws-telehealth-consent
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/telehealth-consent/template.json
       - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
         run: |
           npm run test:fullscript-upgrade-operator

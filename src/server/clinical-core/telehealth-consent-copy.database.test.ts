@@ -9,6 +9,8 @@ import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type Clinical
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from '../../contracts/telehealthConsent';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
+import { createTelehealthConsentHandler, telehealthConsentConfigurationSha256, type TelehealthConsentBuild } from './telehealth-consent-deployment';
+import type { ApiGatewayV2Event } from './aws-identity-api';
 
 // Entire real 112-migration source artifact, actual restricted API role. Every
 // identity, approval and consent below is fictional, in memory, never in AWS.
@@ -18,6 +20,7 @@ const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const build = (script: string) => JSON.parse(execFileSync(process.execPath, [script, '--json'],
   { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 30000, windowsHide: true })) as Artifact;
 let pg: PGlite, parent: Artifact, successor: Artifact, operations: ReturnType<typeof createProductionTelehealthConsent>;
+let runtimeBuild: TelehealthConsentBuild;
 let org: string, foreign: string, owner: string, other: string, staff: string, patient: string, connection: string;
 const copy = 'FICTIONAL TEST ONLY — I agree to fictional telehealth recording and AI notes. Not an approved patient consent.';
 const context = (actor = owner, organization = org): ProductionClinicalRequestContext => ({
@@ -81,6 +84,11 @@ beforeAll(async () => {
   const newSql = successor.files[successor.manifest.migrations.at(-1)!.file];
   const body = /as \$\$([^]*?)\$\$/.exec(newSql)![1];
   operations = createProductionTelehealthConsent(bindTelehealthConsentDatabase(rawDatabase, functions, sha(body)));
+  // Source identities and reviews in this test are deliberately fictional.
+  // Real SQL bindings are derived from the actual distinct release bytes.
+  runtimeBuild = { sourceCommit: '1'.repeat(40), sourceClean: true, sourceInputSha256: '2'.repeat(64), migrationCount: 112,
+    migrationReleaseSha256: String(successor.candidate.migrationReleaseSha256), assemblySha256: successor.releaseHash,
+    sqlSha256: sha(newSql), functions, telehealthFunctionSha256: sha(body) };
 }, 60000);
 afterAll(async () => { await pg?.close(); });
 beforeEach(async () => {
@@ -96,6 +104,70 @@ beforeEach(async () => {
     [connection, org, patient, owner]);
 });
 describe('unreleased 112 telehealth exact-copy consent under actual SQL authority', () => {
+  const runtime = (enabled = true) => {
+    const now = Date.now(), reviewHash = '3'.repeat(64);
+    const environment: Record<string, string> = {
+      SOURCE_COMMIT: runtimeBuild.sourceCommit, SOURCE_INPUT_SHA256: runtimeBuild.sourceInputSha256,
+      MIGRATION_RELEASE_SHA256: runtimeBuild.migrationReleaseSha256, AWS_REGION: 'us-east-2', DEPLOYMENT_ACCOUNT_ID: '588966314750',
+      TELEHEALTH_CONSENT_ACTIVATION: 'blocked', PHI_ALLOWED: 'false', TELEHEALTH_CONSENT_ENABLED: String(enabled),
+      TELEHEALTH_CONSENT_ORGANIZATION_ID: org, CLINICAL_DATABASE_NAME: 'clinical_core_qualification',
+      CLINICAL_DATABASE_CLUSTER_ARN: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional',
+      CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-AbCd12',
+      CONSUMER_ISSUER: 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer', CONSUMER_AUDIENCE: 'c'.repeat(26),
+      WORKFORCE_ISSUER: 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Workforce', WORKFORCE_AUDIENCE: 'w'.repeat(26),
+      DATABASE_REVIEW_SHA256: reviewHash, WORKFORCE_MFA_REVIEW_SHA256: reviewHash, CONNECTION_REVIEW_SHA256: reviewHash,
+      CONSENT_REVIEW_SHA256: reviewHash, RETENTION_REVIEW_SHA256: reviewHash, QUALIFICATION_EXECUTION: 'enabled',
+      QUALIFICATION_REVIEW_SHA256: reviewHash, QUALIFICATION_ACCOUNT_ID: '588966314750',
+      QUALIFICATION_IDENTITY_SUBJECTS: `fixture-${owner},fixture-${other}`,
+    };
+    environment.TELEHEALTH_CONSENT_CONFIGURATION_SHA256 = telehealthConsentConfigurationSha256(environment);
+    const handle = createTelehealthConsentHandler(environment, runtimeBuild, () => rawDatabase, () => now);
+    return (request: TelehealthConsentRequest, actor = owner, organization = org) => handle({
+      routeKey: 'POST /clinical-core/consumer/telehealth-consent', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request),
+      requestContext: { authorizer: { jwt: { claims: { iss: environment.CONSUMER_ISSUER, aud: environment.CONSUMER_AUDIENCE,
+        sub: `fixture-${actor}`, token_use: 'id', 'custom:person_id': actor, 'custom:organization_id': organization,
+        'custom:production_bound': 'true', email_verified: true, iat: Math.floor(now / 1000) - 10,
+        exp: Math.floor(now / 1000) + 1000, auth_time: Math.floor(now / 1000) - 10 } } } },
+    } as ApiGatewayV2Event);
+  };
+  it('composes the compiled handler, consumer API, copy safeguards and actual restricted SQL without substituting a transport', async () => {
+    const id = await artifact(), handle = runtime();
+    const read = await handle(review());
+    expect(read).toMatchObject({ statusCode: 200, headers: { 'x-clinical-execution': 'qualification' } });
+    expect(JSON.parse(read.body).data).toMatchObject({ artifact: { artifactId: id, content: copy }, status: 'not_granted', version: 0 });
+    const granted = await handle(grant(id));
+    expect(granted.statusCode).toBe(200); expect(JSON.parse(granted.body).data).toMatchObject({ status: 'granted', version: 1 });
+    const revoked = await handle(withdraw(1));
+    expect(revoked.statusCode).toBe(200); expect(JSON.parse(revoked.body).data).toMatchObject({ status: 'revoked', version: 2 });
+    expect((await handle(grant(id, 0))).statusCode).toBe(409);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants where organization_id=$1', [org])).rows[0].n).toBe(2);
+  });
+  it('refuses a designated different owner or different clinic through the actual handler and database', async () => {
+    const id = await artifact(), handle = runtime();
+    for (const request of [review(), grant(id), withdraw(0)]) {
+      expect((await handle(request, other)).statusCode).toBe(403);
+      expect((await handle(request, owner, foreign)).statusCode).toBe(403);
+    }
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants where organization_id=$1', [org])).rows[0].n).toBe(0);
+  });
+  it('checks actual deployed function privileges before the runtime can deliver approved copy', async () => {
+    await artifact(); const handle = runtime();
+    await pg.exec('grant execute on function clinical_core.production_telehealth_consent_request(jsonb) to public');
+    try {
+      const response = await handle(review()); expect(response.statusCode).toBe(503);
+      expect(JSON.parse(response.body)).toEqual({ error: 'service_unavailable' });
+      expect(response.body).not.toContain(copy);
+    } finally { await pg.exec('revoke execute on function clinical_core.production_telehealth_consent_request(jsonb) from public'); }
+  });
+  it('keeps status and withdrawal available through the real runtime after new grants are disabled and the connection is revoked', async () => {
+    const id = await artifact(); expect((await runtime()(grant(id))).statusCode).toBe(200);
+    await pg.query("update clinical_core.patient_connections set state='revoked',revoked_at=now(),revoke_reason_safe='patient_request',version=version+1 where id=$1", [connection]);
+    const handle = runtime(false), read = await handle(review());
+    expect(JSON.parse(read.body).data).toMatchObject({ artifact: null, status: 'granted', connectionState: 'revoked' });
+    const revoked = await handle(withdraw(1)); expect(revoked.statusCode).toBe(200);
+    expect(JSON.parse(revoked.body).data).toMatchObject({ status: 'revoked', version: 2 });
+    expect((await handle(grant(id, 2))).statusCode).toBe(403);
+  });
   it('preserves every predecessor byte and creates no seeded approvals', () => {
     expect(parent.manifest.migrations).toHaveLength(111);
     expect(successor.manifest.migrations).toHaveLength(112);
@@ -115,7 +187,7 @@ describe('unreleased 112 telehealth exact-copy consent under actual SQL authorit
     const id = await artifact();
     expect(await call(review())).toMatchObject({ status: 'not_granted', version: 0, currentArtifactId: null,
       artifact: { artifactId: id, content: copy, contentSha256: sha(copy) } });
-    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants')).rows[0].n).toBe(0);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants where organization_id=$1', [org])).rows[0].n).toBe(0);
   });
   it('grants exactly once, then withdraws with append-only audit and refuses a stale regrant', async () => {
     const id = await artifact();

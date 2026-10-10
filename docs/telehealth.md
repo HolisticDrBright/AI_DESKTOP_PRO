@@ -475,11 +475,12 @@ database binding checks the existing immutable-copy safeguards plus the new
 function's exact bytes, restricted execution and search path before reading
 content. Direct table reads, changed functions and overloads are refused.
 
-Remaining integration is explicit: build and register the artifact-bound Lambda
-and its default-blocked template, implement the preserving 111-to-112 operator
-with rollback evidence, and extend the copy registrar through a separate exact
-112 target mapping. The historical 105/106 registrar must not be widened by
-count alone. V2's matched source now implements the reviewed-copy signing
+The separate artifact-bound Lambda and default-blocked template now have a
+source builder and local tests, described below. They are not deployed or
+registered on a hosted API. Remaining integration is the preserving 111-to-112
+operator with rollback evidence and a separate exact 112 copy-registrar mapping.
+The historical 105/106 registrar must not be widened by count alone. V2's
+matched source now implements the reviewed-copy signing
 screen, fresh review before acknowledgment and booking, withdrawal and
 uncertain-outcome inspection. It is not an installed mobile build. Do not route
 this through the legacy metadata-only artifact/grant API.
@@ -503,6 +504,89 @@ access still recheck current governed authority. Booking, withdrawal and visit
 start span different services; these reads are not an atomic authorization-and-
 provider transaction. Matched hosted race tests and the provider/record lifecycle
 work remain activation requirements.
+
+## Patient consent deployment candidate
+
+`npm run build:aws-telehealth-consent` builds the separate 112 consumer-consent
+Lambda, ZIP, template, manifest and credential-free configuration-identity tool
+under `dist/aws-clinical-core/telehealth-consent/`. This command performs no AWS
+operation and creates no approval, consent or grant. Dirty source can be built
+for local tests but is ineligible to serve either qualification or production.
+The build observes source bytes before and after bundling; it does not claim an
+atomic filesystem snapshot.
+
+The manifest binds the source commit and input digest, the distinct 112 ledger,
+assembly and extension, the seven historical copy-safeguard functions, the new
+function body and every emitted artifact. The historical release bytes remain
+unchanged. The Lambda uses only the restricted database role and checks the copy
+guards and exact new-function metadata before each transaction. Those checks are
+not a substitute for the operator's full ledger and rollback verification.
+
+Default deployment is blocked, PHI is false, qualification is disabled, new
+grants are disabled and the role has only bounded logging permissions. Serving
+requires a clean artifact and independent database, MFA, connection, consent and
+retention reviews, configuration identity and an alarm topic. Qualification is
+restricted to account 588966314750 in Ohio, `clinical_core_qualification`, and
+the designated fictional subjects. Production requires separate activation
+evidence in account 173535830222 with `clinical_core`; qualification is never
+production evidence. Disabling new grants preserves status and withdrawal while
+withholding copy for new acknowledgment. Withdrawal is not record erasure.
+
+The API has one consumer-JWT route and invokes a published function version,
+not `$LATEST`. Its version pins the ZIP checksum and identifies the source
+commit and runtime-configuration digest. Changing that digest replaces the
+version; changing a serving environment without the matching digest causes a
+refusal. This uses [AWS Lambda version snapshots and replacement
+semantics](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-version.html).
+Role policies, logging keys, authorizers and other stack resources still require
+independent deployment observation; the runtime digest does not certify them.
+
+### Configuration identity
+
+After building, pass a bounded JSON object to
+`node dist/aws-clinical-core/telehealth-consent/configuration-identity.cjs` on
+standard input. Its only output is `{"configurationSha256":"<digest>"}`.
+Input has exactly `contract: "telehealth-consent-configuration/1"` and
+`environment`. The environment must contain exactly the 26 keys in
+`TELEHEALTH_CONSENT_CONFIGURATION_KEYS` in
+`src/server/clinical-core/telehealth-consent-deployment.ts`, as strings.
+Missing keys, extra fields, credentials under unrelated names, coercion,
+malformed identifiers, oversized input and invalid UTF-8 are refused without
+echoing the input. Do not provide a process-wide environment dump, secret values,
+tokens, patient information or consent wording.
+
+Use the template's fully resolved intended runtime environment: include
+`AWS_REGION` and `DEPLOYMENT_ACCOUNT_ID`, resolve `Ref` and `Fn::If`, and exclude
+`TELEHEALTH_CONSENT_CONFIGURATION_SHA256` itself. Qualification environment
+values are empty or disabled unless its condition holds; raw parameter values
+are not equivalent. Compute with the proposed complete review set and a
+nonempty configuration parameter, then set that parameter to the returned
+digest and verify the final resolved values match. The digest is configuration
+identity only. Empty reviews may identify a blocked configuration, but the tool
+does not approve it or authorize serving. Never manufacture review hashes to
+make a condition pass.
+
+### Source verification and remaining deployment
+
+`npm run test:telehealth-consent-runtime` composes the handler, API parser,
+restricted-role metadata guards and real 112 SQL in a fictional embedded
+database. It also tests source/account/clinic substitutions and missing reviews
+before database construction. `npm run test:telehealth-consent-deployment` builds
+the actual bundle, runs its default refusal, executes the configuration command
+including negative inputs, and verifies route, version, checksum and bounded
+permissions. CI runs both and lints the emitted template. These are source tests,
+not AWS or device acceptance.
+
+Before deployment, inspect the actual qualification ledger, perform the
+preserving predecessor upgrades and rollback rehearsal, register only reviewed
+copy through the exact 112 mapping, and bind the built artifacts and resolved
+configuration to the reviewed target. Hosted checks must observe the published
+version, authorizer, database ledger, role and every review, then exercise current
+and superseded copy, stale grants, withdrawal, cross-owner/clinic denials and
+concurrent booking/provider races. Qualify the matching V2 build on physical
+phones and a real two-participant fictional Zoom visit. Chart integration,
+record lifecycle, clinic-host authorization and the executed provider review
+remain separate requirements. PHI remains disabled.
 
 ## Reminder revision isolation
 
