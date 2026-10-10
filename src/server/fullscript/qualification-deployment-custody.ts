@@ -108,7 +108,7 @@ export function createFullscriptDeploymentCustody(options:Options):DeploymentPor
   },finish:async report=>{
    await verify();const r=report as Record<string,unknown>;check(events.some(e=>e.stage==='execute_admitted')
     &&r.contract==='fullscript-deployment-observation/1'&&r.reviewSha256===binding.reviewSha256&&r.sourceCommit===binding.sourceCommit
-    &&r.deployed===true&&r.controlPlaneObserved===true&&r.hostedQualified===false&&r.phiAllowed===false);
+    &&r.deployed===true&&r.controlPlaneObserved===true&&r.installedControlsObserved===true&&r.hostedQualified===false&&r.phiAllowed===false);
    save(resolve(root,randomBytes(16).toString('hex')+'.fullscript-deployment.receipt.json'),bytes(report));
    await verify();unlinkSync(lock);live=false; // numbered evidence remains immutable
   }};
