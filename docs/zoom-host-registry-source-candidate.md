@@ -2,6 +2,12 @@
 
 The clinic-specific Zoom host registry is an unreleased SQL candidate, not a deployed service. Its source is `infra/aws-clinical-core/source-candidates/zoom-host-authority.sql`. It is deliberately outside the canonical 112-migration assembly and the frozen schema upgrades reviewed by the owner. It seeds no identities, reviews, consent, provider authority or PHI activation.
 
+The distinct [114 source successor](zoom-host-authority-successor-2026-10-10.md)
+now composes this unchanged SQL with the exact 113 chart candidate. It remains
+unregistered and blocked. Its compiled source pins and combined database tests
+do not replace the preserving operator, authenticated handler or provider work
+listed below.
+
 ## Implemented authority rules
 
 Each immutable release belongs to one organization and practitioner. It records the Zoom account, canonical host ID, OAuth client ID, SDK application key, AWS account and region, exact secret ARN and immutable secret version, review digests, reviewer and expiry. Configuration is bounded and hashed in PostgreSQL. Only a current same-clinic owner or administrator may be named as reviewer; the host must be a current clinical workforce member. Review digests are references, not proof that the corresponding review occurred.
@@ -18,7 +24,7 @@ Authorized reconciliation can read original release metadata after rotation or r
 
 Run `npx vitest run src/server/clinical-core/zoom-host-authority.database.test.ts --no-file-parallelism`.
 
-The suite builds the actual canonical 112 source artifact, applies the real initial migration operator and subsequent SQL to in-memory PostgreSQL, then executes this candidate under the restricted API role. All records, review hashes and identities are fictional. It covers empty configuration, replay, clinic isolation, current and retained authority, expiry, revocation, identity withdrawal, calendar corrections, invalid secret configuration and table privileges. This is not AWS, Zoom, browser, device, rollback-upgrade or production activation evidence.
+The suite builds the actual 114 source artifact, applies the real initial migration operator and subsequent source SQL to in-memory PostgreSQL, then executes this candidate under the restricted API role. All records, review hashes and identities are fictional. It covers empty configuration, replay, clinic isolation, current and retained authority, expiry, revocation, identity withdrawal, calendar corrections, invalid secret configuration and table privileges. This is not AWS, Zoom, browser, device, reviewed rollback-upgrade or production activation evidence.
 
 ## Typed database interface
 
