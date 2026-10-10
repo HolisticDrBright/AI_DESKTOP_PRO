@@ -17,7 +17,7 @@ try{
  const args=process.argv.slice(2);
  if(args.length!==6||args[0]!=='--inspect-fictional-fullscript-deployment-only'
   ||typeof __FULLSCRIPT_PREFLIGHT_BUILD__==='undefined'||!__FULLSCRIPT_PREFLIGHT_BUILD__.clean)throw Error('refused');
- const options={encoding:'utf8' as const,timeout:10000,windowsHide:true,maxBuffer:1024*1024};
+ const options={encoding:'utf8' as const,stdio:'pipe' as const,timeout:10000,windowsHide:true,maxBuffer:1024*1024};
  const sourceCommit=execFileSync('git',['rev-parse','HEAD'],options).trim();
  const clean=!execFileSync('git',['status','--porcelain','--untracked-files=all','--','src','scripts','infra','package.json','package-lock.json','.gitattributes','.github'],options).trim();
  if(sourceCommit!==__FULLSCRIPT_PREFLIGHT_BUILD__.sourceCommit)throw Error('refused');
