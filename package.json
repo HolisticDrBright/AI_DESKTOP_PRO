@@ -19,6 +19,8 @@
     "test:clinic-record-privacy-candidate": "node --test scripts/clinic-record-privacy-candidate.test.mjs",
     "test:clinic-record-privacy": "vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts",
     "build:clinic-records-source-candidate": "node scripts/build-clinic-records-source-candidate.mjs",
+    "test:clinic-records-qualification-report": "node --test scripts/clinic-records-qualification-report.test.mjs",
+    "print:clinic-records-qualification-cases": "node scripts/clinic-records-qualification-report.mjs --cases",
     "build:aws-telehealth-consent": "node scripts/build-aws-telehealth-consent.mjs",
     "test:telehealth-consent-runtime": "vitest run src/server/clinical-core/telehealth-consent-deployment.test.ts src/server/clinical-core/telehealth-consent-copy.database.test.ts src/server/clinical-core/production-telehealth-consent-api.test.ts --no-file-parallelism",
     "test:telehealth-consent-deployment": "node --test scripts/telehealth-consent-deployment.test.mjs",

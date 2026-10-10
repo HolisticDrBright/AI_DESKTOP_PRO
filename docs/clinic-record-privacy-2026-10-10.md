@@ -73,6 +73,7 @@ retention duration, deletion guarantee or disclosure approval is invented.
 | `clinic-record-journal/1` (V2 encrypted pending-command journal) | `expo/lib/clinicRecords/clinicRecordJournal.ts` |
 | `clinic-records-source-candidate/1` (bundled handler + SQL + manifest) | `scripts/build-clinic-records-source-candidate.mjs` |
 | `clinic-record-privacy-candidate/1` (114-migration artifact) | `scripts/clinic-record-privacy-candidate.mjs` |
+| `clinic-records-qualification-binding/1`, `clinic-records-qualification-report/1`, `clinic-records-qualification-cases/1` (Codex's synthetic hosted qualification: target binding, mandatory cases, report check) | `scripts/clinic-records-qualification-report.mjs` |
 
 Consumer actions: `overview`, `submit_copy`, `submit_correction`, `get`,
 `withdraw`, `read_copy`. Workforce actions: `queue`, `review`, `begin_review`,
@@ -93,6 +94,12 @@ historical migration, seeds nothing (no request, copy, release), and is not an
 instruction to apply. If Codex's `/4` chart candidate (`20261010190000`)
 replaces 113, the parent pin must be re-pointed and the file renumbered above it.
 
+The number 114 is this file's position above the pinned parent, not a reserved
+release slot: Codex's `zoom-host-authority-candidate/1` also proposes a 114 on a
+different parent, and Codex owns the release mapping. The candidate is declared
+by source name, exact parent ledger/assembly and SQL hash; renumbering changes
+the file name and position only, never the bytes.
+
 It adds: `clinical_core.clinic_record_requests` (state machine, revision CAS,
 immutable identity), `clinic_record_request_events` (append-only, decision ids
 unique), `clinic_record_copies` and `clinic_record_copy_items` (append-only
@@ -110,6 +117,36 @@ register the two routes; deploy the handler (`createProductionClinicRecordsApi`
 with `disclosureReviewSha256`, `retentionReviewSha256`, `mfaReviewSha256`
 reviews, activation blocked, PHI off); classify the new refusal words in the
 hosted rejection mapping (`rds-data-database.ts` already does).
+
+## The qualification contract for Codex
+
+`npm run print:clinic-records-qualification-cases` prints
+`clinic-records-qualification-cases/1`: the target (account `588966314750`,
+`us-east-2`, `clinical_core_qualification`, 114 rows at this candidate's ledger),
+the two routes, the seven fictional subjects (two same-clinic patients, a
+revoked link, an other-clinic patient, a practitioner, a member without a
+clinical role, an other-clinic practitioner), the four reviews (disclosure,
+retention, workforce MFA, qualification) and the 30 mandatory cases in
+execution order. Each case names the pool, subject, action, exact HTTP status
+and decided error word, the response fields the runner must copy, and the facts
+it must establish by its own read-only database readback (no record text in a
+review, no copy row before a release, the original note unchanged after an
+addendum, item digests verified, no admission or signing material, no rows for
+the other clinic, the API role without table access). Seventeen cases run with
+no disclosure release at all; thirteen run after the owner-reviewed operator
+inserts the plainly fictional release named in the binding (`fictional-…`,
+review hash equal to the disclosure review) on the qualification database only.
+
+`evaluateClinicRecordsQualificationReport(report, binding, candidate)` refuses a
+binding on the wrong candidate, ledger or routes, shared pools, duplicate
+subjects, zero review hashes or a non-fictional release; and a report with a
+missing, duplicated, unknown, skipped, unobserved, out-of-order, wrong-subject,
+wrong-phase or mismatched case, or any attestation absent or false. Its only
+verdict is `mandatory_cases_matched` with `acceptance: false`,
+`humanReviewsVerified: false`, `phiAllowed: false`: hosted concurrency, device
+journeys, the owner's reviews and PHI stay outside it. The runner that
+executes the cases against the deployed routes, and the CloudFormation
+template that registers them, are not in this branch (see the handoff).
 
 ## Surfaces
 
@@ -144,6 +181,7 @@ hosted rejection mapping (`rds-data-database.ts` already does).
 | `clinic-record-privacy.database.test.ts` (PGlite, real 114 artifact, `clinical_core_api` role, through the production adapters) | 6 pass: fail-closed without a release then fulfilment under a fictional partial release with an honest manifest; telehealth records without admission material, keyset paging with byte budget, digest cross-check against the device's canonical form; retained copy after pause/revoke/replacement and never to a new owner; two clinics, two same-clinic patients, roles and pools; decisions in both orders, replay, stale revision, withdrawal, supersession, append-only ledgers; corrections only against a disclosed revision, addendum appended, original unchanged, decline recorded |
 | `production-clinic-records-api.test.ts` | 8 pass (off by default, fixture admission per pool, review gates, claim substitution, fresh sign-in windows, body bounds, decided code mapping) |
 | `rds-data-database.test.ts` | the eight new refusal words classified |
+| `npm run test:clinic-records-qualification-report` | 35 pass (case list shape, complete fictional report never accepted, 32 refusals, `--cases` output) |
 | `ClinicRecordRequestsView.render.test.ts` | 4 pass |
 | `e2e/live-clinic-records-ui.spec.ts` | see the handoff for the run result |
 | V2 `clinic-records-client`, `clinic-records-journal`, `clinic-data-center-screen` (mounted), `clinic-records-device-inventory` | 16 pass |
