@@ -163,6 +163,7 @@ describe("AWS telehealth request boundary", () => {
   });
 
   it("creates a synthetic request without inventing a meeting link", async () => {
+    send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({ Items: [{
       pk: `ORG#${claims["custom:organization_id"]}`,
       sk: "SLOT#2026-09-03T17:00:00.000Z#33333333-3333-4333-8333-333333333333",
@@ -184,7 +185,7 @@ describe("AWS telehealth request boundary", () => {
     expect(result.statusCode).toBe(201);
     expect(payload.data).toMatchObject({ status: "requested", joinUrl: null, providerMeetingId: null });
     expect(payload.data).not.toHaveProperty("consumerPersonId");
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(3);
   });
 
   it("will not enable Zoom without an independently recorded BAA gate", () => {
