@@ -75,11 +75,26 @@ beforeAll(async()=>{
   {encoding:'utf8',timeout:20_000,maxBuffer:8*1024*1024}));expect(manifest.migrations).toHaveLength(106);
  db=new PGlite({extensions:{pgcrypto}});
  for(const migration of manifest.migrations)await db.exec(files[migration.file]);
+ // Raw migration-file fixtures do not run the operator that creates its ledger.
+ // Reproduce that table and its exact generated entries before worker grants.
+ await db.exec(`create table clinical_core.schema_migrations(version text primary key,name text not null,
+  sha256 text not null check(sha256~'^[0-9a-f]{64}$'),applied_at timestamptz not null default clock_timestamp())`);
+ for(const migration of manifest.migrations)await db.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)',
+  [migration.version,migration.file.slice(15,-4),sha(files[migration.file])]);
  for(const name of ['fullscript-draft-ledger','canonical-protocol-carts','fullscript-canonical-authority'])
   await db.exec(readFileSync('infra/aws-clinical-core/source-candidates/'+name+'.sql','utf8'));
 },90_000);
 afterAll(async()=>{await db?.close();});
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
+it('worker has a narrow metadata function, not direct clinical-schema access',async()=>{
+ const rows=await database().transaction(tx=>tx.query<{ledger:Array<{version:string;name:string;sha256:string}>}>('select fullscript_delivery.migration_ledger() as ledger'));
+ expect(rows.rows[0].ledger).toHaveLength(106);
+ expect(Object.keys(rows.rows[0].ledger[0]).sort()).toEqual(['name','sha256','version']);
+ await expect(database().transaction(tx=>tx.query('select applied_at from clinical_core.schema_migrations'))).rejects.toThrow(/permission denied/);
+ await expect(database().transaction(tx=>tx.query("update clinical_core.schema_migrations set name='forged'"))).rejects.toThrow(/permission denied/);
+ await expect(database().transaction(tx=>tx.query('select * from clinical_core.patient_records'))).rejects.toThrow(/permission denied/);
+ await expect(database('clinical_core_api').transaction(tx=>tx.query('select fullscript_delivery.migration_ledger()'))).rejects.toThrow(/permission denied/);
+});
 beforeEach(async()=>{
  [org,staff,consumer,other,patient,connection,program,version,productVersion,batch,enrollment]=Array.from({length:11},()=>randomUUID());
  product='prd_fixture_'+randomUUID().replaceAll('-','');releases={};contents={};provider.create.mockClear();provider.findByMetadata.mockClear();

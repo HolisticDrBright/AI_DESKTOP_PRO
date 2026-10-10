@@ -11,8 +11,10 @@ advances provider integration, not commercial or PHI activation.
 `createCanonicalFullscriptDelivery` fixes the actor and session for the life of
 one request. Its methods accept only selectors or intent IDs, never another actor,
 a provider review, a mapping body, credentials or a caller-selected transport.
-The eventual HTTP handler must derive this actor and session from its verified
-identity; this internal constructor is not a JWT, MFA or target verifier.
+The new qualification HTTP source boundary derives this actor and session from
+verified identity and live target observations. This internal constructor is
+not a JWT, MFA or target verifier; the new boundary is not installed or deployed.
+See `docs/fullscript-qualification-api-2026-10-09.md` for its release requirements.
 
 Preparation and writer admission use the canonical SQL authority and ledger.
 After admission commits, the provider bridge reads the exact stored intent in
@@ -58,10 +60,9 @@ or AWS operation ran, and PGlite does not prove hosted multi-session races.
 
 ## Remaining integration
 
-The next required engineering is the scoped HTTP handler with verified JWT,
-fresh workforce authentication and independently observed MFA/pool, AWS account,
-target, exact artifact and migration ledger. It must construct this service from
-server identity only, without accepting review bodies or configuration overrides.
+The scoped HTTP handler and native observer now exist as unreleased source.
+Their source-candidate registration, target artifact loader, published Lambda
+deployment, restricted IAM and positive hosted qualification remain engineering.
 Forward application and rollback for the source candidates, hold-aware account-wide
 privacy and provider-copy lifecycle, exact deployed artifacts and positive real
 DynamoDB/Aurora/Fullscript sandbox acceptance remain open. OAuth-start,
