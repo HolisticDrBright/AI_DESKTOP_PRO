@@ -1,4 +1,5 @@
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
+import { clinicRecordWorkforceRequest, parseClinicRecordWorkforceResponse, type ClinicRecordWorkforceResponse } from '@/contracts/clinicRecordRequests';
 import {
   consultLinkAdminRequest, consultReviewRequest,
   parseConsultLinkAdminResponse, parseConsultReviewResponse,
@@ -49,7 +50,8 @@ import {
  * paperwork somewhere unintended.
  */
 export class ConsultWorkforceError extends Error {
-  constructor(readonly status: number) { super(`consult_workforce_${status}`); this.name = 'ConsultWorkforceError'; }
+  /** `code` is the Lambda's decided error word when a call chose to keep it (clinic records); absent for the other calls. */
+  constructor(readonly status: number, readonly code?: string) { super(`consult_workforce_${status}`); this.name = 'ConsultWorkforceError'; }
 }
 
 function apiOrigin(): URL {
@@ -80,6 +82,33 @@ function call<Request, Response>(input: {
     return input.bind(parsed, JSON.parse(new TextDecoder().decode(bytes)).data);
   };
 }
+
+/**
+ * Patient clinic-record requests (copy / correction): the decided error word is
+ * kept so the screen can tell a missing disclosure release or a stale revision
+ * from an outage. Nothing else from the body is relayed.
+ */
+export const clinicRecordsWorkforceCall = (token: string, signal?: AbortSignal) => {
+  const requestSignal = signal ?? AbortSignal.timeout(20000);
+  return async (body: unknown): Promise<ClinicRecordWorkforceResponse> => {
+    const parsed = clinicRecordWorkforceRequest.parse(body);
+    const response = await fetch(`${apiOrigin().origin}/clinical-core/workforce/clinic-records`, {
+      method: 'POST', redirect: 'error', cache: 'no-store', signal: requestSignal,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(parsed),
+    });
+    const json = response.headers.get('content-type')?.includes('application/json');
+    if (!response.ok) {
+      const status = [400, 401, 403, 404, 409, 429].includes(response.status) ? response.status : 503;
+      let code: string | undefined;
+      if (json) { try { const text = new TextDecoder().decode(await readBoundedRequestBody({ body: response.body, headers: response.headers, signal: requestSignal }, 4096, 5000)); const word = (JSON.parse(text) as { error?: unknown }).error; if (typeof word === 'string' && /^[a-z_]{3,48}$/.test(word)) code = word; } catch { /* a refusal without a readable word is still a refusal */ } }
+      throw new ConsultWorkforceError(status, code);
+    }
+    if (!json) throw new ConsultWorkforceError(503);
+    const bytes = await readBoundedRequestBody({ body: response.body, headers: response.headers, signal: requestSignal }, 400000, 20000);
+    return parseClinicRecordWorkforceResponse(parsed, JSON.parse(new TextDecoder().decode(bytes)).data);
+  };
+};
 
 export const consultLinkCall = (token: string, signal?: AbortSignal) =>
   call<ConsultLinkAdminRequest, ConsultLinkAdminResponse>({

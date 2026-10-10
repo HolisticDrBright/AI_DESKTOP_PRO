@@ -121,4 +121,5 @@ Every spec calls `resetBackend()` in `beforeAll`. If you add mutable state to
 | `docs/phase9b-operator-import.md` | Loading real practitioner material |
 | `docs/phase9c-curated-import.md` | The import safety layer, the inference boundary, the apply paths |
 | `docs/telehealth.md` | The Telehealth tab: embedded Zoom visits, the consent gate, AI Companion notes |
+| `docs/clinic-record-privacy-2026-10-10.md` | Patient copies and corrections of clinic-held records: contracts, the 114 candidate, fail-closed disclosure, practitioner fulfilment, the V2 Clinic Data Center |
 | `docs/telehealth-chart-lifecycle-2026-10-10.md` | Placing a signed telehealth note in the chart, the retained-record read authority, the record inventory, forward candidate 113 |

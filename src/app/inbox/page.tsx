@@ -4,6 +4,7 @@ import { InboxWorkspace } from "@/components/inbox/InboxWorkspace";
 import {CareMessagesPanel} from '@/components/inbox/CareMessagesPanel';
 import {AppProgramAssignmentsPanel} from '@/components/programs/AppProgramAssignmentsPanel';
 import {DisputeQueuePanel} from '@/components/governance/DisputeQueuePanel';
+import {ClinicRecordRequestsPanel} from '@/components/governance/ClinicRecordRequestsPanel';
 
 export const metadata: Metadata = { title: "Inbox — AI Longevity Pro" };
 
@@ -35,6 +36,9 @@ export default async function InboxPage({
       {/* Contested records come first: a patient saying a record is wrong about them is the
           one inbound item that cannot wait behind ordinary messages. */}
       <DisputeQueuePanel />
+      {/* A patient asking for their own records, or for a correction of a signed note, is
+          answered from the same place: nothing here deletes, and nothing is fulfilled by submitting. */}
+      <ClinicRecordRequestsPanel />
       <CareMessagesPanel />
       <AppProgramAssignmentsPanel />
       <InboxWorkspace initialThreadId={thread} />

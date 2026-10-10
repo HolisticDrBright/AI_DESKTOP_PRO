@@ -238,7 +238,15 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   if (/\b(telehealth_admission_refused|telehealth_admission_mismatch|telehealth_transfer_refused|appointment_patient_identity_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(telehealth_transfer_invalid|telehealth_transfer_id_reused|appointment_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\btelehealth_transfer_source_changed\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
-  if (/\b(telehealth_admission_unavailable|appointment_not_found)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  // Clinic-record privacy requests: refusals, conflicts and the disclosure
+  // release that fails closed until the owner's review registers one.
+  if (/\bclinic_record_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\b(clinic_record_refused|clinic_record_subject_not_disclosed)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\bclinic_record_connection_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\b(clinic_record_conflict|clinic_record_open)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\bclinic_record_not_found\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\bclinic_disclosure_release_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("release_required");
+  if (/\b(telehealth_admission_unavailable|appointment_not_found|patient_not_found)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   // A settled request id can never be admitted again; the caller must treat it as a
   // decided conflict, not as an identity problem it could retry past.
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
