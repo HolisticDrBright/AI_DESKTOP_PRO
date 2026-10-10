@@ -412,14 +412,14 @@ describe("SES bounce and complaint suppression for appointment reminders", () =>
     expect(send).not.toHaveBeenCalled();
   });
   it("skips the reminder for a suppressed address and says so; an unsuppressed address is still mailed", async () => {
-    const item = { ...processingItem(), status: "scheduled", scheduledStart: "2026-09-03T17:00:00.000Z" };
+    const item = { ...processingItem(), status: "scheduled", reminderStatus: "scheduled", scheduledStart: "2026-09-03T17:00:00.000Z" };
     const reminder = { internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId, scheduledStart: item.scheduledStart } as never;
     send.mockResolvedValueOnce({ Items: [item] }).mockResolvedValueOnce({ Item: { pk: "EMAIL_SUPPRESSION", sk: "hash", reason: "complaint" } });
     const suppressed = await createTelehealthHandler(reminders)(reminder);
     expect(JSON.parse(suppressed.body ?? "{}").data).toEqual({ sent: false, reason: "suppressed" });
     const lookup = (send.mock.calls[1][0] as { input: { Key: Record<string, unknown> } }).input;
     expect(lookup.Key).toEqual({ pk: "EMAIL_SUPPRESSION", sk: expect.stringMatching(/^[a-f0-9]{64}$/) });
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [item] }).mockResolvedValueOnce({});
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [item] }).mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [item] });
     const mailed = await createTelehealthHandler(reminders)(reminder);
     expect(JSON.parse(mailed.body ?? "{}").data).toEqual({ sent: true });
   });

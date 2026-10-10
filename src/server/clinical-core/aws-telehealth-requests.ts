@@ -72,6 +72,8 @@ type AppointmentItem = {
   slotId: string; appointmentId: string | null; priceMinor: number; currency: "USD"; cancellationPolicy: string;
   cancellationWindowHours: number; cancellationFeeDueMinor: number;
   consumerEmail: string; reminderStatus: "disabled" | "scheduled" | "failed";
+  /** Private operation identity of the reminder revision. Absent only on legacy rows. */
+  reminderGeneration?: string;
   paymentPolicyVersion: "telehealth-payments/1"; paymentAuthorizationStatus: "not_authorized" | "authorized" | "withdrawn";
   paymentStatus: "not_due" | "processing" | "paid" | "failed" | "refunded" | "partially_refunded"; paymentIntentId: string | null;
   paidMinor: number; refundedMinor: number;
@@ -125,7 +127,8 @@ type VisitItem = {
 
 type PaymentProfile = { pk: string; sk: string; organizationId: string; consumerPersonId: string; stripeCustomerId: string; stripePaymentMethodId: string | null; status: "setup_pending" | "active" | "disabled"; updatedAt: string };
 
-type ReminderEvent = { internalEvent?: string; organizationId?: string; requestId?: string; scheduledStart?: string };
+type ReminderEvent = { internalEvent?: string; organizationId?: string; requestId?: string; scheduledStart?: string;
+  reminderProtocol?: string; reminderGeneration?: string };
 /** SNS envelope carrying an SES bounce or complaint notification for the reminder configuration set. */
 type SnsEnvelope = { Records?: Array<{ EventSource?: string; Sns?: { TopicArn?: string; Message?: string } }> };
 const EMAIL_SUPPRESSION_PK = "EMAIL_SUPPRESSION";
@@ -648,15 +651,15 @@ async function cancelRequest(config: TelehealthConfiguration, item: AppointmentI
     if (!config.zoomEnabled) throw new TelehealthError("provider_unavailable");
     await deleteZoomMeeting(config, item.providerMeetingId);
   }
-  if (config.remindersEnabled) await deleteAppointmentReminders(config, item.requestId);
+  if (config.remindersEnabled) await deleteAppointmentReminders(config, item);
   const updatedAt = new Date().toISOString();
   const next = { ...item, status: "cancelled" as const, joinUrl: null, providerMeetingId: null,
-    cancellationFeeDueMinor, version: version + 1, updatedAt, lastActionBy: by };
+    cancellationFeeDueMinor, reminderStatus: "disabled" as const, version: version + 1, updatedAt, lastActionBy: by };
   const actions: ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"] = [
     { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk },
-      UpdateExpression: "SET #version=:next,#status=:cancelled,joinUrl=:none,providerMeetingId=:none,cancellationFeeDueMinor=:fee,updatedAt=:updated,lastActionBy=:by",
+      UpdateExpression: "SET #version=:next,#status=:cancelled,joinUrl=:none,providerMeetingId=:none,cancellationFeeDueMinor=:fee,reminderStatus=:reminders,updatedAt=:updated,lastActionBy=:by",
       ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status" },
-      ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":cancelled": "cancelled", ":none": null, ":fee": cancellationFeeDueMinor, ":updated": updatedAt, ":by": by } } },
+      ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":cancelled": "cancelled", ":none": null, ":fee": cancellationFeeDueMinor, ":reminders": "disabled", ":updated": updatedAt, ":by": by } } },
   ];
   if (cancellationFeeDueMinor === 0) actions.push({ Update: { TableName: config.tableName, Key: { pk: slot.pk, sk: slot.sk },
     UpdateExpression: "SET #status=:available,heldBy=:none,holdId=:none,holdExpiresAt=:none",
@@ -677,20 +680,20 @@ async function rescheduleRequest(config: TelehealthConfiguration, item: Appointm
     if (!config.zoomEnabled) throw new TelehealthError("provider_unavailable");
     await deleteZoomMeeting(config, item.providerMeetingId);
   }
-  if (config.remindersEnabled) await deleteAppointmentReminders(config, item.requestId);
+  if (config.remindersEnabled) await deleteAppointmentReminders(config, item);
   const updatedAt = new Date().toISOString();
   const next = { ...item, status: "reschedule_requested" as const, preferredSlots: [replacement.start],
     scheduledStart: replacement.start, scheduledEnd: replacement.end, timeZone: replacement.timeZone,
     slotId: replacement.slotId, priceMinor: replacement.priceMinor, cancellationPolicy: replacement.cancellationPolicy,
     cancellationWindowHours: replacement.cancellationWindowHours, cancellationFeeDueMinor: 0,
-    joinUrl: null, providerMeetingId: null, version: version + 1, updatedAt, lastActionBy: "consumer" as const };
+    joinUrl: null, providerMeetingId: null, reminderStatus: "disabled" as const, version: version + 1, updatedAt, lastActionBy: "consumer" as const };
   const actions: ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"] = [
     { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk },
-      UpdateExpression: "SET #version=:next,#status=:status,preferredSlots=:slots,scheduledStart=:start,scheduledEnd=:end,#timeZone=:zone,slotId=:slot,priceMinor=:price,cancellationPolicy=:policy,cancellationWindowHours=:window,cancellationFeeDueMinor=:zero,joinUrl=:none,providerMeetingId=:none,updatedAt=:updated,lastActionBy=:by",
+      UpdateExpression: "SET #version=:next,#status=:status,preferredSlots=:slots,scheduledStart=:start,scheduledEnd=:end,#timeZone=:zone,slotId=:slot,priceMinor=:price,cancellationPolicy=:policy,cancellationWindowHours=:window,cancellationFeeDueMinor=:zero,joinUrl=:none,providerMeetingId=:none,reminderStatus=:reminders,updatedAt=:updated,lastActionBy=:by",
       ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status", "#timeZone": "timeZone" }, ExpressionAttributeValues: {
         ":expected": version, ":next": version + 1, ":status": "reschedule_requested", ":slots": [replacement.start], ":start": replacement.start, ":end": replacement.end,
         ":zone": replacement.timeZone, ":slot": replacement.slotId, ":price": replacement.priceMinor, ":policy": replacement.cancellationPolicy,
-        ":window": replacement.cancellationWindowHours, ":zero": 0, ":none": null, ":updated": updatedAt, ":by": "consumer",
+        ":window": replacement.cancellationWindowHours, ":zero": 0, ":none": null, ":reminders": "disabled", ":updated": updatedAt, ":by": "consumer",
       } } },
     { Update: { TableName: config.tableName, Key: { pk: replacement.pk, sk: replacement.sk }, UpdateExpression: "SET #status=:booked REMOVE mutationOperationId",
       ConditionExpression: "#status=:booked AND heldBy=:person AND holdId=:hold AND mutationOperationId=:operation", ExpressionAttributeNames: { "#status": "status" },
@@ -734,19 +737,22 @@ async function workforceAction(config: TelehealthConfiguration, actor: Actor, va
 
 async function scheduleRequest(config: TelehealthConfiguration, item: AppointmentItem, version: number, values: Partial<AppointmentItem>) {
   if (version !== item.version) throw new TelehealthError("conflict");
+  const operation = appointmentOperationScope.getStore();
+  if (!operation || !UUID.test(operation.operationId)) throw new TelehealthError("service_unavailable");
   const appointmentId = item.appointmentId ?? randomUUID(); const updatedAt = new Date().toISOString();
-  const next = { ...item, ...values, appointmentId, version: version + 1, updatedAt, lastActionBy: "workforce" as const };
+  const next = { ...item, ...values, appointmentId, reminderGeneration: operation.operationId,
+    reminderStatus: "disabled" as AppointmentItem["reminderStatus"], version: version + 1, updatedAt, lastActionBy: "workforce" as const };
   const appointment = { pk: item.pk, sk: `APPT#${appointmentId}`, appointmentId, organizationId: item.organizationId, consumerPersonId: item.consumerPersonId,
     requestId: item.requestId, slotId: item.slotId, status: values.status, visitType: item.visitType, start: values.scheduledStart, end: values.scheduledEnd,
     timeZone: values.timeZone, joinUrl: values.joinUrl, providerMeetingId: values.providerMeetingId, priceMinor: item.priceMinor, currency: item.currency,
     cancellationPolicy: item.cancellationPolicy, cancellationWindowHours: item.cancellationWindowHours,
     cancellationFeeDueMinor: item.cancellationFeeDueMinor, updatedAt };
   if (config.remindersEnabled) {
-    try { await scheduleAppointmentReminders(config, next); next.reminderStatus = "scheduled"; }
+    try { await scheduleAppointmentReminders(config, next, item); next.reminderStatus = "scheduled"; }
     catch { next.reminderStatus = "failed"; }
   }
   const actions: RequestTransaction = [
-    { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: "SET #version=:next,#status=:status,scheduledStart=:start,scheduledEnd=:end,joinUrl=:join,providerMeetingId=:meeting,#timeZone=:zone,appointmentId=:appointment,reminderStatus=:reminders,updatedAt=:updated,lastActionBy=:by", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status", "#timeZone": "timeZone" }, ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":status": values.status, ":start": values.scheduledStart, ":end": values.scheduledEnd, ":join": values.joinUrl, ":meeting": values.providerMeetingId, ":zone": values.timeZone, ":appointment": appointmentId, ":reminders": next.reminderStatus, ":updated": updatedAt, ":by": "workforce" } } },
+    { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: "SET #version=:next,#status=:status,scheduledStart=:start,scheduledEnd=:end,joinUrl=:join,providerMeetingId=:meeting,#timeZone=:zone,appointmentId=:appointment,reminderStatus=:reminders,reminderGeneration=:generation,updatedAt=:updated,lastActionBy=:by", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status", "#timeZone": "timeZone" }, ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":status": values.status, ":start": values.scheduledStart, ":end": values.scheduledEnd, ":join": values.joinUrl, ":meeting": values.providerMeetingId, ":zone": values.timeZone, ":appointment": appointmentId, ":reminders": next.reminderStatus, ":generation": next.reminderGeneration, ":updated": updatedAt, ":by": "workforce" } } },
     { Put: { TableName: config.tableName, Item: appointment } },
   ];
   await appendRequestVisitChange(config, { ...item, appointmentId }, actions, "scheduled", next);
@@ -1543,25 +1549,38 @@ async function appendRequestVisitChange(config: TelehealthConfiguration, item: A
     ExpressionAttributeNames: { "#version": "version" }, ExpressionAttributeValues: { ":expected": visit.version, ":operation": operation.operationId } } });
 }
 
-function reminderName(requestId: string, offset: "24h" | "1h") { return `alp-${requestId.replaceAll("-", "")}-${offset}`; }
+function reminderName(item: Pick<AppointmentItem, "requestId" | "reminderGeneration">, offset: "24h" | "1h") {
+  if (!UUID.test(item.requestId)) throw new TelehealthError("service_unavailable");
+  // Preserve the legacy name exactly for cleanup; never treat malformed new metadata as legacy.
+  if (item.reminderGeneration === undefined) return `alp-${item.requestId.replaceAll("-", "")}-${offset}`;
+  if (typeof item.reminderGeneration !== "string" || !UUID.test(item.reminderGeneration)) throw new TelehealthError("service_unavailable");
+  const generation = Buffer.from(item.reminderGeneration.replaceAll("-", ""), "hex").toString("base64url");
+  return `alp-${item.requestId.replaceAll("-", "").toLowerCase()}-${generation}-${offset}`;
+}
 function atExpression(value: Date) { return `at(${value.toISOString().slice(0, 19)})`; }
-async function deleteAppointmentReminders(config: TelehealthConfiguration, requestId: string) {
+async function deleteAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem) {
+  const names = (["24h", "1h"] as const).map(offset => reminderName(item, offset));
   await markRequestSideEffect(config);
-  for (const offset of ["24h", "1h"] as const) {
-    try { await scheduler.send(new DeleteScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: reminderName(requestId, offset) })); }
+  for (const name of names) {
+    try { await scheduler.send(new DeleteScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name })); }
     catch (error) { if ((error as { name?: string }).name !== "ResourceNotFoundException") throw new TelehealthError("service_unavailable"); }
   }
 }
-async function scheduleAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem) {
+async function scheduleAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem, previous: AppointmentItem) {
   if (!item.scheduledStart) throw new TelehealthError("service_unavailable");
-  await deleteAppointmentReminders(config, item.requestId);
+  await deleteAppointmentReminders(config, previous);
   const start = new Date(item.scheduledStart).getTime();
   for (const [offset, milliseconds] of [["24h", 86_400_000], ["1h", 3_600_000]] as const) {
     const runAt = new Date(start - milliseconds); if (runAt.getTime() <= Date.now()) continue;
-    await scheduler.send(new CreateScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: reminderName(item.requestId, offset),
+    const name = reminderName(item, offset);
+    const input = JSON.stringify({ internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId,
+      scheduledStart: item.scheduledStart, reminderProtocol: "appointment-reminder/2", reminderGeneration: item.reminderGeneration });
+    const clientToken = createHash("sha256").update(JSON.stringify(["appointment-reminder/2", config.reminderScheduleGroup, name,
+      atExpression(runAt), config.reminderTargetArn, config.reminderSchedulerRoleArn, input])).digest("hex");
+    await scheduler.send(new CreateScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name, ClientToken: clientToken,
       ScheduleExpression: atExpression(runAt), ScheduleExpressionTimezone: "UTC", FlexibleTimeWindow: { Mode: "OFF" }, ActionAfterCompletion: "DELETE",
       Target: { Arn: config.reminderTargetArn, RoleArn: config.reminderSchedulerRoleArn,
-        Input: JSON.stringify({ internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId, scheduledStart: item.scheduledStart }) } }));
+        Input: input } }));
   }
 }
 /** SES bounce and complaint events (via the reminder configuration set's SNS destination) suppress further reminders to that
@@ -1594,16 +1613,32 @@ async function emailSuppressed(config: TelehealthConfiguration, email: string) {
 async function sendAppointmentReminder(config: TelehealthConfiguration, event: ReminderEvent) {
   if (!config.remindersEnabled || !UUID.test(String(event.organizationId)) || !UUID.test(String(event.requestId)) || !date(String(event.scheduledStart))) throw new TelehealthError("service_unavailable");
   const item = await find(config, String(event.organizationId), String(event.requestId));
-  if (item.mutationOperationId) return { sent: false, reason: "change_pending" };
-  if (item.status === "cancelled" || item.scheduledStart !== event.scheduledStart) return { sent: false, reason: "stale" };
+  const refusal = reminderRefusal(item, event);
+  if (refusal) return { sent: false, reason: refusal };
   // A bounced or complained address is never mailed again; the appointment itself is unaffected and the app still shows it.
   if (await emailSuppressed(config, item.consumerEmail)) return { sent: false, reason: "suppressed" };
-  const when = new Date(item.scheduledStart ?? "").toISOString();
-  const link = item.joinUrl ? `\nJoin your secure visit: ${item.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
+  // Recheck after the suppression I/O. This reduces a stale-read window; it is not an atomic SES/DB transaction.
+  const current = await find(config, String(event.organizationId), String(event.requestId));
+  const currentRefusal = reminderRefusal(current, event);
+  if (currentRefusal) return { sent: false, reason: currentRefusal };
+  if (current.version !== item.version || current.consumerPersonId !== item.consumerPersonId
+    || current.consumerEmail !== item.consumerEmail || current.joinUrl !== item.joinUrl) return { sent: false, reason: "stale" };
+  const when = new Date(current.scheduledStart ?? "").toISOString();
+  const link = current.joinUrl ? `\nJoin your secure visit: ${current.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
   await ses.send(new SendEmailCommand({ FromEmailAddress: config.reminderSender, ConfigurationSetName: config.reminderConfigurationSet,
-    Destination: { ToAddresses: [item.consumerEmail] }, Content: { Simple: { Subject: { Data: "Your AI Longevity Pro appointment reminder" },
+    Destination: { ToAddresses: [current.consumerEmail] }, Content: { Simple: { Subject: { Data: "Your AI Longevity Pro appointment reminder" },
       Body: { Text: { Data: `Your telehealth appointment is scheduled for ${when}.${link}\n\nTo reschedule or cancel, open AI Longevity Pro. Do not reply with health information.` } } } } }));
   return { sent: true };
+}
+function reminderRefusal(item: AppointmentItem, event: ReminderEvent): "change_pending" | "stale" | null {
+  if (item.mutationOperationId) return "change_pending";
+  if (item.reminderStatus !== "scheduled" || !["scheduled", "awaiting_provider"].includes(item.status)
+    || item.scheduledStart !== event.scheduledStart) return "stale";
+  if (item.reminderGeneration === undefined) {
+    return event.reminderProtocol === undefined && event.reminderGeneration === undefined ? null : "stale";
+  }
+  return typeof item.reminderGeneration === "string" && UUID.test(item.reminderGeneration)
+    && event.reminderProtocol === "appointment-reminder/2" && event.reminderGeneration === item.reminderGeneration ? null : "stale";
 }
 
 async function stripeCredentials(config: TelehealthConfiguration) {
@@ -1774,6 +1809,7 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   delete result.consumerEmail;
   delete result.bookingInputSha256;
   delete result.mutationOperationId;
+  delete result.reminderGeneration;
   if (pool === "consumer") delete result.paymentIntentId;
   if (pool === "consumer") delete result.consumerPersonId;
   return result;

@@ -397,6 +397,42 @@ The matched V2 screen first displays the original action for review. Explicit ad
 
 This implements discovery of newly captured pending consumer actions, not a history browser, legacy reconstruction, provider reconciliation or a two-device hosted acceptance result. The new private operation input also requires the still-open cloud lifecycle integration. Deploy the matched authorizer, handler and V2 candidate together; keep PHI disabled until the broader activation requirements are met.
 
+## Reminder revision isolation
+
+Each new scheduling operation gives its reminders a private generation equal to
+the original admitted operation UUID. The schedule name combines the request
+UUID, the generation encoded as 22 base64url characters, and the reminder offset.
+The longest name is 63 characters and retains the existing `alp-` resource
+prefix. The generation is persisted even when only part of schedule creation
+succeeds, but it is removed from public appointment replies. Creation uses a
+deterministic client token bound to the exact name, target and schedule input.
+The format fits the [AWS CreateSchedule name and token constraints](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html).
+
+Rescheduling deletes only the previous generation's names, never the names of
+its replacement. Cleanup of an older row uses its original legacy names; malformed
+generation metadata never selects that legacy fallback. Cancellation and a
+consumer reschedule request disable reminder delivery. A scheduling operation
+with reminders disabled also saves its new generation and disabled status; it
+does not claim that old schedules were physically deleted.
+
+New targets carry `appointment-reminder/2`, the exact generation and scheduled
+start. A reminder can send only for the current matching generation, a scheduled
+reminder status and a scheduled or awaiting-provider appointment. A mutation
+fence refuses delivery. Legacy events can send only for legacy rows; they cannot
+send for a new generation at the same appointment time. After the suppression
+lookup, a second strongly consistent request read checks the generation, time,
+status, fence, version, owner, address and join link before mailing.
+
+These checks are locally tested through the actual scheduling and delivery
+handler with fictional DynamoDB, Scheduler and SES transports. They are not
+hosted acceptance, exactly-once email delivery or an atomic database-and-SES
+transaction. A change or suppression can still occur after the final read. A
+delayed old create can leave an orphan schedule, although its event cannot mail
+the current request. Provider and invocation settlement, compensating cleanup,
+orphan inventory, pagination, cloud lifecycle and hosted race tests remain
+required before activation. Unknown cancellation deletions remain fenced rather
+than becoming certified no-effects refusals. PHI remains disabled.
+
 ## Open decisions (unchanged from the handoff)
 
 Consent wording and renewal (attorney review; California requires every
