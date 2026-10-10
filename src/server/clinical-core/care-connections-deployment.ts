@@ -9,12 +9,15 @@ import { createProductionCareConnectionApi } from './production-care-connections
 import { createProductionCareConnections } from './production-care-connections';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
+import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
+import { ADOPTED_INVENTORY_UPGRADE } from './adopted-plan-inventory-schema-upgrade';
 
 export type CareConnectionsBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly CareConnectionFunctionBinding[];
   claimFunctions: readonly CareConnectionFunctionBinding[];
 };
+export type InventoryCareConnectionsBuild = InventoryQualificationBuild & Pick<CareConnectionsBuild, 'functions' | 'claimFunctions'>;
 type Environment = Record<string, string | undefined>;
 const release = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
 const hash = /^[a-f0-9]{64}$/;
@@ -25,13 +28,26 @@ const hash = /^[a-f0-9]{64}$/;
 export function createCareConnectionsHandler(environment: Environment, suppliedBuild: CareConnectionsBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(environment, suppliedBuild, databaseFactory, now, false);
+}
+/** Separate compiled entry point; a 107 build is never relabeled as 106. */
+export function createInventoryCareConnectionsHandler(environment: Environment, suppliedBuild: InventoryCareConnectionsBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(environment, suppliedBuild, databaseFactory, now, true);
+}
+function createHandler(environment: Environment, suppliedBuild: CareConnectionsBuild | InventoryCareConnectionsBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined,
+  inventory: boolean): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   try {
     const e = { ...environment }, build = structuredClone(suppliedBuild);
+    if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareConnectionsBuild, 'CARE_CONNECTIONS_ACTIVATION');
+    const expectedRelease = inventory ? ADOPTED_INVENTORY_UPGRADE.to : release;
     const functions = validateCareConnectionFunctions(build.functions);
     const claimFunctions = validateCareClaimFunctions(build.claimFunctions);
-    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== 106
-      || build.migrationReleaseSha256 !== release || e.SOURCE_COMMIT !== build.sourceCommit
-      || e.MIGRATION_RELEASE_SHA256 !== release || e.AWS_REGION !== 'us-east-2'
+    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== (inventory ? 107 : 106)
+      || build.migrationReleaseSha256 !== expectedRelease || e.SOURCE_COMMIT !== build.sourceCommit
+      || e.MIGRATION_RELEASE_SHA256 !== expectedRelease || e.AWS_REGION !== 'us-east-2'
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.CONSUMER_ISSUER ?? '')
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.WORKFORCE_ISSUER ?? '')
       || !['false', 'true'].includes(e.PHI_ALLOWED ?? '')

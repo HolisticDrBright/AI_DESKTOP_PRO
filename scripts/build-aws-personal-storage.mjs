@@ -1,7 +1,10 @@
 import {build} from 'esbuild';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {personalStorageCandidate} from './personal-storage-candidate.mjs';
-const out='dist/aws-clinical-core/personal-storage';mkdirSync(out,{recursive:true});
+import {resolve} from 'node:path';
+const args=process.argv.slice(2);
+if(args.length>1||args.length&&!/^--out-dir=.+$/.test(args[0]))throw Error('personal_storage_build_argument_invalid');
+const out=args.length?resolve(args[0].slice(10)):'dist/aws-clinical-core/personal-storage';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-consumer-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
 // Intentionally not an activation template. No data-plane IAM or credentials.
 const ref=name=>({Ref:name});const sub=value=>({'Fn::Sub':value});
@@ -15,6 +18,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Disabled inde
 ['GET records','POST records','GET record','GET consent','POST consent','GET posture','GET chat-context','POST privacy-export','GET privacy-export','POST privacy-export/job','GET privacy-export/job','POST privacy-export/job/cancel','POST privacy-export/job/download','GET active-plan','POST active-plan','POST active-plan/release','GET privacy-request','POST privacy-request','POST privacy-request/tombstone'].forEach((route,index)=>{const [method,resource]=route.split(' ');template.Resources[`Route${index}`]={Type:'AWS::ApiGatewayV2::Route',Properties:{ApiId:ref('ApiId'),RouteKey:`${method} /clinical-core/consumer/personal/${resource}`,AuthorizationType:'JWT',AuthorizerId:ref('ConsumerAuthorizerId'),Target:{'Fn::Join':['/',['integrations',ref('Integration')]]}}};});
 // Stable append: existing Route0..Route18 keep their logical IDs.
 template.Resources.Route19={Type:'AWS::ApiGatewayV2::Route',Properties:{ApiId:ref('ApiId'),RouteKey:'GET /clinical-core/consumer/personal/privacy-export/job/current',AuthorizationType:'JWT',AuthorizerId:ref('ConsumerAuthorizerId'),Target:{'Fn::Join':['/',['integrations',ref('Integration')]]}}};
+template.Resources.Route20={Type:'AWS::ApiGatewayV2::Route',Properties:{ApiId:ref('ApiId'),RouteKey:'GET /clinical-core/consumer/personal/active-plan/inventory',AuthorizationType:'JWT',AuthorizerId:ref('ConsumerAuthorizerId'),Target:{'Fn::Join':['/',['integrations',ref('Integration')]]}}};
 writeFileSync(`${out}/disabled-template.json`,JSON.stringify(template,null,2));
 writeFileSync(`${out}/template.json`,JSON.stringify(personalStorageCandidate(template),null,2));
 console.log('Built personal storage Lambda, legacy disabled template and default-blocked production candidate. No deployment or activation.');

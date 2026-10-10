@@ -1,0 +1,16 @@
+{
+  "contract": "adopted-plan-inventory-upgrade-build/1",
+  "sourceCommit": "2162bca6084eab3780681ba47f56eb23696c1f8e",
+  "clean": true,
+  "operatorSha256": "6539e65ac2f49027344fb87d96209a1f5fbf1fe32f3955dcd21b6db4208bb26c",
+  "embeddedMigrationCount": 107,
+  "fromReleaseSha256": "514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b",
+  "toReleaseSha256": "542b101ca1729576d2b203c9c2b3d98d2d9dd897e7480ab08ff150c8eacf773c",
+  "execution": "qualification_only",
+  "phiAllowed": false,
+  "activation": "blocked",
+  "migrationPerformed": false,
+  "mandatoryRollbackRehearsal": true,
+  "postRehearsalPrestateRecheck": true,
+  "automaticWriteRetry": false
+}

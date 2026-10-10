@@ -3,6 +3,8 @@ if (typeof window !== "undefined") {
 }
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { fullscriptSupplementDraftInput } from './protocol-draft';
+import { FULLSCRIPT_DRAFT_SCOPES } from './draft-scopes';
 
 export type FullscriptEnvironment = "sandbox_us" | "production_us";
 
@@ -219,6 +221,7 @@ async function tokenRequest(
     }),
   }).catch(() => null);
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
+    void response?.body?.cancel().catch(() => undefined);
     throw new FullscriptUnavailableError("Fullscript token exchange failed.");
   }
   const raw = await boundedFullscriptBody(response, 64_000, signal);
@@ -288,12 +291,64 @@ function parseToken(value: unknown): FullscriptToken {
 }
 
 export class FullscriptApiClient {
+  private readonly configuration: FullscriptConfiguration;
+  private readonly grantedScopes: ReadonlySet<string>;
   constructor(
-    private readonly configuration: FullscriptConfiguration,
+    configuration: FullscriptConfiguration,
     private readonly accessToken: string,
     private readonly fetcher: typeof fetch = fetch,
+    scopes: readonly string[] = [],
   ) {
     if (!OPAQUE.test(accessToken)) throw new FullscriptUnavailableError();
+    const canonical = ENVIRONMENTS[configuration.environment];
+    if (!canonical || configuration.apiOrigin !== canonical.apiOrigin || configuration.authorizeUrl !== canonical.authorizeUrl)
+      throw new FullscriptUnavailableError();
+    this.configuration = Object.freeze({...configuration});
+    this.grantedScopes = new Set(scopes);
+  }
+
+  /** Transport only: callers still need a durable, authority-checked delivery
+   * intent. There is deliberately no public JSON action exposing this method. */
+  createSupplementDraft(input: unknown) {
+    this.assertSandboxDraftScope('clinic:write');
+    const parsed = fullscriptSupplementDraftInput.safeParse(input);
+    if (!parsed.success) throw new FullscriptUnavailableError();
+    const value = parsed.data;
+    return this.request('POST', `/clinic/patients/${safeId(value.fullscriptPatientId)}/treatment_plans`, {
+      practitioner_id: safeId(value.practitionerId), state: 'draft',
+      send_to_patient: false, skip_email_notification: true,
+      metadata: {id: value.idempotencyKey}, partner_order_id: value.idempotencyKey,
+      recommendations: value.recommendations.map(row => ({
+        variant_id: safeId(row.variantId), units_to_purchase: row.unitsToPurchase,
+        dosage: {additional_info: row.instructions},
+      })),
+    }, undefined, {'idempotency-key': value.idempotencyKey}, 201);
+  }
+
+  retrieveTreatmentPlan(id: string) {
+    this.assertSandboxDraftScope('patients:treatment_plan_history');
+    return this.request('GET', `/clinic/treatment_plans/${safeId(id)}`, undefined, undefined, undefined, 200);
+  }
+
+  findTreatmentPlanByMetadata(idempotencyKey: string) {
+    this.assertSandboxDraftScope('catalog:read');
+    if (!/^alp-cart-[a-f0-9]{64}$/.test(idempotencyKey)) throw new FullscriptUnavailableError();
+    return this.request('GET', '/clinic/metadata', undefined, {id: idempotencyKey, type: 'treatment_plan'}, undefined, 200);
+  }
+
+  private assertSandboxDraftScope(scope: string) {
+    if (this.configuration.environment !== 'sandbox_us' || !this.grantedScopes.has(scope))
+      throw new FullscriptUnavailableError();
+  }
+
+  /** Before admitting an adapter POST, require every permission necessary to
+   * reconcile an unknown response. This is not credential/release review. */
+  assertSupplementDraftCapabilities() {
+    for (const scope of FULLSCRIPT_DRAFT_SCOPES) this.assertSandboxDraftScope(scope);
+  }
+
+  assertSupplementDraftReadCapabilities() {
+    for (const scope of ['catalog:read', 'patients:treatment_plan_history']) this.assertSandboxDraftScope(scope);
   }
 
   searchProducts(query: string) {
@@ -349,6 +404,7 @@ export class FullscriptApiClient {
     body?: Record<string, unknown>,
     query?: Record<string, string>,
     extraHeaders?: Record<string, string>,
+    expectedStatus?: number,
   ): Promise<Record<string, unknown>> {
     const signal = AbortSignal.timeout(12_000);
     const url = new URL(`${this.configuration.apiOrigin}${path}`);
@@ -365,7 +421,9 @@ export class FullscriptApiClient {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     }).catch(() => null);
-    if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
+    if (!response?.ok || (expectedStatus !== undefined && response.status !== expectedStatus)
+      || !response.headers.get("content-type")?.includes("application/json")) {
+      void response?.body?.cancel().catch(() => undefined);
       throw new FullscriptUnavailableError("Fullscript request failed.");
     }
     const raw = await boundedFullscriptBody(response, 2_000_000, signal);

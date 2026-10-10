@@ -117,6 +117,7 @@ describe('functional personal storage deployment candidate',()=>{
   it('allows exactly the personal API routes under a dedicated matching consumer authorizer',()=>{
     const routes=Object.values(candidate.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route');
     expect(routes.map(r=>r.Properties.RouteKey).sort()).toEqual([...OWNED_CONSUMER_ROUTES].sort());
+    expect(candidate.Resources.Route20.Properties.RouteKey).toBe('GET /clinical-core/consumer/personal/active-plan/inventory');
     for(const route of routes){expect(route.Properties.AuthorizationType).toBe('JWT');expect(route.Properties.AuthorizerId).toEqual({Ref:'ConsumerAuthorizer'});}
     expect(candidate.Resources.ConsumerAuthorizer.Properties.JwtConfiguration).toEqual({Issuer:{Ref:'ConsumerIssuer'},Audience:[{Ref:'ConsumerAudience'}]});
     expect(candidate.Resources.Invoke.Properties.SourceAccount).toEqual({Ref:'AWS::AccountId'});

@@ -1,0 +1,244 @@
+{
+  "runId": "5de94b1cbb644db501fc276941942341",
+  "operatorSource": {
+    "desktop": {
+      "commit": "87e7ce96a41df075809e2d3bf928a628a8dc8bc5",
+      "clean": true,
+      "files": 1748,
+      "sha256": "879f583e6f22b2a4dc0d1054b8d24ab6f307b858e8302120bfad7f9a22e61c48"
+    },
+    "mobile": {
+      "source": {
+        "commit": "e92116b154dd1a206262926388cffe90ac5c06ce",
+        "clean": true,
+        "files": 922,
+        "sha256": "3617bfb0644a6ed7d1ca60b39f8e2647d53c31735f09597266d13c9db5126f8f"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "migrations": {
+      "contract": "care-intent-canonical-mapping/1",
+      "canonicalRegistered": true,
+      "sourceMigrationCount": 47,
+      "liveMigrationCount": 48,
+      "sourceLedgerSha256": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+      "liveLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "referenceLedgerSha256": "80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a",
+      "referenceMigrationCount": 3,
+      "historicalReferenceCount": 2,
+      "historicalReferenceSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "referenceMigration": {
+        "version": "20261008060000",
+        "name": "catalog_offer_current_product",
+        "sha256": "3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117"
+      },
+      "historicalParentCount": 46,
+      "historicalParentSha256": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+      "historicalAliasPreserved": true,
+      "migration": {
+        "version": "20261007010000",
+        "name": "synthetic_care_erasure_intents",
+        "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+      },
+      "schemaReplayAuthorized": false,
+      "ledgerRewriteAuthorized": false,
+      "productionApproved": false,
+      "phiAllowed": false
+    },
+    "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+  },
+  "contract": "synthetic-catalog-runtime-code-change/1",
+  "observedAt": "2026-10-09T06:11:03.456Z",
+  "execution": "synthetic-staging",
+  "account": "588966314750",
+  "region": "us-east-2",
+  "current": {
+    "desktop": {
+      "commit": "65e248f6ecd84a442b1511c52087cd708d7f792b",
+      "clean": true,
+      "files": 1738,
+      "sha256": "9bdf0d72ce1e79ede0953d3e6aebeaed7a9b95ef5be4556186a050871f1488b1"
+    },
+    "mobile": {
+      "source": {
+        "commit": "e92116b154dd1a206262926388cffe90ac5c06ce",
+        "clean": true,
+        "files": 922,
+        "sha256": "3617bfb0644a6ed7d1ca60b39f8e2647d53c31735f09597266d13c9db5126f8f"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "migrations": {
+      "contract": "care-intent-canonical-mapping/1",
+      "canonicalRegistered": true,
+      "sourceMigrationCount": 47,
+      "liveMigrationCount": 48,
+      "sourceLedgerSha256": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+      "liveLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "referenceLedgerSha256": "80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a",
+      "referenceMigrationCount": 3,
+      "historicalReferenceCount": 2,
+      "historicalReferenceSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "referenceMigration": {
+        "version": "20261008060000",
+        "name": "catalog_offer_current_product",
+        "sha256": "3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117"
+      },
+      "historicalParentCount": 46,
+      "historicalParentSha256": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+      "historicalAliasPreserved": true,
+      "migration": {
+        "version": "20261007010000",
+        "name": "synthetic_care_erasure_intents",
+        "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+      },
+      "schemaReplayAuthorized": false,
+      "ledgerRewriteAuthorized": false,
+      "productionApproved": false,
+      "phiAllowed": false
+    },
+    "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+  },
+  "artifact": {
+    "bucket": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7",
+    "key": "clinical-core/authenticated-api/catalog-runtime-release/65e248f6ecd84a442b1511c52087cd708d7f792b/e92116b154dd1a206262926388cffe90ac5c06ce/ef9f9d38b755e0aa62da13a848181cc586988ba5bed4c328ab7948114abc27e3.zip",
+    "versionId": "d8uA5e4HL6vnpWXr9UiWYITVp2VeiU42",
+    "sha256": "ef9f9d38b755e0aa62da13a848181cc586988ba5bed4c328ab7948114abc27e3",
+    "bytes": 1874730,
+    "reused": true,
+    "encryption": "aws:kms",
+    "kmsKeyArn": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900",
+    "exactVersionReadbackVerified": true
+  },
+  "projection": {
+    "contract": "synthetic-catalog-runtime-proposal-projection/1",
+    "current": {
+      "desktop": {
+        "commit": "65e248f6ecd84a442b1511c52087cd708d7f792b",
+        "clean": true,
+        "files": 1738,
+        "sha256": "9bdf0d72ce1e79ede0953d3e6aebeaed7a9b95ef5be4556186a050871f1488b1"
+      },
+      "mobile": {
+        "source": {
+          "commit": "e92116b154dd1a206262926388cffe90ac5c06ce",
+          "clean": true,
+          "files": 922,
+          "sha256": "3617bfb0644a6ed7d1ca60b39f8e2647d53c31735f09597266d13c9db5126f8f"
+        },
+        "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+        "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+        "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+        "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+        "built": false,
+        "deviceVerified": false,
+        "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+        "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+      },
+      "migrations": {
+        "contract": "care-intent-canonical-mapping/1",
+        "canonicalRegistered": true,
+        "sourceMigrationCount": 47,
+        "liveMigrationCount": 48,
+        "sourceLedgerSha256": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+        "liveLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+        "referenceLedgerSha256": "80027d6da351b0756385ba4d68c04dfb7397b21b058e5d341ce625a4c9b1611a",
+        "referenceMigrationCount": 3,
+        "historicalReferenceCount": 2,
+        "historicalReferenceSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+        "referenceMigration": {
+          "version": "20261008060000",
+          "name": "catalog_offer_current_product",
+          "sha256": "3d63f4a04b8168818844736ea5143115ca1e01fc9b2c96f0da6d5889938a6117"
+        },
+        "historicalParentCount": 46,
+        "historicalParentSha256": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+        "historicalAliasPreserved": true,
+        "migration": {
+          "version": "20261007010000",
+          "name": "synthetic_care_erasure_intents",
+          "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+        },
+        "schemaReplayAuthorized": false,
+        "ledgerRewriteAuthorized": false,
+        "productionApproved": false,
+        "phiAllowed": false
+      },
+      "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+    },
+    "stackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+    "changeSetId": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/catalog-runtime-a4ff17fe8c48c9caf5718c9eda86bcb5/44ca72b3-81a5-4a66-9d62-f25b05de415d",
+    "changeSetName": "catalog-runtime-a4ff17fe8c48c9caf5718c9eda86bcb5",
+    "summarySha256": "7505fe647f2038f846e074a735747e1f886140da666140d8adc97a2952f1787c",
+    "propertyValuesSha256": "a3eae94efed0a7fc8aaa515ce31ab8614b50b0738b9b0d45d1f3425219d37de6",
+    "summaryResourceCount": 2,
+    "propertyValuesResourceCount": 1,
+    "affectedResources": [
+      "IdentityApiFunction",
+      "IdentityApiIntegration"
+    ],
+    "predecessorControl": {
+      "stackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+      "revision": "531d8866-f650-4751-a89d-dceef74fc153",
+      "codeSha256": "KF8z0MAz0mazT+u/UzNuHxhThz0xwpE48/yS5SlBsPw=",
+      "codeSize": 1827487,
+      "functionConfigurationSha256": "1787562087db75d24c727317e867284fba54b7842fcd7d87d37886957e401563",
+      "resourcesSha256": "5b6ff163a5afd4908f2b7dc8152ebd0bbb55ed0d18d95337e642fbc368bdde45",
+      "templateSha256": "3ecf4990401b3712a34b856c526755fce8c37732e3dee1ae2e80895c9a344ae7",
+      "parametersSha256": "73dfd7f817a2f1b9e9c006e70f9afc136c7aa4b9edb358b27e227bc25806f8c7",
+      "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+      "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+      "integrationsSha256": "710df282b74213710e8e538f74422b86f6f2f6ab48c2bf74fa59b7d8bc2b6a60",
+      "stageSha256": "8d56c31fd544a6017e56a6444c28d2738fb438c2f28435cb5e6641d032f11cdc",
+      "policySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47",
+      "roleSha256": "8904bb47ebff513f08239504338591ce66a3b810be383420ae817c4567842d68",
+      "identityRouteCount": 51,
+      "apiRouteCount": 112,
+      "iamVerified": true,
+      "loggingVerified": true,
+      "phiAllowed": false
+    },
+    "integrationDependencyClassified": true,
+    "integrationNoOpProven": false,
+    "postExecutionReadbackRequired": true,
+    "compatibleRecoveryRequired": true,
+    "executionAdmissible": false,
+    "deployed": false,
+    "schemaChanged": false,
+    "hostedAcceptance": false,
+    "releaseAccepted": false,
+    "phiAllowed": false,
+    "paidMobileBuildStarted": false
+  },
+  "stackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+  "changeSetId": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/catalog-runtime-a4ff17fe8c48c9caf5718c9eda86bcb5/44ca72b3-81a5-4a66-9d62-f25b05de415d",
+  "changeSetName": "catalog-runtime-a4ff17fe8c48c9caf5718c9eda86bcb5",
+  "changeSetCreated": true,
+  "reused": false,
+  "preflightObservedAt": "2026-10-09T06:10:19.783Z",
+  "preflightSha256": "50d96a4be57df19c96e0ad485ec29b74f217d7dd80407c0ee852be637202e897",
+  "preflightRenewals": 1,
+  "changeSetExecutionStatus": "AVAILABLE",
+  "executionAdmissible": false,
+  "deployed": false,
+  "schemaChanged": false,
+  "recoveryRehearsed": false,
+  "hostedAcceptance": false,
+  "releaseAccepted": false,
+  "phiAllowed": false,
+  "paidMobileBuildStarted": false
+}

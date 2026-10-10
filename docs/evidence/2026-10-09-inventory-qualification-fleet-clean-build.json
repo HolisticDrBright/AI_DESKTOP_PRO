@@ -1,0 +1,210 @@
+{
+  "contract": "inventory-qualification-fleet-clean-build-evidence/1",
+  "buildManifestSha256": "a176dd49a3a2cbe23f24edb8e8fcf1e883a8333b130ed8300d6d8f17b789228c",
+  "build": {
+    "contract": "inventory-qualification-fleet-build/1",
+    "sourceCommit": "188b3e45981ebad22f183404b1de1f5f3f18564e",
+    "sourceClean": true,
+    "sourceInputSha256": "4b0af9855e62bb5723b2dab1f112821d03e2f66336573a16a6563b3dc5f9db9a",
+    "migrationCount": 107,
+    "migrationReleaseSha256": "542b101ca1729576d2b203c9c2b3d98d2d9dd897e7480ab08ff150c8eacf773c",
+    "qualificationProfile": "adopted-plan-inventory-qualification/1",
+    "candidates": [
+      {
+        "candidate": "personal-storage",
+        "manifestSha256": "629635214c76a5b9955856f19190cb6996ce011aa066f5af9514f6497bd8d08e",
+        "templateSha256": "f9e7bd2c17cf25c87dc1da08a13d935851d1acbd3f6b3f806fb64f0a5c84dfdd",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "120762a837faef1b1f2bf29f2de1944aee15a013596756d29d2d370aa3be518e",
+            "bytes": 1284444
+          }
+        ]
+      },
+      {
+        "candidate": "privacy-operations",
+        "manifestSha256": "69aaf8431a6eddfb9b6c86156066e126dcfcd3ca9b57c4673cabe8c0d2913385",
+        "templateSha256": "81d70ae80881fbacdefaad17308685da7cf11e3b3a5022e2b6d7408012a6260b",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "d57b34b45c631136a5554aef6f8683e5966c469aece3d8aa16fa20c8d8490b1f",
+            "bytes": 2635535
+          }
+        ]
+      },
+      {
+        "candidate": "owned-lab",
+        "manifestSha256": "442f15b4eb27a1f44ee109f12d752b5b380a5b4118d55d759dccb610494eb0f7",
+        "templateSha256": "46a7fe17913ba327aa3c365af5f2e5c71b8a43a3371bf02d0e835f7b86fe674d",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "efa3306a33264eb0571cfb120b14d1d8ad77a1bae798dc888425ecefde295d7d",
+            "bytes": 1250512
+          },
+          {
+            "file": "deployment-2.zip",
+            "sha256": "c866050d5eedc1a9aa38699ec3c624d4e87ba92510b42e43f817ef4b3b606aa2",
+            "bytes": 1369332
+          }
+        ]
+      },
+      {
+        "candidate": "owned-voice",
+        "manifestSha256": "befac53628b24dd190bc7932244d6fdf22d8d54fcd7750b1d76e045d1d8849c3",
+        "templateSha256": "a2ad5f31a2df980b8854ea5ff1c1eff2f55ea6cd7ebe98629d78cbade9bdab82",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "1571ae7955f28e58eb1907ed01fa6bed263c7d28934e15bf0874f63d9c3a2969",
+            "bytes": 1193804
+          }
+        ]
+      },
+      {
+        "candidate": "recording-authority",
+        "manifestSha256": "c4b543788da9b73bbf59b2ab39b533b2cf178ecfb4cf3a74a821f570c4dc0b15",
+        "templateSha256": "603f5ba4170c5869484aed6d40c8c8624f986d353a0ecf016cb04372a73053f9",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "1e39da9b2d1a6734e8e23c0b49bdb6fd721ec5294a41ef93a0ef7fe1ef882ff6",
+            "bytes": 776695
+          }
+        ]
+      },
+      {
+        "candidate": "recording-capture",
+        "manifestSha256": "c79d38d4af54e6362e7809b1663e62d43174a1d5f937c0bf303f3438d3bc8702",
+        "templateSha256": "eca75c3b5ba5bd7f5b1d8a41fc1a0d6c12f3ce6740478c7cf412d7bdeed1c199",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "8c901dfd4ccbf8a797575b8c0150f617fdc15255b2211791b3f70b3dfc04c821",
+            "bytes": 1292145
+          }
+        ]
+      },
+      {
+        "candidate": "recording-transcription",
+        "manifestSha256": "620453e8b09d8f5ab795cb9b6b4a8c5b95780ebdb222e76e6a6d417864474e9a",
+        "templateSha256": "14617c4739a1b0ebc4639f91e9f168cb40a4f8211894788ec1f62f42211196a0",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "ea508a94a3372e8d8614dc88c93bb4b1975789cb86c44c4f8a6306630ec7e7a9",
+            "bytes": 1348580
+          }
+        ]
+      },
+      {
+        "candidate": "recording-drafting",
+        "manifestSha256": "3014fc675b0c561877e94825fdc66e57abf8fec6edee23e5dd78d7d1a9ba400c",
+        "templateSha256": "a6742e805c35ef92e00e0c0b6072c92cc24a386fc5c58e5cc3ad184b177a94aa",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "c29631e20649dd5caafe65a8aae4684bab9e199233b3ed420a22498bfe9cec5f",
+            "bytes": 1352817
+          }
+        ]
+      },
+      {
+        "candidate": "recording-cleanup-review",
+        "manifestSha256": "66659614d2655e8c17136449a261fee4d716bdb1199181a46366ec0113cedb63",
+        "templateSha256": "dd4422bb2b8297ffd7d943b82f6ef044ce4cdf280ec6b7ced0706459d4ceb9dc",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "52da3376213a96084042a175db81f55a64be574b40eaf407c4ce252e7e40a3c0",
+            "bytes": 1111477
+          }
+        ]
+      },
+      {
+        "candidate": "recording-cleanup-execution",
+        "manifestSha256": "81c1ff259a20b8894c4d6b39623e50033cd3db7e537eb7d03355697e8efc88dc",
+        "templateSha256": "5ccc1191d5178a1cc1feef464ac6c254de429654bd6900f29639d531c2c401da",
+        "packages": [
+          {
+            "file": "deployment-1.zip",
+            "sha256": "79a44b44fba0ee442b96d674d6ffa5cf95756e3a6fc07c84f7ad323b0fbed635",
+            "bytes": 1309776
+          }
+        ]
+      },
+      {
+        "candidate": "care-messaging",
+        "manifestSha256": "91a065302d7b8e0e6023d66d879fb8887baaeed07c88a040b4228e896b7804f2",
+        "templateSha256": "ec8c3f31d3de7e829d2a77b97a0fee5181e85b09e33f3fb7758cc4dce04ff0e3",
+        "packages": [
+          {
+            "file": "deployment.zip",
+            "sha256": "99f0216178554a3afc56edfb20fc94862e43fb7081f1a805acad667df23307d2",
+            "bytes": 801910
+          }
+        ]
+      },
+      {
+        "candidate": "care-connections",
+        "manifestSha256": "815fabfeff84ec9f9676080f532f08812e26ee16fb420333b6a6d822f1bc4604",
+        "templateSha256": "6ec54de7b56a55069f4303abfaeff15f194726a86e73f8cf5bd95d563e31f430",
+        "packages": [
+          {
+            "file": "deployment.zip",
+            "sha256": "c8dea56fed8c54f0677e188ffa5243b37d20064c54e6ece02073de3e55e4a4c3",
+            "bytes": 809363
+          }
+        ]
+      }
+    ],
+    "artifactSetComplete": true,
+    "targetBindingComplete": false,
+    "deploymentPerformed": false,
+    "hostedVerified": false,
+    "phiAllowed": false,
+    "activation": "blocked",
+    "remaining": [
+      "distinct complete-fleet target/observer",
+      "real recovery qualification",
+      "preserving upgrade",
+      "hosted journeys",
+      "matched releases and physical devices",
+      "independent human reviews"
+    ]
+  },
+  "verification": {
+    "fleetTests": {
+      "passed": 55,
+      "skipped": 0
+    },
+    "envelopeTests": {
+      "passed": 19,
+      "skipped": 0
+    },
+    "historicalInfrastructureTests": {
+      "passed": 54,
+      "skipped": 0
+    },
+    "careArtifactAndZipTests": {
+      "passed": 15,
+      "skipped": 0
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "generatedCloudFormationTemplates": 12,
+    "canonicalMigrationGate": {
+      "count": 106,
+      "seededRows": 0
+    }
+  },
+  "limitations": [
+    "local artifacts and fictional runtime only",
+    "no complete-fleet target observer",
+    "no real custody recovery acceptance",
+    "no AWS deployment, permanent apply or PHI activation",
+    "paid mobile builds remain held"
+  ]
+}

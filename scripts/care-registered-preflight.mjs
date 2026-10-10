@@ -42,7 +42,9 @@ export function verifyCareRegisteredSuccessorFunction(fn,candidate,current){
  verifyCareRegisteredCandidate(candidate,current);
  return verifyRegisteredFunctionProfile(fn,candidate.manifest.zipSha256,candidate.zip.length,'$LATEST');
 }
-function verifyRegisteredFunctionProfile(fn,zip,bytes,version){
+// Pure shared validators. Exporting these does not change any original fixed
+// predecessor, public runner, upload admission or execution profile.
+export function verifyRegisteredFunctionProfile(fn,zip,bytes,version){
  check(fn?.FunctionName===P.functionName&&fn.FunctionArn===R.latestArn+(version==='$LATEST'?'':':'+version)
   &&fn.Version===version&&fn.State==='Active'&&fn.LastUpdateStatus==='Successful'
   &&fn.CodeSha256===Buffer.from(zip,'hex').toString('base64')&&fn.CodeSize===bytes
@@ -88,7 +90,7 @@ export function verifyCareRegisteredRoutingControl(o,source,candidate,current,ar
 }
 /** Both profiles exhaust the same actual inventory; no raw response is patched
  * or reduced before the common authority and configuration checks. */
-function verifyRegisteredControlInventory(o,source,expected,expectedParameters,verifyFunction,uri=R.latestArn){
+export function verifyRegisteredControlInventory(o,source,expected,expectedParameters,verifyFunction,uri=R.latestArn){
  const foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
  check(o.foundation?.Stacks?.length===1&&foundation.StackName===P.foundation
   &&['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(foundation.StackStatus)

@@ -17,9 +17,10 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`POST ${BASE}/privacy-export/job`,`GET ${BASE}/privacy-export/job`,`POST ${BASE}/privacy-export/job/cancel`,`POST ${BASE}/privacy-export/job/download`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`,`GET ${BASE}/privacy-export/job/current`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`POST ${BASE}/privacy-export/job`,`GET ${BASE}/privacy-export/job`,`POST ${BASE}/privacy-export/job/cancel`,`POST ${BASE}/privacy-export/job/download`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`,`GET ${BASE}/privacy-export/job/current`,`GET ${BASE}/active-plan/inventory`] as const;
 // Append instead of renumbering the existing deployed route resources.
 const EXPORT_CURRENT_ROUTE=`GET ${BASE}/privacy-export/job/current`;
+const PLAN_INVENTORY_ROUTE=`GET ${BASE}/active-plan/inventory`;
 /** Each advancing poll of a running job performs one bounded packaging pass under the owner's identity. */
 export const PRIVACY_EXPORT_PASS_BUDGET_MS=8000;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
@@ -131,9 +132,11 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       }
       if(route.includes('/active-plan')){
         // The authoritative plan pointer is owner data under the plans scope; it
-        // is never adopted by the server on its own and never reads plan content.
+        // is never adopted by the server on its own. The inventory endpoint
+        // interprets only the exact adopted record, not a caller-provided plan.
         if(!c.allowedScopes.includes('protocols_supplements'))return response(403,{error:'feature_scope_not_enabled'});
         const adapter=input.adapter();
+        if(route===PLAN_INVENTORY_ROUTE){exact(body,[]);return response(200,{data:await adapter.activePlanInventory(context)});}
         if(route.endsWith('/release')){exact(body,['requestId','expected']);return response(200,{data:await adapter.releaseActivePlan(context,body as Parameters<typeof adapter.releaseActivePlan>[1])});}
         if(post){exact(body,['recordId','revision','contentSha256','consentRevision','requestId','expectedPrevious']);return response(200,{data:await adapter.adoptActivePlan(context,body as Parameters<typeof adapter.adoptActivePlan>[1])});}
         exact(body,[]);return response(200,{data:await adapter.activePlan(context)});

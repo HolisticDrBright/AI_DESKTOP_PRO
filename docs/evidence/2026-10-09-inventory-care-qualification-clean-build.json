@@ -1,0 +1,40 @@
+{
+  "scope": "local_clean_build_not_hosted_acceptance",
+  "contract": "inventory-care-qualification-build/1",
+  "sourceCommit": "e12c9823a1d2fe00321cb37f42772e6302f514a8",
+  "sourceClean": true,
+  "sourceInputSha256": "6d915aa5f15dca9e1b29aa75f6cc51222abbdeb6f8e553611ec7d97a188506eb",
+  "qualificationProfile": "adopted-plan-inventory-qualification/1",
+  "migrationCount": 107,
+  "migrationReleaseSha256": "542b101ca1729576d2b203c9c2b3d98d2d9dd897e7480ab08ff150c8eacf773c",
+  "candidates": [
+    {
+      "candidate": "care-messaging",
+      "manifestSha256": "1b2b891cb98e00cfbf16b5da80f6696193c110af130fd9e2b397c488c4218e72",
+      "templateSha256": "47c4acb0d9a0c89ec2a107cc56ac59d09a0c3eb6bf8dd37f38aa9443661d963d",
+      "deploymentZipSha256": "42962a923ed907cf08ce74e28cdbd56cab94c6798488649690823128ab7372a1"
+    },
+    {
+      "candidate": "care-connections",
+      "manifestSha256": "e6b7d03c60d95cde7e9b2b8333b22b6bbad8d674b062a4159f45349862129b45",
+      "templateSha256": "b3997b53546a6b4a91bfb79e92708475f1601f7e119254ee94ea367b1aca2d2c",
+      "deploymentZipSha256": "f06591d0a16bd69519128378ad009622faaee4c2d70c282f2a85291209bf4414"
+    }
+  ],
+  "fleetComplete": false,
+  "deploymentPerformed": false,
+  "hostedVerified": false,
+  "phiAllowed": false,
+  "activation": "blocked",
+  "verification": {
+    "runtimeAndDatabaseSuitesPassed": 5,
+    "runtimeAndDatabaseTestsPassed": 124,
+    "runtimeAndDatabaseTestsSkipped": 0,
+    "artifactTestsPassed": 12,
+    "typecheckPassed": true,
+    "lintPassed": true,
+    "generatedTemplatesCfnLintPassed": true,
+    "canonicalMigrationGateCount": 106,
+    "canonicalSeededRows": 0
+  }
+}

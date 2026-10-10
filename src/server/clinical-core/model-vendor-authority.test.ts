@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { parseOpenAISecret } from "./aws-lab-openai";
 import {
@@ -25,6 +25,25 @@ const category = (call: () => unknown): string => {
   try { call(); } catch (error) { return error instanceof ModelVendorAuthorityRefusal ? error.category : `unexpected:${String(error)}`; }
   return "no_refusal";
 };
+
+function runtimeSources(directory: string, root = directory): Array<{ file: string; source: string }> {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const file = join(directory, entry.name);
+    if (entry.isSymbolicLink()) throw Error("vendor_scan_link_refused");
+    if (entry.isDirectory()) return runtimeSources(file, root);
+    if (!entry.isFile() || !/\.(?:[cm]?js|tsx?)$/.test(entry.name) || /\.(?:test|spec)\.[^.]+$/.test(entry.name)) return [];
+    return [{ file: relative(root, file), source: readFileSync(file, "utf8") }];
+  });
+}
+function keyBypasses(sources: Array<{ file: string; source: string }>): string[] {
+  return sources.flatMap(({ file, source }) => {
+    if (!source.includes("api.openai.com")) return [];
+    return [
+      ...(!/parseOpenAISecret/.test(source) ? [`${file}: no gated key`] : []),
+      ...(/model-vendor-authority-secret/.test(source) ? [`${file}: operator rewriter imported by a request path`] : []),
+    ];
+  });
+}
 
 describe("model vendor authority", () => {
   it("permits a call only while the recorded authority is active and in force", () => {
@@ -70,18 +89,19 @@ describe("the key is unobtainable without the gate", () => {
 
   it("is the only way a request path can hold the vendor key", () => {
     const directory = "src/server/clinical-core";
-    const bypasses: string[] = [];
-    for (const entry of readdirSync(directory)) {
-      if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
-      const source = readFileSync(join(directory, entry), "utf8");
-      if (!source.includes("api.openai.com")) continue;
-      // A module that sends to the vendor must take its key from the gated parser, and never from the operator rewriter.
-      if (!/parseOpenAISecret/.test(source)) bypasses.push(`${entry}: no gated key`);
-      if (/model-vendor-authority-secret/.test(source)) bypasses.push(`${entry}: operator rewriter imported by a request path`);
-    }
-    expect(bypasses).toEqual([]);
-    expect(readdirSync(directory).filter((entry) => readFileSync(join(directory, entry), "utf8").includes("api.openai.com")).length)
+    const sources = runtimeSources(directory);
+    // A directory is traversed, never read as a file or silently excluded.
+    expect(sources.some(row => row.file.replace(/\\/g, "/") === "testing/inventory-service-fixture.ts")).toBe(true);
+    expect(keyBypasses(sources)).toEqual([]);
+    expect(sources.filter(row => row.source.includes("api.openai.com")).length)
       .toBeGreaterThanOrEqual(4);
+  });
+  it("still detects ungated and operator-backed requests inside nested source paths", () => {
+    expect(keyBypasses([
+      { file: "nested/request.ts", source: 'fetch("https://api.openai.com/v1/responses")' },
+      { file: "nested/operator.js", source: 'import "model-vendor-authority-secret"; parseOpenAISecret(); fetch("https://api.openai.com")' },
+      { file: "nested/gated.ts", source: 'parseOpenAISecret(); fetch("https://api.openai.com")' },
+    ])).toEqual(["nested/request.ts: no gated key", "nested/operator.js: operator rewriter imported by a request path"]);
   });
 });
 

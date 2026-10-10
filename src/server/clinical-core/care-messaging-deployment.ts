@@ -5,11 +5,13 @@ import { createProductionCareMessagingApi } from './production-care-messaging-ap
 import { createProductionCareMessaging, createProductionCareMessageExport, ProductionCareMessageError } from './production-care-messaging';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
+import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
 
 export type CareMessagingBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly { schema: string; name: string; sha256: string; callable: boolean }[];
 };
+export type InventoryCareMessagingBuild = InventoryQualificationBuild & Pick<CareMessagingBuild, 'functions'>;
 type Environment = Record<string, string | undefined>;
 const hash = /^[a-f0-9]{64}$/, commit = /^[a-f0-9]{40}$/;
 const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_message_receipts',
@@ -17,8 +19,9 @@ const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_m
 
 /** Checks deployment identity, not approval. A well-shaped review hash is never
  * created here or claimed to represent an executed review. */
-function binding(e: Environment, build: CareMessagingBuild) {
-  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== 106
+function binding(e: Environment, build: CareMessagingBuild | InventoryCareMessagingBuild, inventory: boolean) {
+  if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareMessagingBuild, 'CARE_MESSAGING_ACTIVATION');
+  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== (inventory ? 107 : 106)
     || e.SOURCE_COMMIT !== build.sourceCommit || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
     || e.CARE_MESSAGING_ACTIVATION !== 'blocked' && e.CARE_MESSAGING_ACTIVATION !== 'approved'
     || e.PHI_ALLOWED !== 'false' && e.PHI_ALLOWED !== 'true' || e.AWS_REGION !== 'us-east-2') throw new Error('binding_refused');
@@ -42,10 +45,8 @@ function binding(e: Environment, build: CareMessagingBuild) {
  * Checks the deployed messaging contract on every transaction before business
  * SQL. The complete migration ledger is separately verified by the deployment
  * operator/hosted target runner; this is not a whole-database ledger claim. */
-export function bindCareMessagingDatabase(database: ClinicalCoreDatabase, build: CareMessagingBuild): ClinicalCoreDatabase {
-  if (build.functions.length !== 7 || new Set(build.functions.map(f => `${f.schema}.${f.name}`)).size !== 7
-    || build.functions.some(f => !/^clinical_(core|private)$/.test(f.schema)
-      || !/^production_care_message_[a-z]+$/.test(f.name) || !hash.test(f.sha256))) throw new Error('binding_refused');
+export function bindCareMessagingDatabase(database: ClinicalCoreDatabase, build: Pick<CareMessagingBuild, 'functions'>): ClinicalCoreDatabase {
+  const functions = validateFunctions(build.functions);
   return { transaction: work => database.transaction(async tx => {
     const checked = await tx.query<{ valid: boolean }>(`with expected as (
       select * from jsonb_to_recordset($1::jsonb) as e(schema text,name text,sha256 text,callable boolean)
@@ -76,7 +77,7 @@ export function bindCareMessagingDatabase(database: ClinicalCoreDatabase, build:
       from expected_triggers e join pg_trigger t on t.tgname=e.trigger_name and t.tgrelid=e.table_name::regclass
       join pg_proc p on p.oid=t.tgfoid join pg_namespace n on n.oid=p.pronamespace
     ) select current_user='clinical_core_api' and f.valid and t.valid and g.valid as valid
-      from checked_functions f cross join checked_tables t cross join checked_triggers g`, [JSON.stringify(build.functions), JSON.stringify(tables)]);
+      from checked_functions f cross join checked_tables t cross join checked_triggers g`, [JSON.stringify(functions), JSON.stringify(tables)]);
     if (checked.rows[0]?.valid !== true) throw new ProductionCareMessageError('service_unavailable');
     return work(tx);
   }) };
@@ -88,8 +89,31 @@ export function bindCareMessagingDatabase(database: ClinicalCoreDatabase, build:
 export function createCareMessagingHandler(e: Environment, build: CareMessagingBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(e, build, databaseFactory, now, false);
+}
+/** Validate and capture compiled authority before constructing any data client. */
+function validateFunctions(supplied: CareMessagingBuild['functions']) {
+  const specs = ['clinical_private.production_care_message_actor', 'clinical_private.production_care_message_consent',
+    'clinical_private.production_care_message_admission', 'clinical_private.production_care_message_immutable',
+    'clinical_core.production_care_message_request', 'clinical_core.production_care_message_resolve', 'clinical_core.production_care_message_export'];
+  const functions = supplied.map(f => ({ ...f }));
+  if (functions.length !== 7 || new Set(functions.map(f => `${f.schema}.${f.name}`)).size !== 7
+    || functions.some(f => !specs.includes(`${f.schema}.${f.name}`) || !hash.test(f.sha256)
+      || f.callable !== (f.schema === 'clinical_core'))) throw new Error('binding_refused');
+  return functions;
+}
+export function createInventoryCareMessagingHandler(e: Environment, build: InventoryCareMessagingBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(e, build, databaseFactory, now, true);
+}
+function createHandler(environment: Environment, supplied: CareMessagingBuild | InventoryCareMessagingBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined,
+  inventory: boolean): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   try {
-    const { activation, qualification } = binding(e, build);
+    const e = { ...environment }, build = structuredClone(supplied);
+    build.functions = validateFunctions(build.functions);
+    const { activation, qualification } = binding(e, build, inventory);
     let database: ClinicalCoreDatabase | undefined;
     const getDatabase = () => database ??= bindCareMessagingDatabase(databaseFactory({
       clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN ?? '', secretArn: e.CLINICAL_DATABASE_SECRET_ARN ?? '',

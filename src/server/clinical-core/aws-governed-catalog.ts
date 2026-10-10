@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import { catalogIngredientReleaseSchema } from '@/contracts/adoptedPlanInventory';
 
 export const GOVERNED_CATALOG_CONTRACT = "governed-catalog-seed/1" as const;
 
@@ -281,6 +282,20 @@ export function validateGovernedCatalogManifest(input: unknown): GovernedCatalog
       || labelKeys.has(key)) invalid();
     if (catalogSha256(productLabelContentForHash(withoutHash(label))) !== label.contentSha256) {
       throw new GovernedCatalogError("content_hash_mismatch");
+    }
+    // Optional for historical labels: absence means UNKNOWN, not complete.
+    // If supplied, a full-ingredient assertion must bind the exact immutable
+    // product/label and verified label sources before it can be imported.
+    if (Object.hasOwn(label.crosscheckPayload, 'ingredientInventory')) {
+      const release = catalogIngredientReleaseSchema.safeParse(label.crosscheckPayload.ingredientInventory);
+      const product = manifest.products.find(p => p.stableId === label.productStableId);
+      if (!release.success || !product || !label.labelFound || label.physicalLabelRequired
+        || label.substantiveConflict || label.practitionerDecisionRequired
+        || release.data.productId !== product.stableId || release.data.productVersion !== product.version
+        || release.data.productContentSha256 !== product.contentSha256
+        || release.data.labelId !== label.stableId || release.data.labelVersion !== label.version
+        || release.data.labelPayloadSha256 !== catalogSha256(label.labelPayload)
+        || release.data.sourceRefs.some(ref => !label.sourceRefs.includes(ref))) invalid();
     }
     labelKeys.add(key);
     labeledProducts.add(label.productStableId);

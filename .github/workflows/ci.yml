@@ -27,6 +27,8 @@ jobs:
           node --test scripts/covered-entity-disposition.test.mjs
       - name: Fictional embedded database only; no AWS access or activation
         run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
+      - name: Fullscript draft compiler transport and existing cart exclusions (fictional only)
+        run: npm run test:fullscript-protocol-draft
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
@@ -67,6 +69,33 @@ jobs:
           node --test scripts/qualification-consent-ledger.test.mjs
           npm run test:care-messaging-qualification-observer
           npm run test:care-connections-qualification-observer
+      - name: Synthetic fixture connection lifecycle and no replay
+        run: npm run test:fixture-transport
+      - name: Undeployed adopted-plan inventory successor (fictional database only)
+        run: |
+          npx vitest run src/server/clinical-core/owned-plan-inventory.database.test.ts src/server/clinical-core/adopted-plan-inventory-artifact.test.ts
+          npm run build:adopted-plan-inventory-candidate
+          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-schema-upgrade.database.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-command.test.ts src/server/clinical-core/adopted-plan-inventory-upgrade-artifact.test.ts
+          npx vitest run --no-file-parallelism src/server/clinical-core/adopted-plan-inventory-native-custody.test.ts src/server/clinical-core/adopted-plan-inventory-custody-read.test.ts src/server/clinical-core/adopted-plan-inventory-operator-fence.database.test.ts
+          npm run build:adopted-plan-inventory-upgrade
+      - name: Distinct 107 care qualification profile (no AWS calls or activation)
+        run: |
+          npx vitest run --no-file-parallelism src/server/clinical-core/inventory-care-qualification.test.ts src/server/clinical-core/inventory-care-qualification.database.test.ts
+          npm run test:inventory-care-qualification-artifact
+          npm run build:inventory-care-qualification
+      - name: Complete 107 qualification artifacts (no AWS calls, deployment or approvals)
+        run: |
+          npx vitest run src/server/clinical-core/inventory-qualification-envelope.test.ts
+          npm run test:inventory-qualification-fleet
+          npm run build:inventory-qualification-fleet
+      - name: Exact configuration and artifact byte checks (no AWS observation or activation)
+        run: |
+          npm run test:inventory-qualification-target
+          npm run build:inventory-qualification-target
+          npm run test:inventory-qualification-identities
+          npx vitest run src/server/clinical-core/inventory-qualification-identity-template.test.ts src/server/clinical-core/inventory-qualification-identity-configuration-command.test.ts
+          npx vitest run src/server/clinical-core/inventory-qualification-fixtures.test.ts
+          npm run build:inventory-qualification-identities
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
@@ -78,6 +107,10 @@ jobs:
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/care-connections/template.json
+          cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
+          cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
+          cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json
+          find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)
     runs-on: ubuntu-latest
@@ -149,6 +182,16 @@ jobs:
           node --test scripts/care-canonical-migrations.test.mjs scripts/synthetic-care-registered-release.test.mjs scripts/care-registered-preflight.test.mjs scripts/care-registered-upload.test.mjs scripts/care-registered-upload-reconciliation.test.mjs scripts/care-registered-code-change.test.mjs scripts/care-registered-proposal-reconciliation.test.mjs scripts/care-registered-deployment.test.mjs scripts/care-registered-routing.test.mjs scripts/care-registered-live-runner.test.mjs scripts/care-registered-release-reconciliation.test.mjs scripts/care-registered-routing-restoration.test.mjs scripts/care-registered-standalone.test.mjs scripts/care-registered-standalone-live.test.mjs scripts/care-registered-standalone-restoration.test.mjs
           npx vitest run src/server/clinical-core/care-erasure-canonical-registration.database.test.ts
           npm run build:care-intent-canonical-inspector
+      - name: Fixed catalog-runtime predecessor and separate recovery identity
+        run: npm run test:synthetic-catalog-runtime-release
+      - name: Fixed catalog-runtime immutable upload and stopped-writer reconciliation
+        run: npm run test:synthetic-catalog-runtime-upload
+      - name: Fixed catalog-runtime unexecuted proposal and stopped-writer reconciliation
+        run: npm run test:synthetic-catalog-runtime-proposal
+      - name: Fixed catalog-runtime execution and exact deployment observation primitives
+        run: npm run test:synthetic-catalog-runtime-deployment
+      - name: Fixed catalog-runtime live operator and stopped execution custody
+        run: npm run test:synthetic-catalog-runtime-execution
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - name: Preserve pinned Next lint rules with the bounded root matcher

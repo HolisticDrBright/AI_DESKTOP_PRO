@@ -16,7 +16,8 @@ import { z } from 'zod';
 export const PROTOCOL_CART_ACK = 'protocol-carts/1' as const;
 const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 export const cartExclusionReason = z.enum(['iron_requires_individual_review',
-  'reproductive_requires_individual_review', 'no_purchase_destination']);
+  'reproductive_requires_individual_review', 'no_purchase_destination',
+  'program_step_unreleased', 'catalog_authority_unavailable']);
 export type CartExclusionReason = z.infer<typeof cartExclusionReason>;
 export const cartManifestStatus = z.enum(['compiled', 'superseded']);
 
@@ -94,4 +95,6 @@ export const CART_EXCLUSION_LABEL: Record<CartExclusionReason, string> = {
   reproductive_requires_individual_review:
     'Touches pregnancy, nursing or fertility — an individual decision, not a cart’s',
   no_purchase_destination: 'No approved purchase destination on this product yet',
+  program_step_unreleased: 'This program step has not been released for the patient',
+  catalog_authority_unavailable: 'Current catalog approval or verified ingredient evidence is missing or changed',
 };
