@@ -78,7 +78,7 @@ describe('Fullscript saved connection custody',()=>{
     expect(await store().replace(before,after)).toBe(false);
     expect(send).toHaveBeenCalledTimes(mode==='race'?2:1);
   });
-  it.each(['clinic','actor','owner','environment','scopes','connected-at'])('refuses replacement of the %s binding before AWS I/O',async mode=>{
+  it.each(['clinic','actor','owner','environment','scopes','connected-at','installation','oauth-client','oauth-callback'])('refuses replacement of the %s binding before AWS I/O',async mode=>{
     const before=fixture(),after=fixture();
     if(mode==='clinic')after.organizationId='b1234567-1234-4123-8123-123456789012';
     if(mode==='actor')after.actorKey='b'.repeat(64);
@@ -86,6 +86,9 @@ describe('Fullscript saved connection custody',()=>{
     if(mode==='environment')after.environment='production_us';
     if(mode==='scopes')after.scope.push('catalog:read');
     if(mode==='connected-at')after.connectedAt='2026-10-09T11:00:00.000Z';
+    if(mode==='installation')after.installationId='c1234567-1234-4123-8123-123456789012';
+    if(mode==='oauth-client')after.oauthClientId='fictional-other-client-abcdefghijklmnopqrstuvwxyz';
+    if(mode==='oauth-callback')after.oauthRedirectUri='https://other.example.test/api/live/fullscript/oauth/callback';
     const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValue({} as never);
     await expect(store().replace(before,after)).rejects.toMatchObject({code:'fullscript_unavailable'});expect(send).not.toHaveBeenCalled();
   });

@@ -3,6 +3,7 @@ import type {RequestSession} from '../session';
 import type {StoredFullscriptConnection} from './token-store';
 import {readFullscriptConfiguration, type FullscriptToken} from './client';
 import {connectedFullscriptClient, disconnectFullscript, fullscriptActor, fullscriptPosture} from './runtime';
+import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 
 const mocks=vi.hoisted(()=>({get:vi.fn(),put:vi.fn(),replace:vi.fn(),remove:vi.fn(),refresh:vi.fn(),configuration:vi.fn(),revoke:vi.fn()}));
 vi.mock('./token-store',async importOriginal=>({...await importOriginal<typeof import('./token-store')>(),
@@ -31,6 +32,26 @@ beforeEach(async()=>{
 });
 
 describe('Fullscript refresh retains installation authority',()=>{
+  it('preserves saved installation/client/callback through a valid draft refresh',async()=>{
+    const saved={...fixture(),installationId:'c1234567-1234-4123-8123-123456789012',
+      oauthClientId:config.clientId,oauthRedirectUri:config.redirectUri,scope:[...FULLSCRIPT_DRAFT_SCOPES]};
+    const next=refreshed(saved);mocks.get.mockResolvedValue(saved);mocks.refresh.mockResolvedValue(next);
+    const result=await connectedFullscriptClient(session,true);
+    expect(result.connection).toEqual({...saved,...next});
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(saved,{...saved,...next});
+  });
+  it('refuses a changed saved OAuth client before refresh even outside draft mode',async()=>{
+    mocks.get.mockResolvedValue({...fixture(),oauthClientId:'fictional-other-client-abcdefghijklmnopqrstuvwxyz'});
+    await expect(connectedFullscriptClient(session)).rejects.toThrow();expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+  it('never reports a different-environment saved connection as connected',async()=>{
+    mocks.get.mockResolvedValue({...fixture(),environment:'production_us'});
+    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'unavailable'});
+  });
+  it('validates posture against actor custody even when a substituted port returns a wrong key',async()=>{
+    mocks.get.mockResolvedValue({...fixture(),actorKey:'b'.repeat(64)});
+    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'unavailable'});
+  });
   it('rotates credentials while preserving exact owner and scope set; does not require scope order',async()=>{
     const saved=fixture(),next=refreshed(saved);mocks.get.mockResolvedValue(saved);mocks.refresh.mockResolvedValue(next);
     const result=await connectedFullscriptClient(session);

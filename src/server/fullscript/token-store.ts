@@ -9,6 +9,11 @@ export type StoredFullscriptConnection = FullscriptToken & {
   organizationId: string;
   environment: "sandbox_us" | "production_us";
   connectedAt: string;
+  /** New authorization, not a token refresh. Legacy records remain readable
+   * for lookup but cannot be approved for governed draft delivery. */
+  installationId?: string;
+  oauthClientId?: string;
+  oauthRedirectUri?: string;
 };
 
 const tokenKey = z.object({
@@ -27,6 +32,13 @@ const storedConnection = tokenKey.extend({
   }).strict(),
   environment: z.enum(["sandbox_us", "production_us"]),
   connectedAt: z.string().datetime(),
+  installationId: z.string().uuid().optional(),
+  oauthClientId: z.string().regex(/^[A-Za-z0-9._~-]{16,512}$/).optional(),
+  oauthRedirectUri: z.string().url().refine(value=>{
+    const url=new URL(value);
+    return url.protocol==='https:'&&!url.username&&!url.password&&!url.search&&!url.hash
+      &&url.pathname==='/api/live/fullscript/oauth/callback';
+  }).optional(),
 }).strict();
 
 /** A DynamoDB key does not prove the JSON payload belongs to that account.
@@ -84,6 +96,8 @@ export function createAwsFullscriptTokenStore(env: NodeJS.ProcessEnv = process.e
       const expectedKey = {actorKey: before.actorKey, organizationId: before.organizationId};
       const after = parseStoredFullscriptConnection(replacement, expectedKey);
       if (after.environment !== before.environment || after.connectedAt !== before.connectedAt
+        || after.installationId !== before.installationId
+        || after.oauthClientId !== before.oauthClientId || after.oauthRedirectUri !== before.oauthRedirectUri
         || after.resourceOwner.id !== before.resourceOwner.id || after.resourceOwner.type !== before.resourceOwner.type
         || after.scope.length !== before.scope.length || after.scope.some(scope => !before.scope.includes(scope))) {
         throw new FullscriptUnavailableError();

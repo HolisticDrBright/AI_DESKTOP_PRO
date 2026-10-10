@@ -12,6 +12,7 @@ import {
   type FullscriptToken,
 } from "./client";
 import { createAwsFullscriptTokenStore, parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
+import { FULLSCRIPT_DRAFT_SCOPES } from './draft-scopes';
 
 export function fullscriptActor(session: RequestSession): { actorKey: string; organizationId: string } {
   if (!session.signedIn || session.expired || !session.email || !session.orgId) throw new FullscriptUnavailableError("Sign in before connecting Fullscript.");
@@ -40,7 +41,9 @@ export async function fullscriptPosture(session: RequestSession) {
     const store = createAwsFullscriptTokenStore();
     if (!store) return { configured: false, connected: false, environment: configuration.environment, reason: "token_store_missing" } as const;
     const actor = fullscriptActor(session);
-    const connection = await store.get(actor.actorKey, actor.organizationId);
+    const saved = await store.get(actor.actorKey, actor.organizationId);
+    const connection = saved ? parseStoredFullscriptConnection(saved, actor) : null;
+    if (connection && connection.environment !== configuration.environment) throw new FullscriptUnavailableError();
     return {
       configured: true,
       connected: Boolean(connection),
@@ -66,7 +69,7 @@ export function beginFullscriptAuthorization(session: RequestSession) {
   });
 }
 
-export async function connectedFullscriptClient(session: RequestSession): Promise<{
+export async function connectedFullscriptClient(session: RequestSession, requireDraftInstallation = false): Promise<{
   client: FullscriptApiClient;
   connection: StoredFullscriptConnection;
 }> {
@@ -77,6 +80,17 @@ export async function connectedFullscriptClient(session: RequestSession): Promis
   let connection = await store.get(actor.actorKey, actor.organizationId);
   if (!connection || connection.environment !== configuration.environment) throw new FullscriptUnavailableError("Connect Fullscript first.");
   connection = parseStoredFullscriptConnection(connection, actor);
+  // Validate the saved OAuth client BEFORE a refresh transmits its credential.
+  // Legacy lookup remains supported, but draft use cannot upgrade a legacy or
+  // staff installation merely by renewing its token.
+  if ((connection.oauthClientId && connection.oauthClientId !== configuration.clientId)
+    || (connection.oauthRedirectUri && connection.oauthRedirectUri !== configuration.redirectUri)
+    || (requireDraftInstallation && (connection.environment !== 'sandbox_us'
+      || !connection.installationId || !connection.oauthClientId || !connection.oauthRedirectUri
+      || connection.resourceOwner.type !== 'Practitioner'
+      || FULLSCRIPT_DRAFT_SCOPES.some(scope => !connection!.scope.includes(scope))))) {
+    throw new FullscriptUnavailableError();
+  }
   if (Date.parse(connection.expiresAt) - 60_000 <= Date.now()) {
     const refreshed: FullscriptToken = await refreshFullscriptToken({ configuration, refreshToken: connection.refreshToken });
     const replacement = parseStoredFullscriptConnection({ ...connection, ...refreshed }, actor);
