@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const { send, secretsSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn() }));
 const secretSend = secretsSend;
@@ -71,6 +72,24 @@ const claims = {
   "custom:organization_id": "22222222-2222-4222-8222-222222222222",
   "custom:synthetic_attested": "true",
   "custom:production_bound": "false",
+};
+const patientConsentFixture = () => {
+  const content = "Fictional reviewed recording consent. No real health information.";
+  const artifact = { artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", artifactVersion: "fictional/1", content,
+    contentSha256: createHash("sha256").update(content).digest("hex"), jurisdiction: "US-CA", approvedAt: "2026-10-01T00:00:00.000Z" };
+  const connection = { connectionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", patientRecordId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    state: "verified", verifiedAt: "2026-10-01T00:00:00.000Z", version: 1 };
+  const review = { connectionId: connection.connectionId, connectionState: "verified", scope: "telehealth_recording",
+    status: "granted", version: 1, currentArtifactId: artifact.artifactId, artifact };
+  const consent = { artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion, contentSha256: artifact.contentSha256,
+    signerName: "Fictional Signer", representativeAuthority: "self", agreed: true };
+  return { artifact, connection, review, consent };
+};
+const patientBookingEvent = (consent: Record<string, unknown>) => {
+  const input = event("POST /clinical-core/consumer/appointments/requests", { visitType: "follow_up",
+    slotId: "33333333-3333-4333-8333-333333333333", holdId: "44444444-4444-4444-8444-444444444444", consent });
+  (input as unknown as { headers: Record<string, string> }).headers.authorization = "Bearer fictional-consumer-token";
+  return input;
 };
 
 const workforceClaims = {
@@ -203,13 +222,16 @@ describe("AWS telehealth request boundary", () => {
       .toThrow("telehealth_configuration_invalid");
   });
 
-  it("validates patient booking consent through the consumer identity route with that patient's token", async () => {
-    const artifact = { artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scope: "telehealth_recording", artifactVersion: "fictional/1",
-      contentSha256: "b".repeat(64), jurisdiction: "US-CA", approvedAt: "2026-10-01T00:00:00.000Z" };
+  it("binds new patient booking to exact copy and the current governed grant through the patient's own port", async () => {
+    const { connection, review, consent } = patientConsentFixture();
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe(config.identityApiOrigin + "/clinical-core/consumer/consent-artifact?scope=telehealth_recording");
+      expect(url).toBe(config.identityApiOrigin + "/clinical-core/consumer/telehealth-consent");
       expect(init?.headers).toMatchObject({ authorization: "Bearer fictional-consumer-token" });
-      return new Response(JSON.stringify({ data: artifact }), { headers: { "content-type": "application/json" } });
+      expect(init).toMatchObject({ method: "POST", redirect: "manual" });
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual(body.action === "connection" ? { action: "connection" }
+        : { action: "consent", connectionId: connection.connectionId, scope: "telehealth_recording" });
+      return new Response(JSON.stringify({ data: body.action === "connection" ? { connection } : review }), { headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetch);
     send.mockResolvedValueOnce({}); // Exact-key booking recovery has no existing request.
@@ -220,17 +242,66 @@ describe("AWS telehealth request boundary", () => {
       cancellationWindowHours: 24, status: "held", heldBy: claims["custom:person_id"], holdId: "44444444-4444-4444-8444-444444444444",
       holdExpiresAt: Math.floor(Date.now() / 1000) + 600,
     }] }).mockResolvedValueOnce({});
-    const input = event("POST /clinical-core/consumer/appointments/requests", { visitType: "follow_up",
-      slotId: "33333333-3333-4333-8333-333333333333", holdId: "44444444-4444-4444-8444-444444444444",
-      consent: { artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion, contentSha256: artifact.contentSha256,
-        signerName: "Fictional Signer", representativeAuthority: "self", agreed: true } });
-    (input as unknown as { headers: Record<string, string> }).headers.authorization = "Bearer fictional-consumer-token";
-    const result = await createTelehealthHandler(config)(input);
-    expect(result.statusCode).toBe(201); expect(fetch).toHaveBeenCalledOnce();
-    expect(JSON.parse(result.body).data.consent).toMatchObject({ method: "patient_app", status: "granted", recordedBy: claims["custom:person_id"] });
+    const result = await createTelehealthHandler(config)(patientBookingEvent(consent));
+    expect(result.statusCode).toBe(201); expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(result.body).data.consent).toMatchObject({ method: "patient_app", status: "granted", recordedBy: claims["custom:person_id"], connectionId: connection.connectionId });
     // A booking receipt is not a governed sharing grant or provider activation.
     expect(JSON.parse(result.body).data.consent.grantId).toBeNull();
     expect(secretSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["guardian", "healthcare_proxy", "legal_representative", "missing_authority", "false_ack", "coerced_signer"])("refuses %s patient consent before reading the authority", async mode => {
+    const { consent } = patientConsentFixture(); const value: Record<string, unknown> = { ...consent };
+    if (mode === "missing_authority") delete value.representativeAuthority;
+    else if (mode === "false_ack") value.agreed = false;
+    else if (mode === "coerced_signer") value.signerName = 123;
+    else value.representativeAuthority = mode;
+    send.mockResolvedValueOnce({}); const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const result = await createTelehealthHandler(config)(patientBookingEvent(value));
+    expect(result.statusCode).toBe(400); expect(fetch).not.toHaveBeenCalled(); expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each(["no_connection", "paused_connection", "paused_review", "revoked", "not_granted", "zero_version", "no_copy", "superseded", "different_connection", "bad_hash", "missing_content", "changed_version", "html", "redirect", "oversized", "deadline", "legacy_metadata"])("refuses %s consent authority without booking or renewing", async mode => {
+    const { consent, connection, review } = patientConsentFixture();
+    const own: Record<string, unknown> = { connection }; const current: Record<string, unknown> = structuredClone(review);
+    if (mode === "no_connection") own.connection = null;
+    if (mode === "paused_connection") own.connection = { ...connection, state: "paused" };
+    if (mode === "paused_review") current.connectionState = "paused";
+    if (mode === "revoked" || mode === "not_granted") current.status = mode;
+    if (mode === "zero_version") current.version = 0;
+    if (mode === "no_copy") current.artifact = null;
+    if (mode === "superseded") current.currentArtifactId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    if (mode === "different_connection") current.connectionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    if (mode === "bad_hash") (current.artifact as Record<string, unknown>).content += " changed";
+    if (mode === "missing_content") delete (current.artifact as Record<string, unknown>).content;
+    if (mode === "changed_version") (current.artifact as Record<string, unknown>).artifactVersion = "fictional/2";
+    if (mode === "legacy_metadata") delete (current.artifact as Record<string, unknown>).content;
+    const controller = new AbortController();
+    if (mode === "deadline") vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(controller.signal);
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)); expect(["connection", "consent"]).toContain(request.action);
+      if (mode === "deadline") controller.abort();
+      if (mode === "redirect") return new Response("", { status: 302, headers: { location: "https://example.test" } });
+      return new Response(mode === "oversized" ? "x".repeat(33_000) : JSON.stringify({ data: request.action === "connection" ? own : current }),
+        { headers: { "content-type": mode === "html" ? "text/html" : "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch); send.mockResolvedValueOnce({});
+    const result = await createTelehealthHandler(config)(patientBookingEvent(consent));
+    expect([409, 503]).toContain(result.statusCode); expect(send).toHaveBeenCalledOnce(); expect(secretSend).not.toHaveBeenCalled();
+  });
+
+  it("returns the original recovered booking without signing again or treating its receipt as current authority", async () => {
+    const { consent } = patientConsentFixture(); const input = patientBookingEvent(consent);
+    const value = JSON.parse((input as { body: string }).body);
+    const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object"
+      ? Object.fromEntries(Object.keys(v).sort().map(key => [key, canonical((v as Record<string, unknown>)[key])])) : v;
+    const requestId = value.holdId;
+    send.mockResolvedValueOnce({ Item: { ...processingItem(), requestId, pk: `ORG#${claims["custom:organization_id"]}`, sk: `REQ#${requestId}`,
+      bookingInputSha256: createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex"), status: "cancelled", consent: null } });
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const result = await createTelehealthHandler(config)(input);
+    expect(result.statusCode).toBe(201); expect(JSON.parse(result.body).data.status).toBe("cancelled");
+    expect(fetch).not.toHaveBeenCalled(); expect(send).toHaveBeenCalledOnce();
   });
 
   it("continues an empty filtered request page and pins a strongly consistent same-clinic lookup", async () => {

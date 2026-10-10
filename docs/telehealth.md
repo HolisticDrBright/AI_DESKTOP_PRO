@@ -479,12 +479,30 @@ Remaining integration is explicit: build and register the artifact-bound Lambda
 and its default-blocked template, implement the preserving 111-to-112 operator
 with rollback evidence, and extend the copy registrar through a separate exact
 112 target mapping. The historical 105/106 registrar must not be widened by
-count alone. V2 still needs the reviewed-copy signing screen, fresh review
-before acknowledgment, booking receipt linkage, withdrawal and uncertain-outcome
-recovery. Do not route this through the legacy metadata-only artifact/grant API.
+count alone. V2's matched source now implements the reviewed-copy signing
+screen, fresh review before acknowledgment and booking, withdrawal and
+uncertain-outcome inspection. It is not an installed mobile build. Do not route
+this through the legacy metadata-only artifact/grant API.
 Hosted concurrent-owner/version tests and physical phone acceptance follow the
 matched deployment. No production consent text, review, copy, grant, provider
 approval or PHI activation is created by this source extension.
+
+For a new signed consumer booking, the appointment handler reads the consumer's
+own connection and current consent through the separate exact-copy port. It
+requires a verified connection, granted scope, matching current artifact and
+exact UTF-8 content hash before recording a self-signature. Both reads share a
+deadline and bounded JSON decoding; redirects and metadata-only replies are
+refused. The handler never grants or renews permission. Unsigned booking does
+not call this consent service. Historical exact-key booking recovery returns
+the stored current appointment without re-signing or treating its old receipt
+as fresh authorization.
+
+The receipt binds the reviewed connection. The review port does not expose an
+immutable grant ID, so the receipt does not fabricate one. Start and AI-summary
+access still recheck current governed authority. Booking, withdrawal and visit
+start span different services; these reads are not an atomic authorization-and-
+provider transaction. Matched hosted race tests and the provider/record lifecycle
+work remain activation requirements.
 
 ## Reminder revision isolation
 

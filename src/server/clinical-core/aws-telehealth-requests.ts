@@ -9,6 +9,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactW
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { boundedProviderJson } from "./bounded-provider-json";
+import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from "../../contracts/telehealthConsent";
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
 import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
   type AppointmentRecoveryProviderDependencies } from "./appointment-provider-recovery";
@@ -225,7 +226,7 @@ async function createRequest(config: TelehealthConfiguration, actor: Actor, valu
   // The combined telehealth + recording/AI-notes consent is the last step of
   // "Request a virtual visit" in the patient app. It is optional on the wire
   // (older app builds), but a visit cannot START without it — see startVisit.
-  const consent = value.consent === undefined || value.consent === null ? null : consentFromPatientApp(value.consent, actor, await currentArtifact(config, actor));
+  const consent = value.consent === undefined || value.consent === null ? null : await consentFromPatientApp(config, value.consent, actor);
   const slot = await findSlot(config, actor.organizationId, String(value.slotId));
   const nowEpoch = Math.floor(Date.now() / 1000);
   if (slot.status !== "held" || slot.heldBy !== actor.personId || slot.holdId !== value.holdId || !slot.holdExpiresAt || slot.holdExpiresAt <= nowEpoch
@@ -1229,13 +1230,59 @@ function buildReceipt(record: Record<string, unknown>, artifact: ArtifactRecord,
     contentSha256: artifact.contentSha256, signerName, method, representativeAuthority: authority as VisitConsent["representativeAuthority"], signedAt: new Date().toISOString(), recordedBy,
     patientLocation: typeof location === "string" && location.trim() ? location.trim() : null, grantId: grant.grantId, connectionId: grant.connectionId, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null };
 }
-/** The patient app's consent at booking: it must name the exact approved artifact it displayed. */
-function consentFromPatientApp(value: unknown, actor: Actor, artifact: ArtifactRecord): VisitConsent {
+/** A NEW patient booking uses the exact-copy port and an already granted scope.
+ * It never creates/renews a grant. Historical exact-key recovery precedes this
+ * check so a lost booking receipt does not require re-signing withdrawn copy. */
+async function consentFromPatientApp(config: TelehealthConfiguration, value: unknown, actor: Actor): Promise<VisitConsent> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TelehealthError("request_invalid");
   const record = value as Record<string, unknown>;
   exact(record, ["artifactId", "artifactVersion", "contentSha256", "signerName", "patientLocation", "representativeAuthority", "agreed"], ["artifactId", "artifactVersion", "contentSha256", "signerName", "agreed"]);
+  if (actor.pool !== "consumer" || record.agreed !== true || typeof record.artifactId !== "string" || !UUID.test(record.artifactId)
+    || typeof record.artifactVersion !== "string" || !record.artifactVersion || record.artifactVersion.length > 64
+    || typeof record.contentSha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.contentSha256)
+    || typeof record.signerName !== "string" || record.signerName.trim().length < 2 || record.signerName.trim().length > 200
+    || record.representativeAuthority !== "self"
+    || !(record.patientLocation === undefined || record.patientLocation === null
+      || typeof record.patientLocation === "string" && record.patientLocation.trim().length <= 120)) throw new TelehealthError("request_invalid");
+  // No redirects, arbitrary host, legacy metadata endpoint or grant fallback.
+  if (!/^https:\/\/[a-z0-9]+\.execute-api\.us-east-2\.amazonaws\.com$/.test(config.identityApiOrigin)) throw new TelehealthError("service_unavailable");
+  const signal = AbortSignal.timeout(10_000);
+  const read = async (request: TelehealthConsentRequest) => {
+    try {
+      if (signal.aborted) throw Error("deadline");
+      const reply = await fetch(`${config.identityApiOrigin}/clinical-core/consumer/telehealth-consent`, {
+        method: "POST", redirect: "manual", signal,
+        headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      if (!reply.ok || reply.redirected || reply.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+        try { await reply.body?.cancel(); } catch { /* original refusal retained */ }
+        if (reply.status === 401 || reply.status === 403) throw new TelehealthError("identity_refused");
+        throw new TelehealthError("consent_artifact_unavailable");
+      }
+      const payload = await boundedProviderJson(reply, 32_768);
+      if (signal.aborted || !payload || typeof payload !== "object" || Array.isArray(payload)
+        || Object.keys(payload).length !== 1 || !("data" in payload)) throw Error("response_invalid");
+      return parseTelehealthConsentResponse(request, (payload as { data: unknown }).data);
+    } catch (error) {
+      if (error instanceof TelehealthError) throw error;
+      throw new TelehealthError("service_unavailable");
+    }
+  };
+  const own = await read({ action: "connection" });
+  if (!("connection" in own) || !own.connection || own.connection.state !== "verified") throw new TelehealthError("consent_required");
+  const current = await read({ action: "consent", connectionId: own.connection.connectionId, scope: "telehealth_recording" });
+  if (!("artifact" in current) || current.connectionState !== "verified" || current.status !== "granted" || current.version < 1
+    || !current.artifact || current.currentArtifactId !== current.artifact.artifactId) throw new TelehealthError("consent_required");
+  const artifact = current.artifact, content = artifact.content;
+  if (!content.trim() || content.includes("\0") || Buffer.byteLength(content, "utf8") > 16_000
+    || Buffer.from(content, "utf8").toString("utf8") !== content
+    || createHash("sha256").update(content, "utf8").digest("hex") !== artifact.contentSha256) throw new TelehealthError("consent_artifact_unavailable");
   if (record.artifactId !== artifact.artifactId || record.artifactVersion !== artifact.artifactVersion || record.contentSha256 !== artifact.contentSha256) throw new TelehealthError("consent_version_refused");
-  return buildReceipt(record, artifact, "patient_app", actor.personId, { grantId: null, connectionId: null });
+  // This review exposes a connection, not an immutable grant ID. Do not invent
+  // one; visit start still rechecks current authority and this exact connection.
+  return buildReceipt(record, { ...artifact, scope: CONSENT_SCOPE }, "patient_app", actor.personId,
+    { grantId: null, connectionId: current.connectionId });
 }
 
 async function readConsentArtifact(config: TelehealthConfiguration, actor: Actor) {
