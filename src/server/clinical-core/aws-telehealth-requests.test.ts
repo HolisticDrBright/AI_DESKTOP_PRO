@@ -211,6 +211,12 @@ describe("AWS telehealth request boundary", () => {
       (policy) => policy.PolicyName === "AppointmentQueue",
     ) as { PolicyDocument?: { Statement?: Array<{ Action?: string[] }> } } | undefined;
     expect(appointmentPolicy?.PolicyDocument?.Statement?.[0]?.Action).toContain("dynamodb:GetItem");
+    // Transactions authorize their underlying Put/Update operations; there
+    // is no IAM action named dynamodb:TransactWriteItems. No delete or scan
+    // permission is needed by these transactions.
+    expect(appointmentPolicy?.PolicyDocument?.Statement?.[0]?.Action).toEqual([
+      "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem",
+    ]);
   });
 
   it("reports card setup as unavailable rather than inventing a card", async () => {

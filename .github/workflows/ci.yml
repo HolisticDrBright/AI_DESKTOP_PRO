@@ -20,6 +20,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - name: Migration byte normalization regression
+        run: npm run test:migration-sql-bytes
       - name: Canonical schema and covered-entity mapping (no seeded approvals)
         run: |
           npm run check:aws-production-clinical-core
@@ -233,6 +235,7 @@ jobs:
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint infra/aws-clinical-core/telehealth-requests-extension.json
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
       - name: Build and validate independent voice deployment candidate (no deployment)
         run: |
@@ -410,6 +413,7 @@ jobs:
       # visit route's headers, register, and initialize a client. Its own
       # step, so a CDN outage is identifiable and never read as a product bug.
       - name: Zoom Meeting SDK bootstraps (real pinned CDN build)
+        if: matrix.shard == 1
         run: |
           curl -fsS -X POST http://127.0.0.1:3999/__control/reset-all
           E2E_LIVE=1 \

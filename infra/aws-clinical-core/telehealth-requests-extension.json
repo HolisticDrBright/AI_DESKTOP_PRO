@@ -334,8 +334,7 @@
                     "dynamodb:GetItem",
                     "dynamodb:PutItem",
                     "dynamodb:Query",
-                    "dynamodb:UpdateItem",
-                    "dynamodb:TransactWriteItems"
+                    "dynamodb:UpdateItem"
                   ],
                   "Resource": [
                     {
@@ -467,9 +466,6 @@
     },
     "TelehealthFunction": {
       "Type": "AWS::Lambda::Function",
-      "DependsOn": [
-        "TelehealthLogGroup"
-      ],
       "Properties": {
         "FunctionName": {
           "Fn::Sub": "${ClinicalApiId}-synthetic-telehealth-requests"

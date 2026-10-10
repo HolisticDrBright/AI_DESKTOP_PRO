@@ -139,9 +139,34 @@ test("recording consent unlocks the visit; ending it stores quick notes and open
   await expect(page.getByText(/Flagged at/)).toBeVisible();
 });
 
-test("AI Companion notes import as not reviewed and one signature freezes the note", async ({ page }) => {
+test("a refused signature removes opened clinical text and does not retain unsaved edits on retry", async ({ page }) => {
   await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
   await page.getByRole("button", { name: "Import AI Companion notes" }).click();
+  await expect(page.getByLabel("Summary")).toHaveValue(/Follow-up on fatigue and iron status/);
+  await page.getByLabel("Practitioner notes").fill("FICTIONAL private unsaved note");
+  await page.getByLabel("Summary").fill("FICTIONAL private unsaved summary");
+  await page.route("**/api/live/telehealth/note/sign", route => route.fulfill({
+    status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "You don't have access to this record." } }),
+  }));
+  await page.getByRole("button", { name: "Sign note" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Sign note" }).click();
+  await expect(page.getByText("You don't have access to this record.")).toBeVisible();
+  await expect(page.getByLabel("Practitioner notes")).toHaveCount(0);
+  await expect(page.getByLabel("Summary")).toHaveCount(0);
+  await expect(page.getByText(/Repeat ferritin/)).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await page.unroute("**/api/live/telehealth/note/sign");
+  await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByLabel("Practitioner notes")).toHaveValue("");
+  await expect(page.getByLabel("Summary")).toHaveValue(/Follow-up on fatigue and iron status/);
+  await expect(page.getByText("FICTIONAL private unsaved summary")).toHaveCount(0);
+});
+
+test("the imported unreviewed AI Companion note is frozen by one confirmed signature", async ({ page }) => {
+  await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
+  // The preceding authorization-loss case imported this same persisted
+  // revision. The import control is correctly absent once a note exists.
   await expect(page.getByText("Not reviewed", { exact: true })).toBeVisible();
   await expect(page.getByLabel("What the patient reported")).toHaveValue(/Afternoon fatigue has eased/);
   // Zoom's unified summary document lands whole under Summary as unreviewed text, not split by a model.
@@ -173,4 +198,48 @@ test("AI Companion notes import as not reviewed and one signature freezes the no
   await page.goto(`/telehealth?date=${DATE}`);
   await expect(page.getByTestId("telehealth-row").first()).toContainText("Note signed");
   await expect(page.getByRole("link", { name: "View note" })).toBeVisible();
+});
+
+test("a late admitted start after navigation never loads an SDK or reconnects the departed screen", async ({ page }) => {
+  await resetBackend();
+  await page.goto(`/telehealth?date=${DATE}`);
+  await page.getByRole("button", { name: "Record consent" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record telehealth consent" });
+  await expect(dialog.getByTestId("consent-artifact")).toContainText("version telehealth-recording/1");
+  await dialog.getByLabel("Patient's full name (as they stated it)").fill("Fixture Patient");
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Record consent" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("link", { name: "Start visit" }).click();
+  await expect(page.getByRole("button", { name: "Start visit" })).toBeVisible();
+  let sdkRequests = 0;
+  await page.route("https://source.zoom.us/**", route => { sdkRequests += 1; return route.abort(); });
+  let admit!: () => void;
+  const admitted = new Promise<void>(resolve => { admit = resolve; });
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  let delivered!: () => void;
+  const delivery = new Promise<void>(resolve => { delivered = resolve; });
+  await page.route("**/api/live/telehealth/start", async route => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(200); // A real local contract response, not a fabricated session.
+    admit();
+    await released;
+    await route.fulfill({ response });
+    delivered();
+  });
+  await page.getByRole("button", { name: "Start visit" }).click();
+  await admitted;
+  await page.getByRole("link", { name: "Telehealth", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Telehealth", exact: true })).toBeVisible();
+  release();
+  await delivery;
+  // Drain two render turns after delivery, not a time-based assertion before the response.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(sdkRequests).toBe(0);
+  await expect(page.getByTestId("zoom-stage")).toHaveCount(0);
+  await expect(page.getByLabel("Quick notes")).toHaveCount(0);
+  // Navigation does not claim end-for-all; the admitted visit remains on the fictional server.
+  await page.goto(`/telehealth?date=${DATE}`);
+  await expect(page.getByTestId("telehealth-row").first()).toContainText("In visit");
 });

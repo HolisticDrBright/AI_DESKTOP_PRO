@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight, Video } from "lucide-react";
 import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
+import { telehealthAccessLost } from "@/lib/telehealth-access-loss";
 import type { TelehealthDay, TelehealthDayVisit, TelehealthVisit } from "@/adapters/telehealth.types";
 import { Btn, BtnLink } from "@/components/ui/Btn";
 import { Card } from "@/components/ui/bits";
@@ -82,6 +83,10 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
+        if (telehealthAccessLost(e)) {
+          setDay(null);
+          setConsentFor(null);
+        }
         setError({
           message: isAdapterError(e) ? e.message : "Telehealth visits could not be loaded.",
           signedOut: isAdapterError(e) && e.code === "unauthenticated",

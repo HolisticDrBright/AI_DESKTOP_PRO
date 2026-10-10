@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { Flag, PhoneOff, ShieldAlert, Video } from "lucide-react";
 import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
+import { telehealthAccessLost } from "@/lib/telehealth-access-loss";
 import type { TelehealthDayVisit, TelehealthFlag, TelehealthSession, TelehealthVisit } from "@/adapters/telehealth.types";
 import { Btn, BtnLink } from "@/components/ui/Btn";
 import { Card, CardTitle } from "@/components/ui/bits";
@@ -70,8 +71,29 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
   const mountRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ZoomEmbeddedClient | null>(null);
   const sessionRef = useRef<TelehealthSession | null>(null);
+  const accessEpoch = useRef(0);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+  const dropOpenedVisit = useCallback((e: unknown) => {
+    if (!telehealthAccessLost(e)) return;
+    accessEpoch.current += 1;
+    const client = clientRef.current;
+    clientRef.current = null;
+    sessionRef.current = null;
+    if (client?.leaveMeeting) void client.leaveMeeting().catch(() => undefined);
+    setRow(null);
+    setFlags([]);
+    setQuickNotes("");
+    setStartedAt(null);
+    setElapsed(0);
+    setConsentOpen(false);
+    setConfirmEnd(false);
+    setEnding(false);
+    setMeeting("idle");
+    setMeetingError(null);
+    setState("error");
+    setError({ message: isAdapterError(e) ? e.message : "This record isn't available.", signedOut: isAdapterError(e) && e.code === "unauthenticated" });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +109,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
       })
       .catch((e: unknown) => {
         if (cancelled) return;
+        dropOpenedVisit(e);
         setError({
           message: isAdapterError(e) ? e.message : "This visit could not be loaded.",
           signedOut: isAdapterError(e) && e.code === "unauthenticated",
@@ -96,7 +119,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
     return () => {
       cancelled = true;
     };
-  }, [appointmentId, date, reloadKey]);
+  }, [appointmentId, date, reloadKey, dropOpenedVisit]);
 
   useEffect(() => {
     if (startedAt === null) return;
@@ -110,15 +133,19 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
   // this client's departure only; the visit stays open on the server.
   useEffect(
     () => () => {
+      accessEpoch.current += 1;
       const client = clientRef.current;
       clientRef.current = null;
+      sessionRef.current = null;
       if (client?.leaveMeeting) void client.leaveMeeting().catch(() => undefined);
     },
-    [],
+    [appointmentId, date],
   );
 
   const startVisit = async () => {
     if (!row || !mountRef.current) return;
+    const epoch = accessEpoch.current;
+    const mount = mountRef.current;
     setMeeting("starting");
     setMeetingError(null);
     try {
@@ -128,15 +155,17 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
         timeZone: viewerTimeZone(),
         hostDisplayName: row.practitionerName ?? undefined,
       });
+      if (epoch !== accessEpoch.current || mount !== mountRef.current) return;
       sessionRef.current = result.session;
       setRow({ ...row, visit: result.visit });
       if (result.visit.startedAt) setStartedAt(Date.parse(result.visit.startedAt));
       setMeeting("loading_sdk");
       const sdk = await loadZoomMeetingSdk();
+      if (epoch !== accessEpoch.current || mount !== mountRef.current) return;
       const client = sdk.createClient();
       clientRef.current = client;
       await client.init({
-        zoomAppRoot: mountRef.current,
+        zoomAppRoot: mount,
         language: "en-US",
         patchJsMedia: true,
         leaveOnPageUnload: true,
@@ -145,8 +174,13 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           meetingInfo: ["topic", "participant"],
         },
       });
+      if (epoch !== accessEpoch.current || mount !== mountRef.current) {
+        if (client.leaveMeeting) await client.leaveMeeting().catch(() => undefined);
+        return;
+      }
       setMeeting("initialized");
       client.on("connection-change", (payload) => {
+        if (epoch !== accessEpoch.current || client !== clientRef.current) return;
         const stateValue = (payload as { state?: string } | undefined)?.state;
         if (stateValue === "Connected") setMeeting("connected");
         else if (stateValue === "Closed") setMeeting("closed");
@@ -155,6 +189,10 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           setMeetingError("The Zoom connection failed. Reconnect to continue the visit.");
         }
       });
+      if (epoch !== accessEpoch.current || client !== clientRef.current) {
+        if (client.leaveMeeting) await client.leaveMeeting().catch(() => undefined);
+        return;
+      }
       setMeeting("joining");
       await client.join({
         signature: result.session.signature,
@@ -163,18 +201,22 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
         userName: result.session.hostDisplayName,
         zak: result.session.zak,
       });
+      if (epoch !== accessEpoch.current || client !== clientRef.current) {
+        if (client.leaveMeeting) await client.leaveMeeting().catch(() => undefined);
+        return;
+      }
       setMeeting("connected");
       announce("Visit started. The Zoom meeting is open in Desktop Pro.");
     } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedVisit(e);
       setMeeting("failed");
       setMeetingError(
         e instanceof ZoomSdkLoadError
           ? `${e.message} The visit is open on the server; retry to load the meeting.`
           : isAdapterError(e)
             ? e.message
-            : e instanceof Error
-              ? `The meeting could not be joined: ${e.message}`
-              : "The visit could not be started.",
+            : "The meeting could not be joined. Retry or contact support.",
       );
     }
   };
@@ -187,6 +229,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
 
   const endVisit = async () => {
     if (!row?.visit) return;
+    const epoch = accessEpoch.current;
     setEnding(true);
     setMeetingError(null);
     try {
@@ -200,6 +243,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
           /* local departure only; the server decides whether the meeting ended */
         }
       }
+      if (epoch !== accessEpoch.current) return;
       const visit = await api.telehealth.end({
         appointmentId: row.appointmentId,
         date,
@@ -208,6 +252,7 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
         flags,
         quickNotes,
       });
+      if (epoch !== accessEpoch.current) return;
       setRow({ ...row, visit });
       setConfirmEnd(false);
       if (visit.status === "ended") {
@@ -218,10 +263,12 @@ export function TelehealthVisitScreen({ appointmentId, date }: { appointmentId: 
         announce("Your notes are saved, but Zoom has not confirmed the meeting stopped. Retry the shutdown.");
       }
     } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedVisit(e);
       setMeetingError(isAdapterError(e) ? e.message : "The visit could not be ended.");
       setConfirmEnd(false);
     } finally {
-      setEnding(false);
+      if (epoch === accessEpoch.current) setEnding(false);
     }
   };
 

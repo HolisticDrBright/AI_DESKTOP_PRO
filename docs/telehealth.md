@@ -101,16 +101,30 @@ The compatibility calendar is the same reviewed operation the Calendar screen
 reads; nothing new is granted to the Lambda, and no shared secret is minted —
 the caller's JWT is the only credential in play.
 
+The appointment-table policy grants only GetItem, PutItem, Query and UpdateItem.
+Its transactions use those underlying operations rather than the nonexistent
+`dynamodb:TransactWriteItems` IAM action, following
+[AWS transaction permissions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html).
+CI lints the telehealth template as well as the other clinical templates.
+
 ### Consent
 
 The combined telehealth + recording/AI-notes consent is the governed
 `telehealth_recording` scope in the identity extension
-(`infra/aws-clinical-core/migrations/20261009100000_telehealth_recording_consent.sql`):
+(`infra/aws-clinical-core/production-candidates/telehealth-recording-consent.sql`):
 one approved, versioned, hashed artifact per organization and an append-only
 grant/revoke lifecycle per patient connection. The identity API exposes two
 workforce reads for it — `GET /clinical-core/workforce/consent-artifact` and
 `GET /clinical-core/workforce/consents/current` — and the telehealth Lambda
 calls them with the caller's own JWT.
+
+The scope is packaged as a distinct, blocked 108-migration candidate by
+`npm run build:telehealth-consent-candidate`. It preserves all 15 consent
+scopes, including `lab_specimen_context`, and binds to the exact 107-migration
+parent. Existing 106/107 release bytes and the synthetic migration manifest
+are unchanged. The candidate adds no artifacts, grants, review rows or
+activation. Its forward-apply, rollback and deployed runtime binding still
+need qualification; building it does not change any database.
 
 | Path | What is checked |
 | --- | --- |
@@ -154,8 +168,10 @@ rather than concluding "nothing exists") → lease `dispatched` written
 BEFORE the create is sent → create → the created id written onto the lease
 as evidence → bind. A thrown create leaves the lease `dispatched`; the next
 start reconciles it first: by exact id when the evidence exists, otherwise
-by a complete listing, adopting what it finds and permitting one new create
-only after proof of absence. A lost database receipt is confirmed by a
+by a complete listing that can adopt exactly one matching meeting. An empty,
+missing or incomplete listing cannot prove that an uncertain creation did
+not happen; the dispatched lease stays fenced and no new create is permitted.
+A lost database receipt is confirmed by a
 single reread (a write that landed is success, never undone); a visit that
 was cancelled or bound elsewhere underneath the attempt has the meeting this
 attempt created deleted. An expired `acquired` lease (the holder never
@@ -297,7 +313,7 @@ frozen and survive reload because the record is the source of truth.
   withdrawal; one meeting under the lease, bound with Zoom's actual password
   (never the URL token), racing start refused without a second create; a
   thrown create leaves a `dispatched` lease — incomplete listing refuses,
-  complete listing adopts, complete empty listing permits one create;
+  complete unique listing adopts, complete empty listing stays fenced;
   evidenced create adopted by exact id; lost database receipt confirmed by
   reread without deleting; meeting deleted when the visit was cancelled
   underneath; shutdown never certified on a disabled provider, empty state,
@@ -314,12 +330,22 @@ frozen and survive reload because the record is the source of truth.
 - `src/lib/telehealth-headers.test.ts` — the visit route's production CSP and
   isolation headers.
 - `src/server/clinical-core/aws-identity-api.test.ts`,
-  `migrations.test.ts`, `authenticated-api-infrastructure.test.ts` — the
-  `telehealth_recording` scope, the workforce consent reads and route pins.
-- `e2e/live-telehealth.spec.ts` — the four browser proofs at the top of that
-  file (now including the artifact shown before attesting, the 404 for an
-  appointment the calendar does not return, and the 409 for a stale artifact),
-  in the one-process battery in any order.
+  `authenticated-api-infrastructure.test.ts` — the workforce consent reads
+  and the 57-route pin. `telehealth-consent-candidate.database.test.ts` applies
+  the distinct 108-migration artifact in PGlite and exercises the API role's
+  real row policies: all prior scopes remain supported, foreign-clinic and
+  consumer-pool reads refuse, retired artifacts confer no authority, and
+  withdrawal supersedes the grant. This is in-memory qualification, not AWS
+  evidence. `scripts/migration-sql-bytes.test.mjs` verifies that CRLF/CR input
+  builds the same canonical LF migration bytes without changing SQL content.
+- `e2e/live-telehealth.spec.ts` — six local browser cases: the artifact shown
+  before attesting, absent-appointment and stale-artifact refusals, consent
+  through confirmed fixture shutdown, clearing opened text after a refused
+  signature, an imported note's confirmed signature and persisted revision,
+  and an admitted start delivered after navigation without loading an SDK.
+  The suite runs serially with a reset at its entry; the delayed-start case
+  resets its own fixture. These are contract-fixture observations, not actual
+  Zoom meetings or hosted acceptance.
 - `e2e/zoom-sdk-bootstrap.spec.ts` — the positive SDK bootstrap (CI step with
   network access).
 

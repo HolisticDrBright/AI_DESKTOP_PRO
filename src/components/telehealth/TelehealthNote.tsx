@@ -15,11 +15,12 @@
  * through the chart's note path is a separate, unbuilt step (docs/telehealth.md).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Download, PenLine } from "lucide-react";
 import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
+import { telehealthAccessLost } from "@/lib/telehealth-access-loss";
 import type {
   TelehealthActionItem,
   TelehealthDayVisit,
@@ -73,8 +74,24 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
   const [signing, setSigning] = useState(false);
   const [confirmSign, setConfirmSign] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const accessEpoch = useRef(0);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+  const dropOpenedNote = useCallback((e: unknown) => {
+    if (!telehealthAccessLost(e)) return;
+    accessEpoch.current += 1;
+    setImporting(false);
+    setSigning(false);
+    setRow(null);
+    setPractitionerNotes("");
+    setSections(EMPTY_SECTIONS);
+    setActionItems([]);
+    setImportMessage(null);
+    setActionError(null);
+    setConfirmSign(false);
+    setState("error");
+    setError({ message: isAdapterError(e) ? e.message : "This record isn't available.", signedOut: isAdapterError(e) && e.code === "unauthenticated" });
+  }, []);
 
   const adoptNote = (note: TelehealthVisitNote | null) => {
     setPractitionerNotes(note?.practitionerNotes ?? "");
@@ -84,17 +101,19 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
 
   useEffect(() => {
     let cancelled = false;
+    const epoch = accessEpoch.current;
     setState("loading");
     loadVisitRow(appointmentId, date)
       .then((result) => {
-        if (cancelled) return;
+        if (cancelled || epoch !== accessEpoch.current) return;
         setRow(result);
         const note = result.visit?.note ?? null;
         adoptNote(isFullNote(note) ? note : null);
         setState("ready");
       })
       .catch((e: unknown) => {
-        if (cancelled) return;
+        if (cancelled || epoch !== accessEpoch.current) return;
+        dropOpenedNote(e);
         setError({
           message: isAdapterError(e) ? e.message : "This visit note could not be loaded.",
           signedOut: isAdapterError(e) && e.code === "unauthenticated",
@@ -104,15 +123,19 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     return () => {
       cancelled = true;
     };
-  }, [appointmentId, date, reloadKey]);
+  }, [appointmentId, date, reloadKey, dropOpenedNote]);
+
+  useEffect(() => () => { accessEpoch.current += 1; }, [appointmentId, date]);
 
   const importSummary = async () => {
     if (!row) return;
+    const epoch = accessEpoch.current;
     setImporting(true);
     setImportMessage(null);
     setActionError(null);
     try {
       const result = await api.telehealth.importNote(row.appointmentId, date, viewerTimeZone());
+      if (epoch !== accessEpoch.current) return;
       setRow({ ...row, visit: result.visit });
       const note = result.visit.note;
       if (result.summaryReady && isFullNote(note)) {
@@ -124,14 +147,17 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
         setImportMessage("Zoom has not produced a usable AI Companion summary yet. It usually appears a few minutes after the meeting ends — try again shortly. Nothing was written.");
       }
     } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedNote(e);
       setActionError(isAdapterError(e) ? e.message : "The AI notes could not be imported.");
     } finally {
-      setImporting(false);
+      if (epoch === accessEpoch.current) setImporting(false);
     }
   };
 
   const sign = async () => {
     if (!row?.visit?.note) return;
+    const epoch = accessEpoch.current;
     setSigning(true);
     setActionError(null);
     try {
@@ -144,15 +170,18 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
         aiSections: sections,
         actionItems: actionItems.map((item) => ({ id: item.id, status: item.status })),
       });
+      if (epoch !== accessEpoch.current) return;
       setRow({ ...row, visit });
       setConfirmSign(false);
       announce("Telehealth visit note signed and saved to the visit record.");
       router.refresh();
     } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedNote(e);
       setActionError(isAdapterError(e) ? e.message : "The note could not be signed.");
       setConfirmSign(false);
     } finally {
-      setSigning(false);
+      if (epoch === accessEpoch.current) setSigning(false);
     }
   };
 

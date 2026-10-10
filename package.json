@@ -7,6 +7,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "test:migration-sql-bytes": "node --test scripts/migration-sql-bytes.test.mjs",
+    "build:telehealth-consent-candidate": "node scripts/build-telehealth-consent-candidate.mjs",
     "build:catalog-forward-inspector": "node scripts/build-catalog-forward-inspector.mjs",
     "build:catalog-forward-rollback": "node scripts/build-catalog-forward-inspector.mjs --rollback-rehearsal",
     "test:catalog-forward-rollback": "node --test scripts/catalog-forward-rollback-custody.test.mjs",

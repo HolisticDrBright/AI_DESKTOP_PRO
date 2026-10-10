@@ -94,7 +94,8 @@ export type CurrentConsentResult = {
   /** Approved artifact the current grant references, or null when revoked/none. */
   artifactVersion: string | null;
   contentSha256: string | null;
-  /** `approved` or `retired` — a retired artifact is no longer current authority even if the grant stands. */
+  /** A retired artifact may be hidden by RLS and return null. Only an explicit
+   * approved status with the exact version/hash is current authority. */
   artifactStatus: "approved" | "retired" | null;
   method: ConsentMethod | null;
   representativeAuthority: RepresentativeAuthority | null;
