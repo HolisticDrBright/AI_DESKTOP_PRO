@@ -4,12 +4,14 @@ if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is s
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
-import { CreateScheduleCommand, DeleteScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
+import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { boundedProviderJson } from "./bounded-provider-json";
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
+import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
+  type AppointmentRecoveryProviderDependencies } from "./appointment-provider-recovery";
 
 const document = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const secrets = new SecretsManagerClient({});
@@ -23,6 +25,7 @@ const CONSUMER_LIST = "GET /clinical-core/consumer/appointments/requests";
 const CONSUMER_ACTION = "POST /clinical-core/consumer/appointments/actions";
 const CONSUMER_CHANGE_OUTCOME = "POST /clinical-core/consumer/appointments/change-outcome";
 const CONSUMER_PENDING_CHANGE = "POST /clinical-core/consumer/appointments/pending-change";
+const CONSUMER_RECOVER_CHANGE = "POST /clinical-core/consumer/appointments/recover-change";
 const CONSUMER_AVAILABILITY = "POST /clinical-core/consumer/appointments/availability";
 const CONSUMER_HOLD = "POST /clinical-core/consumer/appointments/holds";
 const WORKFORCE_LIST = "GET /clinical-core/workforce/appointments/requests";
@@ -140,6 +143,7 @@ type BookingSlot = {
   visitTypes: AppointmentItem["visitType"][]; priceMinor: number; currency: "USD"; cancellationPolicy: string;
   cancellationWindowHours: number;
   status: "available" | "held" | "booked"; heldBy: string | null; holdId: string | null; holdExpiresAt: number | null;
+  mutationOperationId?: string;
   createdAt: string; createdBy: string;
 };
 
@@ -166,6 +170,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
       if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
       if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
+      if (route === CONSUMER_RECOVER_CHANGE) return response(200, { data: await recoverConsumerChange(config, actor, body(event)) });
       if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
       if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
       if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
@@ -546,9 +551,14 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
     }
     throw new TelehealthError("service_unavailable");
   }
+  return executeRequestOperation(config, operation, item, supplied, () => run(value));
+}
+
+async function executeRequestOperation(config: TelehealthConfiguration, operation: AppointmentOperation, item: AppointmentItem,
+  supplied: Record<string, unknown>, run: () => Promise<Record<string, unknown>>) {
   return appointmentOperationScope.run(operation, async () => {
     try {
-      const result = await run(value);
+      const result = await run();
       if (!operation.committed) await commitRequestMutation(config, item, item.version, [{ Update: {
         TableName: config.tableName, Key: operation.requestKey, UpdateExpression: "SET #version=:expected", ConditionExpression: "#version=:expected",
         ExpressionAttributeNames: { "#version": "version" }, ExpressionAttributeValues: { ":expected": item.version },
@@ -572,6 +582,133 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
       await closeRequestWriter(config, operation);
     }
   });
+}
+
+/** Explicit reconciliation of the original saved consumer action. No new
+ * operation, hold, charge or expiry-based takeover is admitted here. */
+async function recoverConsumerChange(config: TelehealthConfiguration, actor: Actor, wrapper: Record<string, unknown>) {
+  exact(wrapper, ["recoveryProtocol", "kind", "input"], ["recoveryProtocol", "kind", "input"]);
+  if (wrapper.recoveryProtocol !== "appointment-recovery/1" || !["consumer_action", "authorize"].includes(String(wrapper.kind))
+    || !wrapper.input || typeof wrapper.input !== "object" || Array.isArray(wrapper.input)) throw new TelehealthError("request_invalid");
+  const kind = String(wrapper.kind), supplied = wrapper.input as Record<string, unknown>;
+  exact(supplied, kind === "authorize" ? ["requestId", "expectedVersion", "policyVersion", "authorized", "operationId", "operationProtocol"]
+    : ["requestId", "expectedVersion", "action", "slotId", "holdId", "operationId", "operationProtocol"],
+  ["requestId", "expectedVersion", "operationId", "operationProtocol"]);
+  if (!UUID.test(String(supplied.requestId)) || !UUID.test(String(supplied.operationId)) || supplied.operationProtocol !== "appointment-change/1"
+    || !Number.isSafeInteger(supplied.expectedVersion) || Number(supplied.expectedVersion) < 1
+    || !consumerRecoveryPayload("consumer", kind, supplied)) throw new TelehealthError("request_invalid");
+  const item = await find(config, actor.organizationId, String(supplied.requestId));
+  if (item.consumerPersonId !== actor.personId) throw new TelehealthError("identity_refused");
+  const identity = appointmentOperationIdentity("consumer", actor.personId, actor.subject, kind, supplied);
+  const operation: AppointmentOperation = { ...identity,
+    key: { pk: `ORG#${actor.organizationId}`, sk: `REQOP#${item.requestId}#${identity.operationId}` },
+    requestKey: { pk: item.pk, sk: item.sk }, expectedVersion: Number(supplied.expectedVersion), pool: "consumer",
+    actorPersonId: actor.personId, actorSubject: actor.subject, admittedAt: "", writerToken: randomUUID(),
+    effectsAttempted: false, effectsRecorded: false, committed: false, visitKey: null };
+  const previous = await readRequestOperation(config, operation.key);
+  if (!previous) throw new TelehealthError("appointment_change_pending");
+  if (!matchesOperation(previous, operation) || previous.organizationId !== actor.organizationId || previous.requestId !== item.requestId
+    || previous.kind !== kind) throw new TelehealthError("conflict");
+  if (previous.phase === "committed") {
+    if (previous.committedVersion !== operation.expectedVersion + 1 || !canonicalOutcomeTime(previous.committedAt)
+      || !Number.isSafeInteger(item.version) || item.version < previous.committedVersion) throw new TelehealthError("appointment_change_pending");
+    return { ...publicItem(item, "consumer"), operationReceipt: operationReceipt(operation, previous.committedVersion, previous.committedAt!) };
+  }
+  if (previous.phase === "refused") throw new TelehealthError(previous.refusal ?? "appointment_change_pending");
+  const captured = previous.consumerRecoveryInput;
+  if (!["admitted", "effects_started"].includes(previous.phase) || previous.writerProtocol !== "appointment-writer/1"
+    || previous.writerStatus !== "closed" || !UUID.test(previous.writerToken ?? "")
+    || !canonicalOutcomeTime(previous.admittedAt) || !canonicalOutcomeTime(previous.writerClosedAt)
+    || Date.parse(previous.writerClosedAt!) < Date.parse(previous.admittedAt)
+    || !captured || !consumerRecoveryPayload("consumer", kind, captured)
+    || appointmentOperationIdentity("consumer", actor.personId, actor.subject, kind, captured).inputSha256 !== identity.inputSha256
+    || String(captured.operationId).toLowerCase() !== identity.operationId || captured.operationProtocol !== "appointment-change/1"
+    || item.version !== operation.expectedVersion || item.mutationOperationId !== identity.operationId)
+    throw new TelehealthError("appointment_change_pending");
+  operation.admittedAt = previous.admittedAt;
+  // Prior remote dispatch/reservation can never become a new no-effects refusal.
+  operation.effectsAttempted = previous.phase === "effects_started" || Object.hasOwn(previous, "reservedSlotKey");
+  operation.effectsRecorded = previous.phase === "effects_started";
+  operation.recovery = { reservedSlotKey: previous.reservedSlotKey, meetingIds: new Set(), remindersConfirmed: false };
+  if (kind === "consumer_action" && supplied.action === "request_reschedule" && previous.phase === "effects_started"
+    && !previous.reservedSlotKey) throw new TelehealthError("appointment_change_pending");
+  const visit = item.appointmentId ? await findVisit(config, actor.organizationId, item.appointmentId) : null;
+  if (visit && (visit.pk !== item.pk || visit.appointmentId !== item.appointmentId || visit.organizationId !== item.organizationId
+    || visit.requestId !== item.requestId || visit.consumerPersonId !== item.consumerPersonId
+    || visit.mutationOperationId !== operation.operationId || (kind === "consumer_action" && (visit.status !== "scheduled" || visit.meetingLease))))
+    throw new TelehealthError("appointment_change_pending");
+  const admission: RequestTransaction = [
+    { Update: { TableName: config.tableName, Key: operation.key, UpdateExpression: "SET writerToken=:writer,writerStatus=:active REMOVE writerClosedAt",
+      ConditionExpression: "writerProtocol=:protocol AND writerStatus=:closed AND writerToken=:previousWriter AND writerClosedAt=:closedAt AND inputSha256=:digest AND #phase=:phase",
+      ExpressionAttributeNames: { "#phase": "phase" }, ExpressionAttributeValues: { ":protocol": "appointment-writer/1", ":active": "active", ":closed": "closed",
+        ":writer": operation.writerToken, ":previousWriter": previous.writerToken, ":closedAt": previous.writerClosedAt, ":digest": operation.inputSha256, ":phase": previous.phase } } },
+    { ConditionCheck: { TableName: config.tableName, Key: operation.requestKey, ConditionExpression: "#version=:expected AND mutationOperationId=:operation",
+      ExpressionAttributeNames: { "#version": "version" }, ExpressionAttributeValues: { ":expected": operation.expectedVersion, ":operation": operation.operationId } } },
+  ];
+  if (visit) {
+    operation.visitKey = visitKey(item.organizationId, visit.appointmentId);
+    admission.push({ ConditionCheck: { TableName: config.tableName, Key: operation.visitKey, ConditionExpression: "#version=:expected AND mutationOperationId=:operation",
+      ExpressionAttributeNames: { "#version": "version" }, ExpressionAttributeValues: { ":expected": visit.version, ":operation": operation.operationId } } });
+  } else if (item.appointmentId) admission.push({ ConditionCheck: { TableName: config.tableName, Key: visitKey(item.organizationId, item.appointmentId),
+    ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } });
+  try { await document.send(new TransactWriteCommand({ TransactItems: admission })); }
+  catch {
+    const observed = await readRequestOperation(config, operation.key);
+    // A lost recovery-admission receipt may close ONLY this unstarted writer.
+    if (observed && matchesOperation(observed, operation) && observed.writerToken === operation.writerToken) await closeRequestWriter(config, operation);
+    throw new TelehealthError("appointment_change_pending");
+  }
+  const { operationId: ignoredId, operationProtocol: ignoredProtocol, ...value } = supplied;
+  void ignoredId; void ignoredProtocol;
+  return executeRequestOperation(config, operation, item, supplied, async () => {
+    return kind === "authorize" ? authorizeAppointmentPayment(config, actor, value) : consumerAction(config, actor, value);
+  });
+}
+
+async function recoveryZoomCredentials(config: TelehealthConfiguration, signal: AbortSignal) {
+  const secret = await recoveryAwait(signal, () => secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }), { abortSignal: signal }));
+  if (typeof secret.SecretString !== "string" || Buffer.byteLength(secret.SecretString) > 16384) throw new TelehealthError("appointment_change_pending");
+  let parsed: Record<string, unknown>; try { parsed = JSON.parse(secret.SecretString); } catch { throw new TelehealthError("appointment_change_pending"); }
+  const accountId = field(parsed, "accountId"), clientId = field(parsed, "clientId"), clientSecret = field(parsed, "clientSecret"), userId = field(parsed, "userId");
+  const result = await recoveryAwait(signal, () => fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`, {
+    method: "POST", redirect: "error", cache: "no-store", signal, headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` },
+  }));
+  if (result.status !== 200) throw new TelehealthError("appointment_change_pending");
+  const token = await recoveryAwait(signal, () => boundedProviderJson(result, 65536));
+  if (!token || typeof token !== "object" || Array.isArray(token)) throw new TelehealthError("appointment_change_pending");
+  return { accessToken: field(token as Record<string, unknown>, "access_token"), userId };
+}
+
+async function reconcileConsumerRecoveryProviders(config: TelehealthConfiguration, item: AppointmentItem, visit: VisitItem | null) {
+  const operation = appointmentOperationScope.getStore();
+  if (!operation?.recovery) throw new TelehealthError("appointment_change_pending");
+  const signal = AbortSignal.timeout(20000);
+  const deps: AppointmentRecoveryProviderDependencies = { signal, fetch,
+    zoomCredentials: child => recoveryZoomCredentials(config, child), beforeWrite: () => markRequestSideEffect(config),
+    schedulerRead: async (name, child) => ({ ...await scheduler.send(new GetScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name }), { abortSignal: child }) }),
+    schedulerDelete: (name, child) => scheduler.send(new DeleteScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name }), { abortSignal: child }),
+    scheduleGroup: config.reminderScheduleGroup, scheduleTarget: config.reminderTargetArn, scheduleRole: config.reminderSchedulerRoleArn };
+  try {
+    if (item.providerMeetingId) {
+      if (!config.zoomEnabled || !config.zoomBaaVerified || !item.scheduledStart) throw new TelehealthError("appointment_change_pending");
+      await confirmRecoveryMeetingAbsent({ id: item.providerMeetingId, markers: [`Governed appointment request ${item.requestId}`], start: item.scheduledStart,
+        uuid: visit?.providerMeetingId === item.providerMeetingId ? visit.providerMeetingUuid : null }, deps);
+      operation.recovery.meetingIds.add(item.providerMeetingId);
+    }
+    if (visit?.providerMeetingId && visit.providerMeetingId !== item.providerMeetingId) {
+      if (!config.zoomEnabled || !config.zoomBaaVerified || !visit.scheduledStart) throw new TelehealthError("appointment_change_pending");
+      const marker = meetingMarker(visit.appointmentId);
+      await confirmRecoveryMeetingAbsent({ id: visit.providerMeetingId, markers: [marker, `Governed appointment request ${marker}`],
+        start: visit.scheduledStart, uuid: visit.providerMeetingUuid }, deps);
+      operation.recovery.meetingIds.add(visit.providerMeetingId);
+    }
+    if (config.remindersEnabled) {
+      if (!item.scheduledStart && item.reminderStatus !== "disabled") throw new TelehealthError("appointment_change_pending");
+      for (const offset of ["24h", "1h"] as const) await confirmRecoveryReminderAbsent({ name: reminderName(item, offset), organizationId: item.organizationId,
+        requestId: item.requestId, start: item.scheduledStart ?? "", generation: item.reminderGeneration }, deps);
+      operation.recovery.remindersConfirmed = true;
+    } else if (item.reminderStatus !== "disabled") throw new TelehealthError("appointment_change_pending");
+  } catch { throw new TelehealthError("appointment_change_pending"); }
 }
 
 async function closeRequestWriter(config: TelehealthConfiguration, operation: AppointmentOperation): Promise<boolean> {
@@ -659,13 +796,20 @@ async function consumerAction(config: TelehealthConfiguration, actor: Actor, val
   if (!UUID.test(String(value.slotId)) || !UUID.test(String(value.holdId))) throw new TelehealthError("request_invalid");
   const replacement = await findSlot(config, actor.organizationId, String(value.slotId));
   const now = Math.floor(Date.now() / 1000);
+  const operation = appointmentOperationScope.getStore();
+  if (!operation) throw new TelehealthError("service_unavailable");
+  const reserved = operation.recovery?.reservedSlotKey;
+  if (reserved) {
+    if (reserved.pk !== replacement.pk || reserved.sk !== replacement.sk || replacement.slotId === item.slotId || replacement.status !== "booked"
+      || replacement.heldBy !== actor.personId || replacement.holdId !== value.holdId || replacement.mutationOperationId !== operation.operationId
+      || !replacement.visitTypes.includes(item.visitType)) throw new TelehealthError("appointment_change_pending");
+    return rescheduleRequest(config, item, replacement, Number(value.expectedVersion), String(value.holdId));
+  }
   if (replacement.slotId === item.slotId || replacement.status !== "held" || replacement.heldBy !== actor.personId
     || replacement.holdId !== value.holdId || !replacement.holdExpiresAt || replacement.holdExpiresAt <= now
     || !replacement.visitTypes.includes(item.visitType) || Date.parse(replacement.start) <= Date.now()) throw new TelehealthError("conflict");
   // Remove expiry/reuse from the replacement BEFORE deleting the old provider
   // meeting. A lost reservation receipt remains fenced, never assumed absent.
-  const operation = appointmentOperationScope.getStore();
-  if (!operation) throw new TelehealthError("service_unavailable");
   operation.effectsAttempted = true;
   try {
     await document.send(new TransactWriteCommand({ TransactItems: [
@@ -688,6 +832,8 @@ async function cancelRequest(config: TelehealthConfiguration, item: AppointmentI
   const slot = await findSlot(config, item.organizationId, item.slotId);
   const cutoff = new Date(slot.start).getTime() - slot.cancellationWindowHours * 3_600_000;
   const cancellationFeeDueMinor = Date.parse(appointmentOperationScope.getStore()?.admittedAt ?? new Date().toISOString()) >= cutoff ? item.priceMinor : 0;
+  if (appointmentOperationScope.getStore()?.recovery)
+    await reconcileConsumerRecoveryProviders(config, item, item.appointmentId ? await findVisit(config, item.organizationId, item.appointmentId) : null);
   if (item.providerMeetingId) {
     if (!config.zoomEnabled) throw new TelehealthError("provider_unavailable");
     await deleteZoomMeeting(config, item.providerMeetingId);
@@ -717,6 +863,8 @@ async function cancelRequest(config: TelehealthConfiguration, item: AppointmentI
 async function rescheduleRequest(config: TelehealthConfiguration, item: AppointmentItem, replacement: BookingSlot, version: number, holdId: string) {
   if (version !== item.version) throw new TelehealthError("conflict");
   const previous = await findSlot(config, item.organizationId, item.slotId);
+  if (appointmentOperationScope.getStore()?.recovery)
+    await reconcileConsumerRecoveryProviders(config, item, item.appointmentId ? await findVisit(config, item.organizationId, item.appointmentId) : null);
   if (item.providerMeetingId) {
     if (!config.zoomEnabled) throw new TelehealthError("provider_unavailable");
     await deleteZoomMeeting(config, item.providerMeetingId);
@@ -849,6 +997,11 @@ async function updateZoomMeeting(config: TelehealthConfiguration, meetingId: str
 }
 
 async function deleteZoomMeeting(config: TelehealthConfiguration, meetingId: string) {
+  const recovery = appointmentOperationScope.getStore()?.recovery;
+  if (recovery) {
+    if (!recovery.meetingIds.has(meetingId)) throw new TelehealthError("appointment_change_pending");
+    return;
+  }
   await markRequestSideEffect(config);
   const { accessToken } = await zoomAccess(config);
   const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`, { method: "DELETE", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
@@ -1600,6 +1753,11 @@ function reminderName(item: Pick<AppointmentItem, "requestId" | "reminderGenerat
 }
 function atExpression(value: Date) { return `at(${value.toISOString().slice(0, 19)})`; }
 async function deleteAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem) {
+  const recovery = appointmentOperationScope.getStore()?.recovery;
+  if (recovery) {
+    if (!recovery.remindersConfirmed) throw new TelehealthError("appointment_change_pending");
+    return;
+  }
   const names = (["24h", "1h"] as const).map(offset => reminderName(item, offset));
   await markRequestSideEffect(config);
   for (const name of names) {

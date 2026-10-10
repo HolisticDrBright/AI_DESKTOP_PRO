@@ -16,6 +16,10 @@ export type AppointmentOperation = {
   /** Private per-invocation authority, never a client retry token. Closure
    * proves only this writer stopped; provider disposition is separate. */
   writerToken: string;
+  /** Explicit original-action recovery only. Never an elapsed-time takeover.
+   * Resources are observed anew on every pass; these are local confirmations,
+   * not a deletion receipt or provider-copy/backup erasure authority. */
+  recovery?: { reservedSlotKey?: { pk: string; sk: string }; meetingIds: Set<string>; remindersConfirmed: boolean };
   effectsAttempted: boolean;
   effectsRecorded: boolean;
   committed: boolean;

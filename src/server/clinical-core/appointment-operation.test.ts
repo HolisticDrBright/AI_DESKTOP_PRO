@@ -511,3 +511,180 @@ it("workforce meeting creation with an unknown result is never repeated by repla
   expect((await run(input, zoom, "workforce")).statusCode).toBe(503); expect(provider).toHaveBeenCalledTimes(calls);
   expect(operations()[0]).toMatchObject({ phase: "effects_started" }); expect(current()).toHaveProperty("mutationOperationId", operationId);
 });
+
+const recover = (input: Record<string, unknown> = cancel(), cfg = config, kind = "consumer_action", person = owner) => run({ recoveryProtocol: "appointment-recovery/1", kind, input }, cfg, "consumer", "recover-change", person);
+const pendingClosed = async (input: Record<string, unknown> = cancel(), cfg = config, path = "actions") => {
+  store.transactionLoss = "admission_after";
+  expect((await run(input, cfg, "consumer", path)).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ writerStatus: "closed", phase: "admitted" });
+};
+const writes = () => store.commands.filter(command => /Write|Update|Put/.test(command.constructor.name)).length;
+const recoveredReceipt = (body: string) => expect(JSON.parse(body).data.operationReceipt).toMatchObject({ operationId, admittedVersion: 4, committedVersion: 5 });
+
+it("explicit recovery continues only the original closed consumer operation", async () => {
+  await pendingClosed(); const originalWriter = writerRow().writerToken;
+  const result = await recover(); expect(result.statusCode).toBe(200); recoveredReceipt(result.body);
+  expect(operations()).toHaveLength(1); expect(writerRow()).toMatchObject({ phase: "committed", writerStatus: "closed", operationId });
+  expect(writerRow().writerToken).not.toBe(originalWriter); expect(current()).toMatchObject({ version: 5, status: "cancelled" });
+  expect(current()).not.toHaveProperty("mutationOperationId"); expect(provider).not.toHaveBeenCalled();
+  for (const field of ["writerToken", "consumerRecoveryInput", "reservedSlotKey"]) expect(result.body).not.toContain(field);
+});
+it("ordinary replay never becomes explicit recovery", async () => {
+  await pendingClosed(); const before = writes(); expect((await run()).statusCode).toBe(503); expect(writes()).toBe(before);
+});
+it("unobserved recovery cannot create an operation, reserve a slot or call providers", async () => {
+  expect((await recover()).statusCode).toBe(503); expect(writes()).toBe(0); expect(operations()).toHaveLength(0); expect(provider).not.toHaveBeenCalled();
+});
+it.each([
+  { writerStatus: "active" }, { writerProtocol: undefined }, { writerToken: undefined }, { writerClosedAt: undefined },
+  { writerClosedAt: "2020-01-01T00:00:00.000Z" }, { consumerRecoveryInput: undefined }, { phase: "unknown" },
+])("missing or unclosed writer authority stays pending without age takeover: %j", async patch => {
+  await pendingClosed(); replaceWriter(patch); const before = writes();
+  expect((await recover()).statusCode).toBe(503); expect(writes()).toBe(before); expect(provider).not.toHaveBeenCalled();
+});
+it.each(["actorSubject", "actorPersonId", "pool", "kind", "inputSha256"])("recovery refuses mismatched %s authority", async field => {
+  await pendingClosed(); replaceWriter({ [field]: "foreign" }); const before = writes();
+  expect((await recover()).statusCode).toBe(409); expect(writes()).toBe(before);
+});
+it("cross-owner recovery is refused before admitting a writer", async () => {
+  await pendingClosed(); const before = writes(); expect((await recover(cancel(), config, "consumer_action", replacementId)).statusCode).toBe(403);
+  expect(writes()).toBe(before); expect(provider).not.toHaveBeenCalled();
+});
+it("a different payload or operation cannot take over the saved action", async () => {
+  await pendingClosed(); const before = writes();
+  expect((await recover(cancel({ action: "request_reschedule", slotId: replacementId, holdId }))).statusCode).toBe(409);
+  expect((await recover(cancel({ operationId: replacementId }))).statusCode).toBe(503); expect(writes()).toBe(before);
+});
+it("a changed request fence or version cannot be recovered", async () => {
+  await pendingClosed(); store.seed({ ...current(), version: 5 }); const before = writes();
+  expect((await recover()).statusCode).toBe(503); expect(writes()).toBe(before);
+});
+it("a committed historical action returns its exact receipt and current authorized record without writes", async () => {
+  expect((await run()).statusCode).toBe(200); store.seed({ ...current(), version: 7 }); const before = writes();
+  const result = await recover(); expect(result.statusCode).toBe(200); recoveredReceipt(result.body); expect(JSON.parse(result.body).data.version).toBe(7);
+  expect(writes()).toBe(before); expect(provider).not.toHaveBeenCalled();
+});
+it.each(["before", "after"])("a lost %s recovery admission leaves a recoverable closed writer without dispatch", async order => {
+  await pendingClosed(); let lost = false;
+  send.mockImplementation(async command => {
+    if (!lost && command.constructor.name === "TransactWriteCommand" && command.input.TransactItems.some((part: { Update?: { UpdateExpression?: string } }) => part.Update?.UpdateExpression?.includes("writerToken=:writer"))) {
+      lost = true; if (order === "after") await store.send(command); throw new Error("fictional lost recovery admission");
+    }
+    return store.send(command);
+  });
+  expect((await recover()).statusCode).toBe(503); expect(writerRow().writerStatus).toBe("closed"); expect(provider).not.toHaveBeenCalled();
+  expect((await recover()).statusCode).toBe(200); expect(operations()).toHaveLength(1);
+});
+it("two devices cannot concurrently own the recovery writer", async () => {
+  await pendingClosed(); let release!: () => void; let reached!: () => void; let held = false;
+  const gate = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { reached = resolve; });
+  send.mockImplementation(async command => {
+    const result = await store.send(command);
+    if (!held && command.constructor.name === "TransactWriteCommand" && command.input.TransactItems.some((part: { Update?: { UpdateExpression?: string } }) => part.Update?.UpdateExpression?.includes("writerToken=:writer"))) {
+      held = true; reached(); await gate;
+    }
+    return result;
+  });
+  const first = recover(); await entered;
+  expect((await recover()).statusCode).toBe(503); expect(writerRow().writerStatus).toBe("active");
+  release(); const result = await first; expect(result.statusCode).toBe(200); recoveredReceipt(result.body);
+  expect((await recover()).statusCode).toBe(200); expect(operations()).toHaveLength(1);
+});
+it("cancel recovery observes actual Zoom absence after the original commit was lost", async () => {
+  store.seed(request({ providerMeetingId: "900000001" })); store.transactionLoss = "commit_before";
+  expect((await run(cancel(), zoom)).statusCode).toBe(503); expect(writerRow()).toMatchObject({ phase: "effects_started", writerStatus: "closed" });
+  provider.mockClear(); provider.mockImplementation(async (url: string) => url.includes("oauth/token")
+    ? new Response(JSON.stringify({ access_token: "fictional" })) : new Response(JSON.stringify({ code: 3001 }), { status: 404 }));
+  const result = await recover(cancel(), zoom); expect(result.statusCode).toBe(200); recoveredReceipt(result.body);
+  expect(provider.mock.calls.filter(([url]) => url.includes("/meetings/"))).toHaveLength(1);
+  expect(provider.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+it("unconfirmed provider absence keeps the original action fenced, not refused or cancelled", async () => {
+  store.seed(request({ providerMeetingId: "900000001" })); await pendingClosed(cancel(), zoom);
+  provider.mockImplementation(async (url: string) => url.includes("oauth/token") ? new Response(JSON.stringify({ access_token: "fictional" }))
+    : new Response(JSON.stringify({ code: 1001 }), { status: 404 }));
+  expect((await recover(cancel(), zoom)).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ phase: "admitted", writerStatus: "closed" });
+  expect(current()).toMatchObject({ version: 4, status: "scheduled", mutationOperationId: operationId });
+});
+it("a lost recovery commit response settles from the exact durable receipt", async () => {
+  await pendingClosed(); store.transactionLoss = "commit_after";
+  const result = await recover(); expect(result.statusCode).toBe(200); recoveredReceipt(result.body); expect(operations()).toHaveLength(1);
+});
+it("reschedule recovery keeps its original reserved replacement even after the hold expiry", async () => {
+  const input = cancel({ action: "request_reschedule", slotId: replacementId, holdId }); store.transactionLoss = "reservation_after";
+  expect((await run(input)).statusCode).toBe(503); expect(writerRow()).toHaveProperty("reservedSlotKey");
+  const key = { pk: `ORG#${org}`, sk: `SLOT#2026-11-11#${replacementId}` }; store.seed({ ...store.get(key), holdExpiresAt: 1 });
+  const result = await recover(input); expect(result.statusCode).toBe(200); recoveredReceipt(result.body);
+  expect(current()).toMatchObject({ slotId: replacementId, status: "reschedule_requested", version: 5 });
+  expect(store.get(key)).toMatchObject({ status: "booked", holdId }); expect(store.get(key)).not.toHaveProperty("mutationOperationId");
+  expect(store.get({ pk: `ORG#${org}`, sk: `SLOT#2026-11-10#${slotId}` })).toMatchObject({ status: "available" });
+});
+it("a foreign replacement cannot be reused after its original reservation", async () => {
+  const input = cancel({ action: "request_reschedule", slotId: replacementId, holdId }); store.transactionLoss = "reservation_after";
+  expect((await run(input)).statusCode).toBe(503);
+  const key = { pk: `ORG#${org}`, sk: `SLOT#2026-11-11#${replacementId}` }; store.seed({ ...store.get(key), mutationOperationId: holdId });
+  expect((await recover(input)).statusCode).toBe(503); expect(current()).toMatchObject({ slotId, version: 4 }); expect(provider).not.toHaveBeenCalled();
+});
+it("an unreserved expired hold fails before deleting the old meeting", async () => {
+  store.seed(request({ providerMeetingId: "900000001" })); const input = cancel({ action: "request_reschedule", slotId: replacementId, holdId });
+  await pendingClosed(input, zoom);
+  const key = { pk: `ORG#${org}`, sk: `SLOT#2026-11-11#${replacementId}` }; store.seed({ ...store.get(key), holdExpiresAt: 1 });
+  expect((await recover(input, zoom)).statusCode).toBe(409); expect(provider).not.toHaveBeenCalled();
+  expect(writerRow()).toMatchObject({ phase: "refused", sideEffects: "none" });
+});
+it("payment authorization recovery applies only the original choice without a charge", async () => {
+  const input = { requestId, expectedVersion: 4, policyVersion: "telehealth-payments/1", authorized: false, operationId, operationProtocol: "appointment-change/1" };
+  await pendingClosed(input, config, "payment-authorizations"); const result = await recover(input, config, "authorize");
+  expect(result.statusCode).toBe(200); recoveredReceipt(result.body); expect(current().paymentAuthorizationStatus).toBe("withdrawn");
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("recovery fees retain the original admitted time, not the later retry time", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-11-08T17:00:00.000Z")); await pendingClosed();
+    vi.setSystemTime(new Date("2026-11-10T17:00:00.000Z")); expect((await recover()).statusCode).toBe(200);
+    expect(current().cancellationFeeDueMinor).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it("recovery route uses the consumer authorizer and still refuses production without activation", async () => {
+  const template = JSON.parse(readFileSync("infra/aws-clinical-core/telehealth-requests-extension.json", "utf8"));
+  expect(template.Resources.ConsumerRecoverChangeRoute.Properties).toMatchObject({ RouteKey: "POST /clinical-core/consumer/appointments/recover-change",
+    AuthorizationType: "JWT", AuthorizerId: { Ref: "ConsumerAuthorizer" }, Target: { "Fn::Sub": "integrations/${Integration}" } });
+  expect((await recover(cancel(), { ...config, runtimeMode: "production" })).statusCode).toBe(503); expect(writes()).toBe(0);
+});
+it.each(["in_visit", "ending", "ended", "cancelled"])("recovery cannot remove a visit in %s state", async status => {
+  const key = { pk: `ORG#${org}`, sk: `VISIT#${appointmentId}` };
+  store.seed(request({ appointmentId }), { ...key, appointmentId, requestId, organizationId: org, consumerPersonId: owner, status: "scheduled", version: 2, meetingLease: null });
+  await pendingClosed(); store.seed({ ...store.get(key), status }); const before = writes();
+  expect((await recover()).statusCode).toBe(503); expect(writes()).toBe(before); expect(provider).not.toHaveBeenCalled();
+});
+it("recovery retains a concurrent consent withdrawal and note history while cancelling", async () => {
+  const key = { pk: `ORG#${org}`, sk: `VISIT#${appointmentId}` };
+  store.seed(request({ appointmentId, providerMeetingId: "900000001" }), { ...key, appointmentId, requestId, organizationId: org,
+    consumerPersonId: owner, status: "scheduled", version: 2, meetingLease: null, providerMeetingId: "900000001", providerMeetingUuid: "fictional-instance",
+    consents: [{ consentId: "fictional", status: "granted" }], quickNotes: "Fictional note", noteHistory: [{ revision: 1 }], note: null });
+  await pendingClosed(cancel(), zoom);
+  provider.mockImplementation(async (url: string) => {
+    if (url.includes("oauth/token")) return new Response(JSON.stringify({ access_token: "fictional" }));
+    const fenced = store.get(key)!; store.seed({ ...fenced, version: Number(fenced.version) + 1, consents: [{ consentId: "fictional", status: "withdrawn" }] });
+    return new Response(JSON.stringify({ code: 3001 }), { status: 404 });
+  });
+  expect((await recover(cancel(), zoom)).statusCode).toBe(200);
+  expect(store.get(key)).toMatchObject({ status: "cancelled", consents: [{ status: "withdrawn" }], quickNotes: "Fictional note", noteHistory: [{ revision: 1 }] });
+  expect(store.get(key)).not.toHaveProperty("mutationOperationId");
+});
+it("a changed provider id after observation prevents settlement without proof for the new id", async () => {
+  const key = { pk: `ORG#${org}`, sk: `VISIT#${appointmentId}` };
+  store.seed(request({ appointmentId }), { ...key, appointmentId, requestId, organizationId: org, consumerPersonId: owner,
+    scheduledStart: request().scheduledStart, status: "scheduled", version: 2, meetingLease: null, providerMeetingId: "900000001", providerMeetingUuid: "fictional-instance" });
+  await pendingClosed(cancel(), zoom);
+  provider.mockImplementation(async (url: string) => {
+    if (url.includes("oauth/token")) return new Response(JSON.stringify({ access_token: "fictional" }));
+    const fenced = store.get(key)!; store.seed({ ...fenced, version: Number(fenced.version) + 1, providerMeetingId: "900000002" });
+    return new Response(JSON.stringify({ code: 3001 }), { status: 404 });
+  });
+  expect((await recover(cancel(), zoom)).statusCode).toBe(503);
+  expect(current()).toMatchObject({ status: "scheduled", version: 4, mutationOperationId: operationId });
+  expect(writerRow()).toMatchObject({ writerStatus: "closed" }); expect(writerRow().phase).not.toBe("committed");
+});

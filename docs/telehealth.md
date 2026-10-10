@@ -397,6 +397,57 @@ The matched V2 screen first displays the original action for review. Explicit ad
 
 This implements discovery of newly captured pending consumer actions, not a history browser, legacy reconstruction, provider reconciliation or a two-device hosted acceptance result. The new private operation input also requires the still-open cloud lifecycle integration. Deploy the matched authorizer, handler and V2 candidate together; keep PHI disabled until the broader activation requirements are met.
 
+## Explicit consumer appointment recovery
+
+The consumer-authorized `POST /clinical-core/consumer/appointments/recover-change`
+continues the original saved `appointment-change/1` cancel, reschedule request,
+or payment-authorization choice. It requires `appointment-recovery/1`, the
+original operation ID and exact input. It never creates a replacement operation,
+hold or charge. Ordinary action replay remains read-only while the original
+action is pending.
+
+Recovery requires an observed private `appointment-writer/1` closure, not an
+elapsed lease or an old admission time. The request, owner, clinic, subject,
+kind, digest and version must match. One transaction claims a new private writer
+token while checking the original request and visit fences. Concurrent recovery,
+an active visit, a missing closure or legacy input remains refused. A lost
+admission response closes only the matching unstarted writer. Historical
+committed operations return their exact receipt without another mutation.
+
+A reserved reschedule continues only its original replacement slot, holder,
+hold ID and operation fence, even after that hold's deadline. An unreserved
+replacement must still be held and unexpired before any provider cleanup. The
+original admission time determines the cancellation fee. Final request,
+calendar, slot, visit and receipt changes settle atomically, preserving the
+fresh visit's consent withdrawals and note history.
+
+Zoom cleanup reads the exact stored meeting ID, never an upcoming-meeting list.
+Before deletion it requires a matching marker, host, time, available instance
+UUID and a waiting non-recurring meeting. Only a subsequent exact GET returning
+HTTP 404 with numeric code 3001 confirms absence. The restriction to
+non-recurring meetings matters because deleting a recurring meeting without an
+occurrence ID deletes its series. See [Zoom meeting APIs](https://developers.zoom.us/docs/api/meetings/).
+
+Scheduler cleanup reads the exact group and generation-specific name and
+verifies its target, role and request payload. Only the SDK's
+`ResourceNotFoundException` proves absence; a successful deletion requires
+another read. Permission errors and throttling remain unresolved. See
+[GetSchedule](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)
+and [DeleteSchedule](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html).
+
+Provider work has a 20-second aggregate wait budget with five-second child
+deadlines. Aborting local waiting is not proof that a remote write stopped.
+Unknown outcomes stay fenced for explicit reconciliation; the original
+operation is never converted into a no-effects refusal after recorded dispatch
+or reservation. These bounds and recovery journeys are locally tested with
+fictional stores and providers, not hosted acceptance.
+
+Deploy the matched consumer route, handler and V2 recovery client together.
+Staff creation recovery, legacy operations, unobserved pre-admission outcomes,
+provider invocation settlement, orphan inventory, full slot lineage, cloud
+record lifecycle, chart integration, patient consent release, per-clinic hosts
+and physical host/patient and two-device acceptance remain open. PHI stays off.
+
 ## Reminder revision isolation
 
 Each new scheduling operation gives its reminders a private generation equal to
