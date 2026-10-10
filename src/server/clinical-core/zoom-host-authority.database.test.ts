@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
@@ -8,6 +8,9 @@ import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import type { ClinicalCoreDatabase } from './database';
 import { createZoomHostRegistry, type ZoomHostFunctionPin } from './zoom-host-registry';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
+import { GetSecretValueCommand, type GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
+import { createZoomHostCredentialResolver } from './zoom-host-credentials';
+import { runZoomCredentialRequest } from './zoom-credential-snapshot';
 
 // Actual canonical112 SQL plus the unreleased candidate, in memory only.
 // Every identity, review and record below is FICTIONAL, not deployment evidence.
@@ -174,6 +177,121 @@ describe('unreleased typed registry port composed with the real restricted SQL',
     const registry=createZoomHostRegistry(portDatabase(),pins,target);
     await expect(registry(context(),{action:'bind',appointmentId:appointment,intentId:randomUUID()})).rejects.toThrow('service_unavailable');
     expect(await count()).toBe(0);
+  });
+});
+
+describe('version-pinned credential resolver composed with real SQL authority',()=>{
+  const secretValue=()=>JSON.stringify({accountId:config().zoomAccountId,clientId:config().clientId,clientSecret:'fictional-client-secret',
+    userId:config().zoomHostId,sdkKey:config().sdkAppKey,sdkSecret:'fictional-sdk-secret'});
+  const reply=():GetSecretValueCommandOutput=>({$metadata:{httpStatusCode:200},ARN:config().secretArn,VersionId:config().secretVersionId,SecretString:secretValue()});
+  const signal=()=>AbortSignal.timeout(10_000);
+  async function setup() {
+    const releaseId=await release();
+    const registry=createZoomHostRegistry(portDatabase(),pins,target);
+    const original=await registry(context(),{action:'bind',appointmentId:appointment,intentId:randomUUID()});
+    const send=vi.fn(async(_command:GetSecretValueCommand,_options:{abortSignal:AbortSignal})=>reply());
+    const resolver=createZoomHostCredentialResolver({database:portDatabase(),compiledPins:pins,compiledTarget:target,
+      allowedSecretArns:[config().secretArn],secretReader:{send}});
+    return {releaseId,registry,original,send,resolver};
+  }
+  it('requests only the reviewed ARN and exact VersionId and checks actual account, client, host and SDK fields',async()=>{
+    const f=await setup();
+    const credentials=await runZoomCredentialRequest(()=>f.resolver(context(),f.original,signal()));
+    expect(credentials).toMatchObject({accountId:config().zoomAccountId,clientId:config().clientId,userId:config().zoomHostId,sdkKey:config().sdkAppKey});
+    expect(Object.isFrozen(credentials)).toBe(true);
+    expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.send.mock.calls[0][0]).toBeInstanceOf(GetSecretValueCommand);
+    expect(f.send.mock.calls[0][0].input).toEqual({SecretId:config().secretArn,VersionId:config().secretVersionId});
+    expect(f.send.mock.calls[0][1].abortSignal).toBeInstanceOf(AbortSignal);
+  });
+  it('shares one version read within a request but refreshes the next request',async()=>{
+    const f=await setup();
+    await runZoomCredentialRequest(async()=>{
+      await f.resolver(context(),f.original,signal()); await f.resolver(context(),f.original,signal());
+    });
+    expect(f.send).toHaveBeenCalledTimes(1);
+    await runZoomCredentialRequest(()=>f.resolver(context(),f.original,signal()));
+    expect(f.send).toHaveBeenCalledTimes(2);
+  });
+  it.each(['ARN','VersionId','SecretString','SecretBinary','status','accountId','clientId','userId','sdkKey','sdkSecret'] as const)('refuses a missing/wrong %s without a fallback or leaked credential',async key=>{
+    const f=await setup();
+    f.send.mockImplementation(async()=>{
+      const output=reply();
+      if(key==='ARN') output.ARN='arn:aws:secretsmanager:us-east-2:588966314750:secret:other-AbCd12';
+      else if(key==='VersionId') output.VersionId='2'.repeat(32);
+      else if(key==='SecretString') output.SecretString=undefined;
+      else if(key==='SecretBinary') output.SecretBinary=new Uint8Array([1]);
+      else if(key==='status') output.$metadata.httpStatusCode=503;
+      else { const values=JSON.parse(secretValue()); values[key]=key==='sdkSecret'?null:'different'; output.SecretString=JSON.stringify(values); }
+      return output;
+    });
+    await expect(runZoomCredentialRequest(()=>f.resolver(context(),f.original,signal()))).rejects.toThrow(/^zoom_credentials_refused$/);
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
+  it.each(['cleanup','wrong_clinic','consumer','unscoped','unadmitted','changed_configuration','substituted_binding','secret_not_allowed'] as const)('refuses %s before any secret read',async problem=>{
+    const f=await setup();
+    const original=problem==='cleanup'?await f.registry(context(),{action:'read',appointmentId:appointment,purpose:'cleanup_metadata'}):
+      problem==='unadmitted'?{...f.original,bindingId:randomUUID(),appointmentId:randomUUID()}:
+      problem==='changed_configuration'?{...f.original,configuration:{...f.original.configuration,secretVersionId:'2'.repeat(32)}}:
+      problem==='substituted_binding'?{...f.original,bindingId:randomUUID()}:f.original;
+    const actor=problem==='wrong_clinic'?{...context(),organizationId:foreign}:problem==='consumer'?{...context(),identityPool:'consumer' as const}:context();
+    const resolver=problem==='secret_not_allowed'?createZoomHostCredentialResolver({database:portDatabase(),compiledPins:pins,compiledTarget:target,
+      allowedSecretArns:['arn:aws:secretsmanager:us-east-2:588966314750:secret:not-this-host-AbCd12'],secretReader:{send:f.send}}):f.resolver;
+    const work=()=>resolver(actor,original,signal());
+    await expect(problem==='unscoped'?work():runZoomCredentialRequest(work)).rejects.toThrow(/^zoom_credentials_refused$/);
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  it.each(['rotation','revocation','host_membership','patient_archived','rescheduled','reassigned'] as const)('withholds credentials when %s changes during secret read',async change=>{
+    const f=await setup();
+    f.send.mockImplementation(async()=>{
+      if(change==='rotation') await release(2,config({secretVersionId:'2'.repeat(32)}));
+      else if(change==='revocation') await revoke(f.releaseId);
+      else if(change==='host_membership') await db.query("update clinical_core.organization_memberships set status='suspended' where organization_id=$1 and person_id=$2",[org,practitioner]);
+      else if(change==='patient_archived') await db.query("update clinical_core.patient_records set status='archived' where id=$1",[patient]);
+      else if(change==='rescheduled') await db.query("update clinical_core.appointments set starts_at=starts_at+interval '5 minutes' where id=$1",[appointment]);
+      else await db.query('update clinical_core.appointments set practitioner_person_id=$2 where id=$1',[appointment,colleague]);
+      return reply();
+    });
+    await expect(runZoomCredentialRequest(()=>f.resolver(context(),f.original,signal()))).rejects.toThrow(/^zoom_credentials_refused$/);
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
+  it('rechecks authority even on a cached version read',async()=>{
+    const f=await setup();
+    await runZoomCredentialRequest(async()=>{
+      await f.resolver(context(),f.original,signal());
+      await revoke(f.releaseId);
+      await expect(f.resolver(context(),f.original,signal())).rejects.toThrow(/^zoom_credentials_refused$/);
+    });
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
+  it('does not retry a failed version read or fall back to current credentials in the same request',async()=>{
+    const f=await setup(); f.send.mockRejectedValue(new Error('FICTIONAL secret or bearer must not escape'));
+    await runZoomCredentialRequest(async()=>{
+      await expect(f.resolver(context(),f.original,signal())).rejects.toThrow(/^zoom_credentials_refused$/);
+      await expect(f.resolver(context(),f.original,signal())).rejects.toThrow(/^zoom_credentials_refused$/);
+    });
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
+  it('refuses pre-aborted work without secret access',async()=>{
+    const f=await setup(); const controller=new AbortController();controller.abort();
+    await expect(runZoomCredentialRequest(()=>f.resolver(context(),f.original,controller.signal))).rejects.toThrow(/^zoom_credentials_refused$/);
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  it('propagates cancellation to a stalled secret read and never returns a late credential',async()=>{
+    const f=await setup(); const controller=new AbortController(); let started!:()=>void, releaseRead!:(value:GetSecretValueCommandOutput)=>void;
+    const ready=new Promise<void>(resolve=>{started=resolve;});
+    f.send.mockImplementation((_command,options)=>{expect(options.abortSignal.aborted).toBe(false);started();return new Promise(resolve=>{releaseRead=resolve;});});
+    await runZoomCredentialRequest(async()=>{
+      const pending=f.resolver(context(),f.original,controller.signal);
+      const assertion=expect(pending).rejects.toThrow(/^zoom_credentials_refused$/);
+      await ready;controller.abort();await assertion;
+      expect(f.send.mock.calls[0][1].abortSignal.aborted).toBe(true);
+      releaseRead(reply());
+    });
+  });
+  it('rejects malformed, wildcard, foreign and duplicate deployment allowlists',async()=>{
+    for(const allowed of [[],['*'],[config().secretArn,config().secretArn],['arn:aws:secretsmanager:us-east-2:173535830222:secret:foreign-AbCd12']])
+      expect(()=>createZoomHostCredentialResolver({database:portDatabase(),compiledPins:pins,compiledTarget:target,allowedSecretArns:allowed})).toThrow(/^zoom_credentials_refused$/);
   });
 });
 

@@ -125,7 +125,9 @@ function configurationDigest(c:ZoomHostConfiguration):string {
     .map(k=>JSON.stringify(k)+': '+JSON.stringify(c[k as keyof typeof c])).join(', ')+'}';
   return createHash('sha256').update(text,'utf8').digest('hex');
 }
-function response(value:unknown,ctx:ProductionClinicalRequestContext,target:ZoomHostRegistryTarget,appointment:string,intent?:string,purpose?:'new_processing'|'cleanup_metadata'):ZoomHostBinding {
+/** Strict response parser, not an authorization grant. Only a current read
+ * through the source-pinned registry can establish database authority. */
+export function parseZoomHostBindingResponse(value:unknown,ctx:ProductionClinicalRequestContext,target:ZoomHostRegistryTarget,appointment:string,intent?:string,purpose?:'new_processing'|'cleanup_metadata'):ZoomHostBinding {
   const r=record(value);
   const keys=['bindingId','organizationId','appointmentId','patientRecordId','practitionerPersonId','appointmentVersion','scheduledStart','scheduledEnd',
     'intentId','releaseId','releaseRevision','configurationSha256','configuration','providerActionAuthorized'];
@@ -170,7 +172,7 @@ export function createZoomHostRegistry(database:ClinicalCoreDatabase,compiledPin
         const result=await tx.query<{data:unknown}>(input.action==='bind'?'select clinical_telehealth.bind_visit_host($1,$2) as data':'select clinical_telehealth.read_visit_host_binding($1,$2) as data',
           [clinicalUuid(input.appointmentId),input.action==='bind'?clinicalUuid(input.intentId):input.purpose]);
         if(result.rows.length!==1) throw new ZoomHostRegistryError('service_unavailable');
-        return response(result.rows[0].data,context,target,input.appointmentId,input.action==='bind'?input.intentId:undefined,input.action==='read'?input.purpose:undefined);
+        return parseZoomHostBindingResponse(result.rows[0].data,context,target,input.appointmentId,input.action==='bind'?input.intentId:undefined,input.action==='read'?input.purpose:undefined);
       });
     } catch(error) {
       if(error instanceof ZoomHostRegistryError) throw error;
