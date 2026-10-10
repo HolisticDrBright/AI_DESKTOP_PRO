@@ -8,6 +8,7 @@ import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import { FULLSCRIPT_UPGRADE, runFullscriptSchemaUpgrade } from './fullscript-schema-upgrade';
+import {verifyFullscriptUpgradeObservation} from './fullscript-upgrade-command';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 let pg:PGlite,m:ClinicalCoreMigration[];
@@ -40,6 +41,10 @@ beforeAll(async()=>{
   const org=randomUUID(),person=randomUUID(),patient=randomUUID();
   await pg.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL release preservation')",[org]);
   await pg.query("insert into clinical_core.persons(id,subject_key) values($1,'subject_fictional_fullscript_release')",[person]);
+  // FICTIONAL PGlite reviewer only. This does not create an AWS identity,
+  // production approval, consent release or a practitioner account.
+  await pg.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'workforce','FICTIONAL_release_reviewer',true)",[person]);
+  await pg.query("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'owner')",[org,person]);
   await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,'patient_fictional_fullscript_release','FICTIONAL','TEST')",[patient,org]);
 },90000);
 afterAll(async()=>{await pg?.close();});
@@ -47,7 +52,7 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
   it('inspects all historical tables read-only with no source approval, grants or rows created',async()=>{
     const queries:string[]=[];
     expect(await runFullscriptSchemaUpgrade(database(async sql=>{queries.push(sql);}),m,c,'inspect')).toMatchObject({
-      observedMigrationCount:107,historicalTableCount:209,rowCount:3,applied:false,newRows:0,phiAllowed:false,activation:'blocked',
+      observedMigrationCount:107,historicalTableCount:209,rowCount:5,applied:false,newRows:0,phiAllowed:false,activation:'blocked',
     });
     expect(queries[0]).toContain('read only'); expect(queries.some(s=>/^(create|alter|insert|update|delete)/i.test(s))).toBe(false);
     await absent();
@@ -56,6 +61,7 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
     const before=await runFullscriptSchemaUpgrade(database(),m,c,'inspect');
     const rehearsal=await runFullscriptSchemaUpgrade(database(),m,c,'rehearse');
     expect(rehearsal).toMatchObject({observedMigrationCount:107,rolledBack:true,applied:false,dataPreserved:true,historicalSchemaPreserved:true});
+    verifyFullscriptUpgradeObservation(rehearsal,'rehearse');
     expect(rehearsal.dataSha256).toBe(before.dataSha256);expect(rehearsal.historicalSchemaSha256).toBe(before.historicalSchemaSha256);
     await absent();
   },60000);
@@ -136,6 +142,20 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
     }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'extension_shape'});
     await absent();
   },30000);
+  it('preserves existing domain constraints, not only the pg_type row',async()=>{
+    await pg.exec('create domain clinical_core.fictional_protected_domain as integer constraint fictional_positive check(value>0)');
+    let changed=false;
+    try {
+      await expect(runFullscriptSchemaUpgrade(database(async(sql,tx)=>{
+        if(!changed&&sql.includes('create schema fullscript_delivery')){changed=true;
+          await tx.query('alter domain clinical_core.fictional_protected_domain drop constraint fictional_positive');
+          await tx.query('alter domain clinical_core.fictional_protected_domain add constraint fictional_positive check(value>=0)');}
+      }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'after_schema'});
+      expect((await pg.query<{definition:string}>("select pg_get_constraintdef(oid) definition from pg_constraint where contypid='clinical_core.fictional_protected_domain'::regtype")).rows[0].definition)
+        .toBe('CHECK ((VALUE > 0))');
+    } finally {await pg.exec('drop domain clinical_core.fictional_protected_domain');}
+    await absent();
+  },30000);
   it('detects a historical record change without certifying preservation and rolls it back',async()=>{
     let changed=false;
     await expect(runFullscriptSchemaUpgrade(database(async(sql,tx)=>{
@@ -165,8 +185,34 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
     const before=await runFullscriptSchemaUpgrade(database(),m,c,'inspect');
     const result=await runFullscriptSchemaUpgrade(database(),m,c,'upgrade',{...before,observedMigrationCount:107});
     expect(result).toMatchObject({observedMigrationCount:111,applied:true,newTableCount:8,newRows:0,dataPreserved:true});
+    verifyFullscriptUpgradeObservation(result,'upgrade');
+    const statements:string[]=[];
+    const settled=await runFullscriptSchemaUpgrade(database(async sql=>{statements.push(sql);}),m,c,'inspect-settled');
+    expect(settled).toMatchObject({observedMigrationCount:111,command:'inspect-settled',applied:false,newTableCount:8,newRows:0});
+    verifyFullscriptUpgradeObservation(settled,'inspect-settled');
+    expect(settled.dataSha256).toBe(before.dataSha256);expect(settled.historicalSchemaSha256).toBe(before.historicalSchemaSha256);
+    expect(settled.consentConstraintSha256).toBe(result.consentConstraintSha256);
+    expect(statements.some(sql=>sql.startsWith('lock table'))).toBe(true);
+    expect(statements.some(sql=>/^(create|alter|insert|update|delete)/i.test(sql))).toBe(false);
     const rows=(await pg.query<{n:number}>('select count(*)::int n from fullscript_delivery.authority_releases')).rows;
     expect(rows[0].n).toBe(0);
     await expect(runFullscriptSchemaUpgrade(database(),m,c,'upgrade',{...before,observedMigrationCount:107})).rejects.toMatchObject({category:'recovery_required'});
   },60000);
+  it('settlement inspection refuses changed new-table shape rather than accepting the final ledger alone',async()=>{
+    await pg.exec('alter table fullscript_delivery.draft_intents add column unrelated text');
+    try {await expect(runFullscriptSchemaUpgrade(database(),m,c,'inspect-settled'))
+      .rejects.toMatchObject({category:'verification_failed',stage:'extension_shape'});}
+    finally {await pg.exec('alter table fullscript_delivery.draft_intents drop column unrelated');}
+  },30000);
+  it('settlement never certifies a successor once provider/approval rows have appeared',async()=>{
+    const person=(await pg.query<{id:string}>('select id from clinical_core.persons limit 1')).rows[0];
+    const patient=(await pg.query<{id:string;organization_id:string}>('select id,organization_id from clinical_core.patient_records limit 1')).rows[0];
+    const id=randomUUID();
+    await pg.query(`insert into fullscript_delivery.recipient_holds(id,organization_id,patient_record_id,reason,placed_by_person_id)
+      values($1,$2,$3,'privacy_request',$4)`,[id,patient.organization_id,patient.id,person.id]);
+    expect((await pg.query<{n:number}>('select count(*)::int n from fullscript_delivery.recipient_holds')).rows[0].n).toBe(1);
+    await expect(runFullscriptSchemaUpgrade(database(),m,c,'inspect-settled')).rejects.toMatchObject({category:'verification_failed'});
+    // Last case: retain this immutable fictional hold until the PGlite fixture
+    // closes. Runtime hold removal is not an acceptable test teardown shortcut.
+  },30000);
 });

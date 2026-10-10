@@ -10,6 +10,8 @@
     "test:migration-sql-bytes": "node --test scripts/migration-sql-bytes.test.mjs",
     "build:telehealth-consent-candidate": "node scripts/build-telehealth-consent-candidate.mjs",
     "build:fullscript-candidate": "node scripts/build-fullscript-candidate.mjs",
+    "build:fullscript-upgrade": "node scripts/build-fullscript-upgrade.mjs",
+    "test:fullscript-upgrade-operator": "vitest run src/server/clinical-core/fullscript-upgrade-command.test.ts src/server/clinical-core/fullscript-native-custody.test.ts src/server/clinical-core/fullscript-upgrade-operator.database.test.ts src/server/clinical-core/fullscript-schema-upgrade.database.test.ts",
     "test:fullscript-candidate": "node --test scripts/fullscript-candidate.test.mjs",
     "test:fullscript-schema-upgrade": "vitest run src/server/clinical-core/fullscript-schema-upgrade.database.test.ts",
     "build:catalog-forward-inspector": "node scripts/build-catalog-forward-inspector.mjs",
