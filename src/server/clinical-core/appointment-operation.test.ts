@@ -102,7 +102,8 @@ it.each([{}, { operationProtocol: "appointment-change/2" }, { operationId: "not-
 });
 it("canonical property order and a deterministic legacy identity do not change replay binding", async () => {
   const input = { requestId, expectedVersion: 4, action: "cancel" };
-  expect((await run(input as ReturnType<typeof cancel>)).statusCode).toBe(200);
+  const first = await run(input as ReturnType<typeof cancel>); expect(first.statusCode).toBe(200);
+  expect(JSON.parse(first.body).data).not.toHaveProperty("operationReceipt");
   expect((await run({ action: "cancel", expectedVersion: 4, requestId } as ReturnType<typeof cancel>)).statusCode).toBe(200);
   expect(operations()).toHaveLength(1);
   expect(operations()[0].operationId).toBe(appointmentOperationIdentity("consumer", owner, "fictional-consumer", "consumer_action", input).operationId);

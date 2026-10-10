@@ -382,7 +382,8 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
     if (previous.phase !== "committed" || !Number.isInteger(previous.committedVersion) || !date(previous.committedAt ?? "")) throw new TelehealthError("appointment_change_pending");
     const current = await find(config, actor.organizationId, String(supplied.requestId));
     if (pool === "consumer" && current.consumerPersonId !== actor.personId) throw new TelehealthError("identity_refused");
-    return { ...publicItem(current, pool), operationReceipt: operationReceipt(operation, previous.committedVersion!, previous.committedAt!) };
+    return { ...publicItem(current, pool), ...(supplied.operationProtocol === "appointment-change/1"
+      ? { operationReceipt: operationReceipt(operation, previous.committedVersion!, previous.committedAt!) } : {}) };
   }
   const item = await find(config, actor.organizationId, String(supplied.requestId));
   if (pool === "consumer" && item.consumerPersonId !== actor.personId) throw new TelehealthError("identity_refused");
@@ -428,7 +429,8 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
       } }]);
       const receipt = await readRequestOperation(config, operation.key);
       if (!receipt || !matchesOperation(receipt, operation) || receipt.phase !== "committed") throw new TelehealthError("appointment_change_pending");
-      return { ...result, operationReceipt: operationReceipt(operation, receipt.committedVersion!, receipt.committedAt!) };
+      return { ...result, ...(supplied.operationProtocol === "appointment-change/1"
+        ? { operationReceipt: operationReceipt(operation, receipt.committedVersion!, receipt.committedAt!) } : {}) };
     } catch (error) {
       if (!operation.committed && !operation.effectsAttempted && error instanceof TelehealthError
         && ["request_invalid", "identity_refused", "conflict", "provider_unavailable", "not_found"].includes(error.category)) {

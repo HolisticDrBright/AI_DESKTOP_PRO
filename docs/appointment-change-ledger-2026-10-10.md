@@ -6,6 +6,8 @@ The source candidate serializes consumer cancellation and rescheduling, workforc
 
 A client can supply `operationId` as a UUID with `operationProtocol: "appointment-change/1"`. It must persist the exact input and operation identity before dispatch. Older callers receive an identity derived from their verified role, person, subject, action, version and canonical input. A different caller or changed input cannot reuse a receipt.
 
+Only callers requesting `appointment-change/1` receive the additional `operationReceipt` field. Legacy callers retain their original strict response shape while the durable receipt remains server-side. This avoids making an older V2 parser reject a successful mutation. A matched new client must refuse an absent or mismatched receipt; it must not infer commitment from matching status.
+
 The service conditionally records `REQOP#requestId#operationId` and fences the request before any provider write. Existing visit rows are fenced under their version; an active or completed visit cannot be cancelled or rescheduled through this path. A competing staff or payment writer cannot pass the fence. Request-backed visit writes check the request fence atomically, including creation when no visit existed during admission.
 
 Provider and scheduler dispatch is recorded before I/O. A known validation refusal before side effects creates a refused receipt and unlocks. An unknown admission, replacement reservation, provider result or uncommitted settlement remains pending. No timeout or empty listing authorizes takeover. The pending refusal is `appointment_change_pending`, HTTP 503.
