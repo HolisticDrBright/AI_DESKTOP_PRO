@@ -113,6 +113,12 @@ export function verifyFullscriptDeployed(plan:DeploymentPlan,o:DeploymentObserva
    publishedVersion:fn!.Version,deployed:true,codeAndRoutesObserved:true,controlPlaneObserved:true,
    iamQualified:false,alarmsQualified:false,sqlQualified:false,hostedQualified:false,providerActionPerformed:false,phiAllowed:false,activation:'blocked'};
 }
+export function verifyFullscriptPreparation(plan:DeploymentPlan,o:DeploymentObservation,now:number){
+ const ids=verifyProposal(plan,o,now);
+ check(o.stack!.StackStatus==='REVIEW_IN_PROGRESS'&&o.proposal!.ExecutionStatus==='AVAILABLE'&&o.resources.length===0);
+ check(!o.routes.some(r=>r.RouteKey==='POST /clinical-core/consumer/fullscript/draft'||r.RouteKey==='POST /clinical-core/workforce/fullscript/draft'));
+ return ids;
+}
 /** One new stack only. Writes are admitted durably BEFORE dispatch. An unknown
  * reply or an observation timeout leaves custody outstanding. Recovery is
  * read-only and never creates, executes, rolls back or deletes anything. */
@@ -132,9 +138,7 @@ export async function runFullscriptDeployment(plan:DeploymentPlan,port:Deploymen
    check(!o.routes.some(r=>r.RouteKey==='POST /clinical-core/consumer/fullscript/draft'||r.RouteKey==='POST /clinical-core/workforce/fullscript/draft'));
    await guard();await port.custody.record('create_admitted');await port.create(structuredClone(plan));o=await observe();
   }else check(mode==='execute-prepared'&&port.custody.stages().includes('create_admitted')&&!port.custody.stages().includes('execute_admitted'));
-  const ids=verifyProposal(plan,o,port.now());
-  check(o.stack!.StackStatus==='REVIEW_IN_PROGRESS'&&o.proposal!.ExecutionStatus==='AVAILABLE'&&o.resources.length===0);
-  check(!o.routes.some(r=>r.RouteKey==='POST /clinical-core/consumer/fullscript/draft'||r.RouteKey==='POST /clinical-core/workforce/fullscript/draft'));
+  const ids=verifyFullscriptPreparation(plan,o,port.now());
   await guard();if(!port.custody.stages().includes('create_observed'))await port.custody.record('create_observed');
   await port.custody.record('execute_admitted');
   await port.execute(structuredClone(plan),ids.stackId,ids.changeSetId);
