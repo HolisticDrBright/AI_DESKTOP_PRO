@@ -119,10 +119,17 @@ describe("workforce payment failure reconciliation", () => {
     const paid = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000 }));
     expect(paid.statusCode).toBe(200);
     expect(JSON.parse(paid.body ?? "{}").data).toMatchObject({ reconciliation: "settled_paid", paymentStatus: "paid", paidMinor: 15000, version: 5 });
-    resetRequest();
+    const foreignStore = resetRequest();
     const foreign = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000, metadata: { organization_id: workforceClaims["custom:organization_id"], request_id: "44444444-4444-4444-8444-444444444444" } }));
     expect(foreign.statusCode).toBe(503);
-    expect(send.mock.calls.filter(([cmd]) => cmd.constructor.name === "UpdateCommand")).toHaveLength(0);
+    // Closing the private invocation is allowed; a foreign provider intent
+    // must still leave every financial field and request version untouched.
+    const updates = send.mock.calls.filter(([cmd]) => cmd.constructor.name === "UpdateCommand");
+    expect(updates).toHaveLength(1);
+    expect(updates[0][0].input).toMatchObject({ UpdateExpression: "SET writerStatus=:closed,writerClosedAt=:at" });
+    expect(updates[0][0].input.Key.sk).toMatch(/^REQOP#/);
+    expect(foreignStore.get(processingItem())).toMatchObject({ version: 4, paymentStatus: "processing", paidMinor: 0, paymentIntentId: "pi_synthetic_1" });
+    expect([...foreignStore.rows.values()].filter(row => String(row.sk).startsWith("REQOP#"))[0].phase).not.toBe("committed");
   });
   it("records a terminal failure, leaves unfinished intents untouched and refuses stale versions or overpayment", async () => {
     expect(JSON.parse((await reconcile(stripeIntent({ status: "requires_payment_method", last_payment_error: { code: "card_declined" } }))).body ?? "{}").data).toMatchObject({ reconciliation: "settled_failed", paymentStatus: "failed" });

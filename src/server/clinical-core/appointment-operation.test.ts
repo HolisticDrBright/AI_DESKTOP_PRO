@@ -56,6 +56,141 @@ const run = (input: Record<string, unknown> = cancel(), cfg = config, pool: "con
 const current = () => store.get({ pk: `ORG#${org}`, sk: `REQ#${requestId}` })!;
 const operations = () => [...store.rows.values()].filter(row => String(row.sk).startsWith("REQOP#"));
 
+const closesWriter = (command: { constructor: { name: string }; input: Record<string, unknown> }) =>
+  command.constructor.name === "UpdateCommand" && String(command.input.UpdateExpression).includes("writerClosedAt");
+const writerRow = () => operations()[0];
+const replaceWriter = (patch: Record<string, unknown>) => store.seed({ ...writerRow(), ...patch });
+
+it("records private writer closure only after cancellation has finished", async () => {
+  const result = await run(); expect(result.statusCode).toBe(200);
+  expect(writerRow()).toMatchObject({ writerProtocol: "appointment-writer/1", writerStatus: "closed", phase: "committed" });
+  expect(writerRow().writerToken).toMatch(/^[0-9a-f-]{36}$/);
+  expect(writerRow().writerToken).not.toBe(operationId);
+  expect(new Date(String(writerRow().writerClosedAt)).toISOString()).toBe(writerRow().writerClosedAt);
+  for (const field of ["writerProtocol", "writerToken", "writerStatus", "writerClosedAt"])
+    expect(result.body).not.toContain(field);
+});
+it("closes a conditional no-effects refusal without rewriting its disposition", async () => {
+  expect((await run(cancel({ action: "invalid" }))).statusCode).toBe(400);
+  expect(writerRow()).toMatchObject({ writerStatus: "closed", phase: "refused", sideEffects: "none" });
+  expect(current()).not.toHaveProperty("mutationOperationId");
+});
+it("lost admission closes only this unstarted writer and leaves the original fence", async () => {
+  store.transactionLoss = "admission_after";
+  expect((await run(cancel(), zoom)).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ phase: "admitted", writerStatus: "closed" });
+  expect(current().mutationOperationId).toBe(operationId);
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("lost admission before the write cannot fabricate a closed writer", async () => {
+  store.transactionLoss = "admission_before";
+  expect((await run()).statusCode).toBe(503); expect(operations()).toHaveLength(0);
+  expect(store.commands.some(closesWriter)).toBe(false);
+});
+it("a competing admission's writer cannot be closed by the losing invocation", async () => {
+  let first = true;
+  send.mockImplementation(async command => {
+    const parts = command.input.TransactItems;
+    if (first && command.constructor.name === "TransactWriteCommand" && parts.some((part: { Put?: { Item?: { sk?: string } } }) => part.Put?.Item?.sk?.startsWith("REQOP#"))) {
+      first = false; await store.send(command);
+      replaceWriter({ writerToken: replacementId });
+      throw new Error("fictional_competing_admission");
+    }
+    return store.send(command);
+  });
+  expect((await run()).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ writerToken: replacementId, writerStatus: "active" });
+  expect(writerRow()).not.toHaveProperty("writerClosedAt");
+  expect(store.commands.some(closesWriter)).toBe(false); expect(provider).not.toHaveBeenCalled();
+});
+it.each(["before", "after"])("a lost %s closure acknowledgement cannot erase a successful receipt", async order => {
+  send.mockImplementation(async command => {
+    if (closesWriter(command)) {
+      if (order === "after") await store.send(command);
+      throw new Error("fictional_lost_writer_closure");
+    }
+    return store.send(command);
+  });
+  const result = await run(); expect(result.statusCode).toBe(200);
+  expect(JSON.parse(result.body).data.operationReceipt.operationId).toBe(operationId);
+  expect(writerRow()).toMatchObject({ phase: "committed", writerStatus: order === "after" ? "closed" : "active" });
+  const writes = store.commands.filter(cmd => /Write|Update|Put/.test(cmd.constructor.name)).length;
+  expect((await run()).statusCode).toBe(200);
+  expect(store.commands.filter(cmd => /Write|Update|Put/.test(cmd.constructor.name))).toHaveLength(writes);
+});
+it("provider failure closes local work but certifies neither cancellation nor absence", async () => {
+  store.seed(request({ providerMeetingId: "900000001" }));
+  provider.mockRejectedValue(new Error("fictional_unknown_provider_result"));
+  expect((await run(cancel(), zoom)).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ phase: "effects_started", writerStatus: "closed" });
+  expect(writerRow()).not.toHaveProperty("sideEffects"); expect(writerRow()).not.toHaveProperty("committedVersion");
+  expect(current()).toMatchObject({ mutationOperationId: operationId, status: "scheduled", version: 4 });
+});
+it("a running provider call stays active and a second invocation cannot close it", async () => {
+  store.seed(request({ providerMeetingId: "900000001" }));
+  let reject!: (error: Error) => void; let started!: () => void;
+  const reached = new Promise<void>(resolve => { started = resolve; });
+  provider.mockImplementation(() => new Promise<Response>((_resolve, decline) => { reject = decline; started(); }));
+  const first = run(cancel(), zoom); await reached;
+  const token = writerRow().writerToken;
+  expect(writerRow().writerStatus).toBe("active"); expect(writerRow()).not.toHaveProperty("writerClosedAt");
+  expect((await run(cancel(), zoom)).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ writerToken: token, writerStatus: "active" });
+  reject(new Error("fictional_provider_stopped")); expect((await first).statusCode).toBe(503);
+  expect(writerRow()).toMatchObject({ writerToken: token, writerStatus: "closed" });
+  expect(current().mutationOperationId).toBe(operationId);
+});
+it.each([{}, { writerProtocol: "wrong" }, { writerToken: replacementId }, { writerStatus: "closed" }])(
+  "lost writer authority refuses provider dispatch: %j", async patch => {
+    store.seed(request({ providerMeetingId: "900000001" }));
+    let replaced = false;
+    send.mockImplementation(async command => {
+      if (!replaced && command.constructor.name === "UpdateCommand" && command.input.UpdateExpression === "SET #phase=:dispatched") {
+        replaced = true;
+        if (Object.keys(patch).length === 0) { const row = { ...writerRow() }; delete row.writerProtocol; store.seed(row); }
+        else replaceWriter(patch);
+      }
+      return store.send(command);
+    });
+    expect((await run(cancel(), zoom)).statusCode).toBe(503);
+    expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+    expect(current()).toMatchObject({ status: "scheduled", version: 4, mutationOperationId: operationId });
+    expect(writerRow().phase).toBe("admitted");
+  });
+it.each(["closed", "foreign"])("a %s writer cannot commit calendar changes", async change => {
+  let changed = false;
+  send.mockImplementation(async command => {
+    if (!changed && command.constructor.name === "TransactWriteCommand"
+      && command.input.TransactItems.some((part: { Update?: { UpdateExpression?: string } }) => part.Update?.UpdateExpression?.includes("committedVersion"))) {
+      changed = true; replaceWriter(change === "closed" ? { writerStatus: "closed" } : { writerToken: replacementId });
+    }
+    return store.send(command);
+  });
+  expect((await run()).statusCode).toBe(503);
+  expect(current()).toMatchObject({ status: "scheduled", version: 4, mutationOperationId: operationId });
+  expect(store.get(slot())?.status).toBe("booked"); expect(writerRow().phase).toBe("admitted");
+});
+it("writer replacement cannot reserve a slot or trigger provider cleanup", async () => {
+  store.seed(request({ providerMeetingId: "900000001" }));
+  send.mockImplementation(async command => {
+    if (command.constructor.name === "TransactWriteCommand"
+      && command.input.TransactItems.some((part: { Update?: { UpdateExpression?: string } }) => part.Update?.UpdateExpression === "SET reservedSlotKey=:slot"))
+      replaceWriter({ writerToken: replacementId });
+    return store.send(command);
+  });
+  expect((await run(cancel({ action: "request_reschedule", slotId: replacementId, holdId }), zoom)).statusCode).toBe(503);
+  expect(store.get(replacement())?.status).toBe("held"); expect(writerRow()).not.toHaveProperty("reservedSlotKey");
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("elapsed time and legacy missing authority never close a pending writer on replay", async () => {
+  store.transactionLoss = "admission_after"; await run();
+  const row: Record<string, unknown> = { ...writerRow(), admittedAt: "2000-01-01T00:00:00.000Z", writerStatus: "active" };
+  delete row.writerClosedAt; delete row.writerProtocol; store.seed(row);
+  const before = JSON.stringify([...store.rows]); send.mockClear();
+  expect((await run()).statusCode).toBe(503); expect(JSON.stringify([...store.rows])).toBe(before);
+  expect(send.mock.calls.every(([command]) => /Get|Query/.test(command.constructor.name))).toBe(true);
+});
+
 const discover = (person = owner) => run({ requestId }, config, "consumer", "pending-change", person);
 it("discovery preserves the supplied UUID casing and original request hash", async () => {
   const upper = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";

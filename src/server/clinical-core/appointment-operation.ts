@@ -13,6 +13,9 @@ export type AppointmentOperation = {
   actorPersonId: string;
   actorSubject: string;
   admittedAt: string;
+  /** Private per-invocation authority, never a client retry token. Closure
+   * proves only this writer stopped; provider disposition is separate. */
+  writerToken: string;
   effectsAttempted: boolean;
   effectsRecorded: boolean;
   committed: boolean;

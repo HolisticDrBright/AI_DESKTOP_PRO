@@ -351,6 +351,12 @@ type RequestOperationRow = {
   /** Private exact input for another device of the same consumer identity.
    * Never captured for workforce or legacy implicit-identity writes. */
   consumerRecoveryInput?: Record<string, unknown>;
+  /** Missing/active authority remains unresolved, irrespective of elapsed time.
+   * Closed is local writer closure, NOT provider cancellation or settlement. */
+  writerProtocol?: "appointment-writer/1";
+  writerToken?: string;
+  writerStatus?: "active" | "closed";
+  writerClosedAt?: string;
 };
 type RequestTransaction = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"]>;
 
@@ -485,7 +491,7 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
   const operation: AppointmentOperation = { operationId, inputSha256,
     key: { pk: `ORG#${actor.organizationId}`, sk: `REQOP#${supplied.requestId}#${operationId}` },
     requestKey: { pk: "", sk: "" }, expectedVersion: Number(supplied.expectedVersion), pool,
-    actorPersonId: actor.personId, actorSubject: actor.subject, admittedAt: new Date().toISOString(),
+    actorPersonId: actor.personId, actorSubject: actor.subject, admittedAt: new Date().toISOString(), writerToken: randomUUID(),
     effectsAttempted: false, effectsRecorded: false, committed: false, visitKey: null };
   const previous = await readRequestOperation(config, operation.key);
   if (previous) {
@@ -512,6 +518,7 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
   const row: RequestOperationRow = { ...operation.key, operationId, inputSha256, requestId: item.requestId,
     organizationId: item.organizationId, actorPersonId: actor.personId, actorSubject: actor.subject, pool, kind,
     expectedVersion: item.version, phase: "admitted", admittedAt: operation.admittedAt,
+    writerProtocol: "appointment-writer/1", writerToken: operation.writerToken, writerStatus: "active",
     ...(recoveryInput ? { consumerRecoveryInput: recoveryInput } : {}) };
   const admission: RequestTransaction = [
     { Put: { TableName: config.tableName, Item: row, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
@@ -531,7 +538,12 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
     // A receipt proving admission is not permission for a second invocation to
     // execute provider work: the first caller may still be running.
     const observed = await readRequestOperation(config, operation.key);
-    if (observed && matchesOperation(observed, operation)) throw new TelehealthError("appointment_change_pending");
+    if (observed && matchesOperation(observed, operation)) {
+      // This invocation has NOT entered run(). A lost admission reply may
+      // close only its own writer, never the competing admission's writer.
+      if (observed.writerToken === operation.writerToken) await closeRequestWriter(config, operation);
+      throw new TelehealthError("appointment_change_pending");
+    }
     throw new TelehealthError("service_unavailable");
   }
   return appointmentOperationScope.run(operation, async () => {
@@ -553,19 +565,46 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
           ExpressionAttributeValues: { ":expected": item.version } } }], error.category);
       }
       throw error;
+    } finally {
+      // Every local provider/store await has returned before this point.
+      // A crash or hard timeout that never reaches finally remains active.
+      // Closure does not remove a fence or certify a provider's late outcome.
+      await closeRequestWriter(config, operation);
     }
   });
+}
+
+async function closeRequestWriter(config: TelehealthConfiguration, operation: AppointmentOperation): Promise<boolean> {
+  const at = new Date().toISOString();
+  try {
+    await document.send(new UpdateCommand({ TableName: config.tableName, Key: operation.key,
+      UpdateExpression: "SET writerStatus=:closed,writerClosedAt=:at",
+      ConditionExpression: "writerProtocol=:protocol AND writerToken=:writer AND writerStatus=:active AND inputSha256=:digest",
+      ExpressionAttributeValues: { ":protocol": "appointment-writer/1", ":writer": operation.writerToken,
+        ":active": "active", ":closed": "closed", ":at": at, ":digest": operation.inputSha256 } }));
+    return true;
+  } catch {
+    // Lost closure acknowledgements need a strong matching read. Failure to
+    // observe closure preserves the original result AND the unresolved writer;
+    // it never unlocks an operation or replaces a committed receipt.
+    try {
+      const row = await readRequestOperation(config, operation.key);
+      return !!row && matchesOperation(row, operation) && row.writerProtocol === "appointment-writer/1"
+        && row.writerToken === operation.writerToken && row.writerStatus === "closed" && canonicalOutcomeTime(row.writerClosedAt);
+    } catch { return false; }
+  }
 }
 
 /** Called before a provider/scheduler write, including before obtaining its
  * secret. A lost dispatch receipt leaves the fence; it is never presumed safe. */
 async function markRequestSideEffect(config: TelehealthConfiguration) {
   const operation = appointmentOperationScope.getStore();
-  if (!operation || operation.effectsRecorded) return;
+  if (!operation) return;
   operation.effectsAttempted = true;
   await document.send(new UpdateCommand({ TableName: config.tableName, Key: operation.key,
-    UpdateExpression: "SET #phase=:dispatched", ConditionExpression: "#phase=:admitted AND inputSha256=:digest",
-    ExpressionAttributeNames: { "#phase": "phase" }, ExpressionAttributeValues: { ":dispatched": "effects_started", ":admitted": "admitted", ":digest": operation.inputSha256 } }));
+    UpdateExpression: "SET #phase=:dispatched", ConditionExpression: "(#phase=:admitted OR #phase=:dispatched) AND inputSha256=:digest AND writerProtocol=:protocol AND writerToken=:writer AND writerStatus=:active",
+    ExpressionAttributeNames: { "#phase": "phase" }, ExpressionAttributeValues: { ":dispatched": "effects_started", ":admitted": "admitted", ":digest": operation.inputSha256,
+      ":protocol": "appointment-writer/1", ":writer": operation.writerToken, ":active": "active" } }));
   operation.effectsRecorded = true;
 }
 
@@ -588,9 +627,10 @@ async function commitRequestMutation(config: TelehealthConfiguration, item: Appo
   const committedAt = new Date().toISOString();
   actions.push({ Update: { TableName: config.tableName, Key: operation.key,
     UpdateExpression: "SET #phase=:committed,committedVersion=:version,committedAt=:at" + (refusal ? ",refusal=:refusal,dispositionProtocol=:protocol,sideEffects=:none" : ""),
-    ConditionExpression: (refusal ? "#phase=:admitted AND attribute_not_exists(reservedSlotKey)" : "(#phase=:admitted OR #phase=:dispatched)") + " AND inputSha256=:digest", ExpressionAttributeNames: { "#phase": "phase" },
+    ConditionExpression: (refusal ? "#phase=:admitted AND attribute_not_exists(reservedSlotKey)" : "(#phase=:admitted OR #phase=:dispatched)") + " AND inputSha256=:digest AND writerProtocol=:writerProtocol AND writerToken=:writer AND writerStatus=:activeWriter", ExpressionAttributeNames: { "#phase": "phase" },
     ExpressionAttributeValues: { ":committed": refusal ? "refused" : "committed", ":version": nextVersion, ":at": committedAt,
       ":admitted": "admitted", ...(!refusal ? { ":dispatched": "effects_started" } : {}), ":digest": operation.inputSha256,
+      ":writerProtocol": "appointment-writer/1", ":writer": operation.writerToken, ":activeWriter": "active",
       ...(refusal ? { ":refusal": refusal, ":protocol": "appointment-disposition/1", ":none": "none" } : {}) } } });
   if (operation.visitKey && !actions.some(action => (action.Put?.Item?.pk === operation.visitKey!.pk && action.Put?.Item?.sk === operation.visitKey!.sk)
     || (action.Update?.Key?.pk === operation.visitKey!.pk && action.Update?.Key?.sk === operation.visitKey!.sk))) {
@@ -635,8 +675,9 @@ async function consumerAction(config: TelehealthConfiguration, actor: Actor, val
         ExpressionAttributeNames: { "#status": "status" }, ExpressionAttributeValues: { ":booked": "booked", ":held": "held", ":person": actor.personId,
           ":hold": value.holdId, ":now": now, ":operation": operation.operationId } } },
       { Update: { TableName: config.tableName, Key: operation.key, UpdateExpression: "SET reservedSlotKey=:slot",
-        ConditionExpression: "#phase=:admitted AND inputSha256=:digest", ExpressionAttributeNames: { "#phase": "phase" },
-        ExpressionAttributeValues: { ":slot": { pk: replacement.pk, sk: replacement.sk }, ":admitted": "admitted", ":digest": operation.inputSha256 } } },
+        ConditionExpression: "#phase=:admitted AND inputSha256=:digest AND writerProtocol=:protocol AND writerToken=:writer AND writerStatus=:active", ExpressionAttributeNames: { "#phase": "phase" },
+        ExpressionAttributeValues: { ":slot": { pk: replacement.pk, sk: replacement.sk }, ":admitted": "admitted", ":digest": operation.inputSha256,
+          ":protocol": "appointment-writer/1", ":writer": operation.writerToken, ":active": "active" } } },
     ] }));
   } catch { throw new TelehealthError("appointment_change_pending"); }
   return rescheduleRequest(config, item, replacement, Number(value.expectedVersion), String(value.holdId));
