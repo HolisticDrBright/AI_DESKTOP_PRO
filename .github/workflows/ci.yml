@@ -40,6 +40,12 @@ jobs:
           npm run test:telehealth-consent-copy
           npm run test:telehealth-consent-copy-candidate
           npm run build:telehealth-consent-copy-candidate
+      - name: Exact chart and clinic host successor assemblies (fictional database only)
+        run: |
+          npm run test:telehealth-chart-lifecycle-candidate
+          npm run test:zoom-host-authority-candidate
+          npm run build:zoom-host-authority-candidate
+          npm run test:zoom-host-authority
       - name: Separate patient consent Lambda and immutable blocked template (no AWS or approval)
         run: |
           npm run test:telehealth-consent-runtime

@@ -2,7 +2,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import type { ClinicalCoreDatabase } from './database';
@@ -12,12 +11,14 @@ import { GetSecretValueCommand, type GetSecretValueCommandOutput } from '@aws-sd
 import { createZoomHostCredentialResolver } from './zoom-host-credentials';
 import { runZoomCredentialRequest } from './zoom-credential-snapshot';
 
-// Actual canonical112 SQL plus the unreleased candidate, in memory only.
+// Actual source-only 114 assembly, including the exact 113 chart predecessor.
 // Every identity, review and record below is FICTIONAL, not deployment evidence.
-type Artifact = { manifest: { migrations: { version: string; file: string }[] }; files: Record<string,string> };
+type Artifact = { manifest: { migrations: { version: string; file: string }[] }; files: Record<string,string>;
+  functionPins: ZoomHostFunctionPin[]; candidate: { contract: string; migrationReleaseSha256: string;
+    activation: string; phiAllowed: boolean; seededAdmissionKeys: boolean; seededHostReleases: boolean } };
 const sha = (v: string) => createHash('sha256').update(v).digest('hex');
 let db: PGlite, artifact: Artifact;
-let sourceSql:string, pins:ZoomHostFunctionPin[];
+let pins:ZoomHostFunctionPin[];
 let org: string, foreign: string, practitioner: string, colleague: string, reviewer: string, consumer: string, staff: string, patient: string, appointment: string;
 const config = (changes: Record<string,unknown> = {}) => ({ runtimeMode: 'qualification', awsAccountId: '588966314750', region: 'us-east-2',
   zoomAccountId: 'fictional-zoom-account', zoomHostId: 'fictional-zoom-host', clientId: 'fictional-oauth-client', sdkAppKey: 'fictional-sdk-key',
@@ -48,8 +49,8 @@ async function revoke(id: string, who = reviewer) {
   return db.query("insert into clinical_telehealth.zoom_host_revocations(release_id,revoked_by_person_id,reason_code) values($1,$2,'security_hold')",[id,who]);
 }
 beforeAll(async () => {
-  artifact = JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
-    { encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true }));
+  artifact = JSON.parse(execFileSync(process.execPath,['scripts/build-zoom-host-authority-candidate.mjs','--json'],
+    { encoding:'utf8',maxBuffer:16*1024*1024,timeout:60000,windowsHide:true }));
   db = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(row => ({ version: row.version, name: row.file.slice(15,-4),
     sql: artifact.files[row.file], sha256: sha(artifact.files[row.file]) }));
@@ -63,14 +64,18 @@ beforeAll(async () => {
     await db.exec(row.sql);
     await db.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)',[row.version,row.name,row.sha256]);
   }
-  sourceSql=readFileSync('infra/aws-clinical-core/source-candidates/zoom-host-authority.sql','utf8').replace(/\r\n?/g,'\n');
-  await db.exec(sourceSql);
-  const bodies=new Map<string,string>();
-  // Expected bodies come from trusted compiled SOURCE, not live catalog reads.
-  for(const sql of [...migrations.map(m=>m.sql),sourceSql]) for(const [,name,body] of sql.matchAll(/create(?: or replace)? function (clinical_(?:private|telehealth)\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)) bodies.set(name,body);
-  pins=[...bodies].filter(([name])=>name.startsWith('clinical_telehealth.')||[
-    'clinical_private.claim','clinical_private.actor_person_id','clinical_private.organization_id','clinical_private.set_request_context','clinical_private.block_update_delete',
-  ].includes(name)).map(([name,body])=>({name,bodySha256:sha(body)}));
+  // Compiled source pins, never inferred from the live test database catalog.
+  pins=artifact.functionPins;
+  expect(artifact.candidate.contract).toBe('zoom-host-authority-candidate/1');
+  expect(artifact.manifest.migrations).toHaveLength(114);
+  expect(artifact.candidate.activation).toBe('blocked');
+  expect(artifact.candidate.phiAllowed).toBe(false);
+  expect(artifact.candidate.seededAdmissionKeys).toBe(false);
+  expect(artifact.candidate.seededHostReleases).toBe(false);
+  const ledger=await db.query<{version:string;sha256:string}>('select version,sha256 from clinical_core.schema_migrations order by version');
+  expect(ledger.rows.map(row=>({version:row.version,sha256:row.sha256}))).toEqual(migrations.map(row=>({version:row.version,sha256:row.sha256})));
+  expect(sha(ledger.rows.map(row=>row.version+':'+row.sha256).join('\n'))).toBe(artifact.candidate.migrationReleaseSha256);
+  expect((await db.query<{n:number}>('select count(*)::int n from clinical_private.telehealth_admission_keys')).rows[0].n).toBe(0);
   for (const table of ['zoom_host_releases','zoom_host_revocations','zoom_visit_host_bindings','host_authority_events']) expect(await count(table)).toBe(0);
 },60000);
 afterAll(async()=>{ await db?.close(); });
