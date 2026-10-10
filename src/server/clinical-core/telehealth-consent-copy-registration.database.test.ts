@@ -1,4 +1,4 @@
-import {afterAll,beforeAll,beforeEach,describe,expect,it} from 'vitest';
+import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {randomUUID} from 'node:crypto';
@@ -6,9 +6,16 @@ import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from './database';
 import type {ClinicalCoreMigration} from './migrations';
 import type {QualificationUpgradeConfiguration} from './qualification-schema-upgrade';
 import {applyProductionClinicalCoreMigrations} from './production-migrations';
-import {configuration,migrations,sha} from './__fixtures__/telehealth-consent-upgrade';
+import {configuration,migrations,sha,build,bytes,caller,foundation,target as upgradeTarget} from './__fixtures__/telehealth-consent-upgrade';
 import {parseTelehealthConsentCopy,runTelehealthConsentCopyRegistration,type TelehealthConsentCopy,type TelehealthConsentCopyMode} from './telehealth-consent-copy-registration';
 import {runCareConsentCopyRegistration} from './care-consent-copy-registration';
+import {inspectRetainedTelehealthConsentCopy} from './telehealth-consent-copy-retained';
+import {bindParameters} from './rds-data-database';
+import {resolve} from 'node:path';
+import {executeTelehealthCopyCommand,type TelehealthCopyCommandDependencies,type TelehealthCopyEvidence,
+  type TelehealthCopyStage} from './telehealth-consent-copy-command';
+import type {TelehealthConsentCopyReceipt} from './telehealth-consent-copy-registration';
+import {FULLSCRIPT_CONSENT_SUCCESSOR} from './fullscript-migration-release';
 
 // Actual 112 SQL, roles, approval triggers and rollback. Every identity and
 // review is fictional in memory; no hosted or concurrent-session evidence.
@@ -16,6 +23,8 @@ let pg:PGlite,m:ClinicalCoreMigration[],copy:TelehealthConsentCopy,staff:string;
 type Intercept=(sql:string,tx:{query:(sql:string,args?:unknown[])=>Promise<unknown>})=>Promise<void>;
 const db=(intercept?:Intercept,name='clinical_core_qualification'):ClinicalCoreDatabase=>({transaction:work=>pg.transaction(async tx=>work({
   query:async(sql:string,args:readonly unknown[]=[])=>{
+    // PGlite must not mask unsupported AWS parameter values.
+    bindParameters(sql,args);
     if(intercept)await intercept(sql,tx);
     if(sql==='select current_database() as name')return {rows:[{name}]};
     return tx.query(sql,args.map(v=>v&&typeof v==='object'&&'kind'in v&&v.kind==='uuid'&&'value'in v?v.value:v));
@@ -30,6 +39,34 @@ async function approved(change:{id?:string;version?:string;text?:string;scope?:s
     case when $6='draft' then null else clock_timestamp()+($7::interval) end,case when $6='draft' then null else $8::uuid end)`,
     [change.id??copy.artifactId,copy.organizationId,change.scope??copy.scope,change.version??copy.artifactVersion,
       sha(change.text??copy.content),change.status??'approved',change.time??'-1 second',staff]);
+}
+function fictionalCommandPorts(){
+  // Only outer AWS and native custody are fictional here. The actual command,
+  // Data API parameter encoder, approval SQL, rollback and readbacks compose.
+  const {contract:_contract,fromReleaseSha256:_from,toReleaseSha256:_to,review:_review,...fields}=upgradeTarget;
+  const target={...fields,contract:'telehealth-consent-copy-target/112',migrationReleaseSha256:FULLSCRIPT_CONSENT_SUCCESSOR.ledger,
+    copySha256:sha(bytes(copy)),artifactId:copy.artifactId,organizationId:copy.organizationId,artifactVersion:copy.artifactVersion,
+    scope:copy.scope,contentSha256:copy.contentSha256,
+    review:{reviewer:'Brandon Bright',reviewedAt:'2026-01-01T00:00:00.000Z',scope:'fictional-consent-copy-registration-only'}};
+  let baseline:TelehealthConsentCopyReceipt|undefined;
+  const writer={verify:vi.fn(async()=>{}),record:vi.fn(async(_stage:TelehealthCopyStage,_value:TelehealthCopyEvidence)=>{}),
+    finding:vi.fn(async()=>{}),settle:vi.fn(async()=>({runId:'4'.repeat(32),journalSha256:'5'.repeat(64),custodySettled:true as const}))};
+  const d:TelehealthCopyCommandDependencies={
+    readTarget:()=>bytes(target),readCopy:()=>bytes(copy),operatorSha256:()=>target.operatorSha256,
+    observeCaller:()=>caller,observeFoundation:()=>foundation,loadMigrations:()=>m,createDatabase:()=>db(),
+    withFence:work=>work({verify:async()=>{}}),
+    createCustody:async(_binding,initial)=>{baseline=structuredClone(initial);return writer;},
+    openRecoveryCustody:async()=>{
+      if(!baseline)throw Error('FICTIONAL missing original baseline');
+      return {baseline:structuredClone(baseline),writeAdmitted:writer.record.mock.calls.some(v=>v[0]==='write_admitted'),
+        verify:async()=>{},settle:async()=>({runId:'4'.repeat(32),journalSha256:'5'.repeat(64),custodySettled:true,
+          originalWriteOutcome:'unknown'})};
+    },
+  };
+  const args=(command:string)=>[command,'--target',resolve('FICTIONAL-target.json'),'--target-sha256',sha(bytes(target)),
+    '--copy',resolve('FICTIONAL-copy.json'),'--copy-sha256',sha(bytes(copy)),
+    command==='reconcile'?'--reconcile-fictional-telehealth-copy':'--confirm-fictional-telehealth-copy'];
+  return {d,writer,args};
 }
 beforeAll(async()=>{
   m=migrations();pg=new PGlite({extensions:{pgcrypto}});
@@ -166,5 +203,93 @@ describe('distinct telehealth-only approved-copy source registrar',()=>{
   it('a failed insert result rolls back without a copy or success receipt',async()=>{
     await approved();const database=db(async sql=>{if(sql.startsWith('insert into clinical_core.care_consent_texts'))throw Error('FICTIONAL transport error');});
     await expect(run('register',database)).rejects.toThrow('operation_failed');expect(await count()).toBe(0);
+  });
+  it.each([
+    "update clinical_core.consent_artifacts set status='retired' where approved_by_person_id=$1",
+    "update clinical_core.identities set status='disabled' where person_id=$1",
+    "update clinical_core.persons set status='disabled' where id=$1",
+    "update clinical_core.organization_memberships set status='suspended' where person_id=$1",
+  ])('retained observation survives lost approval without restoring use authority',async change=>{
+    await approved();await run();await pg.query(change,[staff]);
+    await expect(run('inspect')).rejects.toThrow('approval_required');
+    const queries:string[]=[];
+    const observation=await inspectRetainedTelehealthConsentCopy(db(async sql=>{queries.push(sql);}),m,configuration,copy);
+    expect(observation).toMatchObject({copyPresent:true,approvalAuthorityCertified:false,databaseMutationPerformed:false,
+      retryPerformed:false,deletionCertified:false,phiAllowed:false,activation:'blocked'});
+    expect(JSON.stringify(observation)).not.toContain(copy.content);
+    expect(queries[0]).toContain('read only');
+    expect(queries.some(sql=>/^(insert|update|delete|create|alter|grant|revoke|lock table)/i.test(sql))).toBe(false);
+    expect(await count()).toBe(1);await expect(run()).rejects.toThrow('approval_required');
+  });
+  it('supersession cannot hide an old stored copy or authorize it for patients',async()=>{
+    await approved();await run();await approved({id:randomUUID(),version:'FICTIONAL/2',time:'0 seconds'});
+    await expect(run('inspect')).rejects.toThrow('approval_required');
+    expect(await inspectRetainedTelehealthConsentCopy(db(),m,configuration,copy)).toMatchObject({copyPresent:true,approvalAuthorityCertified:false});
+    expect(await count()).toBe(1);
+  });
+  it('a suspended clinic can retain copy bytes without regaining approval authority',async()=>{
+    await approved();await run();await pg.query("update clinical_core.organizations set status='suspended' where id=$1",[copy.organizationId]);
+    await expect(run('inspect')).rejects.toThrow('approval_required');
+    expect(await inspectRetainedTelehealthConsentCopy(db(),m,configuration,copy)).toMatchObject({copyPresent:true,approvalAuthorityCertified:false});
+  });
+  it('observes original absent copy after approval retirement without certifying deletion or retrying',async()=>{
+    await approved();await pg.query("update clinical_core.consent_artifacts set status='retired' where id=$1",[copy.artifactId]);
+    expect(await inspectRetainedTelehealthConsentCopy(db(),m,configuration,copy)).toMatchObject({copyPresent:false,
+      databaseMutationPerformed:false,retryPerformed:false,deletionCertified:false,approvalAuthorityCertified:false});
+    expect(await count()).toBe(0);
+  });
+  it.each(['missing','clinic','scope','version','hash','text'])('refuses retained lookup substitution: %s',async mode=>{
+    await approved();await run();
+    const value=mode==='missing'?{...copy,artifactId:randomUUID()}:mode==='clinic'?{...copy,organizationId:randomUUID()}:
+      mode==='scope'?{...copy,scope:'messaging'}:mode==='version'?{...copy,artifactVersion:'wrong'}:
+      mode==='hash'||mode==='text'?{...copy,content:copy.content+'changed',contentSha256:sha(copy.content+'changed')}:copy;
+    await expect(inspectRetainedTelehealthConsentCopy(db(),m,configuration,value)).rejects.toThrow();
+    expect(await count()).toBe(1);
+  });
+  it('retained inspection still refuses staging, stale ledger and changed schema',async()=>{
+    await approved();await run();
+    await expect(inspectRetainedTelehealthConsentCopy(db(undefined,'clinical_core'),m,configuration,copy)).rejects.toThrow('boundary_refused');
+    await expect(inspectRetainedTelehealthConsentCopy(db(),m.slice(0,111),configuration,copy)).rejects.toThrow('artifact_refused');
+    // Tamper before the inspection: its real read-only transaction correctly
+    // refuses an injected ALTER before it can reach schema verification.
+    await pg.exec('alter table clinical_core.care_consent_texts disable row level security');
+    try{await expect(inspectRetainedTelehealthConsentCopy(db(),m,configuration,copy)).rejects.toThrow('verification_failed');}
+    finally{await pg.exec('alter table clinical_core.care_consent_texts enable row level security');}
+    expect(await count()).toBe(1);
+  });
+  it('a lost registration reply followed by revocation is observed once without another write',async()=>{
+    await approved();let writes=0;
+    const lost:ClinicalCoreDatabase={transaction:async work=>{writes++;await db().transaction(work);
+      await pg.query("update clinical_core.consent_artifacts set status='retired' where id=$1",[copy.artifactId]);
+      throw Error('FICTIONAL lost reply and retired authority');
+    }};
+    await expect(run('register',lost)).rejects.toThrow('operation_failed');
+    await expect(run('inspect')).rejects.toThrow('approval_required');
+    expect(await inspectRetainedTelehealthConsentCopy(db(),m,configuration,copy)).toMatchObject({copyPresent:true,approvalAuthorityCertified:false});
+    expect(writes).toBe(1);expect(await count()).toBe(1);
+  });
+  it('command composes actual approval SQL, rollback rehearsal, one copy and retained readbacks',async()=>{
+    await approved();const s=fictionalCommandPorts();
+    const result=await executeTelehealthCopyCommand(s.args('register'),build,s.d);
+    expect(result).toMatchObject({copyPresent:true,copyInserted:true,custodySettled:true,approvalsCreated:false,grantsCreated:false});
+    expect(s.writer.record.mock.calls.map(v=>v[0])).toEqual(['rehearsal','write_admitted','write_reply','readback_one','readback_two']);
+    expect(await count()).toBe(1);
+  });
+  it('actual committed copy plus lost reply and retired approval recovers without registration replay',async()=>{
+    await approved();const s=fictionalCommandPorts();let writes=0;
+    s.d.run=async(...args)=>{
+      const result=await runTelehealthConsentCopyRegistration(...args);
+      if(args[3]==='register'){
+        writes++;await pg.query("update clinical_core.consent_artifacts set status='retired' where id=$1",[copy.artifactId]);
+        throw Error('FICTIONAL interrupted committed registration');
+      }
+      return result;
+    };
+    await expect(executeTelehealthCopyCommand(s.args('register'),build,s.d)).rejects.toThrow('FICTIONAL interrupted committed registration');
+    expect(s.writer.settle).not.toHaveBeenCalled();expect(s.writer.finding).toHaveBeenCalledOnce();
+    const observed=await executeTelehealthCopyCommand(s.args('reconcile'),build,s.d);
+    expect(observed).toMatchObject({observation:'exact_retained_copy_observed',originalWriteOutcome:'unknown',
+      databaseMutationPerformed:false,retryPerformed:false,approvalAuthorityCertified:false,deletionCertified:false});
+    expect(writes).toBe(1);expect(await count()).toBe(1);await expect(run('inspect')).rejects.toThrow('approval_required');
   });
 });
