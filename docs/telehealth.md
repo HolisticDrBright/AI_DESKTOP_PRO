@@ -43,23 +43,43 @@ presenting a truncated list as whole.
 
 ### Authority, in order
 
-1. **The appointment, inside the AWS boundary.** Every visit route
-   (`consent`, `withdraw`, `start`, `end`, `import`, `sign`) resolves its
+1. **The appointment, inside the AWS boundary — on every read and write.**
+   Every visit route (`consent`, `withdraw`, `start`, `end`, `import`,
+   `sign`, the single-record read `notes` and the list) resolves its
    appointment itself, with the caller's own JWT, through the reviewed
    desktop-compatibility operation `get_desktop_calendar` on the clinical API
    — so a direct call to the Lambda gets exactly the appointments that
    practitioner can see under the clinical core's role rules. Nonexistent,
-   another organization, revoked membership (the calendar refuses), not a
-   telehealth appointment: refused before any write, consent read, secret or
-   provider call. A cancelled or no-show appointment is refused for
-   consent/start/import; ending a visit still resolves the appointment but
-   tolerates a closed status so an outstanding meeting can be shut down. The
-   visit keeps the calendar's patient record, practitioner and **stored**
-   times; caller-supplied times are at most a search hint. The desktop
-   server performs the same resolution first (so the UI never offers an
-   action the calendar would refuse), but that is convenience, not the
-   control. The day and the zone are the viewer's (`date` + IANA `timeZone`
-   on every call), computed DST-aware; February 31 is refused.
+   another organization, revoked membership (the calendar refuses), a record
+   this caller may not see, not a telehealth appointment: refused before any
+   write, consent read, secret or provider call, and a read returns nothing.
+   A cancelled or no-show appointment is refused for consent/start/import;
+   ending or reading a visit still resolves the appointment but tolerates a
+   closed status, so an outstanding meeting can be shut down and a
+   historical record stays readable through its own appointment (the lookup
+   is centred on the visit's stored time, never on a future entry). The list
+   takes one window (`from`/`to`, at most 31 days) and returns a
+   desktop-booked visit only when the calendar returns its appointment to
+   this caller for that window; a state-only projection is not treated as
+   authorization. The visit keeps the calendar's **stored** times;
+   caller-supplied times are at most a search hint. The desktop server
+   performs the same resolution first (so the UI never offers an action the
+   calendar would refuse), but that is convenience, not the control. The day
+   and the zone are the viewer's (`date` + IANA `timeZone` on every call),
+   computed DST-aware; February 31 is refused.
+   **The subject and practitioner are immutable.** A visit records the
+   calendar's patient record and practitioner at creation, and every later
+   authority check compares the calendar's current values to them: an
+   appointment that now names a different patient or practitioner is refused
+   (`appointment_reassigned`) for consent, start, end, import, sign and
+   reads, before any credential, meeting or session. The receipts on a visit
+   never follow a changed patient; a reschedule of the same subject
+   reconciles the times, a different subject needs a new visit and a new
+   consent. After provider work during `start` (meeting creation can take
+   seconds), both the appointment and the consent authority are rechecked
+   before the SDK session is issued, so a withdrawal or reassignment while
+   the create was in flight stops the session; a create whose bind loses to
+   a withdrawal has its meeting deleted.
 2. **The request.** A patient-app visit is bound to its request on the
    boundary: the request must exist in the caller's organization, name this
    exact appointment, and not be cancelled; its stored times and meeting are
@@ -103,8 +123,9 @@ invents a hash or substitutes a configuration flag.
 | `requestId`, `consumerPersonId`, `scheduledStart/End`, `timeZone` | the binding (request-derived or desktop-resolved) |
 | `consents[]` | append-only receipts: artifact id/version/hash, signer, method, representative authority, governed grant id, `granted`/`withdrawn` |
 | `status` | `scheduled` → `in_visit` → `ending` → `ended`; or `cancelled` |
-| `meetingLease` | the durable creating-intent: `acquired` (held, no provider call yet) or `dispatched` (a create was sent; `createdMeetingId` is the exact evidence once known). Only an expired `acquired` lease may be taken over; a `dispatched` lease is reconciled, never overwritten |
-| `patientRecordId`, `practitionerUserId` | from the calendar (desktop-booked) — the visit's authoritative patient and practitioner |
+| `meetingLease` | the durable creating-intent: `acquired` (held, no provider call yet) or `dispatched` (a create was sent at `dispatchedAt`; `createdMeetingId` is the exact evidence once known). The lease id is the ATTEMPT id, written into the provider meeting's marker. Only an expired `acquired` lease may be taken over; a `dispatched` lease is settled, never overwritten |
+| `settledLeaseIds` | attempts settled as "no meeting" after the settlement window; a meeting carrying one of those markers that shows up later is an orphan, deleted and never adopted (internal, not returned) |
+| `patientRecordId`, `practitionerUserId` | the IMMUTABLE subject and practitioner from the calendar (desktop-booked) or the request (patient-app: both null) at creation |
 | `providerMeetingId`, `providerMeetingUuid`, `joinUrl`, `passcode` | the Zoom meeting instance; `passcode` is Zoom's actual meeting password from create/get meeting, never the encrypted `pwd` token of the join URL, and it leaves the Lambda only inside a start-visit session |
 | `providerShutdown` | `not_started`/`pending`/`ended`/`failed` with the provider's answer; `ended` only when Zoom confirmed |
 | `flags[]`, `quickNotes` | stamped against the visit timer; saved when the visit ends |
@@ -118,20 +139,40 @@ refuse with `conflict`.
 
 Creation is admitted under a durable lease on the visit before any provider
 call; a racing start loses the conditional write and is refused without a
-second meeting. The sequence is: lease `acquired` → a COMPLETE marker
-listing of the host's upcoming meetings (`alp-visit:<appointmentId>` in the
-agenda; an incomplete listing — pages left, or the page bound — refuses
-rather than concluding "nothing exists") → lease `dispatched` written
+second meeting. Every provider meeting carries an EXACT marker — this visit
+and this attempt: agenda `Governed telehealth visit
+alp-visit:<appointmentId>:<leaseId>` — so the outcome of one specific create
+can be looked up, never inferred from "some meeting for this appointment".
+The sequence is: lease `acquired` → a COMPLETE marker listing of the host's
+upcoming meetings, always run to its last page (an incomplete listing —
+pages left, or the page bound — refuses rather than concluding "nothing
+exists"; matching is exact, never substring) → lease `dispatched` written
 BEFORE the create is sent → create → the created id written onto the lease
-as evidence → bind. A thrown create leaves the lease `dispatched`; the next
-start reconciles it first: by exact id when the evidence exists, otherwise
-by a complete listing, adopting what it finds and permitting one new create
-only after proof of absence. A lost database receipt is confirmed by a
-single reread (a write that landed is success, never undone); a visit that
-was cancelled or bound elsewhere underneath the attempt has the meeting this
-attempt created deleted. An expired `acquired` lease (the holder never
-reached the provider) may be taken over; an expired `dispatched` lease may
-not.
+as evidence → bind. Adoption reads the meeting back and requires it to name
+the configured host account; a meeting under another host is never bound.
+
+A thrown create leaves the lease `dispatched` with its attempt id. The next
+start **settles that attempt** before anything else: by exact id when the
+evidence exists (gone at the provider → cleared); otherwise by the attempt's
+exact marker in a complete listing. Found once → adopted. Not found: the
+attempt stays open and the start is refused (`meeting_unsettled`) until the
+settlement window since dispatch (`MEETING_SETTLEMENT_MS`, five minutes —
+asserted in tests to exceed the function timeout many times over) has
+passed, because an empty provider list on its own is not proof that a
+timed-out create did not succeed. Only once the invocation that sent the
+create cannot still be running AND a complete exact listing is still empty
+is the attempt recorded as settled-absent, and ONE new attempt (a new
+marker) admitted. A meeting of a settled attempt that materialises later
+carries a marker the visit will never adopt: it is deleted on the next
+listing (before any create) and swept once the visit ends. Ambiguity — two
+meetings for one attempt, or a marker from no attempt this record knows —
+is refused, never resolved by picking a row.
+
+A lost database receipt is confirmed by a single reread (a write that landed
+is success, never undone); a visit that was cancelled, lost its consent, or
+was bound elsewhere underneath the attempt has the meeting this attempt
+created deleted. An expired `acquired` lease (the holder never reached the
+provider) may be taken over; an expired `dispatched` lease may not.
 
 ### Ending: a shutdown intent, confirmed by the provider
 
@@ -152,10 +193,23 @@ never shown as termination.
 
 `import` requires the appointment authority and a current consent authority
 (summary access is a use of the recording consent), stores Zoom's payload
-verbatim, and refuses a payload that does not name this meeting id, that
-names another meeting uuid when the visit knows its own, or that exceeds the
-size bound (checked on the declared length before the body is read, and on
-the bytes received). Zoom's current unified `summary_content` (Markdown) is
+verbatim, and imports only a payload that names this meeting id, the EXACT
+meeting-instance uuid, and the configured host account (`meeting_host_id`
+or `meeting_host_email`). The instance uuid is the one the visit holds from
+create/get meeting (Zoom generates a new uuid per instance, so the
+create-time uuid is the first held instance's); a visit bound without one
+obtains it from the provider's past-instance list, and only when exactly
+one instance was held — none is "not ready", several is ambiguous and
+refused. A payload with no uuid, another uuid, another host or no host is
+refused: a reusable meeting number never stands in for a specific instance.
+The body is read under a hard byte bound WITHOUT being materialised first:
+a declared `Content-Length` must be a well-formed integer within the bound
+(malformed or oversized refuses before a byte is read); the stream is then
+consumed chunk by chunk and cancelled the moment the running count exceeds
+the bound; strict UTF-8 decoding (malformed bytes refuse); and a received
+size that disagrees with the declared length (truncated or dishonest)
+refuses. A response with no readable stream is refused rather than trusted
+through `text()`. Zoom's current unified `summary_content` (Markdown) is
 kept whole as the unreviewed Summary section and rendered as plain text;
 legacy overview/details/next-steps fields are mapped by label. A payload
 with no usable text is "not ready", never an empty editable note. Re-import
@@ -267,17 +321,43 @@ frozen and survive reload because the record is the source of truth.
   never listed; governed grant recorded through the identity API;
   withdrawal; one meeting under the lease, bound with Zoom's actual password
   (never the URL token), racing start refused without a second create; a
-  thrown create leaves a `dispatched` lease — incomplete listing refuses,
-  complete listing adopts, complete empty listing permits one create;
-  evidenced create adopted by exact id; lost database receipt confirmed by
-  reread without deleting; meeting deleted when the visit was cancelled
-  underneath; shutdown never certified on a disabled provider, empty state,
-  wrong meeting, 404, refused end or `started` — certified only on
-  `waiting` for this meeting; duplicate end idempotent; unified-summary
-  import, wrong-id/missing-id/wrong-uuid/oversized refusals, empty → not
-  ready; re-import keeps notes/decisions and history; frozen signed notes;
-  paginated lists without note bodies; cancelled booking closes the visit
-  and deletes its meeting; SDK JWT shape.
+  thrown create leaves a `dispatched` lease with its attempt id — incomplete
+  listing refuses, exact-marker listing adopts, a complete EMPTY listing
+  inside the settlement window refuses (`meeting_unsettled`, no create),
+  after the window one new attempt with a new marker is admitted and the old
+  attempt recorded as settled; the settlement window exceeds the function
+  timeout; a settled attempt's late meeting is deleted on the next listing
+  and swept after the visit ends, never adopted; an unknown attempt's
+  marker, two meetings for one attempt, a substring/prefix match and a
+  meeting under another host are refused, nothing bound; evidenced create
+  adopted by exact id; lost database receipt confirmed by reread without
+  deleting; meeting deleted when the visit was cancelled underneath, or lost
+  its consent while the create was in flight (no session issued);
+  authority rechecked after provider work (a reassignment mid-create stops
+  the session with the meeting bound, never started); shutdown never
+  certified on a disabled provider, empty state, wrong meeting, 404, refused
+  end or `started` — certified only on `waiting` for this meeting; duplicate
+  end idempotent; unified-summary import for the exact instance and host
+  only — wrong number, missing id, another instance, NO instance uuid,
+  another host and no host all refused with nothing written; instance uuid
+  obtained from the provider's instance list for a visit bound without one
+  (one verifies, none is not ready, several refuse); the body bounded on
+  the wire with real streamed `Response`s — chunked overrun cancelled
+  mid-stream, oversized declared length never read, dishonest/truncated/
+  malformed `Content-Length` and malformed UTF-8 refused, a multi-byte
+  character split across chunks decoded whole, a response without a stream
+  refused; re-import keeps notes/decisions and history; frozen signed
+  notes; the list requires a bounded window and the caller's calendar for
+  it (no window, too wide, revoked membership refused before the table is
+  read; records the calendar does not return omitted; patient-app visits
+  only inside the window), paginated without note bodies; a single note
+  read refused on revoked membership (403), a record the calendar does not
+  return (404) and a changed patient or practitioner (409), with no note
+  text in any refusal, and allowed through a cancelled historical
+  appointment looked up around the visit's stored time; consent, start and
+  reads refused for a reassigned patient or practitioner before any secret
+  or provider call, a reschedule of the same subject reconciling the times;
+  cancelled booking closes the visit and deletes its meeting; SDK JWT shape.
 - `src/adapters/telehealth.live.test.ts` — zoned day bounds (zone, DST,
   impossible dates), the merge, unavailable and incomplete boundary states,
   appointment resolution before any boundary call, stored times only,
@@ -315,6 +395,13 @@ These are stated so they are not mistaken for done:
 - **Zoom agreement.** `ZoomBaaVerified=true` is an operator attestation that
   the executed agreement covers the account, the Meeting SDK app, AI Companion
   and recording/AI policies; it is not the review itself.
+- **Provider-side settlement residue.** A meeting from a settled attempt
+  that materialises after the visit bound another is removed on the next
+  listing or after the visit ends; until then it is an unjoinable orphan in
+  the host account (waiting room on, authentication required, no credential
+  ever issued). An agenda edited by hand in Zoom breaks the exact marker, so
+  that meeting can no longer be adopted and a new one is created after the
+  settlement window. Both are operator-visible, not silent.
 - **Positive visit acceptance.** The CI bootstrap step proves the SDK
   registers and initializes under the dev server and that the fixture's join
   fails as a join. A real two-participant meeting under production headers —

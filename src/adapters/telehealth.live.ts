@@ -93,6 +93,14 @@ const ERROR_MESSAGES: Record<string, { code: AdapterError["code"]; message: stri
     code: "conflict",
     message: "This appointment was cancelled. Its visit cannot be started.",
   },
+  appointment_reassigned: {
+    code: "conflict",
+    message: "This appointment now names a different patient or practitioner than the visit was created for. The visit and its consent stay with the original patient and practitioner: correct the appointment, or book a new one and record a new consent.",
+  },
+  meeting_unsettled: {
+    code: "conflict",
+    message: "An earlier attempt to create this visit's video meeting has not been settled with the provider yet. A second meeting is never created until it is; try again in a few minutes.",
+  },
   provider_unavailable: {
     code: "unavailable",
     message: "Video is not enabled for this practice yet. Zoom must be connected under a verified business associate agreement before a visit can start.",
@@ -247,10 +255,11 @@ type Boundary =
   | { available: true; complete: boolean; visits: Map<string, TelehealthVisit>; requests: WorkforceRequestRow[] }
   | { available: false; message: string };
 
-async function visitBoundary(token: string): Promise<Boundary> {
+/** The boundary's visits for one window: the boundary authorizes the window through the caller's own calendar, so it returns exactly what this practitioner may see. */
+async function visitBoundary(token: string, from: string, to: string): Promise<Boundary> {
   try {
     const [listed, requestRows] = await Promise.all([
-      request<{ visits: unknown[]; complete: boolean }>("/clinical-core/workforce/appointments/visits", token),
+      request<{ visits: unknown[]; complete: boolean }>(`/clinical-core/workforce/appointments/visits?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token),
       request<unknown[]>("/clinical-core/workforce/appointments/requests", token),
     ]);
     const visits = new Map<string, TelehealthVisit>();
@@ -270,7 +279,7 @@ async function buildDay(date: string, timeZone: string, token: string, orgId: st
   const bounds = dayBounds(date, timeZone);
   const [calendar, boundary] = await Promise.all([
     scheduleLive.getCalendar(bounds.from, bounds.to, token, orgId),
-    visitBoundary(token),
+    visitBoundary(token, bounds.from, bounds.to),
   ]);
   const visits = boundary.available ? boundary.visits : new Map<string, TelehealthVisit>();
   const rows: TelehealthDayVisit[] = [];
@@ -332,7 +341,7 @@ async function resolveAppointment(appointmentId: string, date: string, timeZone:
   const center = Date.parse(exact.from);
   const from = new Date(center - 14 * 86_400_000).toISOString();
   const to = new Date(center + 14 * 86_400_000).toISOString();
-  const [calendar, boundary] = await Promise.all([scheduleLive.getCalendar(from, to, token, orgId), visitBoundary(token)]);
+  const [calendar, boundary] = await Promise.all([scheduleLive.getCalendar(from, to, token, orgId), visitBoundary(token, from, to)]);
   const visit = boundary.available ? boundary.visits.get(appointmentId) ?? null : null;
   const appointment = calendar.appointments.find((row) => row.id === appointmentId && row.appointmentType === "telehealth");
   if (appointment) {

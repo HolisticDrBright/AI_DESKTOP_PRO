@@ -11573,7 +11573,7 @@ createServer(async (req, res) => {
 
   // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====
   // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts
-  // (contract telehealth-requests/6). Zoom is "enabled" here only in the sense
+  // (contract telehealth-requests/7). Zoom is "enabled" here only in the sense
   // that start returns a fixture session and end confirms a fixture shutdown:
   // the browser suite aborts the SDK download, so no meeting ever exists.
   if (url.pathname.startsWith("/clinical-core/workforce/appointments/")) {
@@ -11612,12 +11612,23 @@ createServer(async (req, res) => {
     if (sub === "requests" && req.method === "GET") return json(res, 200, { data: [] });
     if (sub === "slots" && req.method === "GET") return json(res, 200, { data: [] });
     if (sub === "visits" && req.method === "GET") {
-      return json(res, 200, { data: { visits: [...telehealthVisits.values()].map(summaryVisit), complete: true } });
+      // One bounded window, authorized through the caller's calendar: a desktop-booked visit is
+      // listed only when its appointment is on the calendar the caller can see.
+      const from = Date.parse(url.searchParams.get("from") ?? ""); const to = Date.parse(url.searchParams.get("to") ?? "");
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 31 * 86_400_000) return json(res, 400, { error: "request_invalid" });
+      seedScheduleFor(new Date(from).toISOString());
+      const visible = new Set(scheduleAppointments.filter((row) => row.organizationId === "org-fixture" && row.appointmentType === "telehealth").map((row) => row.id));
+      const visits = [...telehealthVisits.values()].filter((visit) => visit.requestId === null ? visible.has(visit.appointmentId) : (visit.scheduledStart && Date.parse(visit.scheduledStart) >= from && Date.parse(visit.scheduledStart) < to));
+      return json(res, 200, { data: { visits: visits.map(summaryVisit), complete: true, from: new Date(from).toISOString(), to: new Date(to).toISOString() } });
     }
     if (sub === "visits/consent-artifact" && req.method === "GET") return json(res, 200, { data: TELEHEALTH_CONSENT_ARTIFACT });
     if (sub === "visits/notes" && req.method === "GET") {
       const visit = telehealthVisits.get(url.searchParams.get("appointmentId") ?? "");
       if (!visit) return json(res, 404, { error: "not_found" });
+      // Every read re-establishes current calendar access to the appointment (any status) for the same patient and practitioner.
+      const calendar = calendarAppointment(visit.appointmentId, "close");
+      if (calendar.error) return json(res, calendar.error, { error: calendar.code });
+      if ((calendar.row.patientId ?? null) !== visit.patientRecordId || (calendar.row.practitionerUserId ?? null) !== visit.practitionerUserId) return json(res, 409, { error: "appointment_reassigned" });
       return json(res, 200, { data: publicVisit(visit) });
     }
     if (req.method !== "POST") return json(res, 404, { error: "route_not_found" });

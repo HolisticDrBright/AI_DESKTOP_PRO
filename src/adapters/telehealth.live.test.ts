@@ -82,7 +82,7 @@ describe("telehealthLive.day", () => {
 
   it("keeps only telehealth appointments, attaches the boundary's visit record, and asks the calendar for the zoned day", async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.endsWith("/visits") ? jsonResponse(200, { data: { visits: [visitRow], complete: true } }) : jsonResponse(200, { data: [] }),
+      /\/visits\?from=/.test(url) ? jsonResponse(200, { data: { visits: [visitRow], complete: true } }) : jsonResponse(200, { data: [] }),
     );
     const day = await telehealthLive.day("2026-10-11", LA, null, "org-fixture");
     expect(day.visitService).toEqual({ available: true, complete: true });
@@ -103,7 +103,7 @@ describe("telehealthLive.day", () => {
 
   it("surfaces an incomplete boundary list instead of presenting a truncated one as whole", async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.endsWith("/visits") ? jsonResponse(200, { data: { visits: [], complete: false } }) : jsonResponse(200, { data: [] }),
+      /\/visits\?from=/.test(url) ? jsonResponse(200, { data: { visits: [], complete: false } }) : jsonResponse(200, { data: [] }),
     );
     const day = await telehealthLive.day("2026-10-11", LA, null, "org-fixture");
     expect(day.visitService).toEqual({ available: true, complete: false });
@@ -137,7 +137,7 @@ describe("telehealthLive visit actions", () => {
 
   const boundaryOk = (onStart?: (body: Record<string, unknown>) => void) =>
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/visits")) return jsonResponse(200, { data: { visits: [visitRow], complete: true } });
+      if (/\/visits\?from=/.test(url)) return jsonResponse(200, { data: { visits: [visitRow], complete: true } });
       if (url.endsWith("/requests")) return jsonResponse(200, { data: [] });
       if (url.endsWith("/visits/start")) {
         onStart?.(JSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -180,7 +180,7 @@ describe("telehealthLive visit actions", () => {
       ["consent_artifact_unavailable", /no approved telehealth and recording consent/],
     ] as const) {
       fetchMock.mockImplementation(async (url: string) => {
-        if (url.endsWith("/visits")) return jsonResponse(200, { data: { visits: [visitRow], complete: true } });
+        if (/\/visits\?from=/.test(url)) return jsonResponse(200, { data: { visits: [visitRow], complete: true } });
         if (url.endsWith("/requests")) return jsonResponse(200, { data: [] });
         return jsonResponse(409, { error: serverError });
       });

@@ -1,7 +1,7 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, disabled-by-default Zoom boundary, and consent-gated embedded telehealth visits bound to the governed consent authority with AI Companion note import.",
-  "Metadata": {"ClinicalCore": {"ContractVersion": "telehealth-requests/6", "DataClassification": "synthetic_only", "PhiAllowed": false, "ZoomEnabled": false, "RemindersEnabled": false, "StripeTestEnabled": false}},
+  "Metadata": {"ClinicalCore": {"ContractVersion": "telehealth-requests/7", "DataClassification": "synthetic_only", "PhiAllowed": false, "ZoomEnabled": false, "RemindersEnabled": false, "StripeTestEnabled": false}},
   "Parameters": {
     "ClinicalApiId": {"Type": "String", "AllowedPattern": "^[a-z0-9]{10}$"},
     "ConsumerUserPoolId": {"Type": "String"},
@@ -59,5 +59,5 @@
     "InvokePermission": {"Type": "AWS::Lambda::Permission", "Properties": {"Action": "lambda:InvokeFunction", "FunctionName": {"Ref": "TelehealthFunction"}, "Principal": "apigateway.amazonaws.com", "SourceArn": {"Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*/appointments/*"}}},
     "WebhookInvokePermission": {"Type": "AWS::Lambda::Permission", "Properties": {"Action": "lambda:InvokeFunction", "FunctionName": {"Ref": "TelehealthFunction"}, "Principal": "apigateway.amazonaws.com", "SourceArn": {"Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/webhooks/stripe/appointments"}}}
   },
-  "Outputs": {"ContractVersion": {"Value": "telehealth-requests/6"}, "PhiAllowed": {"Value": "false"}, "ZoomEnabled": {"Value": {"Ref": "ZoomEnabled"}}, "RemindersEnabled": {"Value": {"Ref": "RemindersEnabled"}}, "StripeTestEnabled": {"Value": {"Ref": "StripeTestEnabled"}}, "FunctionName": {"Value": {"Ref": "TelehealthFunction"}}}
+  "Outputs": {"ContractVersion": {"Value": "telehealth-requests/7"}, "PhiAllowed": {"Value": "false"}, "ZoomEnabled": {"Value": {"Ref": "ZoomEnabled"}}, "RemindersEnabled": {"Value": {"Ref": "RemindersEnabled"}}, "StripeTestEnabled": {"Value": {"Ref": "StripeTestEnabled"}}, "FunctionName": {"Value": {"Ref": "TelehealthFunction"}}}
 }

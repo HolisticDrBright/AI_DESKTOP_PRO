@@ -32,7 +32,7 @@ vi.mock("@aws-sdk/client-scheduler", () => ({
   DeleteScheduleCommand: class DeleteScheduleCommand { constructor(readonly input: unknown) {} },
 }));
 
-import { createTelehealthHandler, signMeetingSdkJwt, type TelehealthConfiguration } from "./aws-telehealth-requests";
+import { createTelehealthHandler, MAX_SUMMARY_BYTES, MEETING_SETTLEMENT_MS, readBoundedJson, signMeetingSdkJwt, type TelehealthConfiguration } from "./aws-telehealth-requests";
 
 const config: TelehealthConfiguration = {
   tableName: "synthetic-appointments",
@@ -257,18 +257,24 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   const REQUEST = "33333333-3333-4333-8333-333333333333";
   const ORG = workforceClaims["custom:organization_id"];
   const PATIENT = "66666666-6666-4666-8666-666666666666";
+  const PRACTITIONER = "11111111-aaaa-4aaa-8aaa-111111111111";
+  const HOST = "host@example.test";
+  const LEASE = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
+  const agendaFor = (leaseId: string, appointmentId = APPOINTMENT) => `Governed telehealth visit alp-visit:${appointmentId}:${leaseId}`;
   const ARTIFACT = { artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scope: "telehealth_recording", artifactVersion: "telehealth-recording/1", contentSha256: "b".repeat(64), jurisdiction: "US-CA", approvedAt: "2026-10-01T00:00:00.000Z" };
   const zoomConfig = { ...config, zoomEnabled: true, zoomBaaVerified: true, zoomSecretArn: "arn:secret" };
   const receipt = (overrides: Record<string, unknown> = {}) => ({ consentId: "88888888-8888-4888-8888-888888888888", consentType: "telehealth_recording_combined", scope: "telehealth_recording",
     artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, signerName: "Synthetic Signer", method: "staff_attested", representativeAuthority: "self",
     signedAt: "2026-10-01T00:00:00.000Z", recordedBy: workforceClaims["custom:person_id"], patientLocation: "CA", grantId: null, connectionId: null, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null, ...overrides });
   const visitRecord = (overrides: Record<string, unknown> = {}) => ({
-    pk: `ORG#${ORG}`, sk: `VISIT#${APPOINTMENT}`, appointmentId: APPOINTMENT, organizationId: ORG, requestId: null, consumerPersonId: null, patientRecordId: PATIENT, practitionerUserId: null,
+    pk: `ORG#${ORG}`, sk: `VISIT#${APPOINTMENT}`, appointmentId: APPOINTMENT, organizationId: ORG, requestId: null, consumerPersonId: null, patientRecordId: PATIENT, practitionerUserId: PRACTITIONER,
     scheduledStart: "2026-10-09T17:00:00.000Z", scheduledEnd: "2026-10-09T17:30:00.000Z", timeZone: "America/Los_Angeles",
     status: "scheduled", consents: [receipt()], meetingLease: null, providerMeetingId: null, providerMeetingUuid: null, joinUrl: null, passcode: null, startedAt: null, endedAt: null,
     providerShutdown: { status: "not_started", attemptedAt: null, confirmedAt: null, detail: null }, flags: [], quickNotes: "", note: null, noteHistory: [],
     version: 1, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...overrides,
   });
+  /** A patient-app visit: bound to its request, so it carries no calendar patient/practitioner identity. */
+  const appVisit = (overrides: Record<string, unknown> = {}) => visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"], patientRecordId: null, practitionerUserId: null, ...overrides });
   const requestRecord = (overrides: Record<string, unknown> = {}) => ({
     pk: `ORG#${ORG}`, sk: `REQ#2026-09-01T00:00:00.000Z#${REQUEST}`, requestId: REQUEST, organizationId: ORG, consumerPersonId: claims["custom:person_id"], consumerEmail: claims.email,
     status: "scheduled", visitType: "follow_up", preferredSlots: [], timeZone: "America/Los_Angeles", note: null, scheduledStart: "2026-10-09T17:00:00.000Z", scheduledEnd: "2026-10-09T17:30:00.000Z",
@@ -276,10 +282,31 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     priceMinor: 0, currency: "USD", cancellationPolicy: "", cancellationWindowHours: 24, cancellationFeeDueMinor: 0, reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1",
     paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due", paymentIntentId: null, paidMinor: 0, refundedMinor: 0, ...overrides,
   });
-  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: "11111111-aaaa-4aaa-8aaa-111111111111", practitioner_name: "Dr",
+  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: PRACTITIONER, practitioner_name: "Dr",
     title: null, appointment_type: "telehealth", location: "Telehealth", telehealth_url: null, status: "confirmed", version: 1, starts_at: "2026-10-09T17:00:00.000Z", ends_at: "2026-10-09T17:30:00.000Z", ...overrides });
   const start = (handlerConfig = zoomConfig, extra: Record<string, unknown> = {}) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/start", { appointmentId: APPOINTMENT, hostDisplayName: "Dr. Synthetic", ...extra }, workforceClaims));
   const jsonResponse = (status: number, body: unknown, text?: string) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => body, text: async () => text ?? JSON.stringify(body) });
+  /**
+   * A REAL `Response` over a ReadableStream, so body bounds are exercised on
+   * the wire, not on a prebuilt string: `chunks` arrive one per pull, the
+   * stream records how many were pulled and whether it was cancelled.
+   */
+  const streamed = (status: number, chunks: Array<Uint8Array | string>, headers: Record<string, string> = {}) => {
+    const probe = { pulled: 0, cancelled: false };
+    let index = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index >= chunks.length) { controller.close(); return; }
+        probe.pulled += 1;
+        const chunk = chunks[index]; index += 1;
+        controller.enqueue(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+      },
+      cancel() { probe.cancelled = true; },
+    });
+    return Object.assign(new Response(stream, { status, headers }), { probe });
+  };
+  const streamedJson = (body: unknown, headers: Record<string, string> = {}) => streamed(200, [JSON.stringify(body)], headers);
+  const SUMMARY = (extra: Record<string, unknown> = {}) => ({ meeting_id: 900000001, meeting_uuid: "uuid-900000001", meeting_host_email: HOST, summary_content: "# Visit\n\nPatient reports better afternoons.", ...extra });
 
   /**
    * DynamoDB stand-in: reads are queued per command kind (so interleaved
@@ -321,13 +348,14 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
     ["/clinical-core/workforce/data-compatibility", typeof options.calendar === "function" ? options.calendar : () => jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } })],
   ];
-  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
-  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
+  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, host_email: HOST, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
+  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "end" | "get" | "summary" | "instances" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["zoom.us/oauth/token", overrides.token ?? (() => jsonResponse(200, { access_token: "zoom-access" }))],
     [/\/users\/[^/]+\/meetings\?/, overrides.list ?? (() => jsonResponse(200, { meetings: [] }))],
     [/\/users\/[^/]+\/meetings$/, overrides.create ?? (() => jsonResponse(201, meetingBody(900000001)))],
     ["/token?type=zak", overrides.zak ?? (() => jsonResponse(200, { token: "zak-token" }))],
     [/\/meetings\/[^/]+\/status$/, overrides.end ?? (() => jsonResponse(204, {}))],
+    [/\/past_meetings\/[^/]+\/instances$/, overrides.instances ?? (() => streamedJson({ meetings: [{ uuid: "uuid-900000001", start_time: "2026-10-09T17:00:00.000Z" }] }))],
     [/\/meetings\/[^/?]+\/meeting_summary$/, overrides.summary ?? (() => jsonResponse(404, {}))],
     [/\/meetings\/[^/?]+$/, (url, init) => (init?.method === "DELETE" ? (overrides.delete ?? (() => jsonResponse(204, {})))(url, init) : (overrides.get ?? ((u: string) => jsonResponse(200, meetingBody(Number(/\/meetings\/(\d+)/.exec(u)?.[1] ?? "0")))))(url, init))],
   ];
@@ -421,14 +449,14 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(JSON.parse(superseded.body ?? "{}")).toEqual({ error: "consent_superseded" });
 
     fetchRouter(identityRoutes({ grant: { status: "revoked", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }));
-    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"] })); queueQuery({ Items: [requestRecord()] });
+    queueGet(appVisit()); queueQuery({ Items: [requestRecord()] });
     const withdrawn = await start();
     expect(withdrawn.statusCode).toBe(409);
     expect(JSON.parse(withdrawn.body ?? "{}")).toEqual({ error: "consent_withdrawn" });
 
     // No current connection for the consumer: lost authority, not a fallback to staff-only consent.
     fetchRouter(identityRoutes({ grant: { status: "none", connectionId: null, artifactId: null, artifactStatus: null } }));
-    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"], consents: [receipt({ grantId: "g1", connectionId: "44444444-4444-4444-8444-444444444444" })] })); queueQuery({ Items: [requestRecord()] });
+    queueGet(appVisit({ consents: [receipt({ grantId: "g1", connectionId: "44444444-4444-4444-8444-444444444444" })] })); queueQuery({ Items: [requestRecord()] });
     const gone = await start();
     expect(gone.statusCode).toBe(409);
     expect(JSON.parse(gone.body ?? "{}")).toEqual({ error: "consent_required" });
@@ -437,13 +465,13 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   it("binds a patient-app visit to its request: cancelled, mismatched or missing requests refuse before consent or provider work", async () => {
     const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
-    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"] })); queueQuery({ Items: [requestRecord({ status: "cancelled" })] });
+    queueGet(appVisit()); queueQuery({ Items: [requestRecord({ status: "cancelled" })] });
     const cancelled = await start();
     expect(cancelled.statusCode).toBe(409);
     expect(JSON.parse(cancelled.body ?? "{}")).toEqual({ error: "appointment_cancelled" });
-    queueGet(visitRecord({ requestId: REQUEST })); queueQuery({ Items: [requestRecord({ appointmentId: "66666666-6666-4666-8666-666666666666" })] });
+    queueGet(appVisit()); queueQuery({ Items: [requestRecord({ appointmentId: "66666666-6666-4666-8666-666666666666" })] });
     expect((await start()).statusCode).toBe(400);
-    queueGet(visitRecord({ requestId: REQUEST })); queueQuery({ Items: [] });
+    queueGet(appVisit()); queueQuery({ Items: [] });
     expect((await start()).statusCode).toBe(404);
     expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
     expect(secretsSend).not.toHaveBeenCalled();
@@ -451,7 +479,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   it("reports the video provider as off rather than inventing a meeting", async () => {
     fetchRouter(identityRoutes({ grant: { status: "granted", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: ARTIFACT.artifactId, artifactStatus: "approved" } }));
-    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"] })); queueQuery({ Items: [requestRecord()] });
+    queueGet(appVisit()); queueQuery({ Items: [requestRecord()] });
     const result = await start(config);
     expect(result.statusCode).toBe(503);
     expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
@@ -531,14 +559,15 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(creates(calls)).toHaveLength(0);
   });
 
-  it("a thrown create leaves the lease dispatched; the next start reconciles with a COMPLETE listing before any second create, and refuses on an incomplete one", async () => {
+  it("a thrown create leaves the lease dispatched with its attempt id; the next start settles THAT attempt by exact marker, and an empty list alone never admits a second create", async () => {
     const lostCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ create: () => { throw new Error("socket hang up after dispatch"); } })]);
     queueGet(visitRecord());
     const lost = await start();
     expect(lost.statusCode).toBe(503);
     expect(creates(lostCalls)).toHaveLength(1);
-    const lastLease = putItems().at(-1)?.meetingLease as { state: string; createdMeetingId: string | null };
-    expect(lastLease).toMatchObject({ state: "dispatched", createdMeetingId: null });
+    const lastLease = putItems().at(-1)?.meetingLease as { leaseId: string; state: string; dispatchedAt: string; createdMeetingId: string | null };
+    expect(lastLease).toMatchObject({ state: "dispatched", createdMeetingId: null, dispatchedAt: expect.any(String) });
+    expect(creates(lostCalls)[0].body).toMatchObject({ agenda: agendaFor(lastLease.leaseId) });
 
     // Retry 1: the provider listing cannot be completed → the fence stays and nothing is created.
     writes.length = 0;
@@ -549,9 +578,9 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(creates(fencedCalls)).toHaveLength(0);
     expect(putItems().some((item) => item.meetingLease === null)).toBe(false);
 
-    // Retry 2: a complete listing finds the meeting the lost create made → adopted, no second create.
+    // Retry 2: a complete listing finds the meeting of THIS attempt → adopted, no second create.
     writes.length = 0;
-    const adoptedCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000007, agenda: `alp-visit:${APPOINTMENT}` }] }) })]);
+    const adoptedCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000007, agenda: agendaFor(lastLease.leaseId) }] }) })]);
     queueGet(visitRecord({ meetingLease: lastLease, version: 4 }));
     const adopted = await start();
     expect(adopted.statusCode).toBe(200);
@@ -559,13 +588,93 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(JSON.parse(adopted.body ?? "{}").data.session.passcode).toBe("real-password-900000007");
     expect(creates(adoptedCalls)).toHaveLength(0);
 
-    // Retry 3: a complete, empty listing proves nothing exists → one create is permitted.
+    // Retry 3: a complete, EMPTY listing while the dispatched create may still be executing
+    // (inside the settlement window) is not proof of absence: refused, lease kept, no create.
     writes.length = 0;
-    const recreatedCalls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    const unsettledCalls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
     queueGet(visitRecord({ meetingLease: lastLease, version: 4 }));
+    const unsettled = await start();
+    expect(unsettled.statusCode).toBe(409);
+    expect(JSON.parse(unsettled.body ?? "{}")).toEqual({ error: "meeting_unsettled" });
+    expect(creates(unsettledCalls)).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect(secretsSend.mock.calls.length).toBeGreaterThan(0); // the provider WAS consulted; the empty answer was just not enough
+
+    // Retry 4: the settlement window has passed — the invocation that sent the create cannot be
+    // running — and a complete exact listing is still empty: the attempt is settled as absent and
+    // ONE new attempt (a new marker) is admitted.
+    writes.length = 0;
+    const settledLease = { ...lastLease, dispatchedAt: new Date(Date.now() - MEETING_SETTLEMENT_MS - 1000).toISOString() };
+    const recreatedCalls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    queueGet(visitRecord({ meetingLease: settledLease, version: 4 }));
     const recreated = await start();
     expect(recreated.statusCode).toBe(200);
     expect(creates(recreatedCalls)).toHaveLength(1);
+    const newAgenda = (creates(recreatedCalls)[0].body as { agenda: string }).agenda;
+    expect(newAgenda).not.toBe(agendaFor(lastLease.leaseId));
+    expect(newAgenda).toMatch(new RegExp(`^Governed telehealth visit alp-visit:${APPOINTMENT}:[0-9a-f-]{36}$`));
+    expect(putItems().every((item) => (item.settledLeaseIds as string[]).includes(lastLease.leaseId))).toBe(true);
+    expect(JSON.parse(recreated.body ?? "{}").data).not.toHaveProperty("settledLeaseIds");
+  });
+
+  it("the settlement window is a platform fact: it exceeds the function timeout by a wide margin", () => {
+    const template = JSON.parse(readFileSync("infra/aws-clinical-core/telehealth-requests-extension.json", "utf8")) as { Resources: { TelehealthFunction: { Properties: { Timeout: number } } } };
+    expect(MEETING_SETTLEMENT_MS).toBeGreaterThanOrEqual(template.Resources.TelehealthFunction.Properties.Timeout * 1000 * 5);
+  });
+
+  it("a settled attempt's meeting that materialises late is an orphan: deleted on the next listing, never adopted; after the visit ends it is swept", async () => {
+    // The visit settled attempt LEASE as absent; the next start finds its meeting after all.
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000055, agenda: agendaFor(LEASE) }] }) })]);
+    queueGet(visitRecord({ settledLeaseIds: [LEASE] }));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.visit.providerMeetingId).toBe("900000001"); // the new attempt's meeting, not the orphan
+    expect(deletes(calls).map((call) => call.url)).toEqual([expect.stringContaining("/meetings/900000055")]);
+    expect(creates(calls)).toHaveLength(1);
+
+    // Bound elsewhere and ended: the sweep removes a late orphan and leaves the bound meeting alone.
+    const sweep = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000055, agenda: agendaFor(LEASE) }, { id: 900000001, agenda: agendaFor("ffffffff-ffff-4fff-8fff-ffffffffffff") }] }) })]);
+    queueGet(visitRecord({ status: "in_visit", providerMeetingId: "900000001", settledLeaseIds: [LEASE], version: 6 }));
+    const ended = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/end", { appointmentId: APPOINTMENT, expectedVersion: 6 }, workforceClaims));
+    expect(JSON.parse(ended.body ?? "{}").data).toMatchObject({ status: "ended" });
+    expect(deletes(sweep).map((call) => call.url)).toEqual([expect.stringContaining("/meetings/900000055")]);
+  });
+
+  it("ambiguity at the provider is refused, never resolved by picking a row: an unknown attempt, two meetings for one attempt, a substring match, another host", async () => {
+    // A marker for this visit from no attempt this record knows → not ours to adopt or delete: refused, lease released, no create.
+    const unknownCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000031, agenda: agendaFor("ffffffff-ffff-4fff-8fff-ffffffffffff") }] }) })]);
+    queueGet(visitRecord());
+    const unknown = await start();
+    expect(unknown.statusCode).toBe(409);
+    expect(JSON.parse(unknown.body ?? "{}")).toEqual({ error: "meeting_unsettled" });
+    expect(creates(unknownCalls)).toHaveLength(0);
+    expect(deletes(unknownCalls)).toHaveLength(0);
+    expect(putItems().at(-1)?.meetingLease).toBeNull();
+
+    // Two meetings for the attempt being settled → refused, nothing adopted.
+    const dispatched = { leaseId: LEASE, acquiredAt: new Date().toISOString(), dispatchedAt: new Date().toISOString(), state: "dispatched", createdMeetingId: null };
+    const twinCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000041, agenda: agendaFor(LEASE) }, { id: 900000042, agenda: agendaFor(LEASE) }] }) })]);
+    queueGet(visitRecord({ meetingLease: dispatched }));
+    const twins = await start();
+    expect(twins.statusCode).toBe(409);
+    expect(creates(twinCalls)).toHaveLength(0);
+    expect(putItems().some((item) => item.providerMeetingId)).toBe(false);
+
+    // A substring/prefix is not the marker: an agenda that merely contains it is not this attempt's meeting.
+    const looseCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000043, agenda: `${agendaFor(LEASE)} (copy)` }, { id: 900000044, agenda: `alp-visit:${APPOINTMENT}` }] }) })]);
+    queueGet(visitRecord({ meetingLease: dispatched }));
+    const loose = await start();
+    expect(loose.statusCode).toBe(409); // inside the window, nothing exact found → unsettled
+    expect(creates(looseCalls)).toHaveLength(0);
+    expect(putItems().some((item) => item.providerMeetingId)).toBe(false);
+
+    // The attempt's meeting exists but under another host account → never bound.
+    const hostCalls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, { meetings: [{ id: 900000045, agenda: agendaFor(LEASE) }] }), get: (url) => jsonResponse(200, meetingBody(Number(/\/meetings\/(\d+)/.exec(url)?.[1] ?? "0"), { host_email: "someone-else@example.test" })) })]);
+    queueGet(visitRecord({ meetingLease: dispatched }));
+    const other = await start();
+    expect(other.statusCode).toBe(503);
+    expect(creates(hostCalls)).toHaveLength(0);
+    expect(putItems().some((item) => item.providerMeetingId)).toBe(false);
   });
 
   it("an evidenced create is adopted by its exact id on retry, and a lost database receipt is confirmed by reread instead of deleting the meeting", async () => {
@@ -650,42 +759,115 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- the AI summary */
 
-  it("imports the current unified summary as unreviewed source text and refuses summaries that do not name this meeting instance", async () => {
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, meeting_uuid: "uuid-900000001", summary_content: "# Visit\n\nPatient reports better afternoons." }) })]);
+  const importNote = () => createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+
+  it("imports the current unified summary as unreviewed source text only for the EXACT meeting instance and the configured host", async () => {
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson(SUMMARY()) })]);
     queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
-    const unified = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    const unified = await importNote();
     const payload = JSON.parse(unified.body ?? "{}") as { data: { summaryReady: boolean; visit: { note: Record<string, unknown> } } };
     expect(unified.statusCode).toBe(200);
     expect(payload.data.summaryReady).toBe(true);
-    expect(payload.data.visit.note).toMatchObject({ status: "not_reviewed", aiSections: { summary: "# Visit\n\nPatient reports better afternoons.", patient_reported: "", results_reviewed: "", plan_discussed: "" }, actionItems: [] });
+    expect(payload.data.visit.note).toMatchObject({ status: "not_reviewed", zoomSummaryId: "uuid-900000001", aiSections: { summary: "# Visit\n\nPatient reports better afternoons.", patient_reported: "", results_reviewed: "", plan_discussed: "" }, actionItems: [] });
 
-    for (const bad of [
-      { meeting_id: 123, summary_content: "someone else's meeting" },
-      { summary_content: "no meeting id at all" },
-      { meeting_id: 900000001, meeting_uuid: "another-instance", summary_content: "same number, other instance" },
-    ]) {
-      fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, bad) })]);
+    for (const [label, bad] of Object.entries({
+      "another meeting number": SUMMARY({ meeting_id: 123 }),
+      "no meeting id": { meeting_uuid: "uuid-900000001", meeting_host_email: HOST, summary_content: "no meeting id at all" },
+      "another instance": SUMMARY({ meeting_uuid: "another-instance" }),
+      "no instance uuid (a reusable number is not an instance)": { meeting_id: 900000001, meeting_host_email: HOST, summary_content: "number only" },
+      "another host": SUMMARY({ meeting_host_email: "someone-else@example.test" }),
+      "no host at all": { meeting_id: 900000001, meeting_uuid: "uuid-900000001", summary_content: "unattributed" },
+    })) {
+      writes.length = 0;
+      fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson(bad) })]);
       queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
-      const refused = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
-      expect(refused.statusCode, JSON.stringify(bad)).toBe(503);
+      const refused = await importNote();
+      expect(refused.statusCode, label).toBe(503);
+      expect(writes, label).toHaveLength(0);
     }
 
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => ({ ...jsonResponse(200, {}), headers: { get: (name: string) => (name === "content-length" ? String(10 * 1024 * 1024) : null) } }) })]);
-    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001" }));
-    const oversized = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
-    expect(oversized.statusCode).toBe(503);
+    // The host id form of the account is accepted too.
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson({ ...SUMMARY(), meeting_host_email: undefined, meeting_host_id: HOST }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+    expect((await importNote()).statusCode).toBe(200);
 
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, summary_content: "   " }) })]);
-    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001" }));
-    const empty = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson(SUMMARY({ summary_content: "   " })) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+    const empty = await importNote();
     expect(JSON.parse(empty.body ?? "{}").data).toMatchObject({ summaryReady: false });
-    expect(putItems().filter((item) => item.note)).toHaveLength(1);
+  });
+
+  it("a visit bound without an instance uuid obtains it from the provider's instance list: one held instance verifies, none is not ready, several are ambiguous", async () => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson(SUMMARY()) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: null }));
+    expect(JSON.parse((await importNote()).body ?? "{}").data).toMatchObject({ summaryReady: true });
+    expect(calls.some((call) => call.url.includes("/past_meetings/900000001/instances"))).toBe(true);
+
+    const none = fetchRouter([...identityRoutes(), ...zoomRoutes({ instances: () => streamedJson({ meetings: [] }), summary: () => streamedJson(SUMMARY()) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: null }));
+    expect(JSON.parse((await importNote()).body ?? "{}").data).toMatchObject({ summaryReady: false });
+    expect(none.some((call) => call.url.includes("/meeting_summary"))).toBe(false);
+
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ instances: () => streamedJson({ meetings: [{ uuid: "uuid-900000001" }, { uuid: "uuid-900000001-second-run" }] }), summary: () => streamedJson(SUMMARY()) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: null }));
+    expect((await importNote()).statusCode).toBe(503);
+  });
+
+  it("the summary body is bounded on the wire: cancelled mid-stream on overrun, refused on dishonest, malformed or missing lengths and malformed UTF-8", async () => {
+    const chunk = (size: number) => new Uint8Array(size).fill(0x20);
+    const ended = () => queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+
+    // No Content-Length, chunked overrun: refused before the body is consumed, and the stream is cancelled.
+    const overrun = streamed(200, Array.from({ length: 64 }, () => chunk(64 * 1024)));
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => overrun })]);
+    ended();
+    expect((await importNote()).statusCode).toBe(503);
+    expect(overrun.probe.cancelled).toBe(true);
+    expect(overrun.probe.pulled).toBeLessThanOrEqual(MAX_SUMMARY_BYTES / (64 * 1024) + 2); // the bound, plus the stream's own read-ahead
+
+    // A declared length over the bound is refused without reading a byte.
+    const declaredTooBig = streamedJson(SUMMARY(), { "content-length": String(MAX_SUMMARY_BYTES + 1) });
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => declaredTooBig })]);
+    ended();
+    expect((await importNote()).statusCode).toBe(503);
+    expect(declaredTooBig.bodyUsed).toBe(false); // the stream was never taken (its read-ahead pull is the stream's, not ours)
+
+    // A dishonest declared length (smaller than the bytes sent) and a truncated body (fewer bytes than declared) are both refused.
+    const honest = JSON.stringify(SUMMARY());
+    for (const declared of [String(Buffer.byteLength(honest) - 10), String(Buffer.byteLength(honest) + 10), "12abc", "-5", "1e3"]) {
+      fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamed(200, [honest], { "content-length": declared }) })]);
+      ended();
+      expect((await importNote()).statusCode, `content-length ${declared}`).toBe(503);
+    }
+
+    // Malformed UTF-8 is refused; a multi-byte character split across chunks is decoded whole.
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamed(200, [new Uint8Array([0x7b, 0xff, 0xfe, 0x7d])]) })]);
+    ended();
+    expect((await importNote()).statusCode).toBe(503);
+    const bytes = new TextEncoder().encode(JSON.stringify(SUMMARY({ summary_content: "Patient says: café ✓" })));
+    const cut = bytes.indexOf(0xe2) + 1; // inside the 3-byte check mark
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamed(200, [bytes.slice(0, cut), bytes.slice(cut)]) })]);
+    ended();
+    const split = await importNote();
+    expect(JSON.parse(split.body ?? "{}").data.visit.note.aiSections.summary).toBe("Patient says: café ✓");
+
+    // A response with no readable stream is not trusted through text()/json().
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, SUMMARY()) })]);
+    ended();
+    expect((await importNote()).statusCode).toBe(503);
+  });
+
+  it("readBoundedJson rejects a stream that exceeds the bound even when the first chunk is small", async () => {
+    const response = streamed(200, ["{\"a\":\"", "x".repeat(100), "\"}"]);
+    await expect(readBoundedJson(response, 50)).rejects.toMatchObject({ category: "provider_unavailable" });
+    expect(response.probe.cancelled).toBe(true);
+    await expect(readBoundedJson(streamed(200, ["{\"a\":1}"]), 50)).resolves.toEqual({ a: 1 });
   });
 
   it("re-import keeps practitioner notes and action-item decisions and retains the prior revision", async () => {
     const previous = { status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: "uuid-1", aiSections: { summary: "old", patient_reported: "", results_reviewed: "", plan_discussed: "" }, aiOriginal: {}, practitionerNotes: "Keep me", actionItems: [{ id: "a1", text: "Order ferritin", status: "approved" }], revision: 1, importedAt: "2026-10-01T00:00:00.000Z", signedAt: null, signedBy: null };
-    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, { meeting_id: 900000001, summary_overview: "new overview", next_steps: ["Order ferritin", "Sleep log"] }) })]);
-    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", note: previous, version: 4 }));
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => streamedJson(SUMMARY({ summary_content: undefined, summary_overview: "new overview", next_steps: ["Order ferritin", "Sleep log"] })) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", note: previous, version: 4 }));
     const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
     const note = JSON.parse(result.body ?? "{}").data.visit.note as Record<string, unknown>;
     expect(note).toMatchObject({ revision: 2, practitionerNotes: "Keep me" });
@@ -713,22 +895,149 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- lists and cancellation */
 
-  it("lists visits across every page, says whether the list is complete, and never returns note bodies in a list", async () => {
-    const page = (index: number, last?: Record<string, unknown>) => ({ Items: [visitRecord({ appointmentId: `7777777${index}-7777-4777-8777-777777777777`, sk: `VISIT#${index}`, note: { status: "signed", source: "zoom_ai_companion", zoomSummaryId: "u", revision: 2, importedAt: "", signedAt: "", signedBy: "" } })], ...(last ? { LastEvaluatedKey: last } : {}) });
+  const listEvent = (query: Record<string, string | undefined> | null = { from: "2026-10-09T00:00:00.000Z", to: "2026-10-10T00:00:00.000Z" }) =>
+    ({ ...(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims) as object), queryStringParameters: query ?? undefined }) as never;
+  const apptId = (index: number) => `7777777${index}-7777-4777-8777-777777777777`;
+
+  it("lists one window of visits across every page, says whether the list is complete, and never returns note bodies in a list", async () => {
+    const page = (index: number, last?: Record<string, unknown>) => ({ Items: [visitRecord({ appointmentId: apptId(index), sk: `VISIT#${index}`, note: { status: "signed", source: "zoom_ai_companion", zoomSummaryId: "u", revision: 2, importedAt: "", signedAt: "", signedBy: "" } })], ...(last ? { LastEvaluatedKey: last } : {}) });
+    const calls = fetchRouter(identityRoutes({ calendar: Array.from({ length: 20 }, (_, index) => calendarRow({ id: apptId(index) })) }));
     queueQuery(page(1, { pk: "x", sk: "1" }), page(2));
-    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
-    const payload = JSON.parse(result.body ?? "{}") as { data: { visits: Array<Record<string, unknown>>; complete: boolean } };
-    expect(payload.data.complete).toBe(true);
+    const result = await createTelehealthHandler(config)(listEvent());
+    const payload = JSON.parse(result.body ?? "{}") as { data: { visits: Array<Record<string, unknown>>; complete: boolean; from: string; to: string } };
+    expect(result.statusCode).toBe(200);
+    expect(payload.data).toMatchObject({ complete: true, from: "2026-10-09T00:00:00.000Z", to: "2026-10-10T00:00:00.000Z" });
     expect(payload.data.visits).toHaveLength(2);
     expect(payload.data.visits[0].note).toEqual({ status: "signed", source: "zoom_ai_companion", zoomSummaryId: "u", revision: 2, importedAt: "", signedAt: "", signedBy: "" });
     expect(payload.data.visits[0]).not.toHaveProperty("passcode");
+    expect(calls[0].body).toMatchObject({ functionName: "get_desktop_calendar", args: { _from: "2026-10-09T00:00:00.000Z", _to: "2026-10-10T00:00:00.000Z" } });
     const query = send.mock.calls[0][0] as { input: { ProjectionExpression: string } };
     expect(query.input.ProjectionExpression).not.toContain("aiOriginal");
     expect((send.mock.calls[1][0] as { input: { ExclusiveStartKey?: unknown } }).input.ExclusiveStartKey).toEqual({ pk: "x", sk: "1" });
 
     for (let index = 0; index < 20; index += 1) queueQuery(page(index, { pk: "x", sk: String(index) }));
-    const bounded = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
+    const bounded = await createTelehealthHandler(config)(listEvent());
     expect(JSON.parse(bounded.body ?? "{}").data.complete).toBe(false);
+  });
+
+  /* ---------------------------------------------------- every read is authorized now */
+
+  it("list reads are authorized through the caller's calendar for the window: no window, a window too wide, revoked membership, and records the calendar does not return", async () => {
+    const handler = createTelehealthHandler(config);
+    for (const query of [null, { from: "2026-10-09T00:00:00.000Z" }, { from: "2026-10-09T00:00:00.000Z", to: "2026-10-09T00:00:00.000Z" }, { from: "2026-10-09T00:00:00.000Z", to: "2026-11-10T00:00:00.000Z" }]) {
+      const calls = fetchRouter(identityRoutes());
+      expect((await handler(listEvent(query))).statusCode, JSON.stringify(query)).toBe(400);
+      expect(calls).toHaveLength(0);
+      expect(send).not.toHaveBeenCalled();
+    }
+
+    fetchRouter(identityRoutes({ calendar: () => jsonResponse(403, { error: "identity_refused" }) }));
+    const revoked = await handler(listEvent());
+    expect(revoked.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled(); // refused before the table is read
+
+    // Same organization, but the calendar returns only one of three desktop-booked visits (the
+    // others are records this caller may not see, or belong to another clinic's calendar); a
+    // patient-app visit is returned only inside the window.
+    fetchRouter(identityRoutes({ calendar: [calendarRow({ id: apptId(1) })] }));
+    queueQuery({ Items: [
+      visitRecord({ appointmentId: apptId(1), sk: "VISIT#1" }), visitRecord({ appointmentId: apptId(2), sk: "VISIT#2" }), visitRecord({ appointmentId: apptId(3), sk: "VISIT#3" }),
+      visitRecord({ appointmentId: apptId(4), sk: "VISIT#4", requestId: REQUEST, consumerPersonId: claims["custom:person_id"], scheduledStart: "2026-10-09T17:00:00.000Z" }),
+      visitRecord({ appointmentId: apptId(5), sk: "VISIT#5", requestId: REQUEST, consumerPersonId: claims["custom:person_id"], scheduledStart: "2026-10-12T17:00:00.000Z" }),
+    ] });
+    const filtered = await handler(listEvent());
+    expect(JSON.parse(filtered.body ?? "{}").data.visits.map((visit: { appointmentId: string }) => visit.appointmentId)).toEqual([apptId(1), apptId(4)]);
+  });
+
+  it("a single note read needs current calendar access to that appointment, for the same patient and practitioner — a direct AWS read with none gets nothing", async () => {
+    const read = () => createTelehealthHandler(config)({ ...(event("GET /clinical-core/workforce/appointments/visits/notes", undefined, workforceClaims) as object), queryStringParameters: { appointmentId: APPOINTMENT } } as never);
+    const stored = visitRecord({ status: "ended", quickNotes: "Fictional quick note", note: { status: "not_reviewed", source: "zoom_ai_companion", zoomSummaryId: null, aiSections: { summary: "fictional", patient_reported: "", results_reviewed: "", plan_discussed: "" }, aiOriginal: {}, practitionerNotes: "", actionItems: [], revision: 1, importedAt: "", signedAt: null, signedBy: null } });
+
+    // Revoked membership.
+    fetchRouter(identityRoutes({ calendar: () => jsonResponse(403, { error: "identity_refused" }) }));
+    queueGet(stored);
+    const revoked = await read();
+    expect(revoked.statusCode).toBe(403);
+    expect(revoked.body).not.toContain("Fictional quick note");
+
+    // Same organization, the calendar does not return this appointment (disallowed patient, wrong clinic).
+    fetchRouter(identityRoutes({ calendar: [] }));
+    queueGet(stored);
+    const hidden = await read();
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.body).not.toContain("fictional");
+
+    // The appointment now belongs to another practitioner, or names another patient.
+    for (const row of [calendarRow({ practitioner_user_id: "22222222-bbbb-4bbb-8bbb-222222222222" }), calendarRow({ patient_id: "99999999-9999-4999-8999-999999999999" })]) {
+      fetchRouter(identityRoutes({ calendar: [row] }));
+      queueGet(stored);
+      const reassigned = await read();
+      expect(reassigned.statusCode).toBe(409);
+      expect(JSON.parse(reassigned.body ?? "{}")).toEqual({ error: "appointment_reassigned" });
+      expect(reassigned.body).not.toContain("fictional");
+    }
+
+    // A historical record is read through its own (even cancelled) appointment, looked up around the visit's stored time.
+    const calls = fetchRouter(identityRoutes({ calendar: [calendarRow({ status: "cancelled" })] }));
+    queueGet(stored);
+    const historical = await read();
+    expect(historical.statusCode).toBe(200);
+    expect(JSON.parse(historical.body ?? "{}").data.quickNotes).toBe("Fictional quick note");
+    expect(calls[0].body).toMatchObject({ args: { _from: "2026-09-25T17:00:00.000Z", _to: "2026-10-23T17:00:00.000Z" } });
+  });
+
+  it("consent and the visit follow the immutable subject: an appointment reassigned to another patient or practitioner is refused for consent, start and reads before any credential or provider call", async () => {
+    const otherPatient = calendarRow({ patient_id: "99999999-9999-4999-8999-999999999999" });
+    const calls = fetchRouter([...identityRoutes({ calendar: [otherPatient] }), ...zoomRoutes()]);
+    queueGet(visitRecord()); // patient A's receipt on record
+    const started = await start();
+    expect(started.statusCode).toBe(409);
+    expect(JSON.parse(started.body ?? "{}")).toEqual({ error: "appointment_reassigned" });
+    expect(calls.map((call) => call.url)).toEqual([expect.stringContaining("/data-compatibility")]);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(writes).toHaveLength(0);
+
+    queueGet(visitRecord());
+    const consented = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, signerName: "Patient B", agreed: true,
+    }, workforceClaims));
+    expect(consented.statusCode).toBe(409);
+    expect(JSON.parse(consented.body ?? "{}")).toEqual({ error: "appointment_reassigned" });
+    expect(writes).toHaveLength(0);
+
+    // A changed practitioner is refused the same way; a reschedule of the same subject reconciles the times.
+    fetchRouter([...identityRoutes({ calendar: [calendarRow({ practitioner_user_id: "22222222-bbbb-4bbb-8bbb-222222222222" })] }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    expect(JSON.parse((await start()).body ?? "{}")).toEqual({ error: "appointment_reassigned" });
+    fetchRouter([...identityRoutes({ calendar: [calendarRow({ starts_at: "2026-10-09T18:00:00.000Z", ends_at: "2026-10-09T18:30:00.000Z" })] }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const moved = await start();
+    expect(moved.statusCode).toBe(200);
+    expect(JSON.parse(moved.body ?? "{}").data.visit).toMatchObject({ patientRecordId: PATIENT, practitionerUserId: PRACTITIONER, scheduledStart: "2026-10-09T18:00:00.000Z" });
+  });
+
+  it("authority is rechecked after provider work: a reassignment or withdrawal while the meeting was being created stops the session before any credential", async () => {
+    // The calendar names patient A when the start is admitted and patient B once the meeting exists.
+    let reads = 0;
+    const calls = fetchRouter([...identityRoutes({ calendar: () => jsonResponse(200, { data: { appointments: [reads++ === 0 ? calendarRow() : calendarRow({ patient_id: "99999999-9999-4999-8999-999999999999" })], practitioners: [], patients: [] } }) }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const reassigned = await start();
+    expect(reassigned.statusCode).toBe(409);
+    expect(JSON.parse(reassigned.body ?? "{}")).toEqual({ error: "appointment_reassigned" });
+    expect(calls.some((call) => call.url.includes("type=zak"))).toBe(false);
+    expect(putItems().at(-1)).toMatchObject({ providerMeetingId: "900000001", status: "scheduled" }); // bound, never started
+
+    // Consent withdrawn while the create was in flight: the bind loses to the withdrawal's write,
+    // the reread shows no active receipt, the created meeting is deleted and no session is issued.
+    writes.length = 0;
+    const withdrawnCalls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    failWrite = (input) => ((input.Item as { providerMeetingId?: string })?.providerMeetingId === "900000001" ? conditional() : null);
+    queueGet(visitRecord(), visitRecord({ consents: [receipt({ status: "withdrawn" })], version: 5 }));
+    const withdrawn = await start();
+    expect(withdrawn.statusCode).toBe(409);
+    expect(JSON.parse(withdrawn.body ?? "{}")).toEqual({ error: "consent_withdrawn" });
+    expect(deletes(withdrawnCalls).map((call) => call.url)).toEqual([expect.stringContaining("/meetings/900000001")]);
+    expect(withdrawnCalls.some((call) => call.url.includes("type=zak"))).toBe(false);
   });
 
   it("closes a visit when its booking is cancelled, deleting a meeting the visit itself created", async () => {
