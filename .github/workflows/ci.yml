@@ -46,6 +46,8 @@ jobs:
           npm run test:zoom-host-authority-candidate
           npm run build:zoom-host-authority-candidate
           npm run test:zoom-host-authority
+          npm run test:telehealth-schema-source
+          npm run build:telehealth-schema-source
       - name: Separate patient consent Lambda and immutable blocked template (no AWS or approval)
         run: |
           npm run test:telehealth-consent-runtime
