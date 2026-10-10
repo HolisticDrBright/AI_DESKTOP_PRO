@@ -60,6 +60,16 @@ policies under `clinical_core_api`. Browser API calls use the committed local
 contract fixture. Dependencies were reused, not clean-installed for these
 local runs. These checks are not AWS-hosted or physical-device acceptance.
 
+The complete unit audit at `a14894b` passed 5,224 tests in 397 files, with 11
+existing skips. Both exact-source CI runs failed on five historical release
+checks: the new consent routes were incorrectly included in a fixture for the
+actually deployed 51-route stack. Every browser job passed, including the real
+pinned Zoom SDK bootstrap; deployed-backend steps remained skipped. The repair
+explicitly excludes both new routes from that historical code-only deployment,
+preserves its exact count and verifies that an added route still refuses as
+drift. All 89 release tests then passed locally. The failed CI runs remain
+failures; the successor needs its own CI result.
+
 ## Remaining commercial and PHI work
 
 The signed telehealth record is still not a chart note. Chart/timeline and

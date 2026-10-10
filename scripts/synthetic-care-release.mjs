@@ -23,7 +23,8 @@ export const CARE_RELEASE = Object.freeze({
   reference: '83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62',
   // Existing staging intentionally lacks these routes. A code-only update cannot add them.
   absentRoutes: ['ConsumerSpecimenContextWriteRoute', 'ConsumerSpecimenContextReadRoute',
-    'WorkforceSpecimenContextReadRoute', 'PublicConsultIntakeRoute'],
+    'WorkforceSpecimenContextReadRoute', 'PublicConsultIntakeRoute',
+    'WorkforceConsentArtifactRoute', 'WorkforceCurrentConsentRoute'],
 });
 export const refuseCareRelease = reason => {throw new Error(`synthetic_care_release_refused:${reason}`);};
 export const sha256 = v => createHash('sha256').update(v).digest('hex');

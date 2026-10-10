@@ -97,7 +97,7 @@ export function verifyCareObservation(o, source, manifest) {
     || db.alreadyApplied !== false || db.acceptance !== false || db.phiActivation !== false || db.apiDeploymentPerformed !== false
     || !/^[a-f0-9]{64}$/.test(db.dataSha256) || !Number.isSafeInteger(db.rowCount) || db.rowCount < 0) fail('database');
   const candidate = structuredClone(o.template);
-  candidate.Outputs.RoutesEnabled.Value = '51'; // fix reporting, do not add the four undeployed routes
+  candidate.Outputs.RoutesEnabled.Value = '51'; // fix reporting; never add a route absent from this historical target
   return {template: candidate, parameters: stack.Parameters.map(p => p.ParameterKey === 'LambdaCodeKey'
     ? {ParameterKey: p.ParameterKey, ParameterValue: manifest.key} : {ParameterKey: p.ParameterKey, UsePreviousValue: true}),
     observed: {account: P.account, stackId: stack.StackId, previousCodeSha256: fn.CodeSha256, revisionId: fn.RevisionId,

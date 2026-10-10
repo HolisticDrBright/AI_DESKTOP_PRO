@@ -83,6 +83,17 @@ test('prepare preserves every live resource, all 51 JWT routes, and every non-co
   assert.equal(result.observed.routeCount, 51);
   for (const name of P.absentRoutes) assert.equal(result.template.Resources[name], undefined);
 });
+
+test('new telehealth consent routes remain absent from the historical 51-route code-only target', () => {
+  assert.equal(Object.values(source.Resources).filter(r => r.Type === 'AWS::ApiGatewayV2::Route').length, 57);
+  for (const name of ['WorkforceConsentArtifactRoute', 'WorkforceCurrentConsentRoute']) {
+    assert.ok(P.absentRoutes.includes(name));
+    const o = observation();
+    // A route added to the old stack is real drift, not an accepted count update.
+    o.template.Resources[name] = clone(source.Resources[name]);
+    assert.throws(() => verifyCareObservation(o, source, candidate().manifest), /synthetic_care_release_refused/);
+  }
+});
 test('real target, function, IAM/template, JWT, history or source mismatch cannot prepare', () => {
   const c = candidate();
   const changes = [o => o.caller.Account = '173535830222', o => o.caller.Arn = `arn:aws:iam::${P.account}:root`,
