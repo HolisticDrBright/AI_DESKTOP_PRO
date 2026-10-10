@@ -18,7 +18,7 @@ export function fullscriptQualificationTemplate(build){
    PhiAllowed:{Type:'String',Default:'false',AllowedValues:['false']},Activation:{Type:'String',Default:'blocked',AllowedValues:['blocked']},
    SourceCommit:{Type:'String',Default:source,AllowedValues:[source]},CodeSha256:{Type:'String',Default:build.codeSha256,AllowedValues:[build.codeSha256]},
    FunctionName:str('^alp-fullscript-qualification-[a-z0-9-]{1,30}$'),ApiId:str('^[a-z0-9]{10}$'),
-   ConsumerAuthorizerId:str('^[a-z0-9]+$'),WorkforceAuthorizerId:str('^[a-z0-9]+$'),
+   ConsumerAudience:str('^[A-Za-z0-9]{20,128}$'),WorkforceAudience:str('^[A-Za-z0-9]{20,128}$'),
    ConsumerPoolId:str('^us-east-2_[A-Za-z0-9]+$'),WorkforcePoolId:str('^us-east-2_[A-Za-z0-9]+$'),
    OrganizationId:str('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'),
    CodeKey:{Type:'String',Default:`fullscript/qualification-api/${source}/function.zip`,AllowedValues:[`fullscript/qualification-api/${source}/function.zip`]},CodeObjectVersion:str('^[A-Za-z0-9_.+/=-]{1,1024}$'),
@@ -34,7 +34,7 @@ export function fullscriptQualificationTemplate(build){
   Conditions:{
    Enabled:{'Fn::And':[{'Fn::Equals':[ref('QualificationExecution'),'true']},{'Fn::Equals':[ref('AWS::AccountId'),'588966314750']},
     {'Fn::Equals':[ref('AWS::Region'),'us-east-2']},{'Fn::Not':[{'Fn::Equals':[ref('ProviderSecretArn'),ref('DatabaseSecretArn')]}]},
-    {'Fn::Not':[{'Fn::Equals':[ref('ConsumerAuthorizerId'),ref('WorkforceAuthorizerId')]}]},
+    {'Fn::Not':[{'Fn::Equals':[ref('ConsumerAudience'),ref('WorkforceAudience')]}]},
     {'Fn::Not':[{'Fn::Equals':[ref('ConsumerPoolId'),ref('WorkforcePoolId')]}]},
     {'Fn::Not':[{'Fn::Equals':[ref('TargetObjectVersion'),'null']}]},{'Fn::Not':[{'Fn::Equals':[ref('CodeObjectVersion'),'null']}]}]},
    ProviderKey:{'Fn::Not':[{'Fn::Equals':[ref('ProviderSecretKmsKeyArn'),'']}]},
@@ -78,11 +78,14 @@ export function fullscriptQualificationTemplate(build){
   IntegrationUri:ref('Version'),PayloadFormatVersion:'2.0',TimeoutInMillis:30000}};
  for(const role of ['Consumer','Workforce']){
   const path='/clinical-core/'+role.toLowerCase()+'/fullscript/draft';
+  t.Resources[role+'Authorizer']={Type:'AWS::ApiGatewayV2::Authorizer',Condition:'Enabled',Properties:{ApiId:ref('ApiId'),
+   Name:sub('${FunctionName}-'+role.toLowerCase()),AuthorizerType:'JWT',IdentitySource:['$request.header.Authorization'],
+   JwtConfiguration:{Issuer:sub('https://cognito-idp.us-east-2.amazonaws.com/${'+role+'PoolId}'),Audience:[ref(role+'Audience')]}}};
   t.Resources[role+'Permission']={Type:'AWS::Lambda::Permission',Condition:'Enabled',Properties:{FunctionName:ref('Version'),
    Action:'lambda:InvokeFunction',Principal:'apigateway.amazonaws.com',SourceAccount:'588966314750',
    SourceArn:sub('arn:aws:execute-api:us-east-2:588966314750:${ApiId}/*/POST'+path)}};
   t.Resources[role+'Route']={Type:'AWS::ApiGatewayV2::Route',Condition:'Enabled',DependsOn:role+'Permission',Properties:{ApiId:ref('ApiId'),
-   RouteKey:'POST '+path,AuthorizationType:'JWT',AuthorizerId:ref(role+'AuthorizerId'),Target:sub('integrations/${Integration}')}};
+   RouteKey:'POST '+path,AuthorizationType:'JWT',AuthorizerId:ref(role+'Authorizer'),Target:sub('integrations/${Integration}')}};
  }
  for(const metric of ['Errors','Throttles'])t.Resources[metric+'Alarm']={Type:'AWS::CloudWatch::Alarm',Condition:'Enabled',Properties:{
   AlarmDescription:'Fictional Fullscript qualification '+metric+'; no clinical payload',Namespace:'AWS/Lambda',MetricName:metric,

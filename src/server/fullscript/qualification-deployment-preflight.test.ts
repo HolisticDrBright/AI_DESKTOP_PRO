@@ -29,7 +29,7 @@ function setup(migrations:unknown[]){
  const template=fullscriptQualificationTemplate(build),definitions=template.Parameters as Record<string,{Default?:string}>;
  const parameters:Record<string,string>={...Object.fromEntries(Object.entries(definitions).map(([k,v])=>[k,v.Default??''])),
   QualificationExecution:'true',FunctionName:target.target.functionArn.split(':').at(-1)!,ApiId:target.target.apiId,
-  ConsumerAuthorizerId:'fictionalconsumer',WorkforceAuthorizerId:'fictionalworkforce',ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
+  ConsumerAudience:target.target.consumerAudience,WorkforceAudience:target.target.workforceAudience,ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
   OrganizationId:target.target.organizationId,CodeObjectVersion:'FICTIONAL-code-version',TargetKey:'fullscript/qualification-target/'+'1'.repeat(32)+'/target.json',
   TargetObjectVersion:'FICTIONAL-target-version',TargetReviewSha256:sha(bytes(target)),DatabaseClusterArn:target.target.clusterArn,DatabaseSecretArn:target.target.secretArn,
   ProviderSecretArn:target.credentials.providerSecretArn,ProviderSecretVersion:target.credentials.providerSecretVersion,TokenTableName:target.credentials.tokenTable,
@@ -46,7 +46,7 @@ it('binds all explicit parameters but never reports deployment approval or hoste
   ownerDeploymentReviewRequired:true,approvedForDeployment:false,deployed:false,hostedQualified:false,phiAllowed:false});
  expect(JSON.stringify(report)).not.toContain('fictional-provider');expect(report.parameterCount).toBe(27);
 });
-it.each(['FunctionName','ApiId','OrganizationId','ConsumerPoolId','WorkforcePoolId','DatabaseName','DatabaseClusterArn','DatabaseSecretArn',
+it.each(['FunctionName','ApiId','OrganizationId','ConsumerPoolId','WorkforcePoolId','ConsumerAudience','WorkforceAudience','DatabaseName','DatabaseClusterArn','DatabaseSecretArn',
  'ProviderSecretArn','ProviderSecretVersion','TokenTableName','RedirectUri','TargetReviewSha256','SourceCommit','CodeSha256','CodeKey',
  'QualificationExecution','PhiAllowed','Activation','CodeObjectVersion','TargetObjectVersion','TargetKey','AlarmTopicArn'])('refuses changed %s',key=>{
  const rows=JSON.parse(fixture.parameterBytes.toString()) as {ParameterKey:string;ParameterValue:string}[];
@@ -57,10 +57,15 @@ it.each(['missing','unknown','duplicate','previous','same-authorizer','encoding'
  const rows=JSON.parse(fixture.parameterBytes.toString()) as Record<string,string>[];
  if(kind==='missing')rows.pop();if(kind==='unknown')rows.push({ParameterKey:'Extra',ParameterValue:'x'});
  if(kind==='duplicate')rows.push(rows[0]);if(kind==='previous')rows[0]={ParameterKey:rows[0].ParameterKey,UsePreviousValue:'true'};
- if(kind==='same-authorizer')rows.find(r=>r.ParameterKey==='WorkforceAuthorizerId')!.ParameterValue='fictionalconsumer';
+ if(kind==='same-authorizer')rows.find(r=>r.ParameterKey==='WorkforceAudience')!.ParameterValue='c'.repeat(26);
  let b=bytes(rows);if(kind==='encoding')b=Buffer.from(b.toString().replace(/\n/g,'\r\n'));
  if(kind==='duplicate-key')b=Buffer.from(b.toString().replace('"ParameterKey":','"ParameterKey":"hidden", "ParameterKey":'));
  expect(()=>preflightFullscriptDeployment({...fixture,parameterBytes:b})).toThrow('fullscript_deployment_preflight_refused');
+});
+it.each(['ConsumerAudience','WorkforceAudience'])('refuses syntactically valid but unreviewed %s',key=>{
+ const rows=JSON.parse(fixture.parameterBytes.toString()) as {ParameterKey:string;ParameterValue:string}[];
+ rows.find(row=>row.ParameterKey===key)!.ParameterValue='a'.repeat(26);
+ expect(()=>preflightFullscriptDeployment({...fixture,parameterBytes:bytes(rows)})).toThrow('fullscript_deployment_preflight_refused');
 });
 it.each(['zip','template','source','dirty','future-review','missing-review','missing-gate','wrong-ledger'])('refuses changed authority %s',kind=>{
  const changed={...fixture};

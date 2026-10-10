@@ -118,7 +118,8 @@ settings to ensure they cannot redirect a request. Failures return opaque codes.
 After a clean committed API build, run
 `npm run build:fullscript-qualification-template`. A dirty or mismatched ZIP
 cannot produce the template. It uses the synthetic account, Ohio, the isolated
-qualification database and two existing, separate JWT authorizers. Default
+qualification database and two new, separate JWT authorizers whose issuer and
+audience match the reviewed target. Default
 qualification execution is off; only the retained log group is unconditional.
 PHI and production activation have no enabled parameter value.
 
@@ -164,7 +165,7 @@ keys, `UsePreviousValue`, unknown or missing parameters are refused.
 The inspector verifies actual ZIP bytes, the generated template, source commit,
 target hash, all 111 migration identities and the exact function, API, pools,
 organization, database and credential bindings. It requires immutable object
-versions, separate authorizers and sandbox credentials. The fixed report contains
+versions, separate pool/client audiences and sandbox credentials. The fixed report contains
 only digests, source and status, never credentials or target contents.
 `locally_consistent` is not deployment approval: authorizer configuration,
 S3 object versions, KMS keys, token-table schema, SQL privileges and provider
@@ -187,8 +188,17 @@ fictional; no actual review or AWS deployment is established.
 The first actual built-command run passed six checks and failed the
 outside-repository refusal because Git's child-process stderr escaped the
 opaque error boundary. Git output is now explicitly captured. The seven-case
-command suite must pass on the rebuilt clean source; its initial failure is
-retained, not recast as success.
+command suite passed on clean source 61f2e93; its initial failure is retained,
+not recast as success. That report predates the authorizer-owned candidate below.
+
+A read-only inspection of API 6zt8e9qz04 found four existing JWT authorizers,
+three pointing to an older shared pool and one to an older separate pool. It
+found no Fullscript draft routes. The code bucket is versioned, and the synthetic
+account's name-filtered secret listing has no Fullscript entry. No secret value
+was read. The candidate now creates its own two issuer/audience-pinned
+authorizers instead of reusing those IDs. The offline preflight compares both
+client audiences to the reviewed target. Preparing an actual sandbox secret,
+registration and token store remains independently reviewed work.
 
 The credential and restricted-template increment passed the broad source group:
 590 tests in 20 files, no skips, in 167.87 seconds starting at 21:52:12 PDT on

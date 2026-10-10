@@ -50,12 +50,13 @@ export function preflightFullscriptDeployment(input:{sourceCommit:string;clean:b
   const expected={QualificationExecution:'true',PhiAllowed:'false',Activation:'blocked',SourceCommit:source,CodeSha256:build.codeSha256,
    FunctionName:target.functionArn.split(':').at(-1)!,ApiId:target.apiId,OrganizationId:target.organizationId,
    ConsumerPoolId:target.consumerIssuer.split('/').at(-1)!,WorkforcePoolId:target.workforceIssuer.split('/').at(-1)!,
+   ConsumerAudience:target.consumerAudience,WorkforceAudience:target.workforceAudience,
    DatabaseName:target.databaseName,DatabaseClusterArn:target.clusterArn,DatabaseSecretArn:target.secretArn,
    TargetReviewSha256:digest(input.targetBytes),ProviderSecretArn:credentials.providerSecretArn,
    ProviderSecretVersion:credentials.providerSecretVersion,TokenTableName:credentials.tokenTable,RedirectUri:credentials.redirectUri};
   if(Object.entries(expected).some(([key,value])=>parameters[key]!==value)
    ||parameters.CodeObjectVersion==='null'||parameters.TargetObjectVersion==='null'
-   ||parameters.ConsumerAuthorizerId===parameters.WorkforceAuthorizerId
+   ||parameters.ConsumerAudience===parameters.WorkforceAudience
    ||credentials.providerSecretArn===target.secretArn)throw Error('refused');
   return Object.freeze({contract:'fullscript-deployment-preflight/1',verdict:'locally_consistent',sourceCommit:source,
    zipSha256:build.zipSha256,templateSha256:digest(input.templateBytes),targetSha256:digest(input.targetBytes),
