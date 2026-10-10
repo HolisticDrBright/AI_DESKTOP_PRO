@@ -57,6 +57,25 @@ test('actual clean built CLI reports consistency only without revealing target i
  for(const key of ['awsObserved','approvedForDeployment','deployed','hostedQualified','phiAllowed'])assert.equal(report[key],false);
  assert.equal(report.ownerDeploymentReviewRequired,true);assert.ok(!result.stdout.includes('fictional-provider'));assert.equal(result.stderr,'');
 });
+test('actual clean CLI admits the exact112 release only with its distinct template and reviewed byte binding',()=>{
+ const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
+  {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
+ execFileSync(process.execPath,['scripts/build-fullscript-qualification-template.mjs','--telehealth-consent-copy'],
+  {encoding:'utf8',timeout:15000,windowsHide:true});
+ const v=structuredClone(target);v.contract='fullscript-qualification-target-release/3';v.target.schemaRelease='telehealth-consent-copy/112';
+ v.target.migrations=artifact.manifest.migrations.map(m=>({version:m.version,name:m.file.slice(15,-4),sha256:sha(Buffer.from(artifact.files[m.file]))}));
+ const content=Buffer.from(canonical(v)+'\n'),rows=structuredClone(parameters);
+ rows.find(r=>r.ParameterKey==='TargetReviewSha256').ParameterValue=sha(content);
+ const targetPath=join(directory,'target-112.json'),parameterPath=join(directory,'parameters-112.json');
+ writeFileSync(targetPath,content);writeFileSync(parameterPath,canonical(rows)+'\n');
+ const values=[...args];values[3]=resolve('dist/aws-clinical-core/fullscript-api/template-consent-112.json');values[4]=targetPath;values[5]=parameterPath;
+ const result=run(values);assert.equal(result.status,0,result.stderr);const report=JSON.parse(result.stdout);
+ assert.equal(report.approvedForDeployment,false);assert.equal(report.awsObserved,false);assert.equal(report.phiAllowed,false);
+ refused(run(values.map((v,i)=>i===3?args[3]:v)));
+ const changed=structuredClone(v);changed.target.migrations.pop();writeFileSync(targetPath,canonical(changed)+'\n');
+ rows.find(r=>r.ParameterKey==='TargetReviewSha256').ParameterValue=sha(Buffer.from(canonical(changed)+'\n'));
+ writeFileSync(parameterPath,canonical(rows)+'\n');refused(run(values));
+});
 for(const [name,change] of [['wrong-command',a=>['--deploy',...a.slice(1)]],['extra-argument',a=>[...a,'--approve']],
  ['relative-path',a=>a.map((v,i)=>i===1?'artifact-manifest.json':v)],['missing-path',a=>a.map((v,i)=>i===4?join(directory,'missing.json'):v)]])
  test('actual CLI refuses '+name,()=>refused(run(change(args))));

@@ -2,7 +2,8 @@ import {beforeEach,describe,it,expect,vi} from 'vitest';
 import {createHash,generateKeyPairSync,sign} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {CognitoJwtVerifier} from 'aws-jwt-verify';
-import {createQualificationFullscriptApi,fullscriptQualificationTargetSchema,FULLSCRIPT_QUALIFICATION_ROUTES,FullscriptQualificationReauth,
+import {createQualificationFullscriptApi,fullscriptQualificationTargetSchema,fullscriptConsentQualificationTargetSchema,
+ fullscriptSupportedQualificationTargetSchema,FULLSCRIPT_QUALIFICATION_ROUTES,FullscriptQualificationReauth,
  type FullscriptQualificationTarget,type FullscriptQualificationEvent,type FullscriptRequestIdentity} from './qualification-api';
 import {createFullscriptQualificationObserver} from './qualification-observer';
 import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from '../clinical-core/database';
@@ -19,6 +20,11 @@ const target:FullscriptQualificationTarget={execution:'qualification',account:'5
  migrations:artifact.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
   sha256:createHash('sha256').update(artifact.files[m.file]).digest('hex')}))};
 const context={invokedFunctionArn:target.functionArn,functionVersion:'1'};
+const consentArtifact=JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
+ {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
+const consentTarget:FullscriptQualificationTarget={...target,schemaRelease:'telehealth-consent-copy/112',
+ migrations:consentArtifact.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
+  sha256:createHash('sha256').update(consentArtifact.files[m.file]).digest('hex')}))};
 function event(workforce=true,request:unknown={action:'read',id}):FullscriptQualificationEvent{return {
  routeKey:workforce?FULLSCRIPT_QUALIFICATION_ROUTES.workforce:FULLSCRIPT_QUALIFICATION_ROUTES.consumer,
  headers:{'content-type':'application/json',authorization:'Bearer FICTIONAL_NOT_A_TOKEN'},body:JSON.stringify(request),
@@ -90,7 +96,7 @@ describe('strict source-only qualification API',()=>{
  });
 });
 
-function transports(workforce=true){
+function transports(workforce=true,c:FullscriptQualificationTarget=target){
  const calls:string[]=[],claims=who(workforce).claims,poolId=(workforce?target.workforceIssuer:target.consumerIssuer).split('/').at(-1)!;
  const replies:Record<string,Record<string,unknown>>={GetCallerIdentityCommand:{Account:target.account,Arn:'arn:aws:sts::588966314750:assumed-role/fictional/session'},
   GetFunctionConfigurationCommand:{FunctionArn:target.functionArn,Version:'1',CodeSha256:target.codeSha256,State:'Active',LastUpdateStatus:'Successful',Environment:{Variables:{
@@ -119,7 +125,7 @@ function transports(workforce=true){
   const content=encode({kid:'FICTIONAL_KEY',alg:'RS256',typ:'JWT'})+'.'+encode({...e.requestContext!.authorizer!.jwt!.claims,...extra});
   return {...e,headers:{...e.headers,authorization:'Bearer '+content+'.'+sign('RSA-SHA256',Buffer.from(content),privateKey).toString('base64url')}};
  };
- const observer=createFullscriptQualificationObserver({target,database,jwt,clients:{sts:{send},lambda:{send},gateway:{send},cognito:{send}}});
+ const observer=createFullscriptQualificationObserver({target:c,database,jwt,clients:{sts:{send},lambda:{send},gateway:{send},cognito:{send}}});
  // The transport wrapper uses a real locally signed token and the real AWS
  // verifier with fictional cached JWKS. No signature-accepting mock is used.
  const observed=(e:FullscriptQualificationEvent,ctx:typeof context,w:FullscriptRequestIdentity)=>observer(signedEvent(e),ctx,w);
@@ -194,5 +200,43 @@ describe('native target and identity observations with fictional AWS transports'
   if(kind==='expired')e=t.signedEvent(event(),{exp:now/1000-1});
   if(kind==='duplicate-header')e.headers!.Authorization=e.headers!.authorization;
   await expect(t.rawObserver(e,context,who())).rejects.toThrow();expect(t.send).not.toHaveBeenCalled();
+ });
+});
+
+describe('separately identified exact112 successor; fictional observations, not deployment',()=>{
+ it('pins actual source-built parent and successor without changing historical111 admission',()=>{
+  expect(fullscriptConsentQualificationTargetSchema.parse(consentTarget)).toEqual(consentTarget);
+  expect(fullscriptSupportedQualificationTargetSchema.parse(target)).toEqual(target);
+  expect(()=>fullscriptQualificationTargetSchema.parse(consentTarget)).toThrow();
+  expect(()=>fullscriptConsentQualificationTargetSchema.parse(target)).toThrow();
+ });
+ it.each(['missing-label','wrong-label','old-ledger','duplicate','extra','reordered','parent-name','parent-digest','last-version','last-name','last-digest'])
+ ('refuses altered successor %s before AWS/provider construction',kind=>{
+  const c=structuredClone(consentTarget) as unknown as {schemaRelease?:string;migrations:typeof target.migrations};
+  if(kind==='missing-label')delete c.schemaRelease;if(kind==='wrong-label')c.schemaRelease='arbitrary/112';
+  if(kind==='old-ledger')c.migrations=target.migrations;
+  if(kind==='duplicate')c.migrations[111]=c.migrations[110];if(kind==='extra')c.migrations.push(c.migrations[111]);
+  if(kind==='reordered')[c.migrations[2],c.migrations[3]]=[c.migrations[3],c.migrations[2]];
+  if(kind==='parent-name')c.migrations[0].name='changed';if(kind==='parent-digest')c.migrations[0].sha256='e'.repeat(64);
+  if(kind==='last-version')c.migrations[111].version='20261010100001';if(kind==='last-name')c.migrations[111].name='changed';
+  if(kind==='last-digest')c.migrations[111].sha256='e'.repeat(64);
+  expect(()=>api(c)).toThrow();expect(observe).not.toHaveBeenCalled();expect(construct).not.toHaveBeenCalled();
+  expect(fullscriptConsentQualificationTargetSchema.safeParse(c).success).toBe(false);
+ });
+ it('accepts only the exact112 live ledger through the existing native observer',async()=>{
+  const t=transports(true,consentTarget);t.setLedger(consentTarget.migrations);
+  const actual=createQualificationFullscriptApi({target:consentTarget,observe:t.observer,operations:construct,now:()=>now});
+  expect((await actual(event(),context)).statusCode).toBe(200);expect(t.query).toHaveBeenCalledTimes(2);
+  expect(construct).toHaveBeenCalledTimes(1);
+ });
+ it.each(['111','extra','altered'])('refuses live %s ledger before constructing delivery',async kind=>{
+  const t=transports(true,consentTarget),rows=structuredClone(consentTarget.migrations);
+  if(kind==='111')rows.pop();if(kind==='extra')rows.push(rows[111]);if(kind==='altered')rows[111].sha256='e'.repeat(64);
+  t.setLedger(rows);const actual=createQualificationFullscriptApi({target:consentTarget,observe:t.observer,operations:construct,now:()=>now});
+  expect((await actual(event(),context)).statusCode).toBe(503);expect(construct).not.toHaveBeenCalled();
+ });
+ it('historical111 target still refuses a112 database, with no fallback',async()=>{
+  const t=transports();t.setLedger(consentTarget.migrations);
+  await expect(t.observer(event(),context,who())).rejects.toThrow();expect(construct).not.toHaveBeenCalled();
  });
 });

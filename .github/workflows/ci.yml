@@ -57,6 +57,7 @@ jobs:
           npm run test:fullscript-api-build
           npm run test:fullscript-qualification-template
           npm run build:fullscript-qualification-template
+          npm run build:fullscript-qualification-template -- --telehealth-consent-copy
           npm run test:fullscript-deployment-preflight
           npm run test:fullscript-deployment-execution
           npm run build:fullscript-deployment-preflight
@@ -138,6 +139,7 @@ jobs:
           npm run build:aws-care-messaging
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint dist/aws-clinical-core/fullscript-api/template.json
+          cfn-lint dist/aws-clinical-core/fullscript-api/template-consent-112.json
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json

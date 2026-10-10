@@ -2,7 +2,9 @@ if(typeof window!=='undefined')throw Error('Fullscript target loader is server-o
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {S3Client,GetObjectCommand} from '@aws-sdk/client-s3';
-import {fullscriptQualificationTargetSchema,type FullscriptQualificationTarget,type FullscriptLambdaContext} from './qualification-api';
+import {fullscriptQualificationTargetSchema,fullscriptConsentQualificationTargetSchema,
+ fullscriptSupportedQualificationTargetSchema,fullscriptTargetIdentityBinding,
+ type FullscriptQualificationTarget,type FullscriptLambdaContext} from './qualification-api';
 import {fullscriptCredentialTargetSchema} from './qualification-provider-environment';
 
 const bucket='alp-qualification-code-588966314750-us-east-2';
@@ -16,12 +18,19 @@ const baseArn=z.string().regex(/^arn:aws:lambda:us-east-2:588966314750:function:
 // This avoids putting a zip's digest inside that zip or guessing a version.
 const targetPayload=z.object({...fullscriptQualificationTargetSchema.shape,functionArn:baseArn})
  .omit({reviewSha256:true}).strict();
-export const fullscriptTargetReleaseSchema=z.object({contract:z.literal('fullscript-qualification-target-release/2'),
+const consentTargetPayload=z.object({...fullscriptConsentQualificationTargetSchema.shape,functionArn:baseArn})
+ .omit({reviewSha256:true}).strict();
+const historicalReleaseSchema=z.object({contract:z.literal('fullscript-qualification-target-release/2'),
  target:targetPayload,
  credentials:fullscriptCredentialTargetSchema,
  review:z.object({reviewer:z.literal('Brandon Bright'),reviewedAt:z.string().datetime(),decision:z.literal('approved'),
   scope:z.literal('fictional-fullscript-api-target-only'),versionBinding:z.literal('observed-numeric-version-of-exact-reviewed-code')}).strict(),
 }).strict();
+export const fullscriptConsentTargetReleaseSchema=historicalReleaseSchema.extend({
+ contract:z.literal('fullscript-qualification-target-release/3'),target:consentTargetPayload,
+});
+export const fullscriptTargetReleaseSchema=z.union([historicalReleaseSchema,fullscriptConsentTargetReleaseSchema])
+ .refine(release=>fullscriptTargetIdentityBinding(release.target));
 export type FullscriptTargetBuild={sourceCommit:string;clean:boolean};
 type Store={send(command:GetObjectCommand,options:{abortSignal:AbortSignal}):Promise<Record<string,unknown>>};
 type Stream=AsyncIterable<Uint8Array>&{destroy?:()=>void};
@@ -84,7 +93,7 @@ export async function loadFullscriptQualificationTarget(input:{env:Record<string
    &&env.FULLSCRIPT_PROVIDER_SECRET_VERSION===release.credentials.providerSecretVersion
    &&env.FULLSCRIPT_TOKEN_TABLE===release.credentials.tokenTable&&env.FULLSCRIPT_REDIRECT_URI===release.credentials.redirectUri);
   requireTrue(Date.now()<=endsAt&&!controller.signal.aborted);
-  return fullscriptQualificationTargetSchema.parse({...release.target,functionArn:context.invokedFunctionArn,
+  return fullscriptSupportedQualificationTargetSchema.parse({...release.target,functionArn:context.invokedFunctionArn,
    reviewSha256:env.QUALIFICATION_REVIEW_SHA256});
  }catch{controller.abort();stopBody();return refuse();}
  finally{clearTimeout(timer);}

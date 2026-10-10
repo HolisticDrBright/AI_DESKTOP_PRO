@@ -229,3 +229,38 @@ provider journeys. Account-wide privacy/holds/provider-copy retention, OAuth
 settlement, matched releases and physical devices remain open. All six original
 commercial phases remain incomplete. PHI OFF, production blocked, clinical holds,
 source verification, exclusions, adult-only Core launch and no paid builds remain.
+
+## Exact consent copy successor
+
+The historical release contract `fullscript-qualification-target-release/2`
+still accepts only the unchanged 111-migration artifact. To qualify Fullscript
+and patient telehealth consent on the same database, prepare a separately
+reviewed `fullscript-qualification-target-release/3` artifact. Its target must
+include `schemaRelease: "telehealth-consent-copy/112"` and all 112 exact migration
+entries. No old review is silently promoted. Keep the same independent target,
+credential, SQL-privilege, resource and deployment reviews.
+
+The successor pins ledger
+`45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4`
+and assembly
+`6cc191355442ae2c2349cab50466979eaab0e45961a4e1547f34785294dce4b9`.
+It separately verifies the complete historical 111 entries and the exact final
+consent-copy SQL. Missing labels, extra rows, changed history, reordered rows,
+or a live database still at 111 refuse before delivery construction. There is
+no staging database or administrative-role fallback.
+
+After a clean committed API build, run
+`npm run build:fullscript-qualification-template -- --telehealth-consent-copy`.
+This produces `dist/aws-clinical-core/fullscript-api/template-consent-112.json`
+without replacing `template.json`. The deployment preflight requires the
+matching contract/template pair. IAM, JWT routes, designated fictional
+identities, immutable object versions, numeric Lambda version binding and
+PHI-disabled posture are unchanged. The runtime observer still compares the
+entire live worker ledger on every request.
+
+This release mapping does not upgrade a database or register consent copy. The
+preserving 111-to-112 operator and the telehealth-only 112 copy registrar remain
+separate engineering prerequisites. Do not apply the initial Fullscript
+upgrade's empty-new-tables check to a used 111 database: its legitimate rows,
+holds and immutable copies must be preserved. Reviewed hosted qualification,
+provider journeys, chart integration and physical-device acceptance remain open.

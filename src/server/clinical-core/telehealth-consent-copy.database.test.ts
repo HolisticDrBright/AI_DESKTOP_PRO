@@ -104,6 +104,17 @@ beforeEach(async () => {
     [connection, org, patient, owner]);
 });
 describe('unreleased 112 telehealth exact-copy consent under actual SQL authority', () => {
+  it('the same112 database exposes its exact ledger to Fullscript without granting consent mutation',async()=>{
+    const functionOid=(await pg.query<{oid:number}>("select 'clinical_core.production_telehealth_consent_request(jsonb)'::regprocedure::oid oid")).rows[0].oid;
+    await pg.transaction(async tx=>{
+      await tx.exec('set local role fullscript_draft_worker');
+      const r=await tx.query<{ledger:{version:string;name:string;sha256:string}[];consent_execute:boolean}>(`select
+        fullscript_delivery.migration_ledger() ledger,
+        has_function_privilege(current_user,$1::oid,'EXECUTE') consent_execute`,[functionOid]);
+      expect(r.rows[0].ledger).toEqual(successor.manifest.migrations.map(m=>({version:m.version,name:m.file.slice(15,-4),sha256:sha(successor.files[m.file])})));
+      expect(r.rows[0].consent_execute).toBe(false);
+    });
+  });
   const runtime = (enabled = true) => {
     const now = Date.now(), reviewHash = '3'.repeat(64);
     const environment: Record<string, string> = {

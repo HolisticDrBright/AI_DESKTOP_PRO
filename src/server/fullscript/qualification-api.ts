@@ -1,7 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('Fullscript qualification API is server-only.');
 import {z} from 'zod';
 import {createHash} from 'node:crypto';
-import {FULLSCRIPT_UPGRADE} from '../clinical-core/fullscript-migration-release';
+import {FULLSCRIPT_UPGRADE,FULLSCRIPT_CONSENT_SUCCESSOR} from '../clinical-core/fullscript-migration-release';
 import type {ApiGatewayV2Event,ApiGatewayV2Response} from '../clinical-core/aws-identity-api';
 import {ownedConsumerIdentity} from '../clinical-core/owned-consumer-api';
 import {recordingWorkforceIdentity} from '../clinical-core/recording-authority-api';
@@ -15,6 +15,11 @@ const issuer=z.string().regex(/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com
 const audience=z.string().regex(/^[A-Za-z0-9]{20,128}$/);
 const subject=z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/);
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
+export function fullscriptTargetIdentityBinding(c:{consumerIssuer:string;workforceIssuer:string;
+ consumerAudience:string;workforceAudience:string;consumerSubjects:string[];workforceSubjects:string[]}){
+ return c.consumerIssuer!==c.workforceIssuer&&c.consumerAudience!==c.workforceAudience
+  &&new Set([...c.consumerSubjects,...c.workforceSubjects]).size===c.consumerSubjects.length+c.workforceSubjects.length;
+}
 const ledger=z.array(z.object({version:z.string().regex(/^\d{14}$/),name:z.string().regex(/^[a-z0-9_]{1,200}$/),sha256:hash}).strict()).length(111)
  .refine(rows=>rows.every((row,i)=>i===0||row.version>rows[i-1].version))
  .refine(rows=>digest(rows.map(r=>`${r.version}:${r.sha256}`).join('\n'))===FULLSCRIPT_UPGRADE.successor111)
@@ -30,9 +35,22 @@ export const fullscriptQualificationTargetSchema=z.object({
  consumerIssuer:issuer,consumerAudience:audience,workforceIssuer:issuer,workforceAudience:audience,
  consumerSubjects:z.array(subject).min(2).max(10),workforceSubjects:z.array(subject).min(1).max(10),
  migrations:ledger,
-}).strict().refine(c=>c.consumerIssuer!==c.workforceIssuer&&c.consumerAudience!==c.workforceAudience
- &&new Set([...c.consumerSubjects,...c.workforceSubjects]).size===c.consumerSubjects.length+c.workforceSubjects.length);
-export type FullscriptQualificationTarget=z.infer<typeof fullscriptQualificationTargetSchema>;
+}).strict().refine(fullscriptTargetIdentityBinding);
+const consentLedger=z.array(ledger.element).length(112)
+ .refine(rows=>ledger.safeParse(rows.slice(0,111)).success)
+ .refine(rows=>rows[111]?.version===FULLSCRIPT_CONSENT_SUCCESSOR.version
+  &&rows[111]?.name===FULLSCRIPT_CONSENT_SUCCESSOR.name&&rows[111]?.sha256===FULLSCRIPT_CONSENT_SUCCESSOR.sqlSha256)
+ .refine(rows=>digest(rows.map(r=>`${r.version}:${r.sha256}`).join('\n'))===FULLSCRIPT_CONSENT_SUCCESSOR.ledger)
+ .refine(rows=>digest(rows.map(r=>`${r.version}:${r.version}_${r.name}.sql:${r.sha256}`).join('\n'))===FULLSCRIPT_CONSENT_SUCCESSOR.assembly);
+export const fullscriptConsentQualificationTargetSchema=fullscriptQualificationTargetSchema.safeExtend({
+ schemaRelease:z.literal(FULLSCRIPT_CONSENT_SUCCESSOR.schemaRelease),migrations:consentLedger,
+});
+/** Historical admission is not broadened. The successor must explicitly name
+ * its own contract and pass both the parent and whole successor byte pins. */
+export const fullscriptSupportedQualificationTargetSchema=z.union([
+ fullscriptQualificationTargetSchema,fullscriptConsentQualificationTargetSchema,
+]);
+export type FullscriptQualificationTarget=z.infer<typeof fullscriptSupportedQualificationTargetSchema>;
 export type FullscriptQualificationEvent=ApiGatewayV2Event&{requestContext?:NonNullable<ApiGatewayV2Event['requestContext']>&{apiId?:string;routeId?:string}};
 export type FullscriptLambdaContext={invokedFunctionArn:string;functionVersion:string};
 export type FullscriptRequestIdentity={actor:DraftDeliveryActor;session?:RequestSession;claims:Record<string,string|number|boolean|undefined>};
@@ -78,7 +96,7 @@ function identity(event:FullscriptQualificationEvent,c:FullscriptQualificationTa
 export function createQualificationFullscriptApi(input:{target:unknown;
  observe:(event:FullscriptQualificationEvent,context:FullscriptLambdaContext,identity:FullscriptRequestIdentity)=>Promise<void>;
  operations:(identity:FullscriptRequestIdentity)=>Operations;now?:()=>number}){
- const c=fullscriptQualificationTargetSchema.parse(structuredClone(input.target));
+ const c=fullscriptSupportedQualificationTargetSchema.parse(structuredClone(input.target));
  return async(event:FullscriptQualificationEvent,context:FullscriptLambdaContext):Promise<ApiGatewayV2Response>=>{
   const reply=(statusCode:number,value:unknown)=>({statusCode,headers:{'content-type':'application/json','cache-control':'no-store',
    'x-content-type-options':'nosniff','x-clinical-execution':'qualification'},body:JSON.stringify(value)});

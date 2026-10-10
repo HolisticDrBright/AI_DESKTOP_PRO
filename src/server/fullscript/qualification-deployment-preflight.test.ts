@@ -1,7 +1,7 @@
 import {beforeAll,expect,it} from 'vitest';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {fullscriptQualificationTemplate} from '../../../scripts/fullscript-qualification-template.mjs';
+import {fullscriptQualificationTemplate,fullscriptConsentQualificationTemplate} from '../../../scripts/fullscript-qualification-template.mjs';
 import {preflightFullscriptDeployment} from './qualification-deployment-preflight';
 import {prepareFullscriptDeployment} from './qualification-deployment-execution';
 const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'
@@ -9,13 +9,14 @@ const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join('
 const bytes=(v:unknown)=>Buffer.from(canonical(v)+'\n'),pretty=(v:unknown)=>Buffer.from(JSON.stringify(v,null,2)+'\n');
 const sha=(v:Buffer)=>createHash('sha256').update(v).digest('hex');
 let fixture:ReturnType<typeof setup>;
-function setup(migrations:unknown[]){
+function setup(migrations:unknown[],successor=false){
  const zipBytes=Buffer.from('FICTIONAL ZIP BYTES: no deployed artifact'),sourceCommit='a'.repeat(40);
  const build={contract:'fullscript-api-build/1',sourceCommit,clean:true,handler:'index.handler',runtime:'nodejs22.x',
   indexSha256:'b'.repeat(64),zipSha256:sha(zipBytes),codeSha256:createHash('sha256').update(zipBytes).digest('base64'),
   execution:'qualification_only',phiAllowed:false,activation:'blocked',targetEmbedded:false,immutableTargetVersionRequired:true,
   targetReviewRequired:true,publishedVersionRequired:true,deployed:false,hostedQualified:false,providerActionPerformed:false};
- const target={contract:'fullscript-qualification-target-release/2',target:{execution:'qualification',account:'588966314750',region:'us-east-2',
+ const target={contract:successor?'fullscript-qualification-target-release/3':'fullscript-qualification-target-release/2',target:{execution:'qualification',account:'588966314750',region:'us-east-2',
+  ...(successor?{schemaRelease:'telehealth-consent-copy/112'}:{}),
   phiAllowed:false,activation:'blocked',sourceCommit,apiId:'a123456789',functionArn:'arn:aws:lambda:us-east-2:588966314750:function:alp-fullscript-qualification-fictional',
   codeSha256:build.codeSha256,clusterArn:'arn:aws:rds:us-east-2:588966314750:cluster:fictional',
   secretArn:'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-db',databaseName:'clinical_core_qualification',
@@ -27,7 +28,7 @@ function setup(migrations:unknown[]){
   // FICTIONAL fixture attestation; never an actual owner review.
   review:{reviewer:'Brandon Bright',reviewedAt:'2026-10-01T00:00:00.000Z',decision:'approved',scope:'fictional-fullscript-api-target-only',
    versionBinding:'observed-numeric-version-of-exact-reviewed-code'}};
- const template=fullscriptQualificationTemplate(build),definitions=template.Parameters as Record<string,{Default?:string}>;
+ const template=(successor?fullscriptConsentQualificationTemplate:fullscriptQualificationTemplate)(build),definitions=template.Parameters as Record<string,{Default?:string}>;
  const parameters:Record<string,string>={...Object.fromEntries(Object.entries(definitions).map(([k,v])=>[k,v.Default??''])),
   QualificationExecution:'true',FunctionName:target.target.functionArn.split(':').at(-1)!,ApiId:target.target.apiId,
   ConsumerAudience:target.target.consumerAudience,WorkforceAudience:target.target.workforceAudience,ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
@@ -46,6 +47,17 @@ it('binds all explicit parameters but never reports deployment approval or hoste
  const report=preflightFullscriptDeployment(fixture);expect(report).toMatchObject({verdict:'locally_consistent',awsObserved:false,
   ownerDeploymentReviewRequired:true,approvedForDeployment:false,deployed:false,hostedQualified:false,phiAllowed:false});
  expect(JSON.stringify(report)).not.toContain('fictional-provider');expect(report.parameterCount).toBe(27);
+});
+it('separate112 preflight requires the successor template and exact target; no111 fallback',()=>{
+ const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
+  {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
+ const rows=artifact.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
+  sha256:sha(Buffer.from(artifact.files[m.file]))}));
+ const successor=setup(rows,true);expect(preflightFullscriptDeployment(successor)).toMatchObject({awsObserved:false,approvedForDeployment:false});
+ expect(()=>preflightFullscriptDeployment({...successor,templateBytes:fixture.templateBytes})).toThrow();
+ expect(()=>preflightFullscriptDeployment({...fixture,templateBytes:successor.templateBytes})).toThrow();
+ expect(()=>preflightFullscriptDeployment(setup(rows,false))).toThrow();
+ expect(()=>preflightFullscriptDeployment(setup(rows.slice(0,111),true))).toThrow();
 });
 it('the execution plan delegates to the real artifact preflight and requires a separate exact write review',()=>{
  const p=preflightFullscriptDeployment(fixture);

@@ -7,7 +7,7 @@ import {CognitoJwtVerifier} from 'aws-jwt-verify';
 import type {ClinicalCoreDatabase} from '../clinical-core/database';
 import {createRdsDataFullscriptDraftDatabase} from '../clinical-core/rds-data-database';
 import {createCanonicalFullscriptDelivery} from './canonical-delivery-runtime';
-import {createQualificationFullscriptApi,fullscriptQualificationTargetSchema,FullscriptQualificationReauth,type FullscriptQualificationEvent,
+import {createQualificationFullscriptApi,fullscriptSupportedQualificationTargetSchema,FullscriptQualificationReauth,type FullscriptQualificationEvent,
  type FullscriptLambdaContext,type FullscriptRequestIdentity} from './qualification-api';
 
 interface Commands{send(command:unknown):Promise<Record<string,unknown>>}
@@ -27,7 +27,7 @@ const modified=(value:unknown):number=>{const n=value instanceof Date?value.getT
  * that it is deployed. All checks must actually succeed before it serves. */
 export function createFullscriptQualificationObserver(input:{target:unknown;database:ClinicalCoreDatabase;clients?:Clients;
  jwt?:{verify(token:string):Promise<unknown>}}){
- const c=fullscriptQualificationTargetSchema.parse(structuredClone(input.target));
+ const c=fullscriptSupportedQualificationTargetSchema.parse(structuredClone(input.target));
  const verifier=input.jwt??CognitoJwtVerifier.create([
   {userPoolId:c.workforceIssuer.split('/').at(-1)!,tokenUse:'id',clientId:c.workforceAudience},
   {userPoolId:c.consumerIssuer.split('/').at(-1)!,tokenUse:'id',clientId:c.consumerAudience},
@@ -126,7 +126,7 @@ export function createFullscriptQualificationObserver(input:{target:unknown;data
  * versions only; no $LATEST/alias and no active production mode. No existing
  * HTTP stack installs it and no reviewed target is fabricated by this module. */
 export function createNativeFullscriptQualificationApi(rawTarget:unknown,providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>){
- const target=fullscriptQualificationTargetSchema.parse(structuredClone(rawTarget));
+ const target=fullscriptSupportedQualificationTargetSchema.parse(structuredClone(rawTarget));
  const database=createRdsDataFullscriptDraftDatabase(target);
  const observe=createFullscriptQualificationObserver({target,database});
  return createQualificationFullscriptApi({target,observe,operations:who=>createCanonicalFullscriptDelivery({database,

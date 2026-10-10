@@ -9,6 +9,7 @@ const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join('
 const bytes=(v:unknown)=>Buffer.from(canonical(v)+'\n');
 const sha=(v:Buffer)=>createHash('sha256').update(v).digest('hex');
 let release:Record<string,unknown>;
+let consentRelease:Record<string,unknown>;
 beforeAll(()=>{
  const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-fullscript-candidate.mjs','--json'],
   {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
@@ -27,6 +28,12 @@ beforeAll(()=>{
   review:{reviewer:'Brandon Bright',reviewedAt:'2026-10-01T00:00:00.000Z',decision:'approved',scope:'fictional-fullscript-api-target-only',
    versionBinding:'observed-numeric-version-of-exact-reviewed-code'}};
  // This approval is explicitly FICTIONAL fixture metadata, not a real release.
+ const successor=JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
+  {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
+ consentRelease=structuredClone(release);consentRelease.contract='fullscript-qualification-target-release/3';
+ Object.assign(consentRelease.target as Record<string,unknown>,{schemaRelease:'telehealth-consent-copy/112',
+  migrations:successor.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
+   sha256:sha(Buffer.from(successor.files[m.file]))}))});
 });
 function setup(value:unknown=release){
  const content=bytes(value),target=(release.target as Record<string,string>);
@@ -44,6 +51,26 @@ function setup(value:unknown=release){
  return {env,object,body,destroy,send,context,build,run:()=>loadFullscriptQualificationTarget({env,build,context,store:{send}})};
 }
 describe('immutable Fullscript target loader with fictional S3; not hosted acceptance',()=>{
+ it('loads the independently hash-bound112 target from an immutable reviewed version',async()=>{
+  const s=setup(consentRelease),target=await s.run();
+  expect(target).toMatchObject({schemaRelease:'telehealth-consent-copy/112',reviewSha256:s.env.QUALIFICATION_REVIEW_SHA256,
+   functionArn:s.context.invokedFunctionArn});expect(target.migrations).toHaveLength(112);
+ });
+ it.each(['legacy-contract','missing-label','wrong-label','old-ledger','changed-sql','altered-parent','extra','reordered','duplicate-subject'])
+ ('refuses hash-matched %s successor without falling back',async kind=>{
+  const v=structuredClone(consentRelease),t=v.target as Record<string,unknown>,rows=t.migrations as Record<string,unknown>[];
+  if(kind==='legacy-contract')v.contract='fullscript-qualification-target-release/2';
+  if(kind==='missing-label')delete t.schemaRelease;if(kind==='wrong-label')t.schemaRelease='arbitrary/112';
+  if(kind==='old-ledger')rows.pop();if(kind==='changed-sql')rows[111].sha256='e'.repeat(64);
+  if(kind==='altered-parent')rows[0].name='changed';if(kind==='extra')rows.push(rows[111]);
+  if(kind==='reordered')[rows[0],rows[1]]=[rows[1],rows[0]];
+  if(kind==='duplicate-subject')t.consumerSubjects=['FICTIONAL-consumer-1','FICTIONAL-consumer-1'];
+  await expect(setup(v).run()).rejects.toThrow('fullscript_target_release_refused');
+ });
+ it('legacy review cannot be silently promoted by changing only its contract',async()=>{
+  const v=structuredClone(release);v.contract='fullscript-qualification-target-release/3';
+  await expect(setup(v).run()).rejects.toThrow();
+ });
  it('fetches the exact version under expected-owner binding and derives only AWS numeric context',async()=>{
   const s=setup(),target=await s.run();expect(target).toMatchObject({functionArn:s.context.invokedFunctionArn,reviewSha256:s.env.QUALIFICATION_REVIEW_SHA256,phiAllowed:false});
   expect(s.send.mock.calls).toHaveLength(1);

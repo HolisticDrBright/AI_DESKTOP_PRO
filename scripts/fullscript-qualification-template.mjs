@@ -1,6 +1,15 @@
 // Restricted source candidate only; generation makes no AWS calls or reviews.
 const ref=name=>({Ref:name}),sub=text=>({'Fn::Sub':text}),get=(name,attribute)=>({'Fn::GetAtt':[name,attribute]});
 const str=(pattern,extra={})=>({Type:'String',AllowedPattern:pattern,...extra});
+/** Separate source successor; the original 111 template remains unchanged. */
+export function fullscriptConsentQualificationTemplate(build){
+ const template=fullscriptQualificationTemplate(build);
+ template.Metadata={...template.Metadata,Contract:'fullscript-consent-qualification-candidate/1',
+  TargetContract:'fullscript-qualification-target-release/3',SchemaRelease:'telehealth-consent-copy/112',MigrationCount:112,
+  MigrationReleaseSha256:'45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4',
+  MigrationAssemblySha256:'6cc191355442ae2c2349cab50466979eaab0e45961a4e1547f34785294dce4b9'};
+ return template;
+}
 export function fullscriptQualificationTemplate(build){
  if(build?.contract!=='fullscript-api-build/1'||build.clean!==true||!/^[a-f0-9]{40}$/.test(build.sourceCommit??'')
   ||!/^[a-f0-9]{64}$/.test(build.zipSha256??'')||!/^[A-Za-z0-9+/]{43}=$/.test(build.codeSha256??'')

@@ -2,7 +2,7 @@ if (typeof window !== 'undefined') throw Error('Fullscript deployment preflight 
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {fullscriptTargetReleaseSchema} from './qualification-target-loader';
-import {fullscriptQualificationTemplate} from '../../../scripts/fullscript-qualification-template.mjs';
+import {fullscriptQualificationTemplate,fullscriptConsentQualificationTemplate} from '../../../scripts/fullscript-qualification-template.mjs';
 
 const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'
  ?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical((v as Record<string,unknown>)[k])).join(',')+'}':JSON.stringify(v);
@@ -32,9 +32,10 @@ export function preflightFullscriptDeployment(input:{sourceCommit:string;clean:b
   const build=buildSchema.parse(decode(input.buildBytes,8192,'pretty'));
   if(build.sourceCommit!==source||!Buffer.isBuffer(input.zipBytes)||input.zipBytes.length===0||input.zipBytes.length>16*1024*1024
    ||digest(input.zipBytes)!==build.zipSha256||createHash('sha256').update(input.zipBytes).digest('base64')!==build.codeSha256)throw Error('refused');
-  const template=fullscriptQualificationTemplate(build);
-  if(!Buffer.from(JSON.stringify(template,null,2)+'\n').equals(input.templateBytes))throw Error('refused');
   const release=fullscriptTargetReleaseSchema.parse(decode(input.targetBytes,65536,'canonical'));
+  const template=(release.contract==='fullscript-qualification-target-release/3'
+   ?fullscriptConsentQualificationTemplate:fullscriptQualificationTemplate)(build);
+  if(!Buffer.from(JSON.stringify(template,null,2)+'\n').equals(input.templateBytes))throw Error('refused');
   const target=release.target,credentials=release.credentials;
   if(Date.parse(release.review.reviewedAt)>now||target.sourceCommit!==source||target.codeSha256!==build.codeSha256)throw Error('refused');
   const rows=parameterSchema.parse(decode(input.parameterBytes,65536,'canonical'));

@@ -1,10 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {fullscriptQualificationTemplate} from './fullscript-qualification-template.mjs';
+import {fullscriptQualificationTemplate,fullscriptConsentQualificationTemplate} from './fullscript-qualification-template.mjs';
 const digest=Buffer.alloc(32,7),build={contract:'fullscript-api-build/1',clean:true,sourceCommit:'a'.repeat(40),zipSha256:digest.toString('hex'),
  codeSha256:digest.toString('base64'),handler:'index.handler',runtime:'nodejs22.x',phiAllowed:false,activation:'blocked',
  execution:'qualification_only',deployed:false,targetEmbedded:false,hostedQualified:false};
 const ref=name=>({Ref:name});
+test('separate112 template preserves restricted resources and111 identity unchanged',()=>{
+ const old=fullscriptQualificationTemplate(build),successor=fullscriptConsentQualificationTemplate(build);
+ assert.equal(old.Metadata.MigrationCount,111);assert.equal(old.Metadata.TargetContract,'fullscript-qualification-target-release/2');
+ assert.equal(successor.Metadata.MigrationCount,112);assert.equal(successor.Metadata.TargetContract,'fullscript-qualification-target-release/3');
+ assert.equal(successor.Metadata.SchemaRelease,'telehealth-consent-copy/112');
+ assert.equal(successor.Metadata.MigrationReleaseSha256,'45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4');
+ assert.deepEqual(successor.Resources,old.Resources);assert.deepEqual(successor.Parameters,old.Parameters);
+ assert.equal(successor.Metadata.ApprovedForPhi,false);assert.equal(successor.Metadata.HostedQualified,false);
+});
 function values(t){return {...Object.fromEntries(Object.entries(t.Parameters).map(([key,p])=>[key,p.Default??'FICTIONAL'])),
  'AWS::AccountId':'588966314750','AWS::Region':'us-east-2',QualificationExecution:'true',ProviderSecretArn:'FICTIONAL-provider',DatabaseSecretArn:'FICTIONAL-db',
  ConsumerAudience:'consumer',WorkforceAudience:'workforce',ConsumerPoolId:'consumer',WorkforcePoolId:'workforce'};}
