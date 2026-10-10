@@ -530,7 +530,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     priceMinor: 0, currency: "USD", cancellationPolicy: "", cancellationWindowHours: 24, cancellationFeeDueMinor: 0, reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1",
     paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due", paymentIntentId: null, paidMinor: 0, refundedMinor: 0, ...overrides,
   });
-  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: "11111111-aaaa-4aaa-8aaa-111111111111", practitioner_name: "Dr",
+  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: workforceClaims["custom:person_id"], practitioner_name: "Dr",
     title: null, appointment_type: "telehealth", location: "Telehealth", telehealth_url: null, status: "confirmed", version: 1, starts_at: "2026-10-09T17:00:00.000Z", ends_at: "2026-10-09T17:30:00.000Z", ...overrides });
   const start = (handlerConfig = zoomConfig, extra: Record<string, unknown> = {}) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/start", { appointmentId: APPOINTMENT, hostDisplayName: "Dr. Synthetic", ...extra }, workforceClaims));
   const jsonResponse = (status: number, body: unknown, text?: string) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, body: new Response(text ?? JSON.stringify(body)).body, json: async () => body, text: async () => text ?? JSON.stringify(body) });
@@ -575,8 +575,10 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   };
   const identityRoutes = (options: { grant?: Record<string, unknown> | null; calendar?: Array<Record<string, unknown>> | (() => unknown) } = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["/clinical-core/workforce/consent-artifact", () => jsonResponse(200, { data: ARTIFACT })],
-    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT, ...options.grant } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null } })],
-    ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted" } })],
+    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT,
+      artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, representativeAuthority: "self", ...options.grant,
+    } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null, representativeAuthority: null } })],
+    ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 1, recordedAt: "2026-10-10T00:00:00.000Z" } })],
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
     ["/clinical-core/workforce/data-compatibility", typeof options.calendar === "function" ? options.calendar : () => jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } })],
   ];
@@ -617,6 +619,62 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   });
 
   /* ---------------------------------------------------- appointment authority at the AWS boundary */
+
+  it.each([null, "99999999-9999-4999-8999-999999999999", "not-a-person-id"])("will not issue host authority when the assigned practitioner is %j", async (practitioner) => {
+    const calls = fetchRouter([...identityRoutes({ calendar: [calendarRow({ practitioner_user_id: practitioner })] }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(403);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "identity_refused" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each(["guardian", "healthcare_proxy", "legal_representative"])("retains historical %s consent but does not treat it as current provider authority", async (authority) => {
+    const calls = fetchRouter([...identityRoutes({ calendar: [calendarRow({ practitioner_user_id: workforceClaims["custom:person_id"] })] }), ...zoomRoutes()]);
+    queueGet(visitRecord({ consents: [receipt({ representativeAuthority: authority })] }));
+    const result = await start();
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each([
+    { representativeAuthority: "guardian" },
+    { representativeAuthority: null },
+    { artifactVersion: "different-release" },
+    { contentSha256: "c".repeat(64) },
+  ])("refuses a connected visit's mismatched current grant %j before provider access", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes({ grant: { status: "granted", connectionId: "44444444-4444-4444-8444-444444444444",
+      artifactId: ARTIFACT.artifactId, artifactStatus: "approved", ...mismatch } }), ...zoomRoutes()]);
+    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"] })); queueQuery({ Items: [requestRecord()] });
+    const result = await start();
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each([2, 3])("withholds the host session if practitioner assignment changes on authority read %i", async (changedOnRead) => {
+    let authorityReads = 0;
+    const calls = fetchRouter([...identityRoutes({ calendar: () => jsonResponse(200, { data: { appointments: [calendarRow({
+      practitioner_user_id: ++authorityReads < changedOnRead ? workforceClaims["custom:person_id"] : "99999999-9999-4999-8999-999999999999",
+    })] } }) }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "request_invalid" });
+    expect(JSON.parse(result.body ?? "{}")).not.toHaveProperty("data.session");
+    expect(putItems().some((item) => item.status === "in_visit")).toBe(false);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(changedOnRead === 2 ? 0 : 1);
+    // A real provider meeting already exists: retain its durable receipt for
+    // recovery, not a false claim that a denied host session erased it.
+    expect(putItems().some((item) => item.providerMeetingId === "900000001")).toBe(true);
+  });
 
   it("refuses a direct AWS call for an appointment the caller's calendar does not return — no write, no secret, no provider call", async () => {
     const calls = fetchRouter([...identityRoutes({ calendar: [] }), ...zoomRoutes()]);
@@ -717,6 +775,59 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   });
 
   /* ---------------------------------------------------- consent receipts */
+
+  it.each([
+    ["empty signer", { signerName: " " }],
+    ["non-text signer", { signerName: { name: "Signer" } }],
+    ["oversized signer", { signerName: "x".repeat(201) }],
+    ["control character in signer", { signerName: "Signer\u0000" }],
+    ["invalid Unicode in signer", { signerName: "Signer\ud800" }],
+    ["non-text location", { patientLocation: { state: "CA" } }],
+    ["oversized location", { patientLocation: "x".repeat(121) }],
+    ["control character in location", { patientLocation: "CA\u0000" }],
+    ["guardian without verified authority", { representativeAuthority: "guardian" }],
+    ["proxy without verified authority", { representativeAuthority: "healthcare_proxy" }],
+    ["legal representative without verified authority", { representativeAuthority: "legal_representative" }],
+    ["non-text authority", { representativeAuthority: ["self"] }],
+  ])("refuses %s before creating a connected patient's consent grant or visit", async (_label, invalid) => {
+    const calls = fetchRouter(identityRoutes({ grant: { status: "none", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }));
+    queueGet(undefined); queueQuery({ Items: [requestRecord()] }, { Items: [requestRecord()] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, requestId: REQUEST, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion,
+      contentSha256: ARTIFACT.contentSha256, signerName: "Signer", agreed: true, representativeAuthority: "self", ...invalid,
+    }, workforceClaims));
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "request_invalid" });
+    expect(calls.filter((call) => call.method !== "GET" && call.url.includes("/consents/grant"))).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    "granted",
+    { consentId: "not-an-id", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "55555555-5555-4555-8555-555555555555", status: "granted" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "revoked" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "health_intake", version: 1, recordedAt: "2026-10-10T00:00:00.000Z" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 0, recordedAt: "2026-10-10T00:00:00.000Z" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 1, recordedAt: "never" },
+  ])("does not certify a visit from a malformed or mismatched grant reply %j", async (reply) => {
+    const calls = fetchRouter([
+      ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: reply })],
+      ...identityRoutes({ grant: { status: "none", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }),
+    ]);
+    queueGet(undefined); queueQuery({ Items: [requestRecord()] }, { Items: [requestRecord()] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, requestId: REQUEST, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion,
+      contentSha256: ARTIFACT.contentSha256, signerName: "Signer", agreed: true, representativeAuthority: "self",
+    }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "service_unavailable" });
+    expect(calls.filter((call) => call.url.includes("/consents/grant"))).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+  });
 
   it("records a staff-attested consent only against the organization's current approved artifact, append-only, without the passcode", async () => {
     fetchRouter(identityRoutes());

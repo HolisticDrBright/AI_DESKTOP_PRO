@@ -1095,7 +1095,7 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
   return (payload as { data: T }).data;
 }
 type ArtifactRecord = { artifactId: string; scope: string; artifactVersion: string; contentSha256: string; jurisdiction: string; approvedAt: string };
-type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null };
+type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null; representativeAuthority: VisitConsent["representativeAuthority"] | null };
 const currentArtifact = (config: TelehealthConfiguration, actor: Actor) =>
   identityApi<ArtifactRecord>(config, actor, `/clinical-core/${actor.pool}/consent-artifact?scope=${CONSENT_SCOPE}`, undefined, "consent_artifact_unavailable");
 const currentGrant = (config: TelehealthConfiguration, actor: Actor, consumerPersonId: string) =>
@@ -1115,6 +1115,9 @@ async function requireConsentAuthority(config: TelehealthConfiguration, actor: A
   const receipts = activeConsents(visit);
   if (receipts.length === 0) throw new TelehealthError("consent_required");
   const receipt = receipts[receipts.length - 1];
+  // Retain historical representative receipts for the record, but they do not
+  // authorize new provider processing without a verified representative lane.
+  if (receipt.representativeAuthority !== "self") throw new TelehealthError("consent_required");
   const artifact = await currentArtifact(config, actor);
   if (artifact.artifactId !== receipt.artifactId || artifact.artifactVersion !== receipt.artifactVersion || artifact.contentSha256 !== receipt.contentSha256) throw new TelehealthError("consent_superseded");
   if (visit.consumerPersonId) {
@@ -1124,7 +1127,8 @@ async function requireConsentAuthority(config: TelehealthConfiguration, actor: A
     const grant = await currentGrant(config, actor, visit.consumerPersonId);
     if (!grant.connectionId) throw new TelehealthError("consent_required");
     if (receipt.connectionId && receipt.connectionId !== grant.connectionId) throw new TelehealthError("consent_required");
-    if (grant.status !== "granted" || grant.artifactId !== artifact.artifactId || grant.artifactStatus !== "approved") {
+    if (grant.status !== "granted" || grant.artifactId !== artifact.artifactId || grant.artifactStatus !== "approved"
+      || grant.artifactVersion !== artifact.artifactVersion || grant.contentSha256 !== artifact.contentSha256 || grant.representativeAuthority !== "self") {
       throw new TelehealthError(grant.status === "revoked" ? "consent_withdrawn" : "consent_required");
     }
   }
@@ -1190,6 +1194,12 @@ async function requireBindingAuthority(config: TelehealthConfiguration, actor: A
   assertVisitSubject(visit, binding);
   return binding;
 }
+function assertAssignedVisitHost(actor: Actor, binding: VisitBinding) {
+  // get_desktop_calendar projects appointments.practitioner_person_id, not
+  // a provider user or an arbitrary display name. Calendar read access alone
+  // must not let a colleague obtain the assigned practitioner's host session.
+  if (actor.pool !== "workforce" || binding.practitionerUserId !== actor.personId) throw new TelehealthError("identity_refused");
+}
 /** Consent on a visit belongs to its original subject, never a replacement
  * patient or request owner. A time-only reschedule does not change that subject. */
 function assertVisitSubject(visit: VisitItem, binding: VisitBinding) {
@@ -1220,15 +1230,26 @@ function requestIdOf(value: Record<string, unknown>, existing: VisitItem | null)
 
 /* ---- consent receipts ---- */
 
+function consentAttestation(record: Record<string, unknown>): Pick<VisitConsent, "signerName" | "patientLocation" | "representativeAuthority"> {
+  const signer = record.signerName, location = record.patientLocation;
+  // Only self-attestation is implemented. Historical guardian/proxy receipts
+  // remain readable; accepting a caller's label is not proof of authority.
+  const authority = record.representativeAuthority === undefined ? "self" : record.representativeAuthority;
+  const text = (value: string) => !/[\u0000-\u001f\u007f]/.test(value)
+    && Buffer.from(value, "utf8").toString("utf8") === value;
+  if (record.agreed !== true || typeof signer !== "string" || signer.trim().length < 2 || signer.trim().length > 200
+    || !text(signer) || authority !== "self"
+    || !(location === undefined || location === null || typeof location === "string" && location.trim().length <= 120 && text(location))) {
+    throw new TelehealthError("request_invalid");
+  }
+  return { signerName: signer.trim(), patientLocation: typeof location === "string" && location.trim() ? location.trim() : null, representativeAuthority: "self" };
+}
+
 function buildReceipt(record: Record<string, unknown>, artifact: ArtifactRecord, method: VisitConsent["method"], recordedBy: string, grant: { grantId: string | null; connectionId: string | null }): VisitConsent {
-  const signerName = String(record.signerName ?? "").trim(); const location = record.patientLocation;
-  const authority = record.representativeAuthority === undefined ? "self" : String(record.representativeAuthority);
-  if (record.agreed !== true || signerName.length < 2 || signerName.length > 200
-    || !["self", "guardian", "healthcare_proxy", "legal_representative"].includes(authority)
-    || !(location === undefined || location === null || (typeof location === "string" && location.trim().length <= 120))) throw new TelehealthError("request_invalid");
+  const attestation = consentAttestation(record);
   return { consentId: randomUUID(), consentType: TELEHEALTH_CONSENT_TYPE, scope: CONSENT_SCOPE, artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion,
-    contentSha256: artifact.contentSha256, signerName, method, representativeAuthority: authority as VisitConsent["representativeAuthority"], signedAt: new Date().toISOString(), recordedBy,
-    patientLocation: typeof location === "string" && location.trim() ? location.trim() : null, grantId: grant.grantId, connectionId: grant.connectionId, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null };
+    contentSha256: artifact.contentSha256, ...attestation, method, signedAt: new Date().toISOString(), recordedBy,
+    grantId: grant.grantId, connectionId: grant.connectionId, status: "granted", withdrawnAt: null, withdrawnBy: null, withdrawalReason: null };
 }
 /** A NEW patient booking uses the exact-copy port and an already granted scope.
  * It never creates/renews a grant. Historical exact-key recovery precedes this
@@ -1303,6 +1324,9 @@ async function recordVisitConsent(config: TelehealthConfiguration, actor: Actor,
     ["appointmentId", "artifactId", "artifactVersion", "contentSha256", "signerName", "agreed"]);
   const appointmentId = String(value.appointmentId ?? "");
   if (!UUID.test(appointmentId) || value.agreed !== true) throw new TelehealthError("request_invalid");
+  // Validate the entire attestation before any external consent write. In
+  // particular, do not grant first and discover an invalid signer afterwards.
+  const attestation = consentAttestation(value);
   const existing = await findVisit(config, actor.organizationId, appointmentId);
   if (existing?.status === "cancelled") throw new TelehealthError("appointment_cancelled");
   const binding = await resolveBinding(config, actor, appointmentId, requestIdOf(value, existing), value);
@@ -1313,12 +1337,21 @@ async function recordVisitConsent(config: TelehealthConfiguration, actor: Actor,
   if (binding.consumerPersonId) {
     const current = await currentGrant(config, actor, binding.consumerPersonId);
     if (current.connectionId) {
-      if (current.status === "granted" && current.artifactId === artifact.artifactId && current.artifactStatus === "approved") {
+      if (current.status === "granted" && current.artifactId === artifact.artifactId && current.artifactStatus === "approved"
+        && current.artifactVersion === artifact.artifactVersion && current.contentSha256 === artifact.contentSha256 && current.representativeAuthority === "self"
+        && typeof current.consentId === "string" && UUID.test(current.consentId)) {
         grant = { grantId: current.consentId, connectionId: current.connectionId };
       } else {
-        const recorded = await identityApi<{ consentId: string; connectionId: string; status: string }>(config, actor, "/clinical-core/workforce/consents/grant", { method: "POST",
-          body: { connectionId: current.connectionId, artifactId: artifact.artifactId, scope: CONSENT_SCOPE, method: "in_person", representativeAuthority: value.representativeAuthority ?? "self" } });
-        grant = { grantId: recorded.consentId, connectionId: recorded.connectionId };
+        const recorded = await identityApi<unknown>(config, actor, "/clinical-core/workforce/consents/grant", { method: "POST",
+          body: { connectionId: current.connectionId, artifactId: artifact.artifactId, scope: CONSENT_SCOPE, method: "in_person", representativeAuthority: attestation.representativeAuthority } });
+        // A write may have happened even if its reply is unusable. Never
+        // manufacture a local receipt, revoke, or retry it in this request.
+        if (!recorded || typeof recorded !== "object" || Array.isArray(recorded)) throw new TelehealthError("service_unavailable");
+        const row = recorded as Record<string, unknown>;
+        if (typeof row.consentId !== "string" || !UUID.test(row.consentId) || row.connectionId !== current.connectionId
+          || row.status !== "granted" || row.scope !== CONSENT_SCOPE || !Number.isSafeInteger(row.version) || Number(row.version) < 1
+          || typeof row.recordedAt !== "string" || !date(row.recordedAt)) throw new TelehealthError("service_unavailable");
+        grant = { grantId: row.consentId, connectionId: current.connectionId };
       }
     }
   }
@@ -1513,16 +1546,17 @@ async function startVisit(config: TelehealthConfiguration, actor: Actor, value: 
   if (visit.status === "ended" || visit.status === "ending") throw new TelehealthError("conflict");
   const binding = await resolveBinding(config, actor, appointmentId, requestIdOf(value, visit), value);
   assertVisitSubject(visit, binding);
+  assertAssignedVisitHost(actor, binding);
   await requireConsentAuthority(config, actor, visit);
   if (!config.zoomEnabled || !config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
   const withMeeting = await admitProviderMeeting(config, { ...visit, scheduledStart: binding.scheduledStart ?? visit.scheduledStart, scheduledEnd: binding.scheduledEnd ?? visit.scheduledEnd, timeZone: visit.timeZone ?? binding.timeZone,
     patientRecordId: binding.patientRecordId ?? visit.patientRecordId, practitionerUserId: binding.practitionerUserId ?? visit.practitionerUserId }, binding);
   if (withMeeting.status === "cancelled") throw new TelehealthError("appointment_cancelled");
   if (withMeeting.status === "ended" || withMeeting.status === "ending") throw new TelehealthError("conflict");
-  await requireBindingAuthority(config, actor, withMeeting);
+  assertAssignedVisitHost(actor, await requireBindingAuthority(config, actor, withMeeting));
   await requireConsentAuthority(config, actor, withMeeting);
   const session = await meetingSdkSession(config, withMeeting.providerMeetingId as string, withMeeting.passcode, hostDisplayName);
-  await requireBindingAuthority(config, actor, withMeeting);
+  assertAssignedVisitHost(actor, await requireBindingAuthority(config, actor, withMeeting));
   await requireConsentAuthority(config, actor, withMeeting);
   const saved = await saveVisit(config, { ...withMeeting, status: "in_visit", startedAt: withMeeting.startedAt ?? new Date().toISOString() }, withMeeting.version);
   return { visit: publicVisit(saved), session };

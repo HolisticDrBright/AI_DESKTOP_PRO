@@ -12,6 +12,36 @@ made, and a service that cannot answer says so.
 
 ## Product decisions carried into code
 
+### October 10 consent and assigned host checks
+
+Staff-attested consent validates the signer, location and representative authority
+before any consent-grant write. Only self-attestation is supported. Guardian, proxy
+and legal-representative labels are refused; retaining an older representative
+receipt does not make it current processing authority. Patient-app bookings still
+require explicit self-authority. Malformed text is refused rather than coerced
+from objects or arrays.
+
+A new grant reply must name the same connection, the telehealth scope, a valid
+grant ID, a positive version, a recorded timestamp and `granted` status before a
+visit receipt can be saved. An unusable reply can mean the external write landed:
+the request does not retry it, revoke it or manufacture a receipt. Existing grant
+reuse and provider access require the exact artifact version and hash plus
+self-authority. These checks do not make the identity and visit stores atomic;
+cross-store consent recovery remains required.
+
+Start Visit requires the signed-in workforce person to be the practitioner assigned
+in the authoritative calendar. The boundary checks this before meeting admission,
+again before SDK credentials, and before returning the session. A changed assignment
+withholds the session and preserves any existing provider-meeting receipt for
+recovery. Calendar read access alone is not host authority.
+
+This is not clinic-specific Zoom onboarding. The current provider configuration
+still uses one global host secret; an explicitly reviewed clinic/practitioner host
+registry, immutable meeting-to-host binding, rotation/revocation recovery and real
+multi-clinic provider acceptance remain launch requirements. These source checks
+do not constitute hosted acceptance, representative-authority verification or PHI
+activation.
+
 ### October 9 summary-boundary repair
 
 Summary import requires a known visit instance UUID and an exact matching UUID
