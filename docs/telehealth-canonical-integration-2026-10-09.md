@@ -70,6 +70,16 @@ preserves its exact count and verifies that an added route still refuses as
 drift. All 89 release tests then passed locally. The failed CI runs remain
 failures; the successor needs its own CI result.
 
+The subsequent `fab4c34020bb5a57eaa2e0333d11f3b0f6e0fe02` checkpoint passed
+the full unchanged-source audit:399files,5,273passed,11skipped,1,101.90seconds.
+Both CI38012601709 and38012604402 succeeded, including the real pinned Zoom SDK
+bootstrap. Deployed-backend acceptance still skipped for missing secrets. The
+AST report was refreshed fromfab4c340:15,636nodes,36,033edges,1,003communities.
+These are predecessor results for the later observed Fullscript installation
+increment, not its exact-source full-suite or CI evidence. The observer's local
+305-test extended result and remaining runtime gates are recorded in
+`docs/fullscript-observed-installation-2026-10-09.md`.
+
 ## Remaining commercial and PHI work
 
 The signed telehealth record is still not a chart note. Chart/timeline and
