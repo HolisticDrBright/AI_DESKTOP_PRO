@@ -172,4 +172,22 @@ describe('Observed Fullscript installation, not deployed approval or hosted acce
       {...reviewed,scopes:['clinic:read']},{...reviewed,environment:'production_us'}])
       expect(()=>createCredentialBoundFullscriptDraftProvider(session,bad)).toThrow('fullscript_delivery_refused');
   });
+  it.each(['create','recover'])('uses one request-scoped credential environment for all %s custody reads, not poisoned shared settings',async mode=>{
+    const reviewed=await review(),scoped={...process.env};fetcher.mockClear();
+    vi.stubEnv('FULLSCRIPT_ENVIRONMENT','production_us');vi.stubEnv('FULLSCRIPT_CLIENT_ID','untrusted-global-client');
+    vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','untrusted-global-table');
+    const load=vi.fn(async()=>scoped),p=createCredentialBoundFullscriptDraftProvider(session,reviewed,undefined,load);
+    expect(load).not.toHaveBeenCalled();
+    expect(mode==='create'?await p.create(input):await p.findByMetadata(input.idempotencyKey)).toBeTruthy();
+    expect(load).toHaveBeenCalledOnce();expect(process.env.FULLSCRIPT_ENVIRONMENT).toBe('production_us');
+    expect(fetcher.mock.calls.every(call=>new URL(String(call[0])).origin==='https://api-us-snd.fullscript.io')).toBe(true);
+  });
+  it('secret refusal is opaque and makes no token-store or upstream request',async()=>{
+    const reviewed=await review();fetcher.mockClear();
+    const tokenRead=vi.spyOn(DynamoDBClient.prototype,'send');tokenRead.mockClear();
+    const load=vi.fn(async():Promise<NodeJS.ProcessEnv>=>{throw Error('FICTIONAL secret internal failure');});
+    const p=createCredentialBoundFullscriptDraftProvider(session,reviewed,undefined,load);
+    await expect(p.create(input)).rejects.toThrow(/^fullscript_delivery_refused$/);
+    expect(load).toHaveBeenCalledOnce();expect(tokenRead).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();
+  });
 });

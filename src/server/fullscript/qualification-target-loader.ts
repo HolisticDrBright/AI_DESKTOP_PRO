@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {S3Client,GetObjectCommand} from '@aws-sdk/client-s3';
 import {fullscriptQualificationTargetSchema,type FullscriptQualificationTarget,type FullscriptLambdaContext} from './qualification-api';
+import {fullscriptCredentialTargetSchema} from './qualification-provider-environment';
 
 const bucket='alp-qualification-code-588966314750-us-east-2';
 const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'
@@ -15,8 +16,9 @@ const baseArn=z.string().regex(/^arn:aws:lambda:us-east-2:588966314750:function:
 // This avoids putting a zip's digest inside that zip or guessing a version.
 const targetPayload=z.object({...fullscriptQualificationTargetSchema.shape,functionArn:baseArn})
  .omit({reviewSha256:true}).strict();
-export const fullscriptTargetReleaseSchema=z.object({contract:z.literal('fullscript-qualification-target-release/1'),
+export const fullscriptTargetReleaseSchema=z.object({contract:z.literal('fullscript-qualification-target-release/2'),
  target:targetPayload,
+ credentials:fullscriptCredentialTargetSchema,
  review:z.object({reviewer:z.literal('Brandon Bright'),reviewedAt:z.string().datetime(),decision:z.literal('approved'),
   scope:z.literal('fictional-fullscript-api-target-only'),versionBinding:z.literal('observed-numeric-version-of-exact-reviewed-code')}).strict(),
 }).strict();
@@ -78,6 +80,9 @@ export async function loadFullscriptQualificationTarget(input:{env:Record<string
    &&context.invokedFunctionArn===release.target.functionArn+':'+context.functionVersion
    &&env.CLINICAL_DATABASE_NAME===release.target.databaseName&&env.CLINICAL_DATABASE_CLUSTER_ARN===release.target.clusterArn
    &&env.CLINICAL_DATABASE_SECRET_ARN===release.target.secretArn);
+  requireTrue(env.FULLSCRIPT_PROVIDER_SECRET_ARN===release.credentials.providerSecretArn
+   &&env.FULLSCRIPT_PROVIDER_SECRET_VERSION===release.credentials.providerSecretVersion
+   &&env.FULLSCRIPT_TOKEN_TABLE===release.credentials.tokenTable&&env.FULLSCRIPT_REDIRECT_URI===release.credentials.redirectUri);
   requireTrue(Date.now()<=endsAt&&!controller.signal.aborted);
   return fullscriptQualificationTargetSchema.parse({...release.target,functionArn:context.invokedFunctionArn,
    reviewSha256:env.QUALIFICATION_REVIEW_SHA256});

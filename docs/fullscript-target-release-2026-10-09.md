@@ -15,11 +15,22 @@ are marked dirty and cannot load a target. The ZIP does not contain a reviewed
 target, its own digest or approval data.
 
 The separately reviewed JSON artifact has contract
-`fullscript-qualification-target-release/1`, a `target` and a `review`. The target
+`fullscript-qualification-target-release/2`, a `target`, `credentials` and a `review`. Version 1 is refused. The target
 contains the existing qualification API fields and all 111 exact migration
 entries, except `reviewSha256`. Its `functionArn` is the unqualified function
 name in synthetic account 588966314750, us-east-2. Its source commit and exact
 ZIP `codeSha256` come from the clean build, not a placeholder.
+
+The credentials binding names one sandbox JSON secret ARN and immutable version,
+one token table and the exact registered HTTPS OAuth callback. These are
+identifiers, not secret values. They must match the function's four corresponding
+settings. The provider and database secrets are distinct. The protected secret
+has contract `fullscript-sandbox-credentials/1` and fields `environment=sandbox_us`,
+`clientId`, `clientSecret`, `stateSecret` and `redirectUri`. Use recursively sorted
+compact JSON with one LF. Do not paste values into source, reports or Lambda
+environment variables. Existing separate connector secrets are not automatically
+combined or copied; a reviewed operator must prepare this explicit sandbox
+credential version, preserve its custody and confirm the OAuth installation.
 
 The review contains Brandon Bright's actual approval time, decision `approved`,
 scope `fictional-fullscript-api-target-only` and version binding
@@ -40,7 +51,9 @@ The publication sequence avoids a circular digest or a guessed Lambda version:
 
 1. Build the ZIP and record its exact source and code digest.
 2. Review the target's function name, code digest, API, database, pools,
-   organization and designated fictional subjects. No numeric version is guessed.
+   organization, designated fictional subjects and credential identifiers. Review
+   the generated template and database credential's restricted login privileges
+   as well. No numeric version is guessed.
 3. Store the reviewed artifact and record its immutable S3 version and byte hash.
 4. Configure the function's pointer and qualification-only settings, then publish
    a numeric Lambda version. Route integrations must name that numeric version.
@@ -81,12 +94,72 @@ returns only an opaque refusal, without a successful qualification marker.
 
 AWS documents [specific-version object reads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)
 and [immutable published function versions](https://docs.aws.amazon.com/lambda/latest/dg/configuration-versions.html).
-The candidate deployment still needs exact version-scoped `s3:GetObjectVersion`,
-the existing observation grants, restricted database/token/provider permissions,
-reviewed stack parameters and no public/direct Lambda invocation. Those grants
-and their deployed behavior have not been qualified by local source tests.
+The candidate builder now generates those grants and published-version routes
+as source. Their deployed behavior remains unqualified.
+
+## Scoped provider credentials
+
+Only an admitted workforce send or reconciliation invokes the native secret
+loader, after the API has verified the signed identity, current MFA, exact AWS
+target and worker ledger, and the delivery service has checked current SQL
+authority. Consumer read, cancel and export do not read provider secrets.
+
+The loader requests the exact secret ARN and version, verifies the returned
+identity/version and sandbox content, refuses malformed or oversized content,
+and applies a five-second deadline with one native attempt. The 8 KiB check is
+on the SDK-decoded secret value, not a proof of network streaming bounds.
+Secrets are not cached. The resulting environment belongs to one request and
+is used by configuration, token refresh and every credential-custody recheck;
+shared `process.env` is never changed. The source tests also poison global
+settings to ensure they cannot redirect a request. Failures return opaque codes.
+
+## Restricted qualification candidate
+
+After a clean committed API build, run
+`npm run build:fullscript-qualification-template`. A dirty or mismatched ZIP
+cannot produce the template. It uses the synthetic account, Ohio, the isolated
+qualification database and two existing, separate JWT authorizers. Default
+qualification execution is off; only the retained log group is unconditional.
+PHI and production activation have no enabled parameter value.
+
+The function and both exact POST routes are conditional. They use one published
+numeric version whose code digest must match the build. Invocation permissions
+name only API Gateway, this account, this API and those two POST paths. No
+function URL, alias, default route, direct-invoke grant or provider-send endpoint
+is created. The function reserves one execution, which still needs actual AWS
+capacity. Lambda errors and throttles target the existing qualification alarm
+topic; source wiring does not prove a subscription or delivery.
+
+Runtime permissions read only the pinned S3 target version, the selected function
+configuration, the selected API's route/authorizer/integration metadata, two
+Cognito pools and current users, the reviewed cluster and database secret, and
+the pinned provider secret version. Token custody permits GetItem and conditional
+PutItem only within the reviewed organization's partition. It permits no token
+scan, deletion, nonce write, secret mutation or object write. Customer-managed
+secret keys require separately reviewed exact key ARNs and decrypt grants limited
+to Secrets Manager and the corresponding secret encryption context. The database
+secret is still not a claim of least-privilege SQL access: inspect its login and
+role membership before deployment. The native worker never falls back to an
+administrative role.
+
+Before a deployment, independently compare all filled parameters with the reviewed
+target, exact source/ZIP, foundation, IAM policies, existing token store, actual
+secret encryption and authorizers. Register current SQL/provider/consent releases
+only from real reviews. The template contains no release rows, consent grants,
+provider approval or fictional identities. A deployment and acceptance operator,
+live permission checks and real fictional sandbox journeys remain required.
 
 ## Evidence and remaining work
+
+The credential and restricted-template increment passed the broad source group:
+590 tests in 20 files, no skips, in 167.87 seconds starting at 21:52:12 PDT on
+October 9. The template has 19 passing Node tests, and its generated fictional
+instance passes local CloudFormation schema/reference lint. Typecheck and
+targeted lint pass. The 31 secret-loader cases, eight credential-target cases
+and three provider-binding cases add 42 unit regressions. The real SQL/native
+provider composition also verifies request-scoped credentials under poisoned
+global settings and consent withdrawal. These are local fictional transports,
+PGlite and reused dependencies, not AWS, Fullscript or device acceptance.
 
 The focused loader/runtime/API group passed 140 tests in three files, and the
 actual bundle/ZIP checksum and safe-refusal test passed. Responses are fictional;

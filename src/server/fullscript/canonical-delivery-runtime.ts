@@ -25,7 +25,7 @@ const guarded=async<T>(work:()=>Promise<T>)=>{try{return await work();}catch{thr
  * Consumer reads/cancellation/export never construct an OAuth provider.
  */
 export function createCanonicalFullscriptDelivery(input:{database:ClinicalCoreDatabase;
- configuration:unknown;actor:DraftDeliveryActor;session?:RequestSession}){
+ configuration:unknown;actor:DraftDeliveryActor;session?:RequestSession;providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>}){
  let actor:DraftDeliveryActor;
  try{actor=actorSchema.parse(structuredClone(input.actor));}catch{throw new DraftDeliveryRefused();}
  const session=input.session?{...input.session}:undefined;
@@ -59,7 +59,7 @@ export function createCanonicalFullscriptDelivery(input:{database:ClinicalCoreDa
     const current=await load(request.idempotencyKey,true,request);
     if(canonical(current)!==canonical(admitted))throw new DraftDeliveryRefused();
    };
-   return createCredentialBoundFullscriptDraftProvider(session!,admitted.release,check).create(request);
+   return createCredentialBoundFullscriptDraftProvider(session!,admitted.release,check,input.providerEnvironment).create(request);
   }),
   findByMetadata:(key:string)=>guarded(async()=>{
    const admitted=await load(key,false);
@@ -67,7 +67,7 @@ export function createCanonicalFullscriptDelivery(input:{database:ClinicalCoreDa
     const current=await load(key,false);
     if(canonical(current)!==canonical(admitted))throw new DraftDeliveryRefused();
    };
-   return createCredentialBoundFullscriptDraftProvider(session!,admitted.release,check).findByMetadata(key);
+   return createCredentialBoundFullscriptDraftProvider(session!,admitted.release,check,input.providerEnvironment).findByMetadata(key);
   }),
  };
  const delivery=createDraftDeliveryService(database,authority,provider);

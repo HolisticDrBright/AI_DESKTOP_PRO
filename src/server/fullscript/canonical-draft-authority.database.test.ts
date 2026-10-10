@@ -311,8 +311,8 @@ describe('same-target Fullscript authority with canonical SQL and fictional revi
 describe('canonical delivery composition, fictional SQL and provider observations, not hosted qualification',()=>{
  const session=():RequestSession=>({signedIn:true,email:'fictional.practitioner@example.test',orgId:org,
   expired:false,expiresAt:null,token:'fictional-identity-token'});
- const runtime=(a=actor(),s:RequestSession|null=session(),target=database())=>createCanonicalFullscriptDelivery({
-  database:target,configuration:cfg,actor:a,session:s??undefined});
+ const runtime=(a=actor(),s:RequestSession|null=session(),target=database(),providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>)=>createCanonicalFullscriptDelivery({
+  database:target,configuration:cfg,actor:a,session:s??undefined,providerEnvironment});
  const bridge=(duringCredentialObservation?:()=>Promise<void>)=>vi.spyOn(credentialBinding,'createCredentialBoundFullscriptDraftProvider')
   .mockImplementation((_s,_review,check)=>({
    create:async input=>{await duringCredentialObservation?.();await check?.();return provider.create(input);},
@@ -329,15 +329,15 @@ describe('canonical delivery composition, fictional SQL and provider observation
   expect(typeof factory.mock.calls[0][2]).toBe('function');
  });
  it('consumer status, cancel and owner export use no provider credentials even with no session',async()=>{
-  const factory=bridge(),p=await runtime().prepare({manifestId,patientRecordId:patient});
-  const owner=runtime(actor(consumer,'consumer'),null);
+  const load=vi.fn(async()=>({...process.env})),factory=bridge(),p=await runtime(actor(),session(),database(),load).prepare({manifestId,patientRecordId:patient});
+  const owner=runtime(actor(consumer,'consumer'),null,database(),load);
   expect(await owner.read(p.id)).toMatchObject({state:'prepared'});
   expect(await owner.exportForOwner(p.id)).toMatchObject({contract:'fullscript-draft-owner-export/1'});
   expect(await owner.cancel(p.id)).toMatchObject({state:'cancelled'});
   await expect(owner.send(p.id)).rejects.toThrow('fullscript_delivery_refused');
   await expect(owner.reconcile(p.id)).rejects.toThrow('fullscript_delivery_refused');
   await expect(owner.prepare({manifestId,patientRecordId:patient})).rejects.toThrow('fullscript_delivery_refused');
-  expect(factory).not.toHaveBeenCalled();expect(provider.create).not.toHaveBeenCalled();
+  expect(factory).not.toHaveBeenCalled();expect(provider.create).not.toHaveBeenCalled();expect(load).not.toHaveBeenCalled();
  });
  it.each(['external-consent','clinic-consent','enrollment','hold','deletion','consumer-identity','reviewer','catalog','link'])
  ('rechecks %s loss during credential I/O before POST, settles withheld and emits no provider body',async reason=>{
@@ -450,8 +450,13 @@ describe('canonical delivery composition, fictional SQL and provider observation
    releases[kind]=await release(kind,id,contents[kind],kind==='consent'?1:2);
   }
   await externalGrant();fetcher.mockClear();
-  const r=runtime(),p=await r.prepare({manifestId,patientRecordId:patient});withdraw=mode!=='positive';
+  const scoped={...process.env},load=vi.fn(async()=>scoped);
+  // Version-pinned secret values belong to this request, not shared globals.
+  vi.stubEnv('FULLSCRIPT_ENVIRONMENT','production_us');vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','untrusted-global-table');
+  const r=runtime(actor(),session(),database(),load),p=await r.prepare({manifestId,patientRecordId:patient});withdraw=mode!=='positive';
+  expect(load).not.toHaveBeenCalled();
   const result=await r.send(p.id);
+  expect(load).toHaveBeenCalledOnce();
   expect(result).toMatchObject({state:withdraw?'withheld':'verified',patientSent:false,phiAllowed:false});
   expect(fetcher.mock.calls.filter(c=>c[1]?.method==='POST')).toHaveLength(withdraw?0:1);
   if(!withdraw){

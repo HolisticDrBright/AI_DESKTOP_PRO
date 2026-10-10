@@ -12,7 +12,7 @@ let release:Record<string,unknown>;
 beforeAll(()=>{
  const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-fullscript-candidate.mjs','--json'],
   {encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
- release={contract:'fullscript-qualification-target-release/1',target:{execution:'qualification',account:'588966314750',region:'us-east-2',
+ release={contract:'fullscript-qualification-target-release/2',target:{execution:'qualification',account:'588966314750',region:'us-east-2',
   phiAllowed:false,activation:'blocked',sourceCommit:'a'.repeat(40),apiId:'a123456789',
   functionArn:'arn:aws:lambda:us-east-2:588966314750:function:FICTIONAL-fullscript',codeSha256:Buffer.alloc(32,7).toString('base64'),
   clusterArn:'arn:aws:rds:us-east-2:588966314750:cluster:fictional',secretArn:'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional',
@@ -22,6 +22,8 @@ beforeAll(()=>{
   consumerSubjects:['FICTIONAL-consumer-1','FICTIONAL-consumer-2'],workforceSubjects:['FICTIONAL-workforce'],
   migrations:artifact.manifest.migrations.map((m:{version:string;file:string})=>({version:m.version,name:m.file.slice(15,-4),
    sha256:sha(Buffer.from(artifact.files[m.file]))}))},
+  credentials:{providerSecretArn:'arn:aws:secretsmanager:us-east-2:588966314750:secret:FICTIONAL-fullscript',
+   providerSecretVersion:'f'.repeat(32),tokenTable:'FICTIONAL-fullscript-tokens',redirectUri:'https://fictional.example.test/api/live/fullscript/oauth/callback'},
   review:{reviewer:'Brandon Bright',reviewedAt:'2026-10-01T00:00:00.000Z',decision:'approved',scope:'fictional-fullscript-api-target-only',
    versionBinding:'observed-numeric-version-of-exact-reviewed-code'}};
  // This approval is explicitly FICTIONAL fixture metadata, not a real release.
@@ -32,7 +34,10 @@ function setup(value:unknown=release){
   QUALIFICATION_ACCOUNT_ID:'588966314750',FULLSCRIPT_SOURCE_COMMIT:'a'.repeat(40),FULLSCRIPT_TARGET_BUCKET:'alp-qualification-code-588966314750-us-east-2',
   FULLSCRIPT_TARGET_KEY:'fullscript/qualification-target/'+ '1'.repeat(32)+'/target.json',FULLSCRIPT_TARGET_VERSION:'FICTIONAL-version',
   QUALIFICATION_REVIEW_SHA256:sha(content),CLINICAL_DATABASE_NAME:target.databaseName,
-  CLINICAL_DATABASE_CLUSTER_ARN:target.clusterArn,CLINICAL_DATABASE_SECRET_ARN:target.secretArn};
+  CLINICAL_DATABASE_CLUSTER_ARN:target.clusterArn,CLINICAL_DATABASE_SECRET_ARN:target.secretArn,
+  FULLSCRIPT_PROVIDER_SECRET_ARN:'arn:aws:secretsmanager:us-east-2:588966314750:secret:FICTIONAL-fullscript',
+  FULLSCRIPT_PROVIDER_SECRET_VERSION:'f'.repeat(32),FULLSCRIPT_TOKEN_TABLE:'FICTIONAL-fullscript-tokens',
+  FULLSCRIPT_REDIRECT_URI:'https://fictional.example.test/api/live/fullscript/oauth/callback'};
  const body=Readable.from([content.subarray(0,31),content.subarray(31)]),destroy=vi.spyOn(body,'destroy');
  const object:Record<string,unknown>={$metadata:{httpStatusCode:200},VersionId:'FICTIONAL-version',ContentLength:content.length,ContentType:'application/json',ServerSideEncryption:'AES256',Body:body};
  const send=vi.fn(async()=>object),context={invokedFunctionArn:target.functionArn+':7',functionVersion:'7'},build={sourceCommit:'a'.repeat(40),clean:true};
@@ -104,5 +109,16 @@ describe('immutable Fullscript target loader with fictional S3; not hosted accep
  });
  it('does not cache target observations across requests',async()=>{
   const s=setup();await s.run();s.object.VersionId='changed';await expect(s.run()).rejects.toThrow();expect(s.send).toHaveBeenCalledTimes(2);
+ });
+ it.each(['FULLSCRIPT_PROVIDER_SECRET_ARN','FULLSCRIPT_PROVIDER_SECRET_VERSION','FULLSCRIPT_TOKEN_TABLE','FULLSCRIPT_REDIRECT_URI'])
+  ('refuses changed credential pointer %s despite the same target digest',async key=>{
+   const s=setup();s.env[key]='changed';await expect(s.run()).rejects.toThrow('fullscript_target_release_refused');
+  });
+ it.each(['missing','legacy','wrong-account','wrong-version'])('refuses %s credential binding in a hash-matched artifact',async kind=>{
+  const v=structuredClone(release),credentials=v.credentials as Record<string,unknown>;
+  if(kind==='missing')delete v.credentials;if(kind==='legacy')v.contract='fullscript-qualification-target-release/1';
+  if(kind==='wrong-account')credentials.providerSecretArn='arn:aws:secretsmanager:us-east-2:173535830222:secret:FICTIONAL';
+  if(kind==='wrong-version')credentials.providerSecretVersion='AWSCURRENT';
+  await expect(setup(v).run()).rejects.toThrow('fullscript_target_release_refused');
  });
 });

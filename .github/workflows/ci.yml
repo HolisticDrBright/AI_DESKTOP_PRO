@@ -43,6 +43,8 @@ jobs:
         run: |
           npm run test:fullscript-target-runtime
           npm run test:fullscript-api-build
+          npm run test:fullscript-qualification-template
+          npm run build:fullscript-qualification-template
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
@@ -119,6 +121,7 @@ jobs:
         run: |
           npm run build:aws-care-messaging
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/fullscript-api/template.json
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
