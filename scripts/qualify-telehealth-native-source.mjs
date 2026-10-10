@@ -1,6 +1,7 @@
-/** Local empty-source compilation only. No AWS/provider transport, existing
- * database URL, target manifest, activation or credential input is supported. */
-import { spawnSync } from 'node:child_process';
+/** Local disposable-source qualification, optionally with fictional SQL races.
+ * No AWS/provider transport, existing database URL, target manifest, activation
+ * or credential input is supported. */
+import { spawnSync,execFileSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -8,12 +9,15 @@ import { createRequire } from 'node:module';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileTelehealthSchemaNativeSource } from './compile-telehealth-schema-source.mjs';
-import { TELEHEALTH_SCHEMA_NAMES } from './telehealth-schema-projection.mjs';
+import { TELEHEALTH_SCHEMA_NAMES,projectTelehealthSchema } from './telehealth-schema-projection.mjs';
+import { runTelehealthNativeRaces } from './telehealth-native-races.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const refuse=()=>{throw Error('telehealth_native_source_arguments_refused');};
 const args=process.argv.slice(2);
-if(process.platform!=='win32'||args.length!==4||args[0]!=='--binary-directory'||args[2]!=='--driver-directory'
+const keyFence=args.length===8&&args[6]==='--candidate'&&args[7]==='key-fence';
+const matrix=(args.length===6||keyFence)&&args[4]==='--matrix'&&args[5]==='telehealth-transfer';
+if(process.platform!=='win32'||!(args.length===4||matrix)||args[0]!=='--binary-directory'||args[2]!=='--driver-directory'
   ||!isAbsolute(args[1])||!isAbsolute(args[3]))refuse();
 const bin=realpathSync(args[1]),driver=realpathSync(args[3]);
 const binary=name=>join(bin,name+'.exe');
@@ -41,7 +45,7 @@ const runDirectory=mkdtempSync(join(runs,'pg17-')),data=join(runDirectory,'clust
 const password=randomBytes(32).toString('hex'),passwordFile=join(runDirectory,'bootstrap-password');
 writeFileSync(passwordFile,password+'\n',{flag:'wx',mode:0o600});
 const databaseName='alp_source_'+randomUUID().replaceAll('-','');
-let startAttempted=false,client,report;
+let startAttempted=false,client,report,stage='bootstrap';
 try {
   run('initdb',['-D',data,'-U','postgres','--encoding=UTF8','--locale=C','--auth=scram-sha-256','--pwfile='+passwordFile,'--data-checksums']);
   unlinkSync(passwordFile);
@@ -56,6 +60,7 @@ try {
   // Database identifier is generated here, never supplied by the caller.
   await client.query(`create database "${databaseName}"`);await client.end();
   client=new Client({...configuration,database:databaseName});await client.connect();
+  stage='compile';
   // Match the embedded compiler's explicitly installed public pgcrypto. With
   // pg_catalog first in search_path, an unqualified fresh CREATE EXTENSION
   // otherwise tries to install there and collides with built-in UUID functions.
@@ -67,6 +72,7 @@ try {
     transaction:async work=>{await connection.query('begin');try{const value=await work(db);await connection.query('commit');return value;}
       catch(error){await connection.query('rollback');throw error;}}};
   const compiled=await compileTelehealthSchemaNativeSource(db);
+  stage='empty-inventory';
   if(compiled.postgresVersion!=='17.7'||compiled.snapshots.map(s=>s.migrationCount).join(',')!=='112,113,114')refuse();
   const tables=(await client.query(`select n.nspname,c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
     where n.nspname in(select jsonb_array_elements_text($1::jsonb)) and c.relkind in('r','p')
@@ -81,9 +87,36 @@ try {
     sourceOnly:true,phiAllowed:false,activation:'blocked',providerAuthorized:false,upgradeAuthorized:false,
     databaseOwner:'postgres',postgresVersion:'17.7',driverVersion:'8.16.3',
     binarySha256:hash(readFileSync(binary('postgres'))),emptyApplicationTables:true,applicationTableCount:tables.length,compiled};
+  if(matrix){
+    stage='race-matrix';
+    delete report.emptyApplicationTables;
+    report.sourceTablesInitiallyEmpty=true;
+    report.execution='local_fictional_sql_matrix';
+    if(keyFence){
+      const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-transfer-key-fence-candidate.mjs','--json'],
+        {cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,timeout:60_000,windowsHide:true}));
+      const row=artifact.manifest.migrations.at(-1),sql=artifact.files[row.file];
+      if(artifact.candidate.contract!=='telehealth-transfer-key-fence-candidate/1'||artifact.candidate.phiAllowed!==false
+        ||artifact.candidate.activation!=='blocked'||artifact.candidate.parentArtifactSha256!==compiled.snapshots.at(-1).assemblySha256)refuse();
+      await client.query('begin');
+      try{
+        await client.query(sql);
+        await client.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)',[row.version,row.file.slice(15,-4),hash(sql)]);
+        await client.query('commit');
+      }catch(error){await client.query('rollback');throw error;}
+      report.sourceExtension={...artifact.candidate,assemblySha256:artifact.releaseHash,
+        localSchemaSha256:hash(JSON.stringify(await projectTelehealthSchema((sql,args)=>client.query(sql,args))))};
+    }
+    report.races=await runTelehealthNativeRaces(client,async()=>{
+      const session=new Client({...configuration,database:databaseName});await session.connect();return session;
+    });
+  }
 } catch(error) {
   // Do not print the data-URL installer stack, query text, environment or keys.
   const failure=new Error('telehealth_native_source_run_failed');
+  failure.stage=stage;
+  if(/^[A-Z0-9]{5}$/.test(error?.code??''))failure.databaseErrorCode=error.code;
+  if(/^telehealth_native_race_[a-z_]+$/.test(error?.message??''))failure.raceRefusal=error.message;
   if(['migration_failed','history_mismatch','verification_failed'].includes(error?.category))failure.category=error.category;
   if(/^\d{14}$/.test(error?.version??''))failure.migrationVersion=error.version;
   if(Number.isSafeInteger(error?.statementIndex))failure.statementIndex=error.statementIndex;
@@ -107,5 +140,8 @@ writeFileSync(join(runDirectory,'source-qualification.json'),JSON.stringify(repo
 console.log(JSON.stringify({contract:report.contract,execution:report.execution,postgresVersion:report.postgresVersion,
   databaseOwner:report.databaseOwner,reportDirectory:basename(runDirectory),shutdownConfirmed:true,
   emptyApplicationTables:report.emptyApplicationTables,applicationTableCount:report.applicationTableCount,
+  ...(report.races?{races:report.races}:{}),
+  ...(report.sourceExtension?{sourceExtension:report.sourceExtension}:{}),
   snapshots:report.compiled.snapshots.map(({migrationCount,schemaSha256,projection})=>({migrationCount,schemaSha256,items:projection.length})),
   phiAllowed:false,activation:'blocked',providerAuthorized:false,upgradeAuthorized:false}));
+if(report.races?.verdict==='failed')process.exitCode=1;
