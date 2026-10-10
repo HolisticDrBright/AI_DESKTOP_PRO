@@ -184,6 +184,12 @@ passes. Built-command acceptance is a separate check, not implied by these
 module results. All targets, transports and review attestations in tests are
 fictional; no actual review or AWS deployment is established.
 
+The first actual built-command run passed six checks and failed the
+outside-repository refusal because Git's child-process stderr escaped the
+opaque error boundary. Git output is now explicitly captured. The seven-case
+command suite must pass on the rebuilt clean source; its initial failure is
+retained, not recast as success.
+
 The credential and restricted-template increment passed the broad source group:
 590 tests in 20 files, no skips, in 167.87 seconds starting at 21:52:12 PDT on
 October 9. The template has 19 passing Node tests, and its generated fictional
