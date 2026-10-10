@@ -1,6 +1,6 @@
 /** Read actual response bytes under a hard limit. Never fall back to text(),
  * which materializes an unbounded body before a subsequent size check. */
-export async function boundedProviderJson(response: Response, limit: number): Promise<unknown> {
+export async function boundedProviderJson(response: Response, limit: number, signal?: AbortSignal): Promise<unknown> {
   const refuse = () => new Error('provider_body_refused');
   if (!Number.isSafeInteger(limit) || limit < 1 || !response.body) throw refuse();
   const rawLength = response.headers.get('content-length');
@@ -9,6 +9,7 @@ export async function boundedProviderJson(response: Response, limit: number): Pr
     try { await response.body?.cancel(); } catch { /* refusal retained */ }
     throw refuse();
   };
+  if (signal?.aborted) return rejectBeforeRead();
   let declared: number | null = null;
   if (rawLength !== null) {
     if (!/^(0|[1-9][0-9]*)$/.test(rawLength)) return rejectBeforeRead();
@@ -19,13 +20,24 @@ export async function boundedProviderJson(response: Response, limit: number): Pr
   // length. Both the declared wire size and actual decoded bytes stay bounded.
   const compareLength = !encoding || encoding.toLowerCase() === 'identity';
   const reader = response.body.getReader();
+  let rejectAbort: ((error: Error) => void) | undefined;
+  const aborted = signal ? new Promise<never>((_resolve, reject) => { rejectAbort = reject; }) : null;
+  const abort = () => {
+    rejectAbort?.(refuse());
+    // Cancel the locked reader, not response.body. Do not wait for another
+    // provider chunk, and do not interpret cancellation as remote deletion.
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', abort, { once: true });
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let received = 0;
   let text = '';
   let completed = false;
   try {
     for (;;) {
-      const next = await reader.read();
+      if (signal?.aborted) throw refuse();
+      const next = await (aborted ? Promise.race([reader.read(), aborted]) : reader.read());
+      if (signal?.aborted) throw refuse();
       if (next.done) break;
       if (!(next.value instanceof Uint8Array)) throw refuse();
       received += next.value.byteLength;
@@ -40,10 +52,11 @@ export async function boundedProviderJson(response: Response, limit: number): Pr
   } catch {
     throw refuse();
   } finally {
+    signal?.removeEventListener('abort', abort);
     if (!completed) {
       // Cancellation failure must not turn a refused body into success.
-      try { await reader.cancel(); } catch { /* original refusal retained */ }
+      try { if (!signal?.aborted) await reader.cancel(); } catch { /* original refusal retained */ }
     }
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* pending transport read cannot authorize success */ }
   }
 }

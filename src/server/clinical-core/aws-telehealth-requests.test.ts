@@ -879,6 +879,113 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- one meeting per visit, with the real password */
 
+  it.each(["meeting-900000001", [900000001], "900000001-other"])("refuses a coerced summary meeting identity %j", async (meetingId) => {
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, {
+      meeting_id: meetingId, meeting_uuid: "uuid-900000001", summary_content: "Unrelated instance text must not be imported.",
+    }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+    const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(putItems()).toHaveLength(0);
+  });
+
+  it.each([
+    { meetings: [], next_page_token: 42 },
+    { meetings: [], next_page_token: null },
+    { meetings: [], next_page_token: "x".repeat(1025) },
+    { meetings: [null] },
+    { meetings: [{ id: [900000001], agenda: `alp-visit:${APPOINTMENT}` }] },
+  ])("refuses malformed recovery listing rather than creating or adopting a meeting %j", async (payload) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, payload) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(creates(calls)).toHaveLength(0);
+    expect(putItems().some(item => item.providerMeetingId)).toBe(false);
+  });
+
+  it.each([
+    { id: [900000001] }, { password: ["real-password-900000001"] },
+    { password: { value: "real-password-900000001" } }, { password: "secret\u0000" },
+    { uuid: null }, { uuid: "" }, { uuid: "instance\u0000" },
+    { join_url: "https://unrelated.example.test/j/900000001" },
+    { join_url: "https://zoom.us@unrelated.example.test/j/900000001" },
+    { join_url: "https://zoom.us/j/900000002" },
+    { join_url: "https://zoom.us:444/j/900000001" },
+  ])("does not bind a coerced or unsafe create result %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ create: () => jsonResponse(201, meetingBody(900000001, mismatch)) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(creates(calls)).toHaveLength(1);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId)).toBe(false);
+    // The dispatched lease is retained: refusal cannot certify no Zoom effect.
+    expect(putItems().at(-1)?.meetingLease).toMatchObject({ state: "dispatched" });
+  });
+
+  it.each(["list", "create", "get"] as const)("cancels oversized %s bytes before binding or issuing a session", async (stage) => {
+    let cancelled = false;
+    const oversized = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('"' + "x".repeat(300_000) + '"')); },
+      cancel() { cancelled = true; },
+    }), { status: stage === "create" ? 201 : 200 });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: oversized })]);
+    queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(cancelled).toBe(true);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+  });
+
+  it.each(["list", "create", "get"] as const)("cancels a stalled %s body at the shared deadline", async (stage) => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let response: Response | undefined, cancelled = false;
+    try {
+      const stalled = () => response = new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(new TextEncoder().encode('{')); }, cancel() { cancelled = true; },
+      }), { status: stage === "create" ? 201 : 200 });
+      const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: stalled })]);
+      queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+      const pending = start();
+      for (let tick = 0; tick < 300 && !response?.body?.locked; tick += 1) await Promise.resolve();
+      expect(response?.body?.locked).toBe(true);
+      controller.abort();
+      const result = await pending;
+      expect(result.statusCode).toBe(503);
+      expect(cancelled).toBe(true);
+      expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+      expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+      if (stage === "create") expect(putItems().at(-1)?.meetingLease).toMatchObject({ state: "dispatched" });
+    } finally { timeout.mockRestore(); }
+  });
+
+  it.each(["list", "create", "get"] as const)("refuses a redirected %s response", async (stage) => {
+    const redirected = () => ({ ...jsonResponse(stage === "create" ? 201 : 200,
+      stage === "list" ? { meetings: [] } : meetingBody(900000001)), redirected: true });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: redirected })]);
+    queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+  });
+
+  it("retains a valid regional Zoom join URL without substituting its encrypted token for the password", async () => {
+    const joinUrl = "https://us02web.zoom.us/j/900000001?pwd=ENCRYPTED-URL-TOKEN";
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ create: () => jsonResponse(201, meetingBody(900000001, { join_url: joinUrl })) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.visit.joinUrl).toBe(joinUrl);
+    expect(JSON.parse(result.body ?? "{}").data.session.passcode).toBe("real-password-900000001");
+  });
+
   it.each([
     { host_id: "another-host" }, { host_id: null }, { uuid: "another-instance" }, { uuid: null },
     { id: 900000002 }, { type: 8 }, { status: "deleted" }, { password: "changed-password" },

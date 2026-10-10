@@ -61,7 +61,7 @@ export async function observeZoomSdkHost(input: ZoomSdkHostInput, signal: AbortS
         try { await response.body?.cancel(); } catch { /* refusal retained */ }
         throw refuse();
       }
-      const value = await boundedProviderJson(response, 65_536);
+      const value = await boundedProviderJson(response, 65_536, signal);
       if (signal.aborted) throw refuse();
       return value;
     };

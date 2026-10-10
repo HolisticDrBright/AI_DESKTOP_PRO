@@ -679,7 +679,7 @@ async function recoveryZoomCredentials(config: TelehealthConfiguration, signal: 
     method: "POST", redirect: "error", cache: "no-store", signal, headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` },
   }));
   if (result.status !== 200) throw new TelehealthError("appointment_change_pending");
-  const token = await recoveryAwait(signal, () => boundedProviderJson(result, 65536));
+  const token = await recoveryAwait(signal, () => boundedProviderJson(result, 65536, signal));
   try { return { accessToken: zoomBearerToken(token, "access_token"), userId }; }
   catch { throw new TelehealthError("appointment_change_pending"); }
 }
@@ -964,7 +964,7 @@ async function zoomAccess(config: TelehealthConfiguration, sdkRequired = false, 
       try { await tokenResponse.body?.cancel(); } catch { /* refusal retained */ }
       throw new TelehealthError("provider_unavailable");
     }
-    const accessToken = zoomBearerToken(await boundedProviderJson(tokenResponse, 65_536), "access_token");
+    const accessToken = zoomBearerToken(await boundedProviderJson(tokenResponse, 65_536, signal), "access_token");
     if (signal.aborted) throw new TelehealthError("provider_unavailable");
     return { accessToken, userId, credentials };
   } catch { throw new TelehealthError("provider_unavailable"); }
@@ -972,28 +972,57 @@ async function zoomAccess(config: TelehealthConfiguration, sdkRequired = false, 
 
 async function createZoomMeeting(config: TelehealthConfiguration, input: { requestId: string; start: string; durationMinutes: number; timeZone: string }) {
   await markRequestSideEffect(config);
-  const { accessToken, userId } = await zoomAccess(config);
-  const meetingResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/meetings`, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ topic: "AI Longevity Pro telehealth appointment", type: 2, start_time: input.start, duration: input.durationMinutes, timezone: input.timeZone, agenda: `Governed appointment request ${input.requestId}`, settings: { waiting_room: true, join_before_host: false, meeting_authentication: true } }) });
-  if (!meetingResponse.ok) throw new TelehealthError("provider_unavailable");
-  return zoomMeetingRecord(await meetingResponse.json() as Record<string, unknown>);
+  const signal = AbortSignal.timeout(20_000);
+  const { accessToken, userId } = await zoomAccess(config, false, signal);
+  const meetingResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/meetings`, { method: "POST", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ topic: "AI Longevity Pro telehealth appointment", type: 2, start_time: input.start, duration: input.durationMinutes, timezone: input.timeZone, agenda: `Governed appointment request ${input.requestId}`, settings: { waiting_room: true, join_before_host: false, meeting_authentication: true } }) });
+  return zoomMeetingRecord(await zoomResponseJson(meetingResponse, signal, 65_536, 201));
 }
 type ZoomMeetingRecord = { providerMeetingId: string; providerMeetingUuid: string | null; joinUrl: string; password: string };
+function zoomMeetingId(value: unknown): string {
+  const id = typeof value === "number" && Number.isSafeInteger(value) ? String(value) : value;
+  if (typeof id !== "string" || !/^\d{9,12}$/.test(id)) throw new TelehealthError("provider_unavailable");
+  return id;
+}
+async function zoomResponseJson(response: Response, signal: AbortSignal, limit: number, expectedStatus = 200): Promise<Record<string, unknown>> {
+  try {
+    if (signal.aborted || response.redirected || !response.ok || response.status !== expectedStatus) {
+      try { await response.body?.cancel(); } catch { /* refusal retained */ }
+      throw new TelehealthError("provider_unavailable");
+    }
+    const value = await recoveryAwait(signal, () => boundedProviderJson(response, limit, signal));
+    if (!value || typeof value !== "object" || Array.isArray(value) || signal.aborted) throw new TelehealthError("provider_unavailable");
+    return value as Record<string, unknown>;
+  } catch { throw new TelehealthError("provider_unavailable"); }
+}
 /** The fields a visit keeps from Zoom's meeting object. `password` is the API's meeting password; the join URL's `pwd` is an encrypted token and is never used. */
 function zoomMeetingRecord(meeting: Record<string, unknown>): ZoomMeetingRecord {
-  const id = String(meeting.id ?? "");
-  if (!/^\d{9,12}$/.test(id)) throw new TelehealthError("provider_unavailable");
-  const password = meeting.password === undefined || meeting.password === null ? "" : String(meeting.password);
-  if (password.length > 64) throw new TelehealthError("provider_unavailable");
-  return { providerMeetingId: id, providerMeetingUuid: typeof meeting.uuid === "string" ? meeting.uuid : null, joinUrl: field(meeting, "join_url"), password };
+  const id = zoomMeetingId(meeting.id);
+  const password = meeting.password === undefined || meeting.password === null ? "" : meeting.password;
+  if (typeof password !== "string" || password.length > 64 || /[\u0000-\u001f\u007f]/.test(password)
+    || Buffer.from(password, "utf8").toString("utf8") !== password
+    || typeof meeting.uuid !== "string" || !meeting.uuid || meeting.uuid.length > 512
+    || /[\s\u0000-\u001f\u007f]/.test(meeting.uuid) || Buffer.from(meeting.uuid, "utf8").toString("utf8") !== meeting.uuid)
+    throw new TelehealthError("provider_unavailable");
+  const joinUrl = field(meeting, "join_url");
+  let url: URL;
+  try { url = new URL(joinUrl); } catch { throw new TelehealthError("provider_unavailable"); }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash
+    || (url.hostname !== "zoom.us" && !url.hostname.endsWith(".zoom.us")) || url.pathname !== `/j/${id}`
+    || /[\s\u0000-\u001f\u007f]/.test(joinUrl) || Buffer.from(joinUrl, "utf8").toString("utf8") !== joinUrl)
+    throw new TelehealthError("provider_unavailable");
+  return { providerMeetingId: id, providerMeetingUuid: meeting.uuid, joinUrl, password };
 }
 /** GET one meeting by id: the password and uuid for a meeting this Lambda did not just create (request-booked, or adopted by evidence). Null when the provider says it no longer exists. */
-async function getZoomMeeting(config: TelehealthConfiguration, meetingId: string): Promise<ZoomMeetingRecord | null> {
-  const { accessToken } = await zoomAccess(config);
-  const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
-  if (result.status === 404) return null;
-  if (!result.ok) throw new TelehealthError("provider_unavailable");
-  const record = zoomMeetingRecord(await result.json() as Record<string, unknown>);
-  if (record.providerMeetingId !== meetingId.replace(/\D/g, "")) throw new TelehealthError("provider_unavailable");
+async function getZoomMeeting(config: TelehealthConfiguration, meetingId: string, signal = AbortSignal.timeout(20_000)): Promise<ZoomMeetingRecord | null> {
+  zoomMeetingId(meetingId);
+  const { accessToken } = await zoomAccess(config, false, signal);
+  const result = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}`, { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
+  if (result.status === 404 && !result.redirected && !signal.aborted) {
+    try { await result.body?.cancel(); } catch { /* missing result is not deletion evidence */ }
+    return null;
+  }
+  const record = zoomMeetingRecord(await zoomResponseJson(result, signal, 65_536));
+  if (record.providerMeetingId !== meetingId) throw new TelehealthError("provider_unavailable");
   return record;
 }
 
@@ -1404,21 +1433,24 @@ const MAX_LIST_LOOKUP_PAGES = 10;
  * is never taken as "nothing exists".
  */
 async function findZoomMeetingForVisit(config: TelehealthConfiguration, appointmentId: string): Promise<{ found: ZoomMeetingRecord | null; complete: boolean }> {
-  const { accessToken, userId } = await zoomAccess(config);
+  const signal = AbortSignal.timeout(20_000);
+  const { accessToken, userId } = await zoomAccess(config, false, signal);
   const marker = meetingMarker(appointmentId);
   let nextPageToken = "";
   const matches = new Set<string>();
   for (let page = 0; page < MAX_LIST_LOOKUP_PAGES; page += 1) {
     const result = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/meetings?type=upcoming&page_size=300${nextPageToken ? `&next_page_token=${encodeURIComponent(nextPageToken)}` : ""}`,
-      { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
-    if (!result.ok) throw new TelehealthError("provider_unavailable");
-    const payload = await result.json() as { meetings?: Array<Record<string, unknown>>; next_page_token?: string };
-    if (!Array.isArray(payload.meetings)) throw new TelehealthError("provider_unavailable");
-    for (const meeting of payload.meetings) {
+      { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
+    const payload = await zoomResponseJson(result, signal, 262_144);
+    if (!Array.isArray(payload.meetings) || payload.meetings.length > 300
+      || payload.meetings.some(meeting => !meeting || typeof meeting !== "object" || Array.isArray(meeting))
+      || (Object.hasOwn(payload, "next_page_token") && (typeof payload.next_page_token !== "string"
+        || payload.next_page_token.length > 1024 || /[\s\u0000-\u001f\u007f]/.test(payload.next_page_token))))
+      throw new TelehealthError("provider_unavailable");
+    for (const meeting of payload.meetings as Array<Record<string, unknown>>) {
       // Preserve exact historical and current marker formats, never substring matching.
       if (meeting.agenda !== marker && meeting.agenda !== `Governed appointment request ${marker}`) continue;
-      const id = String(meeting.id ?? "");
-      if (!/^\d{9,12}$/.test(id)) throw new TelehealthError("provider_unavailable");
+      const id = zoomMeetingId(meeting.id);
       matches.add(id);
       if (matches.size > 1) throw new TelehealthError("provider_unavailable");
     }
@@ -1426,7 +1458,7 @@ async function findZoomMeetingForVisit(config: TelehealthConfiguration, appointm
     if (!nextPageToken) {
       // Do not adopt a first-page match before checking for an ambiguous second match.
       const id = [...matches][0];
-      const record = id ? await getZoomMeeting(config, id) : null;
+      const record = id ? await getZoomMeeting(config, id, signal) : null;
       if (id && !record) throw new TelehealthError("provider_unavailable");
       return { found: record, complete: true };
     }
@@ -1765,16 +1797,16 @@ function nextStepsFromZoomSummary(summary: Record<string, unknown>): VisitAction
  * declared length before the body is read, and again on the bytes received.
  */
 async function zoomMeetingSummary(config: TelehealthConfiguration, meetingId: string, meetingUuid: string | null): Promise<Record<string, unknown> | null> {
-  const { accessToken } = await zoomAccess(config);
-  const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/meeting_summary`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
-  if (result.status === 404) return null;
-  if (!result.ok) throw new TelehealthError("provider_unavailable");
-  let payload: unknown;
-  try { payload = await boundedProviderJson(result, MAX_SUMMARY_BYTES); }
-  catch { throw new TelehealthError("provider_unavailable"); }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new TelehealthError("provider_unavailable");
-  const summary = payload as Record<string, unknown>;
-  if (summary.meeting_id === undefined || summary.meeting_id === null || String(summary.meeting_id).replace(/\D/g, "") !== meetingId.replace(/\D/g, "")) throw new TelehealthError("provider_unavailable");
+  if (zoomMeetingId(meetingId) !== meetingId) throw new TelehealthError("provider_unavailable");
+  const signal = AbortSignal.timeout(20_000);
+  const { accessToken } = await zoomAccess(config, false, signal);
+  const result = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/meeting_summary`, { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
+  if (result.status === 404 && !result.redirected && !signal.aborted) {
+    try { await result.body?.cancel(); } catch { /* no summary is not deletion */ }
+    return null;
+  }
+  const summary = await zoomResponseJson(result, signal, MAX_SUMMARY_BYTES);
+  if (zoomMeetingId(summary.meeting_id) !== meetingId) throw new TelehealthError("provider_unavailable");
   if (!meetingUuid || summary.meeting_uuid !== meetingUuid) throw new TelehealthError("provider_unavailable");
   return summary;
 }
@@ -1798,7 +1830,7 @@ async function meetingSdkSession(config: TelehealthConfiguration, meetingId: str
     throw new TelehealthError("provider_unavailable");
   }
   let zak: string;
-  try { zak = zoomBearerToken(await boundedProviderJson(zakResponse, 65_536), "token"); }
+  try { zak = zoomBearerToken(await boundedProviderJson(zakResponse, 65_536, signal), "token"); }
   catch { throw new TelehealthError("provider_unavailable"); }
   if (signal.aborted) throw new TelehealthError("provider_unavailable");
   // Obtaining ZAK is not an atomic host-authority check. Observe again before

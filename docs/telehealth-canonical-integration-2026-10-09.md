@@ -82,6 +82,20 @@ increment, not its exact-source full-suite or CI evidence. The observer's local
 
 ## Remaining commercial and PHI work
 
+### October 10 Zoom response and recovery repair
+
+The actual meeting-create, legacy meeting-read, marker-recovery listing and summary-import paths now reject coerced identifiers and credentials, unsafe join destinations and redirected responses before storing a meeting or importing text. Marker listings are bounded to300 entries per page and262144 received bytes; create/read responses to65536 bytes; summaries retain their256KiB bound. Pagination tokens must be bounded strings when present. A malformed token is not a completed empty listing and cannot permit another create. The listing and subsequent exact meeting read share one20-second deadline.
+
+Create/read results require an exact numeric meeting number, bounded instance UUID, real string password and HTTPS Zoom join URL whose path names that same meeting. Regional `.zoom.us` hosts are accepted; credentials in URLs, foreign domains, nonstandard ports and mismatched meeting paths are refused. This is the declared standard-Zoom boundary, not automatic support for arbitrary ISV/custom/government destinations. Summary IDs are compared exactly instead of stripping non-digits or coercing an array. The encrypted join-URL token never becomes the meeting password.
+
+The bounded reader now accepts the caller's abort signal and cancels its locked stream on deadline, including a body that never supplies another chunk. OAuth, ZAK, fresh host observations and appointment recovery use that signal. Local cancellation does not prove remote settlement or deletion. A malformed or timed-out create leaves its dispatched lease in place for reconciliation rather than claiming that no meeting exists.
+
+The initial new regression run reproduced 18 failures in recovery/create/read checks; three further summary tests reproduced acceptance of non-exact IDs, and two reader tests reproduced missing abort refusal/cancellation. After repair, 459 tests across seven focused provider, booking, reminder and recovery suites pass without skips. Typecheck, targeted ESLint and the telehealth Lambda build pass. The complete Desktop unit suite passed 6,713 tests in 433 files, with 11 existing skips and no failures, in 679.99 seconds. It ran with the documented Pacific timezone and the unrelated clinical Supabase key unset. No live Zoom, hosted backend, current browser, device or production acceptance is supplied by these tests.
+
+Read-only AWS inspection separately verified the short-lived member-role session in synthetic account 588966314750 and the existing qualification foundation as CREATE_COMPLETE, with its outputs still declaring synthetic-only data, PHI false and activation blocked. The database ledger was not reread. Both CI runs for predecessor `1eabf679223575672ba08f926c59fa3841c4be10` succeeded; these do not substitute for CI on this response-repair successor.
+
+The pagination completion rule is documented by [Zoom pagination](https://developers.zoom.us/docs/api/pagination/), and [Zoom meeting creation](https://developers.zoom.us/docs/isv/workflows/create-meeting/) distinguishes the returned join URL and password. The ALP bounds and target restrictions above are explicit local controls, not new vendor guarantees.
+
 The signed telehealth record is still not a chart note. Chart/timeline and
 amendment integration; record export, retention, holds, erasure and Zoom-copy
 reconciliation; per-clinic authorized host binding; the released V2 consent
