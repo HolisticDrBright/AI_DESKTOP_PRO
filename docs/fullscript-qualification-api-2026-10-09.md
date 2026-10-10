@@ -1,7 +1,8 @@
 # Fullscript qualification API
 
-The canonical delivery service now has a strict HTTP source boundary and native
-AWS observer. It remains an unreleased candidate: no HTTP stack installs it,
+The canonical delivery service now has a strict HTTP source boundary, native
+AWS observer and separate [immutable target loader and bundle](fullscript-target-release-2026-10-09.md).
+It remains an unreleased candidate: no HTTP stack installs it,
 no reviewed target is manufactured, and the current cart route still reports
 `not_implemented`. PHI is disabled and production activation is blocked. This
 advances the provider phase, not commercial readiness or live-patient approval.
@@ -69,10 +70,12 @@ atomic rollback rehearsal. The separate [native operator](fullscript-upgrade-ope
 now implements qualification-only command/custody/reconciliation source. Exact
 operator/target review and actual AWS qualification remain required. Never splice
 SQL into the existing 107 ledger or invent approval rows.
-Build the Lambda from exact source and record its zip hash and published
-version before filling the reviewed target. The target must be loaded from a
-separate reviewed server artifact; embedding the zip's own expected hash inside
-that zip would be circular and is not a valid release procedure.
+Build the Lambda from exact source and record its ZIP hash before reviewing the
+separate target artifact. The loader derives only the numeric invocation version
+from AWS context; the observer independently verifies its actual code and route
+binding. Record that exact published version in deployment/acceptance evidence.
+Embedding the ZIP's own expected hash inside that ZIP would be circular and is
+not a valid release procedure. No target artifact or approval is manufactured.
 
 The future candidate needs narrowly scoped permissions for STS caller observation,
 its own `lambda:GetFunctionConfiguration`, the selected API's route/authorizer/
