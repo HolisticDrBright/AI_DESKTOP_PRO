@@ -25,10 +25,10 @@ after(()=>{
 });
 const command=args=>spawnSync(process.execPath,[join(directory,'index.cjs'),...args],
   {encoding:'utf8',timeout:10000,maxBuffer:100000,windowsHide:true});
-function refused(args,stage='arguments'){
+function refused(args,stage='arguments',category='boundary_refused'){
   const result=command(args);
   assert.equal(result.error,undefined);assert.equal(result.status,1);
-  assert.equal(result.stdout,'');assert.equal(result.stderr,`boundary_refused:${stage}\n`);
+  assert.equal(result.stdout,'');assert.equal(result.stderr,`${category}:${stage}\n`);
 }
 test('actual built operator pins source bytes and the distinct 111 to 112 release without a hosted claim',()=>{
   const identity=inventorySourceIdentity();
@@ -69,7 +69,11 @@ test('actual CLI refuses dirty source or unsafe canonical target before AWS obse
   const path=join(directory,'invalid-target.json');
   for(const bytes of [Buffer.from(canonical(target)+'\n'),Buffer.from('{}\n'),Buffer.from('null\n'),Buffer.alloc(16385,32)]){
     writeFileSync(path,bytes);
-    refused(['inspect','--target',path,'--target-sha256',sha(bytes)],manifest.clean?(bytes.length>16384?'target_bytes':'target_fields'):'arguments');
+    // Native bounded custody reads reject oversized files even earlier than
+    // the command parser. Preserve and test that stronger refusal boundary.
+    const oversized=manifest.clean&&bytes.length>16384;
+    refused(['inspect','--target',path,'--target-sha256',sha(bytes)],oversized?'file':manifest.clean?'target_fields':'arguments',
+      oversized?'custody_refused':'boundary_refused');
   }
   writeFileSync(path,JSON.stringify(target));
   refused(['inspect','--target',path,'--target-sha256',sha(JSON.stringify(target))],manifest.clean?'target_encoding':'arguments');
