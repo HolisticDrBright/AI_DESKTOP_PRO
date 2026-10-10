@@ -7,7 +7,7 @@ const digest=Buffer.alloc(32,7),build={contract:'fullscript-api-build/1',clean:t
 const ref=name=>({Ref:name});
 function values(t){return {...Object.fromEntries(Object.entries(t.Parameters).map(([key,p])=>[key,p.Default??'FICTIONAL'])),
  'AWS::AccountId':'588966314750','AWS::Region':'us-east-2',QualificationExecution:'true',ProviderSecretArn:'FICTIONAL-provider',DatabaseSecretArn:'FICTIONAL-db',
- ConsumerAuthorizerId:'consumer',WorkforceAuthorizerId:'workforce',ConsumerPoolId:'consumer',WorkforcePoolId:'workforce'};}
+ ConsumerAudience:'consumer',WorkforceAudience:'workforce',ConsumerPoolId:'consumer',WorkforcePoolId:'workforce'};}
 function evaluate(v,parameters){if(v.Ref)return parameters[v.Ref];if(v['Fn::Equals'])return evaluate(v['Fn::Equals'][0],parameters)===evaluate(v['Fn::Equals'][1],parameters);
  if(v['Fn::Not'])return !evaluate(v['Fn::Not'][0],parameters);if(v['Fn::And'])return v['Fn::And'].every(x=>evaluate(x,parameters));return v;}
 test('default creates only retained logs; source cannot enable PHI, production, another account or staging',()=>{
@@ -17,17 +17,22 @@ test('default creates only retained logs; source cannot enable PHI, production, 
  assert.deepEqual(t.Parameters.DatabaseName.AllowedValues,['clinical_core_qualification']);assert.equal(t.Metadata.ApprovedForPhi,false);
 });
 for(const [key,value] of [['AWS::AccountId','173535830222'],['AWS::Region','us-east-1'],['QualificationExecution','false'],
- ['ProviderSecretArn','FICTIONAL-db'],['ConsumerAuthorizerId','workforce'],['ConsumerPoolId','workforce'],['TargetObjectVersion','null'],['CodeObjectVersion','null']])
+ ['ProviderSecretArn','FICTIONAL-db'],['ConsumerAudience','workforce'],['ConsumerPoolId','workforce'],['TargetObjectVersion','null'],['CodeObjectVersion','null']])
  test('refuses candidate enablement with '+key+'='+value,()=>{const t=fullscriptQualificationTemplate(build),p=values(t);p[key]=value;assert.equal(evaluate(t.Conditions.Enabled,p),false);});
 test('JWT routes and invoke permissions bind only the published numeric version and exact two POST paths',()=>{
  const t=fullscriptQualificationTemplate(build);assert.equal(evaluate(t.Conditions.Enabled,values(t)),true);
  assert.deepEqual(t.Resources.Version.Properties.CodeSha256,ref('CodeSha256'));assert.deepEqual(t.Resources.Integration.Properties.IntegrationUri,ref('Version'));
  for(const role of ['Consumer','Workforce']){const route=t.Resources[role+'Route'].Properties,permission=t.Resources[role+'Permission'].Properties;
-  assert.equal(route.AuthorizationType,'JWT');assert.deepEqual(route.AuthorizerId,ref(role+'AuthorizerId'));assert.deepEqual(permission.FunctionName,ref('Version'));
+  assert.equal(route.AuthorizationType,'JWT');assert.deepEqual(route.AuthorizerId,ref(role+'Authorizer'));assert.deepEqual(permission.FunctionName,ref('Version'));
+  const authorizer=t.Resources[role+'Authorizer'];assert.equal(authorizer.Condition,'Enabled');assert.equal(authorizer.Properties.AuthorizerType,'JWT');
+  assert.deepEqual(authorizer.Properties.IdentitySource,['$request.header.Authorization']);
+  assert.deepEqual(authorizer.Properties.JwtConfiguration.Audience,[ref(role+'Audience')]);
+  assert.deepEqual(authorizer.Properties.JwtConfiguration.Issuer,{'Fn::Sub':'https://cognito-idp.us-east-2.amazonaws.com/${'+role+'PoolId}'});
   assert.equal(permission.SourceAccount,'588966314750');assert.equal(permission.Principal,'apigateway.amazonaws.com');
   assert.equal(route.RouteKey,'POST /clinical-core/'+role.toLowerCase()+'/fullscript/draft');assert.ok(permission.SourceArn['Fn::Sub'].endsWith('/POST'+route.RouteKey.slice(5)));
  }
  assert.equal(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route').length,2);
+ assert.equal(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Authorizer').length,2);
  assert.equal(Object.values(t.Resources).some(r=>r.Type==='AWS::Lambda::Url'||r.Type==='AWS::Lambda::Alias'),false);
 });
 test('secrets, target and tokens are individually scoped; no plaintext credential, provider mutation or broad clinical storage grant',()=>{

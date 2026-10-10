@@ -30,7 +30,7 @@ before(()=>{
  const template=JSON.parse(readFileSync('dist/aws-clinical-core/fullscript-api/template.json','utf8'));
  const p={...Object.fromEntries(Object.entries(template.Parameters).map(([k,v])=>[k,v.Default??''])),QualificationExecution:'true',
   FunctionName:target.target.functionArn.split(':').at(-1),ApiId:target.target.apiId,OrganizationId:target.target.organizationId,
-  ConsumerAuthorizerId:'fictionalconsumer',WorkforceAuthorizerId:'fictionalworkforce',ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
+  ConsumerAudience:target.target.consumerAudience,WorkforceAudience:target.target.workforceAudience,ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
   CodeObjectVersion:'FICTIONAL-code-version',TargetKey:'fullscript/qualification-target/'+'1'.repeat(32)+'/target.json',TargetObjectVersion:'FICTIONAL-target-version',
   TargetReviewSha256:sha(Buffer.from(canonical(target)+'\n')),DatabaseClusterArn:target.target.clusterArn,DatabaseSecretArn:target.target.secretArn,
   ProviderSecretArn:target.credentials.providerSecretArn,ProviderSecretVersion:target.credentials.providerSecretVersion,TokenTableName:target.credentials.tokenTable,
