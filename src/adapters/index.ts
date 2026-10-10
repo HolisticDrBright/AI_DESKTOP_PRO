@@ -40,6 +40,7 @@ import type {
   TelehealthConsentInput,
   TelehealthEndInput,
   TelehealthSignInput,
+  TelehealthTransferInput,
   TelehealthStartInput,
   TelehealthWithdrawInput,
 } from "./telehealth.types";
@@ -158,6 +159,10 @@ export const api = {
     note: async (appointmentId: string) => liveClient.telehealthNote(appointmentId),
     importNote: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthImportNote(appointmentId, date, timeZone),
     signNote: async (input: TelehealthSignInput) => liveClient.telehealthSignNote(input),
+    /** Explicit, practitioner-initiated placement of a SIGNED visit record into the chart as an UNSIGNED draft; safe to repeat. */
+    transferToChart: async (input: TelehealthTransferInput) => liveClient.telehealthTransferToChart(input),
+    /** Read the chart's receipt back for an admitted transfer (no chart write). */
+    inspectTransfer: async (appointmentId: string) => liveClient.telehealthInspectTransfer(appointmentId),
   },
   schedule: {
     /**

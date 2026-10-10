@@ -1,5 +1,7 @@
 # Claude Code clinic records and V2 privacy engineering handoff
 
+Codex integration follow-up: [integrated telehealth source qualification](telehealth-integrated-source-qualification-2026-10-10.md) records the completion-expiry merge, consent-fixture chronology and authorization-loss recovery repair. These stay in Codex's lane; your independent clinic privacy starting points and acceptance requirements below are unchanged.
+
 Complete the production-shaped clinic-record privacy workflow across Desktop
 and V2. Patients need to request their clinic-held records, track fulfillment,
 receive an authorized copy, and raise a correction or dispute. Practitioners

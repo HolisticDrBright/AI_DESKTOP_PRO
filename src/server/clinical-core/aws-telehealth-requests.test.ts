@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 const { send, secretsSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn() }));
 const secretSend = secretsSend;
@@ -60,6 +60,13 @@ const config: TelehealthConfiguration = {
   stripeSuccessUrl: "",
   stripeCancelUrl: "",
   identityApiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com",
+  chartAdmissionSecretArn: "arn:aws:secretsmanager:us-east-2:000000000000:secret:fictional-chart-admission",
+};
+/** The fictional admission key the boundary signs with; the chart fixture holds the same bytes. Never a real secret. */
+const ADMISSION_KEY = { keyId: "fictional-admission-key-1", secret: "ab".repeat(32) };
+const admissionSecretAnswer = (command: { input?: { SecretId?: string } }) => {
+  if (command?.input?.SecretId === config.chartAdmissionSecretArn) return Promise.resolve({ SecretString: JSON.stringify(ADMISSION_KEY) });
+  return Promise.reject(new Error("fictional secret not found"));
 };
 
 const claims = {
@@ -573,14 +580,30 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     vi.stubGlobal("fetch", fn);
     return calls;
   };
-  const identityRoutes = (options: { grant?: Record<string, unknown> | null; calendar?: Array<Record<string, unknown>> | (() => unknown) } = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
+  const PRACTITIONER_ID = "11111111-aaaa-4aaa-8aaa-111111111111";
+  const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+  /** The chart's answer to `get_telehealth_record_authority` (the retained-record read path). */
+  const recordAuthority = (overrides: Record<string, unknown> = {}) => ({ authorized: true, actor_person_id: workforceClaims["custom:person_id"], patient_record_id: PATIENT, legal_hold: false,
+    appointment: { id: APPOINTMENT, status: "completed", deleted: false, appointment_type: "telehealth", patient_matches: true, practitioner_person_id: PRACTITIONER_ID }, transfer: null, ...overrides });
+  const compatibilityRoute = (options: { calendar?: Array<Record<string, unknown>> | (() => unknown); authority?: Record<string, unknown> | null | (() => unknown) }) =>
+    (url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { functionName?: string } : {};
+      if (body.functionName === "get_telehealth_record_authority") {
+        if (typeof options.authority === "function") return options.authority();
+        if (options.authority === null) return jsonResponse(403, { error: "operation_refused" });
+        return jsonResponse(200, { data: options.authority ?? recordAuthority() });
+      }
+      if (typeof options.calendar === "function") return options.calendar();
+      return jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } });
+    };
+  const identityRoutes = (options: { grant?: Record<string, unknown> | null; calendar?: Array<Record<string, unknown>> | (() => unknown); authority?: Record<string, unknown> | null | (() => unknown) } = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["/clinical-core/workforce/consent-artifact", () => jsonResponse(200, { data: ARTIFACT })],
     ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT,
       artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, representativeAuthority: "self", ...options.grant,
     } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null, representativeAuthority: null } })],
     ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 1, recordedAt: "2026-10-10T00:00:00.000Z" } })],
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
-    ["/clinical-core/workforce/data-compatibility", typeof options.calendar === "function" ? options.calendar : () => jsonResponse(200, { data: { appointments: options.calendar ?? [calendarRow()], practitioners: [], patients: [] } })],
+    ["/clinical-core/workforce/data-compatibility", compatibilityRoute(options)],
   ];
   const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, host_id: "zoom-host-id", type: 2, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
   const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "host" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
@@ -610,6 +633,8 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
       "POST /clinical-core/workforce/appointments/visits/consent", "POST /clinical-core/workforce/appointments/visits/consent/withdraw",
       "POST /clinical-core/workforce/appointments/visits/start", "POST /clinical-core/workforce/appointments/visits/end",
       "GET /clinical-core/workforce/appointments/visits/notes", "POST /clinical-core/workforce/appointments/visits/notes/import",
+      "POST /clinical-core/workforce/appointments/visits/notes/transfer", "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete",
+      "GET /clinical-core/workforce/appointments/visits/notes/inventory",
       "POST /clinical-core/workforce/appointments/visits/notes/sign",
     ]) {
       const route = routes.find((resource) => resource.Properties.RouteKey === key);
@@ -1422,7 +1447,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     fetchRouter(identityRoutes({ calendar: [] }));
     queueQuery({ Items: [visitRecord()] });
     const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
-    expect(JSON.parse(result.body ?? "{}").data).toEqual({ visits: [], complete: false });
+    expect(JSON.parse(result.body ?? "{}").data).toEqual({ visits: [], complete: false, withheld: 1 });
   });
 
   it("refuses patient substitution before secrets or meeting creation and rechecks after provider work", async () => {
@@ -1480,6 +1505,303 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(result.statusCode).toBe(200);
     expect(deletes(calls).some((call) => call.url.includes("/meetings/900000003"))).toBe(true);
     expect(store.get({ pk: `ORG#${ORG}`, sk: `VISIT#${APPOINTMENT}` })).toMatchObject({ status: "cancelled", providerMeetingId: null, meetingLease: null });
+  });
+
+  /* ---------------------------------------------------- retained-record authority and the chart transfer */
+
+  const signedNote = (overrides: Record<string, unknown> = {}) => ({ status: "signed", source: "zoom_ai_companion", zoomSummaryId: "uuid-900000001",
+    aiSections: { summary: "Fictional summary.", patient_reported: "Fictional report.", results_reviewed: "", plan_discussed: "Fictional plan." }, aiOriginal: { meeting_id: 900000001, summary_content: "Fictional provider summary" },
+    practitionerNotes: "Fictional practitioner text.", actionItems: [{ id: "a1", text: "Order ferritin", status: "approved" }], revision: 2, importedAt: "2026-10-09T18:00:00.000Z", signedAt: "2026-10-09T18:30:00.000Z", signedBy: workforceClaims["custom:person_id"], ...overrides });
+  const completedVisit = (overrides: Record<string, unknown> = {}) => visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", endedAt: "2026-10-09T17:30:00.000Z", note: signedNote(), version: 6, ...overrides });
+  const readNote = (handlerConfig = config) => createTelehealthHandler(handlerConfig)({ ...(event("GET /clinical-core/workforce/appointments/visits/notes", undefined, workforceClaims) as unknown as Record<string, unknown>), queryStringParameters: { appointmentId: APPOINTMENT } } as never);
+  const transfer = (body: Record<string, unknown>) => createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/notes/transfer", { appointmentId: APPOINTMENT, ...body }, workforceClaims));
+  const complete = () => createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/notes/transfer/complete", { appointmentId: APPOINTMENT }, workforceClaims));
+  const authorityCalls = (calls: Array<{ url: string; body?: unknown }>) => calls.filter((call) => (call.body as { functionName?: string } | undefined)?.functionName === "get_telehealth_record_authority");
+  const calendarCalls = (calls: Array<{ url: string; body?: unknown }>) => calls.filter((call) => (call.body as { functionName?: string } | undefined)?.functionName === "get_desktop_calendar");
+
+  it("reads a COMPLETED visit under the retained-record authority, not the calendar: a deleted or moved appointment does not erase access; membership, role and patient refusals return no text", async () => {
+    const calls = fetchRouter(identityRoutes({ calendar: [], authority: recordAuthority({ appointment: null }) }));
+    queueGet(completedVisit({ quickNotes: "Fictional retained text" }));
+    const retained = await readNote();
+    expect(retained.statusCode).toBe(200);
+    expect(JSON.parse(retained.body ?? "{}").data).toMatchObject({ quickNotes: "Fictional retained text", chartTransferSource: { sourceRevision: 2, sourceDigest: expect.stringMatching(/^[0-9a-f]{64}$/) } });
+    expect(authorityCalls(calls)).toHaveLength(1);
+    expect(calendarCalls(calls)).toHaveLength(0);
+    expect(authorityCalls(calls)[0].body).toMatchObject({ kind: "rpc", functionName: "get_telehealth_record_authority", args: { _organization_id: ORG, _patient_id: PATIENT, _appointment_id: APPOINTMENT } });
+
+    for (const [label, authority] of Object.entries({
+      "refused by the clinical core (revoked membership, wrong clinic, staff-only role, archived patient)": null,
+      "not an authorized answer": recordAuthority({ authorized: false }),
+      "an answer about another patient": recordAuthority({ patient_record_id: "99999999-9999-4999-8999-999999999999" }),
+    })) {
+      fetchRouter(identityRoutes({ authority: authority as Record<string, unknown> | null }));
+      queueGet(completedVisit({ quickNotes: "Fictional retained text" }));
+      const refused = await readNote();
+      expect(refused.statusCode, label).toBe(403);
+      expect(refused.body, label).not.toContain("Fictional");
+    }
+    // No authority answer at all is a refusal, never organization-membership access.
+    fetchRouter(identityRoutes({ authority: () => jsonResponse(503, { error: "database_unavailable" }) }));
+    queueGet(completedVisit({ quickNotes: "Fictional retained text" }));
+    const silent = await readNote();
+    expect(silent.statusCode).toBe(503);
+    expect(silent.body).not.toContain("Fictional");
+    // A completed visit with no patient record has no retained-record subject: refused without any authority call.
+    const none = fetchRouter(identityRoutes());
+    queueGet(completedVisit({ patientRecordId: null, requestId: REQUEST, consumerPersonId: claims["custom:person_id"], quickNotes: "Fictional retained text" }));
+    const subjectless = await readNote();
+    expect(subjectless.statusCode).toBe(403);
+    expect(authorityCalls(none)).toHaveLength(0);
+  });
+
+  it("a visit that is still scheduled or running keeps the current appointment binding for reads; start and import are untouched by the retained path", async () => {
+    const calls = fetchRouter(identityRoutes({ calendar: [] }));
+    queueGet(visitRecord({ status: "in_visit", providerMeetingId: "900000001", quickNotes: "Fictional live text" }));
+    const running = await readNote();
+    expect(running.statusCode).toBe(404);
+    expect(running.body).not.toContain("Fictional");
+    expect(calendarCalls(calls)).toHaveLength(1);
+    expect(authorityCalls(calls)).toHaveLength(0);
+  });
+
+  const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
+    : value && typeof value === "object" ? `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}` : JSON.stringify(value === undefined ? null : value);
+  type SignedSource = { transferId: string; organizationId: string; patientRecordId: string; appointmentId: string; sourceRevision: number; sourceDigest: string; contentText: string; sourcePayloadText: string; provenanceText: string; admission: string; admissionSignature: string; admissionExpiresAt: string };
+  it("transfer: admits the exact signed source under the boundary's key, returns the exact bytes and a verifiable admission once, and is idempotent across a lost response", async () => {
+    // The chart resolves the caller to ITS person id; the admission binds that, not the JWT claim (which the record's admittedBy keeps).
+    const calls = fetchRouter(identityRoutes({ authority: recordAuthority({ actor_person_id: PRACTITIONER_ID }) }));
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
+    queueGet(completedVisit());
+    const read = JSON.parse((await readNote()).body ?? "{}").data as { chartTransferSource: { sourceRevision: number; sourceDigest: string } };
+    const source = read.chartTransferSource;
+    queueGet(completedVisit());
+    const before = Date.now();
+    const admitted = await transfer({ sourceRevision: source.sourceRevision, sourceDigest: source.sourceDigest });
+    expect(admitted.statusCode).toBe(200);
+    const payload = JSON.parse(admitted.body ?? "{}").data as { transfer: Record<string, unknown>; source: SignedSource };
+    expect(payload.transfer).toMatchObject({ state: "admitted", sourceRevision: 2, sourceDigest: source.sourceDigest, admittedBy: workforceClaims["custom:person_id"], encounterId: null, noteId: null, admissionKeyId: ADMISSION_KEY.keyId, admissionSha256: sha256(payload.source.admission) });
+    expect(payload.source).toMatchObject({ transferId: payload.transfer.transferId, organizationId: ORG, patientRecordId: PATIENT, appointmentId: APPOINTMENT, sourceRevision: 2, sourceDigest: source.sourceDigest });
+    // The exact bytes the chart will hash: canonical JSON, the narrative note's single `text` section.
+    const content = JSON.parse(payload.source.contentText) as Record<string, string>;
+    expect(Object.keys(content)).toEqual(["text"]);
+    expect(payload.source.contentText).toBe(canonicalJson(content));
+    for (const expected of ["## Telehealth visit — AI Companion summary (reviewed)\nFictional summary.", "## What the patient reported\nFictional report.", "## Plan discussed\nFictional plan.", "## Practitioner notes\nFictional practitioner text.", "- Order ferritin (approved)", "no order, task or protocol change was created", "Transferred UNSIGNED for chart review"]) expect(content.text).toContain(expected);
+    expect(content.text).not.toContain("## Results reviewed"); // an empty section is not invented
+    expect(JSON.parse(payload.source.sourcePayloadText)).toMatchObject({ aiOriginal: { meeting_id: 900000001 }, revision: 2, signedBy: workforceClaims["custom:person_id"], providerMeetingUuid: "uuid-900000001" });
+    expect((JSON.parse(payload.source.provenanceText) as Array<Record<string, unknown>>).every((entry) => ["telehealth_visit", "practitioner_entered"].includes(String(entry.refType)))).toBe(true);
+    // The admission: the contract's members exactly, bound to the chart-resolved practitioner, the exact bytes, a short window — and it verifies under the key, which never appears in the response.
+    const admission = JSON.parse(payload.source.admission) as Record<string, unknown>;
+    expect(Object.keys(admission).sort()).toEqual(["appointment_id", "content_sha256", "contract", "expires_at", "intent", "issued_at", "key_id", "organization_id", "patient_record_id", "payload_sha256", "practitioner_person_id", "provenance_sha256", "source_custody", "source_digest", "source_record_version", "source_revision", "transfer_id"]);
+    expect(admission).toMatchObject({ contract: "telehealth-chart-admission/1", intent: "chart_draft", key_id: ADMISSION_KEY.keyId, transfer_id: payload.transfer.transferId, organization_id: ORG, patient_record_id: PATIENT, appointment_id: APPOINTMENT,
+      practitioner_person_id: PRACTITIONER_ID, source_custody: "telehealth-visit-record", source_record_version: 6, source_revision: 2, source_digest: source.sourceDigest,
+      content_sha256: sha256(payload.source.contentText), payload_sha256: sha256(payload.source.sourcePayloadText), provenance_sha256: sha256(payload.source.provenanceText) });
+    const window = Date.parse(String(admission.expires_at)) - Date.parse(String(admission.issued_at));
+    expect(window).toBe(15 * 60_000); expect(Date.parse(String(admission.issued_at))).toBeGreaterThanOrEqual(before - 1000);
+    expect(payload.source.admissionSignature).toBe(createHmac("sha256", Buffer.from(ADMISSION_KEY.secret, "hex")).update(payload.source.admission, "utf8").digest("hex"));
+    expect(admitted.body).not.toContain(ADMISSION_KEY.secret);
+    expect(putItems().at(-1)).toMatchObject({ chartTransfer: { state: "admitted", transferId: payload.transfer.transferId, admissionKeyId: ADMISSION_KEY.keyId } });
+    expect(JSON.stringify(putItems().at(-1))).not.toContain(payload.source.admissionSignature);
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect((secretsSend.mock.calls[0][0] as { input: { SecretId: string } }).input.SecretId).toBe(config.chartAdmissionSecretArn);
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+
+    // The same attempt again (the desktop lost its response before the chart write): the SAME transfer id under a fresh admission, the record rewritten only with the new admission digest.
+    writes.length = 0; secretsSend.mockClear();
+    const first = putItems().at(-1)?.chartTransfer ?? (JSON.parse(admitted.body ?? "{}").data.transfer as Record<string, unknown>);
+    queueGet(completedVisit({ chartTransfer: first, version: 7 }));
+    const again = await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest });
+    const againSource = JSON.parse(again.body ?? "{}").data.source as SignedSource;
+    expect(againSource.transferId).toBe(payload.transfer.transferId);
+    expect(JSON.parse(againSource.admission)).toMatchObject({ transfer_id: payload.transfer.transferId, content_sha256: sha256(payload.source.contentText) });
+    expect(againSource.admissionSignature).toBe(createHmac("sha256", Buffer.from(ADMISSION_KEY.secret, "hex")).update(againSource.admission, "utf8").digest("hex"));
+    expect(JSON.parse(again.body ?? "{}").data.transfer).toMatchObject({ transferId: payload.transfer.transferId, admittedAt: (first as Record<string, unknown>).admittedAt, admittedBy: workforceClaims["custom:person_id"] });
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+
+    // The chart now holds the receipt (the chart write landed; its response was lost): complete reads it back and records it; no admission is minted for a read.
+    const admissionRecord = putItems().at(-1)?.chartTransfer as Record<string, unknown>;
+    secretsSend.mockClear();
+    fetchRouter(identityRoutes({ authority: recordAuthority({ transfer: { transfer_id: payload.transfer.transferId, encounter_id: "eeeeeeee-1111-4111-8111-111111111111", note_id: "aaaaaaaa-2222-4222-8222-222222222222", note_version: 1,
+      source_note_revision: 2, source_digest: source.sourceDigest, content_sha256: "c".repeat(64), transferred_at: "2026-10-10T01:00:00.000Z", transferred_by_person_id: workforceClaims["custom:person_id"], note_status: "draft", note_current_version: 1, note_deleted: false } }) }));
+    queueGet(completedVisit({ chartTransfer: admissionRecord, version: 8 }));
+    const completed = await complete();
+    expect(completed.statusCode).toBe(200);
+    expect(JSON.parse(completed.body ?? "{}").data.transfer).toMatchObject({ state: "completed", transferId: payload.transfer.transferId, encounterId: "eeeeeeee-1111-4111-8111-111111111111", noteId: "aaaaaaaa-2222-4222-8222-222222222222", noteVersion: 1 });
+    // Completed is terminal and idempotent: transfer and complete both return the receipt without any further admission or secret read.
+    writes.length = 0;
+    const receipt = JSON.parse(completed.body ?? "{}").data.transfer as Record<string, unknown>;
+    queueGet(completedVisit({ chartTransfer: receipt, version: 9 }));
+    expect(JSON.parse((await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest })).body ?? "{}").data).toMatchObject({ transfer: { state: "completed" }, source: null });
+    queueGet(completedVisit({ chartTransfer: receipt, version: 9 }));
+    expect(JSON.parse((await complete()).body ?? "{}").data.transfer).toMatchObject({ state: "completed" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+  });
+
+  it("transfer is unavailable, with nothing written and nothing minted, when the boundary holds no admission key, cannot read it, or the secret is malformed; a refused authority or stale source never reads the secret", async () => {
+    fetchRouter(identityRoutes());
+    queueGet(completedVisit());
+    const source = (JSON.parse((await readNote()).body ?? "{}").data as { chartTransferSource: { sourceDigest: string } }).chartTransferSource;
+    const attempt = (handlerConfig: TelehealthConfiguration) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/transfer", { appointmentId: APPOINTMENT, sourceRevision: 2, sourceDigest: source.sourceDigest }, workforceClaims));
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
+    queueGet(completedVisit());
+    const unprovisioned = await attempt({ ...config, chartAdmissionSecretArn: "" });
+    expect(unprovisioned.statusCode).toBe(503);
+    expect(JSON.parse(unprovisioned.body ?? "{}")).toEqual({ error: "transfer_unavailable" });
+    expect(secretsSend).not.toHaveBeenCalled();
+    for (const answer of [Promise.reject(new Error("fictional secrets outage")), Promise.resolve({ SecretString: "{not json" }), Promise.resolve({ SecretString: JSON.stringify({ keyId: "fictional-admission-key-1", secret: "too-short" }) }),
+      Promise.resolve({ SecretString: JSON.stringify({ keyId: "Bad Key", secret: "ab".repeat(32) }) }), Promise.resolve({ SecretBinary: new Uint8Array(4) })]) {
+      secretsSend.mockReset(); secretsSend.mockImplementation(() => answer);
+      queueGet(completedVisit());
+      const result = await attempt(config);
+      expect(result.statusCode).toBe(503);
+      expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "transfer_unavailable" });
+      expect(result.body).not.toContain("fictional secrets outage");
+    }
+    expect(writes).toHaveLength(0);
+    // Refusals that come first never touch the secret.
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
+    queueGet(completedVisit());
+    expect((await transfer({ sourceRevision: 1, sourceDigest: "a".repeat(64) })).statusCode).toBe(409);
+    fetchRouter(identityRoutes({ authority: null }));
+    queueGet(completedVisit());
+    expect((await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest })).statusCode).toBe(403);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(writes).toHaveLength(0);
+  });
+
+  it("transfer refuses a stale screen, an unsigned or unfinished visit, a lost subject and a chart receipt for a different source — and complete without a receipt leaves the admission standing", async () => {
+    fetchRouter(identityRoutes());
+    queueGet(completedVisit());
+    const stale = await transfer({ sourceRevision: 1, sourceDigest: "a".repeat(64) });
+    expect(stale.statusCode).toBe(409);
+    expect(JSON.parse(stale.body ?? "{}")).toEqual({ error: "transfer_source_stale" });
+    expect(writes).toHaveLength(0);
+
+    queueGet(completedVisit({ note: signedNote({ status: "not_reviewed", signedAt: null, signedBy: null }) }));
+    expect((await transfer({ sourceRevision: 2, sourceDigest: "a".repeat(64) })).statusCode).toBe(409);
+    queueGet(visitRecord({ status: "in_visit", note: signedNote() }));
+    expect((await transfer({ sourceRevision: 2, sourceDigest: "a".repeat(64) })).statusCode).toBe(409);
+    queueGet(completedVisit({ status: "cancelled" }));
+    expect((await transfer({ sourceRevision: 2, sourceDigest: "a".repeat(64) })).statusCode).toBe(409);
+    expect(writes).toHaveLength(0);
+
+    // The exact source digest, then the chart answers with a receipt for ANOTHER source: needs review, never a second write.
+    queueGet(completedVisit());
+    const source = (JSON.parse((await readNote()).body ?? "{}").data as { chartTransferSource: { sourceDigest: string } }).chartTransferSource;
+    fetchRouter(identityRoutes({ authority: recordAuthority({ transfer: { transfer_id: "dddddddd-1111-4111-8111-111111111111", encounter_id: "e", note_id: "n", note_version: 1, source_note_revision: 1, source_digest: "b".repeat(64),
+      content_sha256: "c".repeat(64), transferred_at: "2026-10-10T01:00:00.000Z", transferred_by_person_id: "p", note_status: "draft", note_current_version: 1, note_deleted: false } }) }));
+    queueGet(completedVisit());
+    const mismatch = await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest });
+    expect(mismatch.statusCode).toBe(409);
+    expect(JSON.parse(mismatch.body ?? "{}")).toEqual({ error: "transfer_mismatch" });
+    expect(writes).toHaveLength(0);
+
+    // Complete with an admission but no chart receipt yet: the admission stands (state admitted), nothing invented.
+    fetchRouter(identityRoutes());
+    const admission = { transferId: "22222222-2222-4222-8222-222222222222", state: "admitted", sourceRevision: 2, sourceDigest: source.sourceDigest, admittedAt: "2026-10-10T00:00:00.000Z", admittedBy: workforceClaims["custom:person_id"], encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null };
+    queueGet(completedVisit({ chartTransfer: admission }));
+    const pending = await complete();
+    expect(pending.statusCode).toBe(200);
+    expect(JSON.parse(pending.body ?? "{}").data.transfer).toMatchObject({ state: "admitted", transferId: admission.transferId });
+    expect(writes).toHaveLength(0);
+    // Complete with neither an admission nor a receipt: nothing to complete.
+    queueGet(completedVisit());
+    expect((await complete()).statusCode).toBe(409);
+    // Refused authority refuses the transfer before any admission is written.
+    fetchRouter(identityRoutes({ authority: null }));
+    queueGet(completedVisit());
+    expect((await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest })).statusCode).toBe(403);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("a list withholds a completed visit the retained-record authority refuses, keeps the others, and says the list is not complete", async () => {
+    const calls = fetchRouter(identityRoutes({ authority: null }));
+    queueQuery({ Items: [visitRecord({ appointmentId: APPOINTMENT, sk: "VISIT#1" }), completedVisit({ appointmentId: "66666666-7777-4777-8777-777777777777", sk: "VISIT#2", quickNotes: "Fictional retained text" })] });
+    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits", undefined, workforceClaims));
+    const payload = JSON.parse(result.body ?? "{}") as { data: { visits: Array<{ appointmentId: string }>; complete: boolean; withheld: number } };
+    expect(result.statusCode).toBe(200);
+    expect(payload.data.visits.map((visit) => visit.appointmentId)).toEqual([APPOINTMENT]);
+    expect(payload.data).toMatchObject({ complete: false, withheld: 1 });
+    expect(result.body).not.toContain("Fictional");
+    expect(authorityCalls(calls)).toHaveLength(1);
+  });
+
+  /* ---------------------------------------------------- record lifecycle: inventory, never deletion */
+
+  const inventoryOf = () => createTelehealthHandler(config)({ ...(event("GET /clinical-core/workforce/appointments/visits/notes/inventory", undefined, workforceClaims) as unknown as Record<string, unknown>), queryStringParameters: { appointmentId: APPOINTMENT } } as never);
+
+  it("inventories every telehealth text location with digests and never the text, under the retained-record authority, and reports the chart's hold", async () => {
+    const calls = fetchRouter(identityRoutes({ authority: recordAuthority({ legal_hold: true }) }));
+    const visit = completedVisit({ quickNotes: "Fictional quick note", flags: [{ atSeconds: 5, label: "Fictional flagged moment" }],
+      noteHistory: [signedNote({ status: "not_reviewed", revision: 1, signedAt: null, signedBy: null, practitionerNotes: "Fictional earlier text" })],
+      chartTransfer: { transferId: "22222222-2222-4222-8222-222222222222", state: "completed", sourceRevision: 2, sourceDigest: "a".repeat(64), admittedAt: "2026-10-10T00:00:00.000Z", admittedBy: "p", encounterId: "e1", noteId: "n1", noteVersion: 1, contentSha256: "c".repeat(64), transferredAt: "2026-10-10T00:01:00.000Z", completedAt: "2026-10-10T00:02:00.000Z" } });
+    queueGet(visit);
+    const result = await inventoryOf();
+    expect(result.statusCode).toBe(200);
+    const inventory = JSON.parse(result.body ?? "{}").data as { legalHold: boolean; consent: Record<string, unknown>; processing: Record<string, unknown>; locations: Array<Record<string, unknown>>; notCertifiable: string[] };
+    expect(inventory).toMatchObject({ contract: "telehealth-record-inventory/1", legalHold: true, consent: { granted: true, withdrawn: false }, processing: { aiImportAllowed: true } });
+    expect(authorityCalls(calls)).toHaveLength(1);
+    // Every text-bearing field of the record is represented as present with a digest; the text itself never leaves.
+    const byId = Object.fromEntries(inventory.locations.map((location) => [String(location.id), location]));
+    for (const id of ["visit.quickNotes", "visit.flags", "visit.note.aiOriginal", "visit.note.aiSections", "visit.note.practitionerNotes", "visit.note.actionItems", "visit.note.signature", "visit.noteHistory", "visit.consents", "visit.chartTransfer", "visit.providerIdentifiers"]) {
+      expect(byId[id], id).toMatchObject({ present: true, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    }
+    expect(byId["visit.noteHistory"].count).toBe(1); expect(byId["visit.flags"].count).toBe(1); expect(byId["visit.consents"].count).toBe(1);
+    expect(byId["visit.chartTransfer"].identifiers).toMatchObject({ transferId: "22222222-2222-4222-8222-222222222222", noteId: "n1" });
+    expect(byId["zoom.aiCompanionSummary"]).toMatchObject({ present: false, identifiers: { zoomSummaryId: "uuid-900000001" } });
+    for (const text of ["Fictional quick note", "Fictional flagged moment", "Fictional summary.", "Fictional practitioner text.", "Fictional earlier text", "Order ferritin", "Fictional provider summary", "Synthetic Signer"]) expect(result.body).not.toContain(text);
+    // Every store is accounted for, and what cannot be certified is said.
+    expect(new Set(inventory.locations.map((location) => location.store))).toEqual(new Set(["telehealth_visit_record", "chart", "zoom", "backups"]));
+    expect(inventory.notCertifiable.join(" ")).toMatch(/Zoom/); expect(inventory.notCertifiable.join(" ")).toMatch(/backups/); expect(inventory.notCertifiable.join(" ")).toMatch(/retention/);
+    expect(inventory.locations.every((location) => (location.controls as { erasure: { coverage: string } }).erasure.coverage !== "covered")).toBe(true);
+  });
+
+  it("consent withdrawal stops new processing and claims no deletion; the inventory of a running visit uses the current binding; a refused caller gets no inventory", async () => {
+    const calls = fetchRouter(identityRoutes());
+    queueGet(visitRecord({ status: "in_visit", providerMeetingId: "900000001", consents: [receipt({ status: "withdrawn", withdrawnAt: "2026-10-09T17:10:00.000Z" })], quickNotes: "Fictional live text" }));
+    const running = await inventoryOf();
+    expect(running.statusCode).toBe(200);
+    const inventory = JSON.parse(running.body ?? "{}").data as { legalHold: boolean | null; consent: Record<string, unknown>; processing: Record<string, unknown> };
+    expect(inventory).toMatchObject({ legalHold: null, consent: { granted: false, withdrawn: true, withdrawnAt: "2026-10-09T17:10:00.000Z" }, processing: { aiImportAllowed: false, reason: expect.stringContaining("not deleted") } });
+    expect(calendarCalls(calls).length).toBeGreaterThan(0); expect(authorityCalls(calls)).toHaveLength(0);
+    expect(running.body).not.toContain("Fictional live text");
+    // After withdrawal the import route refuses; nothing on the record is removed.
+    writes.length = 0;
+    queueGet(completedVisit({ consents: [receipt({ status: "withdrawn" })], note: signedNote({ status: "not_reviewed", signedAt: null, signedBy: null }) }));
+    const imported = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(imported.statusCode).toBe(409);
+    expect(JSON.parse(imported.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(writes).toHaveLength(0);
+    // Refused retained authority: no inventory at all.
+    fetchRouter(identityRoutes({ authority: null }));
+    queueGet(completedVisit({ quickNotes: "Fictional retained text" }));
+    const refused = await inventoryOf();
+    expect(refused.statusCode).toBe(403);
+    expect(refused.body).not.toContain("Fictional");
+  });
+
+  it("there is no deletion route for a visit record, and a consumer identity cannot reach any visit route", async () => {
+    const handler = createTelehealthHandler(config);
+    for (const key of ["DELETE /clinical-core/workforce/appointments/visits", "POST /clinical-core/workforce/appointments/visits/delete", "POST /clinical-core/workforce/appointments/visits/notes/delete", "POST /clinical-core/workforce/appointments/visits/erase"]) {
+      const result = await handler(event(key, { appointmentId: APPOINTMENT }, workforceClaims));
+      expect(result.statusCode, key).toBe(404);
+    }
+    for (const key of ["GET /clinical-core/workforce/appointments/visits/notes/inventory", "GET /clinical-core/workforce/appointments/visits/notes", "POST /clinical-core/workforce/appointments/visits/notes/transfer"]) {
+      const result = await handler({ ...(event(key, key.startsWith("POST") ? { appointmentId: APPOINTMENT, sourceRevision: 1, sourceDigest: "a".repeat(64) } : undefined, claims) as unknown as Record<string, unknown>), queryStringParameters: { appointmentId: APPOINTMENT } } as never);
+      expect(result.statusCode, key).toBe(403);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("signing a completed visit's note uses the retained-record authority and never the calendar", async () => {
+    const calls = fetchRouter(identityRoutes({ calendar: [] }));
+    const draft = signedNote({ status: "not_reviewed", signedAt: null, signedBy: null });
+    queueGet(completedVisit({ note: draft, version: 4 }));
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/notes/sign", { appointmentId: APPOINTMENT, expectedVersion: 4, practitionerNotes: "Patient tolerating protocol.", aiSections: draft.aiSections, actionItems: [{ id: "a1", status: "approved" }] }, workforceClaims));
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.note).toMatchObject({ status: "signed", revision: 3 });
+    expect(authorityCalls(calls)).toHaveLength(1);
+    expect(calendarCalls(calls)).toHaveLength(0);
   });
 
   it("signs a Meeting SDK JWT with the SDK key as appKey and HS256", () => {

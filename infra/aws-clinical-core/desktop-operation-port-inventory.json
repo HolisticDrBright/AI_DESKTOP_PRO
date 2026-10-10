@@ -1,15 +1,15 @@
 {
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
-    "operationManifestSha256": "57a9674138661932c3e27e09d37cabd4cbbf7bf6f336b8666e721ca1bd59d0a6",
-    "productionOperationManifestSha256": "6c76fe027ca28064897b1c95ac3f50893e9170ede5e5b10b0f1b43e296b387d2",
+    "operationManifestSha256": "2361fa6a25f727ff143ca39840100bbfd2ff3715143f7366d7afa707b4e38849",
+    "productionOperationManifestSha256": "3624ba313a731855fdd5e8f250cceff40ee340be375e107fa6aef183002655dc",
     "legacyDefinitionSetSha256": "2c472d26e98365b7ba9c966f6223cb634cd076f52aece75f17d65fd1e9f4a739"
   },
   "counts": {
-    "rpc": 221,
+    "rpc": 223,
     "select": 5,
-    "total": 226,
-    "productionImplemented": 226,
+    "total": 228,
+    "productionImplemented": 228,
     "productionEnabled": 0
   },
   "operations": [
@@ -5328,6 +5328,34 @@
         "implementation": "native_production_function",
         "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql",
         "sourceSha256": "28f6586e9fbbe5a036d0fb4520e1be085bf30b2f9fc8f6a975e679d1ea2b53ef",
+        "activationState": "phi_disabled"
+      }
+    },
+    {
+      "kind": "rpc",
+      "name": "get_telehealth_record_authority",
+      "domains": [
+        "telehealth"
+      ],
+      "callSites": [
+        {
+          "adapter": "telehealth.live.ts",
+          "domain": "telehealth",
+          "line": 265,
+          "argumentKeys": [
+            "_appointment_id",
+            "_organization_id",
+            "_patient_id"
+          ]
+        }
+      ],
+      "legacyDefinitions": [],
+      "syntheticBoundary": "registry_disabled",
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql",
+        "sourceSha256": "78f03a282b3f5ba97af2f50683aeab0fc1e20d19d77ec7111fc28116ede7bab7",
         "activationState": "phi_disabled"
       }
     },
@@ -11491,6 +11519,42 @@
     },
     {
       "kind": "rpc",
+      "name": "transfer_telehealth_note",
+      "domains": [
+        "telehealth"
+      ],
+      "callSites": [
+        {
+          "adapter": "telehealth.live.ts",
+          "domain": "telehealth",
+          "line": 499,
+          "argumentKeys": [
+            "_admission",
+            "_admission_signature",
+            "_appointment_id",
+            "_content",
+            "_organization_id",
+            "_patient_id",
+            "_provenance",
+            "_source_digest",
+            "_source_payload",
+            "_source_revision",
+            "_transfer_id"
+          ]
+        }
+      ],
+      "legacyDefinitions": [],
+      "syntheticBoundary": "registry_disabled",
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql",
+        "sourceSha256": "78f03a282b3f5ba97af2f50683aeab0fc1e20d19d77ec7111fc28116ede7bab7",
+        "activationState": "phi_disabled"
+      }
+    },
+    {
+      "kind": "rpc",
       "name": "transition_appointment",
       "domains": [
         "frontdesk"
@@ -12316,7 +12380,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "50025e7b079a502b1d3228cc715a5abebd442dc16806b19a61c1754404786c30",
+        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
         "activationState": "phi_disabled"
       }
     },
@@ -12344,7 +12408,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "50025e7b079a502b1d3228cc715a5abebd442dc16806b19a61c1754404786c30",
+        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
         "activationState": "phi_disabled"
       }
     },
@@ -12372,7 +12436,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "50025e7b079a502b1d3228cc715a5abebd442dc16806b19a61c1754404786c30",
+        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
         "activationState": "phi_disabled"
       }
     },
@@ -12400,7 +12464,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "50025e7b079a502b1d3228cc715a5abebd442dc16806b19a61c1754404786c30",
+        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
         "activationState": "phi_disabled"
       }
     },
@@ -12441,7 +12505,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "50025e7b079a502b1d3228cc715a5abebd442dc16806b19a61c1754404786c30",
+        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
         "activationState": "phi_disabled"
       }
     }

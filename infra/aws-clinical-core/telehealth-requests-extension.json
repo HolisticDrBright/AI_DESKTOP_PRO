@@ -3,7 +3,7 @@
   "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, disabled-by-default Zoom boundary, and consent-gated embedded telehealth visits bound to the governed consent authority with AI Companion note import.",
   "Metadata": {
     "ClinicalCore": {
-      "ContractVersion": "telehealth-requests/6",
+      "ContractVersion": "telehealth-requests/8",
       "DataClassification": "synthetic_only",
       "PhiAllowed": false,
       "ZoomEnabled": false,
@@ -87,6 +87,11 @@
       "Default": "",
       "NoEcho": true
     },
+    "ChartAdmissionSecretArn": {
+      "Type": "String",
+      "Default": "",
+      "NoEcho": true
+    },
     "StripeSuccessUrl": {
       "Type": "String",
       "Default": "https://ailongevitypro.app/appointments/payment-complete"
@@ -157,6 +162,18 @@
                 ""
               ]
             }
+          ]
+        }
+      ]
+    },
+    "UseChartAdmission": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ChartAdmissionSecretArn"
+            },
+            ""
           ]
         }
       ]
@@ -460,6 +477,29 @@
                 "Ref": "AWS::NoValue"
               }
             ]
+          },
+          {
+            "Fn::If": [
+              "UseChartAdmission",
+              {
+                "PolicyName": "ExactChartAdmissionSecret",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Action": "secretsmanager:GetSecretValue",
+                      "Resource": {
+                        "Ref": "ChartAdmissionSecretArn"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
           }
         ]
       }
@@ -568,6 +608,9 @@
             },
             "CLINICAL_API_ORIGIN": {
               "Fn::Sub": "https://${ClinicalApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+            },
+            "CHART_ADMISSION_SECRET_ARN": {
+              "Ref": "ChartAdmissionSecretArn"
             }
           }
         }
@@ -786,31 +829,49 @@
     "ConsumerChangeOutcomeRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "ClinicalApiId" },
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
         "RouteKey": "POST /clinical-core/consumer/appointments/change-outcome",
         "AuthorizationType": "JWT",
-        "AuthorizerId": { "Ref": "ConsumerAuthorizer" },
-        "Target": { "Fn::Sub": "integrations/${Integration}" }
+        "AuthorizerId": {
+          "Ref": "ConsumerAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
       }
     },
     "ConsumerPendingChangeRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "ClinicalApiId" },
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
         "RouteKey": "POST /clinical-core/consumer/appointments/pending-change",
         "AuthorizationType": "JWT",
-        "AuthorizerId": { "Ref": "ConsumerAuthorizer" },
-        "Target": { "Fn::Sub": "integrations/${Integration}" }
+        "AuthorizerId": {
+          "Ref": "ConsumerAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
       }
     },
     "ConsumerRecoverChangeRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "ClinicalApiId" },
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
         "RouteKey": "POST /clinical-core/consumer/appointments/recover-change",
         "AuthorizationType": "JWT",
-        "AuthorizerId": { "Ref": "ConsumerAuthorizer" },
-        "Target": { "Fn::Sub": "integrations/${Integration}" }
+        "AuthorizerId": {
+          "Ref": "ConsumerAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
       }
     },
     "ConsumerAvailabilityRoute": {
@@ -1124,6 +1185,54 @@
         }
       }
     },
+    "WorkforceVisitNoteTransferRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/appointments/visits/notes/transfer",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
+    "WorkforceVisitNoteTransferCompleteRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
+    "WorkforceVisitNoteInventoryRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "GET /clinical-core/workforce/appointments/visits/notes/inventory",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
     "WorkforceVisitConsentArtifactRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
@@ -1159,7 +1268,7 @@
   },
   "Outputs": {
     "ContractVersion": {
-      "Value": "telehealth-requests/6"
+      "Value": "telehealth-requests/8"
     },
     "PhiAllowed": {
       "Value": "false"

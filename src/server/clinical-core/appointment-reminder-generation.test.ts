@@ -21,7 +21,7 @@ const config: TelehealthConfiguration = { tableName: "fictional", consumerIssuer
   remindersEnabled: true, reminderSender: "fictional@example.test", reminderConfigurationSet: "fictional", reminderScheduleGroup: "fictional",
   reminderSchedulerRoleArn: "arn:aws:iam::111122223333:role/fictional", reminderTargetArn: "arn:aws:lambda:us-east-2:111122223333:function:fictional",
   reminderEventsTopicArn: "arn:aws:sns:us-east-2:111122223333:fictional", stripeTestEnabled: false, stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "",
-  identityApiOrigin: "https://fictional.execute-api.us-east-2.amazonaws.com" };
+  identityApiOrigin: "https://fictional.execute-api.us-east-2.amazonaws.com", chartAdmissionSecretArn: "" };
 const key = { pk: `ORG#${org}`, sk: `REQ#${requestId}` };
 const request = (patch: Record<string, unknown> = {}) => ({ ...key, requestId, organizationId: org, consumerPersonId: owner,
   status: "requested", visitType: "follow_up", preferredSlots: [start], timeZone: "America/Los_Angeles", note: null,

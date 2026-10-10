@@ -338,6 +338,16 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["consult_retention_forbidden", "identity_refused"],
     ["consult_contact_purged", "operation_refused"],
     ["consult_retention_immutable", "operation_refused"],
+    ["telehealth_admission_refused", "identity_refused"],
+    ["telehealth_admission_mismatch", "identity_refused"],
+    ["telehealth_transfer_refused", "identity_refused"],
+    ["appointment_patient_identity_immutable", "identity_refused"],
+    ["telehealth_transfer_invalid", "request_invalid"],
+    ["telehealth_transfer_id_reused", "request_invalid"],
+    ["appointment_required", "request_invalid"],
+    ["telehealth_transfer_source_changed", "conflict"],
+    ["telehealth_admission_unavailable", "operation_refused"],
+    ["appointment_not_found", "operation_refused"],
   ])("maps the authored %s marker without returning provider text", async (marker, category) => {
     const mock = client((call) => {
       if (call.name === "BeginTransactionCommand") return { transactionId: "tx-refused" };

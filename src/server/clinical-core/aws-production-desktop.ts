@@ -162,6 +162,8 @@ const CORE_RPCS = new Set([
   "list_desktop_patient_encounters",
   "get_desktop_note",
   "get_desktop_patient_timeline",
+  "get_telehealth_record_authority",
+  "transfer_telehealth_note",
   "get_patient_overview",
   "get_patient_relationships",
   "get_patient_app_intake",
@@ -651,6 +653,42 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.get_desktop_note($1) as data",
       [clinicalUuid(requiredUuid(args._note_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_telehealth_record_authority") {
+    exactKeys(args, ["_organization_id", "_patient_id", "_appointment_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_telehealth_record_authority($1,$2,$3) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id)), clinicalUuid(requiredUuid(args._appointment_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "transfer_telehealth_note") {
+    exactKeys(args, [
+      "_organization_id", "_transfer_id", "_appointment_id", "_patient_id", "_source_revision", "_source_digest",
+      "_content", "_source_payload", "_provenance", "_admission", "_admission_signature",
+    ]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const digest = requiredString(args._source_digest, 64);
+    if (!/^[0-9a-f]{64}$/.test(digest)) throw invalid();
+    // The content, payload, provenance and admission are the EXACT bytes the
+    // telehealth boundary hashed and signed: validated here for shape, passed
+    // through unchanged so the database can recompute every hash over them.
+    const contentText = requiredString(args._content, 262_144); boundedNoteContent(parsedJson(contentText));
+    const payloadText = requiredString(args._source_payload, 524_288); boundedTransferPayload(parsedJson(payloadText));
+    const provenanceText = requiredString(args._provenance, 65_536); boundedProvenance(parsedJson(provenanceText));
+    const admissionText = requiredString(args._admission, 8_192); boundedAdmission(parsedJson(admissionText));
+    const signature = requiredString(args._admission_signature, 64);
+    if (!/^[0-9a-f]{64}$/.test(signature)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._transfer_id)), clinicalUuid(requiredUuid(args._appointment_id)),
+        clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._source_revision, 1, 1_000_000), digest,
+        contentText, payloadText, provenanceText, admissionText, signature,
+      ],
     ));
     return decodeJson(row.data);
   }
@@ -1788,11 +1826,40 @@ function boundedNoteContent(value: unknown): Record<string, string> {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+function parsedJson(text: string): unknown {
+  try { return JSON.parse(text) as unknown; } catch { throw invalid(); }
+}
+
+/** The boundary's admission (telehealth-chart-admission/1): exactly its members, every id a UUID, every hash hex; the database verifies the signature and bindings. */
+function boundedAdmission(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const admission = value as Record<string, unknown>;
+  exactKeys(admission, [
+    "contract", "intent", "key_id", "transfer_id", "organization_id", "patient_record_id", "appointment_id", "practitioner_person_id",
+    "source_custody", "source_record_version", "source_revision", "source_digest", "content_sha256", "payload_sha256", "provenance_sha256",
+    "issued_at", "expires_at",
+  ]);
+  if (admission.contract !== "telehealth-chart-admission/1" || admission.intent !== "chart_draft" || admission.source_custody !== "telehealth-visit-record") throw invalid();
+  if (!/^[a-z0-9][a-z0-9-]{7,63}$/.test(requiredString(admission.key_id, 64))) throw invalid();
+  for (const key of ["transfer_id", "organization_id", "patient_record_id", "appointment_id", "practitioner_person_id"]) requiredUuid(admission[key]);
+  for (const key of ["source_digest", "content_sha256", "payload_sha256", "provenance_sha256"]) if (!/^[0-9a-f]{64}$/.test(requiredString(admission[key], 64))) throw invalid();
+  boundedInteger(admission.source_revision, 1, 1_000_000); boundedInteger(admission.source_record_version, 0, 1_000_000_000);
+  for (const key of ["issued_at", "expires_at"]) if (Number.isNaN(Date.parse(requiredString(admission[key], 40)))) throw invalid();
+  return admission;
+}
+
+/** The complete telehealth source kept beside a chart draft: a JSON object under the ledger's 512 KiB bound, never a string or array. */
+function boundedTransferPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  if (Object.keys(value as Record<string, unknown>).length > 64 || JSON.stringify(value).length > 524_288) throw invalid();
+  return value as Record<string, unknown>;
+}
+
 function boundedProvenance(value: unknown): Array<Record<string, string | null>> {
   if (!Array.isArray(value) || value.length > 50) throw invalid();
   const allowed = new Set([
     "appointment", "encounter", "lab_observation", "lab_document", "patient_form", "chart_item",
-    "practitioner_entered", "transcript", "differential_question", "lens_evaluation",
+    "practitioner_entered", "transcript", "differential_question", "lens_evaluation", "telehealth_visit",
   ]);
   return value.map((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();

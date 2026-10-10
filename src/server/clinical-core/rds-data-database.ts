@@ -214,7 +214,8 @@ function assertConfiguration(configuration: RdsDataConfiguration) {
   }
 }
 
-function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
+/** Exported for embedded-database tests that stand the production dispatch in front of a real PGlite: the same classification, no other mapping. */
+export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
@@ -231,6 +232,13 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\btelehealth_consent_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\btelehealth_consent_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\btelehealth_consent_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  // Chart transfer of a telehealth note: an unadmitted, forged, substituted or
+  // foreign source is a refusal; a changed source is a decided conflict; a chart
+  // with no registered admission key refuses the operation rather than failing.
+  if (/\b(telehealth_admission_refused|telehealth_admission_mismatch|telehealth_transfer_refused|appointment_patient_identity_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(telehealth_transfer_invalid|telehealth_transfer_id_reused|appointment_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\btelehealth_transfer_source_changed\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(telehealth_admission_unavailable|appointment_not_found)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   // A settled request id can never be admitted again; the caller must treat it as a
   // decided conflict, not as an identity problem it could retry past.
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

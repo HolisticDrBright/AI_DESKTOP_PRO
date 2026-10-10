@@ -106,6 +106,40 @@ export interface TelehealthProviderShutdown {
 
 export type TelehealthVisitStatus = "scheduled" | "in_visit" | "ending" | "ended" | "cancelled";
 
+/**
+ * The visit-side record of a chart transfer. `admitted` = the exact source was
+ * fixed and the chart write may be in flight (or its response was lost);
+ * `completed` = the chart's authoritative receipt was read back. The chart is
+ * the authority; this record is reconciled from it, never the other way.
+ */
+export interface TelehealthChartTransfer {
+  transferId: string;
+  state: "admitted" | "completed";
+  sourceRevision: number;
+  sourceDigest: string;
+  admittedAt: string;
+  admittedBy: string;
+  encounterId: string | null;
+  noteId: string | null;
+  noteVersion: number | null;
+  contentSha256: string | null;
+  transferredAt: string | null;
+  completedAt: string | null;
+}
+
+/** The chart's own view of the retained record (from `get_telehealth_record_authority`), attached to a completed visit's read. */
+export interface TelehealthChartRecord {
+  legalHold: boolean;
+  appointment: { id: string; status: string; deleted: boolean; patientMatches: boolean } | null;
+  transfer: { transferId: string; encounterId: string; noteId: string; noteVersion: number; noteStatus: string | null; noteCurrentVersion: number | null; noteDeleted: boolean; transferredAt: string } | null;
+}
+
+/** The outcome of one transfer attempt, as returned to the screen. */
+export interface TelehealthTransferResult {
+  visit: TelehealthVisit;
+  transfer: TelehealthChartTransfer | null;
+}
+
 export interface TelehealthVisit {
   appointmentId: string;
   organizationId: string;
@@ -131,6 +165,15 @@ export interface TelehealthVisit {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** The retained record's patient and practitioner, fixed when the visit was created. */
+  patientRecordId?: string | null;
+  practitionerUserId?: string | null;
+  /** Chart transfer state recorded on the visit (null until a transfer is admitted). */
+  chartTransfer?: TelehealthChartTransfer | null;
+  /** The exact source a transfer must name (present only once the note is signed). */
+  chartTransferSource?: { sourceRevision: number; sourceDigest: string } | null;
+  /** Attached by the desktop for a completed visit: the chart's view of the retained record. */
+  chartRecord?: TelehealthChartRecord | null;
 }
 
 /** One row of the day view: the appointment plus whatever the visit boundary knows about it. */
@@ -226,6 +269,13 @@ export interface TelehealthEndInput {
   expectedVersion: number;
   flags: TelehealthFlag[];
   quickNotes: string;
+}
+
+/** An explicit chart transfer names the exact signed source the practitioner reviewed. */
+export interface TelehealthTransferInput {
+  appointmentId: string;
+  sourceRevision: number;
+  sourceDigest: string;
 }
 
 export interface TelehealthSignInput {

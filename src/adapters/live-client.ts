@@ -116,6 +116,8 @@ import type {
   TelehealthEndInput,
   TelehealthImportResult,
   TelehealthSignInput,
+  TelehealthTransferInput,
+  TelehealthTransferResult,
   TelehealthStartInput,
   TelehealthStartResult,
   TelehealthVisit,
@@ -206,6 +208,10 @@ export const liveClient = {
     liveFetch<TelehealthImportResult>("telehealth/note/import", { method: "POST", body: { appointmentId, date, timeZone } }),
   telehealthSignNote: (input: TelehealthSignInput) =>
     liveFetch<TelehealthVisit>("telehealth/note/sign", { method: "POST", body: input }),
+  telehealthTransferToChart: (input: TelehealthTransferInput) =>
+    liveFetch<TelehealthTransferResult>("telehealth/note/transfer", { method: "POST", body: input }),
+  telehealthInspectTransfer: (appointmentId: string) =>
+    liveFetch<TelehealthTransferResult>("telehealth/note/transfer/inspect", { method: "POST", body: { appointmentId } }),
 
   bookAppointment: (input: LiveBookInput) =>
     liveFetch<LiveBookResult>("schedule/book", { method: "POST", body: input }),

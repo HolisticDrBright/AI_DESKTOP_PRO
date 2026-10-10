@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * TELEHEALTH TAB, browser-level, against the committed contract fixture:
@@ -15,6 +15,10 @@ import { resetBackend } from "./support/backend";
  *   4. the AI Companion summary imports as NOT reviewed, the practitioner's
  *      notes sit above it, action items are decisions only, and one
  *      signature freezes the note — persisted, not local state
+ *   5. placing the signed record in the chart is an explicit action that
+ *      creates ONE unsigned chart draft on the telehealth encounter, links
+ *      it from the visit, shows it in the patient timeline, survives a lost
+ *      completion response through Inspect, and never writes a second note
  *
  * The Zoom Meeting SDK download is aborted by the suite: no meeting exists in
  * the fixture, and the screen must report that honestly instead of pretending
@@ -198,6 +202,97 @@ test("the imported unreviewed AI Companion note is frozen by one confirmed signa
   await page.goto(`/telehealth?date=${DATE}`);
   await expect(page.getByTestId("telehealth-row").first()).toContainText("Note signed");
   await expect(page.getByRole("link", { name: "View note" })).toBeVisible();
+});
+
+test("authorization loss during a failed transfer's recovery read removes the opened signed note", async ({ page }) => {
+  await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveText("Agree with the summary. Continue protocol.");
+  await page.route("**/api/live/telehealth/note/transfer", route => route.fulfill({
+    status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "unavailable", message: "Fictional transfer unavailable." } }),
+  }));
+  await page.route("**/api/live/telehealth/note?*", route => route.fulfill({
+    status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "You don't have access to this record." } }),
+  }));
+  await page.getByTestId("note-transfer").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Place in chart" }).click();
+  await expect(page.getByText("You don't have access to this record.")).toBeVisible();
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveCount(0);
+  await expect(page.getByText("Edited summary.", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Repeat ferritin in 8 weeks", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("note-chart-transfer")).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await page.unroute("**/api/live/telehealth/note?*");
+  await page.unroute("**/api/live/telehealth/note/transfer");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveText("Agree with the summary. Continue protocol.");
+  await expect(page.getByTestId("note-chart-transfer")).toHaveAttribute("data-transfer-state", "none");
+});
+
+test("placing the signed note in the chart creates one unsigned draft, links it, reaches the timeline, and a lost completion is reconciled without a second note", async ({ page, request }) => {
+  await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
+  await expect(page.getByTestId("note-signed")).toBeVisible();
+  const card = page.getByTestId("note-chart-transfer");
+  await expect(card).toHaveAttribute("data-transfer-state", "none");
+  await expect(card).toContainText("Not in the chart yet");
+
+  // The completion read is lost once: the chart write lands, the desktop never hears it.
+  await request.post(`${STUB_BASE}/__control/telehealth-lose-completion`);
+  await page.getByTestId("note-transfer").click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("UNSIGNED chart draft");
+  await dialog.getByRole("button", { name: "Place in chart" }).click();
+  await expect(page.getByTestId("note-transfer-error")).toBeVisible();
+  // The true state, from the chart's own authority: the draft exists at the chart, but the visit record never
+  // received the confirmation. Inspect records the chart's receipt; nothing is written to the chart again.
+  await expect(card).toHaveAttribute("data-transfer-state", "unreconciled");
+  await expect(card).toContainText("Receipt not yet recorded on the visit");
+  await expect(page.getByTestId("note-transfer")).toHaveCount(0);
+  await page.getByTestId("note-transfer-inspect").click();
+  await expect(card).toHaveAttribute("data-transfer-state", "completed");
+  await expect(card).not.toContainText("Receipt not yet recorded");
+  await expect(card).toContainText("Placed in the chart");
+  await expect(card).toContainText("chart note draft");
+  await expect(page.getByTestId("note-transfer")).toHaveCount(0);
+  const link = page.getByTestId("note-chart-link");
+  await expect(link).toBeVisible();
+  const href = await link.getAttribute("href");
+  expect(href).toMatch(/^\/patients\/[^/]+\/encounter\/[^/]+$/);
+
+  // Reload: the chart state comes from the records, and the action is gone for good.
+  await page.reload();
+  await expect(page.getByTestId("note-chart-transfer")).toHaveAttribute("data-transfer-state", "completed");
+  await expect(page.getByTestId("note-transfer")).toHaveCount(0);
+  await expect(page.getByTestId("note-chart-link")).toHaveAttribute("href", href as string);
+
+  // The chart's own view: exactly one draft note on the telehealth encounter, unsigned, with the reviewed text and provenance.
+  await page.goto(href as string);
+  await expect(page.getByTestId("encounter-workspace")).toBeVisible();
+  await expect(page.getByTestId("encounter-status")).toContainText(/in progress/i);
+  // Exactly one note on the encounter: a narrative DRAFT (v1), never a signed one.
+  await expect(page.getByRole("button", { name: /Narrative draft · v1/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /signed/i })).toHaveCount(0);
+  await page.getByRole("button", { name: /Narrative draft · v1/ }).click();
+  const narrative = page.getByLabel("Narrative");
+  await expect(narrative).toHaveValue(/## Telehealth visit — AI Companion summary \(reviewed\)\nEdited summary\./);
+  await expect(narrative).toHaveValue(/## Practitioner notes\nAgree with the summary\. Continue protocol\./);
+  await expect(narrative).toHaveValue(/- Repeat ferritin in 8 weeks \(approved\)/);
+  await expect(narrative).toHaveValue(/Transferred UNSIGNED for chart review/);
+  await expect(page.getByText(/Zoom AI Companion summary, reviewed in telehealth visit record revision 2/).first()).toBeVisible();
+  // The chart's own signature control is present and untouched: the visit signature did not sign the chart.
+  await expect(page.getByRole("button", { name: "Sign note" })).toBeVisible();
+  // The patient timeline carries the draft through the chart's own events.
+  const patientId = (href as string).split("/")[2];
+  await page.goto(`/patients/${patientId}/chart`);
+  const timeline = page.getByTestId("timeline-list");
+  await expect(timeline).toContainText("Encounter started (telehealth)");
+  await expect(timeline).toContainText("Draft note created (narrative)");
+  await expect(timeline.getByText("Draft note created (narrative)")).toHaveCount(1);
+
+  // Keyboard: the chart link is reachable and activatable without a pointer.
+  await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
+  await page.getByTestId("note-chart-link").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("encounter-workspace")).toBeVisible();
 });
 
 test("a late admitted start after navigation never loads an SDK or reconnects the departed screen", async ({ page }) => {

@@ -44,6 +44,8 @@ Thirty-one added tests exercise this composition against the actual restricted-r
 
 The subsequent full run crossed a source commit during the qualification build and failed its parent/child source-identity comparison: 432 files passed and one setup failed, with 6,666 tests passing, 89 skipped and no release qualification. Its 78 inventory cases were skipped by the failed setup, not accepted. After source stabilized at `5fd2f4e5e2a672aa1656dad99bd0406e43623824`, all 78 inventory cases passed in a separate run. The source-change refusal stays intact. A complete unchanged-source rerun is still required; the isolated pass does not retroactively turn the failed full run into a pass.
 
+The stable rerun at documentation head `e7f1cab4a0a5710e5993f1e39c1023d17df8d8d0`, with runtime `5fd2f4e5e2a672aa1656dad99bd0406e43623824`, subsequently passed all 433 files: 6,744 tests passed, 11 existing skips, zero failures. Both exact-head CI checks succeeded. This clears the unchanged-source rerun requirement for that resolver predecessor; it does not erase the earlier source-cutover refusal or qualify the later chart-transfer integration. The current integration must have its own evidence.
+
 ## Remaining integration
 
 1. Create a distinct successor assembly and preserving upgrade with exact hashes, counts, security inspection and rollback acceptance. Preserve every canonical parent byte and obtain any required review of changed operators. Do not silently append this candidate to the approved 107-to-112 sequence.

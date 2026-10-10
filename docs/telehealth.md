@@ -409,6 +409,18 @@ frozen and survive reload because the record is the source of truth.
   ready; re-import keeps notes/decisions and history; frozen signed notes;
   paginated lists without note bodies; cancelled booking closes the visit
   and deletes its meeting; SDK JWT shape.
+- `src/server/clinical-core/telehealth-chart-lifecycle.database.test.ts` —
+  the real 113 artifact in an embedded database under the actual API role:
+  draft creation, encounter reuse, timeline, retry in both orders, stale and
+  changed sources, tenant/patient/role/appointment binding, append-only
+  ledger, chart signature and addendum, retained authority after calendar
+  removal, refusals. `src/contracts/telehealthRecordInventory.test.ts` — the
+  inventory never claims an erasure receipt, a provider or backup copy, or a
+  retention duration. The Lambda suite adds retained reads, withheld lists,
+  transfer admit/complete/stale/mismatch/lost response, the inventory,
+  withdrawal, the absence of any deletion route and consumer refusal; the
+  browser suite adds the transfer case (explicit action, lost completion
+  reconciled by Inspect, one draft, chart link, timeline, keyboard).
 - `src/adapters/telehealth.live.test.ts` — zoned day bounds (zone, DST,
   impossible dates), the merge, unavailable and incomplete boundary states,
   appointment resolution before any boundary call, stored times only,
@@ -435,18 +447,56 @@ frozen and survive reload because the record is the source of truth.
 - `e2e/zoom-sdk-bootstrap.spec.ts` — the positive SDK bootstrap (CI step with
   network access).
 
+## Chart integration and retained-record authority — October 10
+
+See `docs/telehealth-chart-lifecycle-2026-10-10.md` for the full design. In
+short: a completed visit is read under the clinical core's patient-record
+authority (`get_telehealth_record_authority`), never the calendar, so removing
+or moving an appointment does not erase access to a retained record and a
+staff-only role or foreign clinic is refused; a signed note is placed in the
+chart only by an explicit practitioner action, as an unsigned draft, bound to
+the exact signed revision and settled against the chart's own receipt; and
+every telehealth text location is inventoried with the control that reaches
+it. The visit record carries `chartTransfer` (admitted/completed, source
+revision and digest, destination ids) and, once signed, `chartTransferSource`
+(the revision and digest a transfer must name).
+
+Three audit findings (Codex, October 10, `aa08cb4`) were repaired in the same
+lane: the chart now verifies a **signed admission** the telehealth boundary
+issues only after it has checked the signed visit record — HMAC under a key
+the boundary holds in Secrets Manager and the chart database holds in a
+private key table, binding subject, practitioner, source and the exact bytes;
+a general caller of the chart RPC cannot fabricate a "signed visit". Receipt
+reads are bound to the requested patient (another same-clinic patient sees
+"not this patient's appointment", never the receipt). And the calendar
+correction contract is explicit: an appointment that carries clinical records
+keeps its patient identity (`appointment_patient_identity_immutable`);
+correction is a status correction plus a successor appointment, and the
+original record stays with its patient.
+
 ## Not integrated yet — blocking for PHI
 
 These are stated so they are not mistaken for done:
 
-- **Chart integration.** The signed telehealth note lives on the visit
-  record with its revisions; it is not posted through the chart's
-  clinical-note/timeline/amendment path and does not appear in the patient
-  timeline. The screens and the sign confirmation say so.
-- **Record lifecycle.** Consent receipts, quick notes, AI originals and signed
-  visit text are new clinical data on the telehealth table. Export,
-  correction/amendment, retention, legal hold, erasure and provider-copy
-  reconciliation (Zoom's recording/summary copies) are not wired for them.
+- **Chart integration — built in source, not yet released.** A signed
+  telehealth note reaches the chart only through the explicit *Place in
+  chart* action, as an UNSIGNED draft on the telehealth encounter, bound and
+  retry-safe (`docs/telehealth-chart-lifecycle-2026-10-10.md`). It depends on
+  forward candidate 113 (`transfer_telehealth_note`,
+  `get_telehealth_record_authority`, the append-only transfer ledger, the
+  admission key table), which is proposed and byte-pinned, not registered,
+  applied or deployed. Until the candidate is released and an admission key is
+  provisioned on both sides, the action has no chart function behind it and
+  the boundary refuses the transfer as unavailable.
+- **Record lifecycle — inventoried, not resolved.** Every telehealth text
+  location is enumerated with the control that reaches it
+  (`src/contracts/telehealthRecordInventory.ts`) and each visit's inventory
+  is readable with digests (`GET …/visits/notes/inventory`). What is still
+  missing is policy, not plumbing: there is no approved retention/disposition
+  policy, clinic-authored text is excluded from the owner's personal-storage
+  export by the existing scope decision, chart records are append-only with
+  no reviewed disposition procedure, and Zoom's copies stay under Zoom's
+  retention with no delete permission. No receipt claims otherwise.
 - **Host binding.** The Lambda uses one configured Zoom host per deployment.
   A multi-practitioner, multi-clinic binding of organization → authorized
   host/practitioner is not proven by a workforce JWT and organization string.
