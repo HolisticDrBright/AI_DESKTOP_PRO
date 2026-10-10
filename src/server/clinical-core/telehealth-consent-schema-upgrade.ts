@@ -8,6 +8,7 @@ import type { QualificationUpgradeConfiguration } from './qualification-schema-u
 import { careErasurePreservation } from './care-erasure-schema-upgrade';
 import { FULLSCRIPT_UPGRADE, FULLSCRIPT_CONSENT_SUCCESSOR } from './fullscript-migration-release';
 import { FullscriptUpgradeError, verifyFullscriptExtensionSchema } from './fullscript-schema-upgrade';
+import { verifyCareConsentRegistrationSchema } from './care-connections-schema-upgrade';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const ledger = 'clinical_core.schema_migrations';
@@ -136,6 +137,27 @@ async function verifyNewFunction(tx: ClinicalCoreTransaction, m: ClinicalCoreMig
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clinical_core'
       and p.proname='production_telehealth_consent_request'`,[sha(body)])).rows;
   if (successor ? rows.length!==1 || rows[0]?.valid!==true : rows.length!==0) fail('verification_failed','new_function');
+}
+/** Separate exact successor admission for the telehealth-only copy registrar.
+ * No prefix tolerance, migration, approval, copy insertion or consent grant. */
+export async function verifyTelehealthConsentCopyRegistrationTarget(tx: ClinicalCoreTransaction,
+  supplied: ClinicalCoreMigration[], configuration: QualificationUpgradeConfiguration) {
+  const m=supplied.map(r=>({...r})),c={...configuration};assertTelehealthConsentUpgrade(c,m);
+  if((await tx.query<{name:string}>('select current_database() as name')).rows[0]?.name!==c.qualificationDatabaseName)fail('boundary_refused');
+  if(await history(tx,m,true)!==112)fail('history_refused');
+  await inventory(tx);await verifyFullscriptExtensionSchema(tx,m.slice(0,111));
+  await verifyCareConsentRegistrationSchema(tx,m[104]);await verifyNewFunction(tx,m,true);
+  const immutableBodies=m.flatMap(r=>[...r.sql.matchAll(/create(?: or replace)? function clinical_private\.block_update_delete\(\)[^]*?as \$\$([^]*?)\$\$/g)])
+    .map(match=>match[1]);
+  const body=immutableBodies.at(-1)??fail('artifact_refused');
+  const immutable=(await tx.query<{valid:boolean}>(`select count(*)=1 and bool_and(
+    p.oid=to_regprocedure('clinical_private.block_update_delete()') and p.prorettype='trigger'::regtype
+    and p.prokind='f' and p.provolatile='v' and p.prolang=(select oid from pg_language where lanname='plpgsql')
+    and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=$1) valid
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clinical_private' and p.proname='block_update_delete'`,[sha(body)])).rows[0];
+  const protectedTable=(await tx.query<{valid:boolean}>(`select c.relkind='r' and c.relrowsecurity and c.relforcerowsecurity valid
+    from pg_class c where c.oid='clinical_core.care_consent_texts'::regclass`)).rows[0];
+  if(immutable?.valid!==true||protectedTable?.valid!==true)fail('verification_failed','copy_immutability');
 }
 class Rehearsal extends Error { constructor(readonly observation: TelehealthConsentUpgradeObservation) { super('rollback_rehearsal'); } }
 const observationKeys = ['contract','execution','phiAllowed','activation','historicalTableCount','rowCount','dataSha256',

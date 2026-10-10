@@ -20,6 +20,7 @@
     "build:fullscript-upgrade": "node scripts/build-fullscript-upgrade.mjs",
     "build:telehealth-consent-upgrade": "node scripts/build-telehealth-consent-upgrade.mjs",
     "test:telehealth-consent-upgrade-artifact": "node --test scripts/telehealth-consent-upgrade-artifact.test.mjs",
+    "test:telehealth-consent-copy-registration": "vitest run src/server/clinical-core/telehealth-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-registration.database.test.ts --no-file-parallelism",
     "test:telehealth-consent-upgrade": "vitest run src/server/clinical-core/telehealth-consent-upgrade-command.test.ts src/server/clinical-core/telehealth-consent-native-custody.test.ts src/server/clinical-core/telehealth-consent-upgrade-operator.database.test.ts src/server/clinical-core/telehealth-consent-schema-upgrade.database.test.ts",
     "build:fullscript-api": "node scripts/build-fullscript-api.mjs",
     "build:fullscript-deployment-preflight": "node scripts/build-fullscript-deployment-preflight.mjs",
