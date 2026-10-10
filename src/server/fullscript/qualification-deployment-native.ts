@@ -8,6 +8,7 @@ import {LambdaClient,GetFunctionConfigurationCommand} from '@aws-sdk/client-lamb
 import {createFullscriptDeploymentDatabaseObserver} from './qualification-deployment-database';
 import {observeFullscriptDeploymentResources,type FullscriptResourcePort} from './qualification-deployment-resources';
 import {deploymentCanonical,verifyFullscriptPreparation,type DeploymentPlan,type DeploymentObservation,type DeploymentPorts} from './qualification-deployment-execution';
+import {observeFullscriptInstalledControls} from './qualification-deployment-controls';
 type Obj=Record<string,unknown>;
 const profile='ai-synthetic-member',region='us-east-2',account='588966314750',bucket='alp-qualification-code-588966314750-us-east-2';
 const fail=():never=>{throw Error('fullscript_deployment_native_refused');};
@@ -155,7 +156,13 @@ export function createNativeFullscriptDeploymentPorts(plan:DeploymentPlan,custod
      const fn=await resources.functionConfiguration(String(version??p.target.target.functionArn));
      const authorizers=(await pages('apigatewayv2','get-authorizers',{ApiId:p.target.target.apiId},'Items')).Items as Obj[];
      const integrations=(await pages('apigatewayv2','get-integrations',{ApiId:p.target.target.apiId},'Items')).Items as Obj[];
-     return {stack,proposal,template,resources:stackResources,function:fn,routes,authorizers,integrations} as DeploymentObservation;
+     const observation:DeploymentObservation={stack,proposal,template,resources:stackResources,function:fn,routes,authorizers,integrations};
+     if(stack.StackStatus==='CREATE_COMPLETE'){
+      await localGuard();await resources.identity();await custody.verify();
+      observation.controls=await observeFullscriptInstalledControls(p,observation,async(s,a,i)=>fullscriptNativeAwsJson(s,a,i));
+      await resources.identity();await localGuard();await custody.verify();
+     }
+     check(Date.now()-start<=180000);return observation;
     }return fail();
    }catch{return fail();}
   }};return port;

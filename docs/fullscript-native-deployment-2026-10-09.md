@@ -46,10 +46,20 @@ or the command refuses. An empty successful ExecuteChangeSet response is not
 mistaken for a failed dispatch, but an empty metadata response is always refused.
 
 The resulting control-plane report verifies the exact published code, version,
-environment, stack resources, JWT authorizers and routes. It keeps
+environment, stack resources, JWT authorizers and routes. Settlement now also
+requires the actual installed role trust policy and its only inline policy,
+absence of attached managed policies and an unexpected permissions boundary,
+the published version's two API invocation grants, the reserved concurrency of
+one, 14-day log retention and the two enabled Errors/Throttles alarms pointing
+to the reviewed topic. Partial inventories and additional permissions refuse.
+Policy documents are compared after bounded decoding and semantic statement
+ordering, not by a saved report or an environment flag.
+
+`installedControlsObserved` describes these configuration checks only. It keeps
 `iamQualified`, `alarmsQualified`, `sqlQualified` and `hostedQualified` false.
 Effective runtime access, provider behavior, notification delivery and hosted
-acceptance still require separate tests.
+acceptance still require separate tests. This is not an atomic snapshot of the
+account's policies or an audit of every other AWS role.
 
 ## Required before the actual run
 
@@ -74,3 +84,7 @@ AWS documents the distinct execute response and rollback controls in
 [ExecuteChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html).
 Version-specific artifact reads follow
 [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html).
+Installed policy and alarm reads follow
+[GetRolePolicy](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRolePolicy.html),
+[GetPolicy](https://docs.aws.amazon.com/lambda/latest/api/API_GetPolicy.html) and
+[DescribeAlarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_DescribeAlarms.html).

@@ -10,12 +10,17 @@ const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const command=resolve('dist/aws-clinical-core/fullscript-deployment-preflight/index.cjs');
 const nativeCommand=resolve('dist/aws-clinical-core/fullscript-deployment-operator/index.cjs');
-let directory,args,target,parameters,manifest;
+let directory,args,target,parameters,manifest,nativeBuild;
 before(()=>{
- for(const script of ['build-fullscript-api.mjs','build-fullscript-qualification-template.mjs','build-fullscript-deployment-preflight.mjs','build-fullscript-deployment-operator.mjs'])
-  execFileSync(process.execPath,['scripts/'+script],{encoding:'utf8',timeout:60000,windowsHide:true});
+ for(const script of ['build-fullscript-api.mjs','build-fullscript-qualification-template.mjs','build-fullscript-deployment-preflight.mjs','build-fullscript-deployment-operator.mjs']){
+  const result=execFileSync(process.execPath,['scripts/'+script],{encoding:'utf8',timeout:60000,windowsHide:true});
+  if(script==='build-fullscript-deployment-operator.mjs')nativeBuild=JSON.parse(result);
+ }
  manifest=JSON.parse(readFileSync('dist/aws-clinical-core/fullscript-api/artifact-manifest.json','utf8'));
  assert.equal(manifest.clean,true,'actual CLI acceptance requires clean committed source');
+ assert.equal(nativeBuild.clean,true,'native refusals must not pass merely because the built source was dirty');
+ assert.equal(nativeBuild.sourceCommit,manifest.sourceCommit);
+ assert.equal(sha(readFileSync(nativeCommand)),nativeBuild.operatorSha256);
  const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-fullscript-candidate.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:30000,windowsHide:true}));
  // FICTIONAL review fixture only, never saved into AWS or treated as owner approval.
  target={contract:'fullscript-qualification-target-release/2',target:{execution:'qualification',account:'588966314750',region:'us-east-2',phiAllowed:false,

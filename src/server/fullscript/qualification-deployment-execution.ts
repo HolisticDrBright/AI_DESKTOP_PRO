@@ -2,6 +2,7 @@ if (typeof window !== 'undefined') throw Error('Fullscript deployment is server-
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {preflightFullscriptDeployment} from './qualification-deployment-preflight';
+import {verifyFullscriptInstalledControls,type FullscriptInstalledControls} from './qualification-deployment-controls';
 
 export const deploymentCanonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(deploymentCanonical).join(',')+']':v&&typeof v==='object'
  ?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+deploymentCanonical((v as Record<string,unknown>)[k])).join(',')+'}':JSON.stringify(v);
@@ -38,7 +39,7 @@ export function prepareFullscriptDeployment(input:DeploymentInput){
 }
 type Obj=Record<string,unknown>;
 export type DeploymentObservation={stack:Obj|null;proposal:Obj|null;template:unknown;resources:Obj[];
- function:Obj|null;routes:Obj[];authorizers:Obj[];integrations:Obj[]};
+ function:Obj|null;routes:Obj[];authorizers:Obj[];integrations:Obj[];controls?:FullscriptInstalledControls};
 export type DeploymentStage='create_admitted'|'create_observed'|'execute_admitted'|'settled';
 export type DeploymentMode='deploy'|'resume-unadmitted'|'execute-prepared'|'observe';
 export interface DeploymentPorts{
@@ -109,8 +110,9 @@ export function verifyFullscriptDeployed(plan:DeploymentPlan,o:DeploymentObserva
  }
  const integration=o.integrations.filter(r=>r.IntegrationId===physical('Integration'));
  check(integration.length===1&&integration[0].IntegrationType==='AWS_PROXY'&&integration[0].PayloadFormatVersion==='2.0'&&integration[0].IntegrationUri===versionArn);
+ const controls=verifyFullscriptInstalledControls(plan,o);
  return {contract:'fullscript-deployment-observation/1',...ids,sourceCommit:plan.sourceCommit,reviewSha256:plan.reviewSha256,
-   publishedVersion:fn!.Version,deployed:true,codeAndRoutesObserved:true,controlPlaneObserved:true,
+   publishedVersion:fn!.Version,deployed:true,codeAndRoutesObserved:true,controlPlaneObserved:true,...controls,
    iamQualified:false,alarmsQualified:false,sqlQualified:false,hostedQualified:false,providerActionPerformed:false,phiAllowed:false,activation:'blocked'};
 }
 export function verifyFullscriptPreparation(plan:DeploymentPlan,o:DeploymentObservation,now:number){

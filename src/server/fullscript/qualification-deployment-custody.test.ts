@@ -85,7 +85,8 @@ it('old custody formats and subsidiary locks are not automatically migrated or d
 it('only a positive bound deployment receipt after admitted execution retires custody',async()=>{
  const c=start();await c.record('create_admitted');await c.record('create_observed');await c.record('execute_admitted');await c.record('settled');
  const report={contract:'fullscript-deployment-observation/1',reviewSha256:plan.reviewSha256,sourceCommit:plan.sourceCommit,
-  deployed:true,controlPlaneObserved:true,hostedQualified:false,phiAllowed:false};
+  deployed:true,controlPlaneObserved:true,installedControlsObserved:true,hostedQualified:false,phiAllowed:false};
+ await expect(c.finish({...report,installedControlsObserved:false})).rejects.toThrow();expect(existsSync(join(root,'operator.lock'))).toBe(true);
  await expect(c.finish({...report,phiAllowed:true})).rejects.toThrow();expect(existsSync(join(root,'operator.lock'))).toBe(true);
  await c.finish(report);expect(existsSync(join(root,'operator.lock'))).toBe(false);
  expect(readdirSync(root).filter(n=>n.endsWith('.receipt.json'))).toHaveLength(1);await expect(c.verify()).rejects.toThrow();

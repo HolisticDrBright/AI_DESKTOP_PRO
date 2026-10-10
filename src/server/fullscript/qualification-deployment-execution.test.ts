@@ -4,6 +4,7 @@ import {fullscriptQualificationTemplate} from '../../../scripts/fullscript-quali
 import {deploymentCanonical,deploymentDigest,prepareFullscriptDeployment,runFullscriptDeployment,verifyFullscriptDeployed,
  type DeploymentInput,type DeploymentObservation,type DeploymentPlan,type DeploymentPorts,type DeploymentStage} from './qualification-deployment-execution';
 import {preflightFullscriptDeployment} from './qualification-deployment-preflight';
+import {fictionalInstalledControls} from './qualification-deployment-controls.fixture';
 // Execution tests use fictional control-plane ports. Real artifact composition
 // is tested separately in qualification-deployment-preflight.test.ts.
 vi.mock('./qualification-deployment-preflight',()=>({preflightFullscriptDeployment:vi.fn()}));
@@ -17,7 +18,9 @@ beforeEach(()=>{
  const target={target:{functionArn:'arn:aws:lambda:us-east-2:588966314750:function:alp-fullscript-qualification-fictional',codeSha256:build.codeSha256,
   consumerIssuer:'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_FictionalConsumer',workforceIssuer:'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_FictionalWorkforce'}};
  const values={ConsumerAudience:'c'.repeat(26),WorkforceAudience:'w'.repeat(26),TargetKey:'FICTIONAL',TargetObjectVersion:'FICTIONAL',TargetReviewSha256:'b'.repeat(64),
-  DatabaseName:'clinical_core_qualification',DatabaseClusterArn:'FICTIONAL',DatabaseSecretArn:'FICTIONAL',ProviderSecretArn:'FICTIONAL',ProviderSecretVersion:'FICTIONAL',TokenTableName:'FICTIONAL',RedirectUri:'https://fictional.test'};
+  DatabaseName:'clinical_core_qualification',DatabaseClusterArn:'FICTIONAL',DatabaseSecretArn:'FICTIONAL',ProviderSecretArn:'FICTIONAL',ProviderSecretVersion:'FICTIONAL',TokenTableName:'FICTIONAL',RedirectUri:'https://fictional.test',
+  FunctionName:'alp-fullscript-qualification-fictional',ApiId:'fictionalapi',ConsumerPoolId:'us-east-2_FictionalConsumer',WorkforcePoolId:'us-east-2_FictionalWorkforce',
+  OrganizationId:'fictional-org',ProviderSecretKmsKeyArn:'',DatabaseSecretKmsKeyArn:'',AlarmTopicArn:'fictional-topic'};
  const parameterBytes=bytes(Object.entries(values).map(([ParameterKey,ParameterValue])=>({ParameterKey,ParameterValue})));
  const templateBytes=Buffer.from(JSON.stringify(template,null,2)+'\n'),targetBytes=bytes(target);
  const review={contract:'fullscript-qualification-deployment-review/1',reviewer:'Brandon Bright',reviewedAt:'2026-10-09T20:59:00.000Z',decision:'approved',
@@ -42,7 +45,7 @@ function observation(final=false):DeploymentObservation{
   DatabaseClusterArn:'CLINICAL_DATABASE_CLUSTER_ARN',DatabaseSecretArn:'CLINICAL_DATABASE_SECRET_ARN',ProviderSecretArn:'FULLSCRIPT_PROVIDER_SECRET_ARN',
   ProviderSecretVersion:'FULLSCRIPT_PROVIDER_SECRET_VERSION',TokenTableName:'FULLSCRIPT_TOKEN_TABLE',RedirectUri:'FULLSCRIPT_REDIRECT_URI'};
  for(const [k,v] of Object.entries(mapping))(env as Record<string,string>)[v]=plan.parameters.find(p=>p.ParameterKey===k)!.ParameterValue;
- return {stack:{StackId:stackId,StackStatus:final?'CREATE_COMPLETE':'REVIEW_IN_PROGRESS',Capabilities:['CAPABILITY_IAM'],Parameters:plan.parameters,Tags:tags},
+ const o:DeploymentObservation={stack:{StackId:stackId,StackStatus:final?'CREATE_COMPLETE':'REVIEW_IN_PROGRESS',Capabilities:['CAPABILITY_IAM'],Parameters:plan.parameters,Tags:tags},
   proposal:{StackId:stackId,StackName:plan.review.stackName,ChangeSetId:changeSetId,ChangeSetName:plan.changeSetName,Status:'CREATE_COMPLETE',
    ExecutionStatus:final?'EXECUTE_COMPLETE':'AVAILABLE',Capabilities:['CAPABILITY_IAM'],Parameters:plan.parameters,Tags:tags,CreationTime:'2026-10-09T21:00:00Z',
    Changes:plan.resources.map(r=>({Type:'Resource',ResourceChange:{...r,Action:'Add'}}))},template:JSON.parse(plan.templateBody),resources:final?resources:[],
@@ -53,6 +56,7 @@ function observation(final=false):DeploymentObservation{
   authorizers:final?['Consumer','Workforce'].map(role=>({AuthorizerId:physical(role+'Authorizer'),AuthorizerType:'JWT',IdentitySource:['$request.header.Authorization'],
    JwtConfiguration:{Issuer:plan.target.target[role.toLowerCase()+'Issuer'],Audience:[plan.parameters.find(p=>p.ParameterKey===role+'Audience')!.ParameterValue]}})):[],
   integrations:final?[{IntegrationId:physical('Integration'),IntegrationType:'AWS_PROXY',PayloadFormatVersion:'2.0',IntegrationUri:version}]:[]};
+ if(final)o.controls=fictionalInstalledControls(plan,o);return o;
 }
 function ports(){
  const stages:DeploymentStage[]=[],trace:string[]=[];
@@ -67,6 +71,13 @@ it('admits each write before dispatch and reports only observed control-plane de
  expect(result).toMatchObject({deployed:true,hostedQualified:false,phiAllowed:false,providerActionPerformed:false});
  expect(trace.indexOf('create_admitted')).toBeLessThan(trace.indexOf('create'));expect(trace.indexOf('execute_admitted')).toBeLessThan(trace.indexOf('execute'));
  expect(p.create).toHaveBeenCalledOnce();expect(p.execute).toHaveBeenCalledOnce();expect(p.custody.finish).toHaveBeenCalledOnce();
+});
+it.each(['missing','drift'])('cannot settle deployment with %s installed controls',async kind=>{
+ const {p,stages}=ports();stages.push('create_admitted','create_observed','execute_admitted');const o=observation(true);
+ if(kind==='missing')delete o.controls;else o.controls!.attached.AttachedPolicies=[{PolicyArn:'AdministratorAccess'}];
+ vi.mocked(p.observe).mockReset().mockResolvedValue(o);
+ await expect(runFullscriptDeployment(plan,p,'observe')).rejects.toThrow(/^fullscript_deployment_execution_refused$/);
+ expect(p.custody.finish).not.toHaveBeenCalled();expect(p.execute).not.toHaveBeenCalled();
 });
 it.each(['create','execute'])('lost %s response leaves admitted custody and never repeats or certifies',async which=>{
  const {p,stages}=ports();vi.mocked(p[which as 'create'|'execute']).mockRejectedValue(Error('SECRET raw error'));
