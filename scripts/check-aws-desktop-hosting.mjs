@@ -7,6 +7,12 @@ const dockerfile = readFileSync(`${root}Dockerfile`, "utf8");
 const serialized = JSON.stringify(template);
 const errors = [];
 const need = (condition, message) => { if (!condition) errors.push(message); };
+const buildspec = template.Resources?.DesktopWebBuildProject?.Properties?.Source?.BuildSpec?.["Fn::Sub"] ?? "";
+need(buildspec.includes('test "$CODEBUILD_RESOLVED_SOURCE_VERSION" = "$IMAGE_TAG"'), "downloaded source must equal the exact image commit");
+need(buildspec.includes('printf \'%s\' "$IMAGE_TAG" | grep -Eq \'^[a-f0-9]{40}$\''), "build image tag must be a full immutable commit");
+need(buildspec.includes('post_build:\n    commands:\n      - test "$CODEBUILD_BUILD_SUCCEEDING" = 1\n      - docker push '), "a failed or unknown build must not publish an image");
+for (const key of ["SourceVersion", "ImageTag"])
+  need(template.Parameters?.[key]?.AllowedPattern === "^[a-f0-9]{40}$", `${key} must require a full immutable commit`);
 
 need(!/supabase/i.test(serialized), "synthetic Desktop hosting must not inject Supabase configuration");
 need(!/supabase/i.test(dockerfile), "the hosted Desktop image must not require Supabase configuration");

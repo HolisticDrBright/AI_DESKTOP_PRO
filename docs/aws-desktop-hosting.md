@@ -47,8 +47,10 @@ inside the Desktop and subsequent sign-ins require its six-digit code.
 
 The container builds with `APP_EDITION=clinical`, so the repository's edition
 lock continues to refuse demo binaries and mock-data fallback. The runtime
-configuration is an explicit allowlist. App Runner receives no AWS instance
-role and therefore cannot read unrelated account resources.
+configuration is an explicit allowlist. With Fullscript disabled, App Runner
+receives no AWS instance role. When that connector is configured, the template
+attaches a dedicated, scoped role for its named secrets, key, and token table;
+this is not general account access or PHI activation.
 
 The generated App Runner URL is a staging URL. App Runner is used only for the
 synthetic environment and is forbidden from the production PHI architecture.
@@ -90,3 +92,24 @@ ECR for evidence only and was not deployed to App Runner.
 This closes the prior Debian/Perl image findings for this candidate. It does
 not replace source-dependency review, penetration testing, or the final scan
 of the exact production release image.
+
+## October 8, 2026 publication guard (source verification only)
+
+The inline buildspec now refuses publication unless CodeBuild reports the
+earlier build phases successful. It also requires the downloaded source commit
+to equal the full 40-character hexadecimal image tag before registry login.
+Both CloudFormation inputs reject mutable branch names and shortened tags.
+These guards prevent a failed build or smoke check from reaching the final
+image push; the same-container health check remains required.
+
+`npm run test:aws-desktop-buildspec` executes the actual template commands in
+a real shell, with credential-free local substitutes only for AWS and Docker.
+Ten of twelve cases failed against the original source; all twelve pass after
+the repair, including the two positive paths. CI runs this regression and the
+hosting safety checker. These tests do not build, publish, or deploy an image.
+
+At the October 8 inspection, the hosted Desktop still used image commit
+`c6efae087b1f20cbbcb3b50a5f4776f5dfa340df` with automatic deployment disabled.
+The live CodeBuild project still had the earlier unconditional publication
+command. This source repair is not evidence of a changed hosted build project
+or a new Desktop image. Those updates and exact-image verification remain owed.

@@ -169,6 +169,10 @@ jobs:
         run: npm run check:aws-identity-consent
       - name: AWS authenticated synthetic API safety gate
         run: npm run check:aws-authenticated-api
+      - name: Desktop web immutable-source and failed-publication shell regressions (no AWS calls)
+        run: |
+          npm run test:aws-desktop-buildspec
+          npm run check:aws-desktop-hosting
       - name: AWS deployed synthetic acceptance harness gate
         run: npm run check:aws-deployment-acceptance
       - name: AWS governed catalog and read API safety gates
