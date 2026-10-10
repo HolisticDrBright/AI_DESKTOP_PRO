@@ -39,6 +39,10 @@ jobs:
         run: |
           npm run test:fullscript-upgrade-operator
           npm run build:fullscript-upgrade
+      - name: Fullscript immutable target and actual API bundle (fictional AWS only)
+        run: |
+          npm run test:fullscript-target-runtime
+          npm run test:fullscript-api-build
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
