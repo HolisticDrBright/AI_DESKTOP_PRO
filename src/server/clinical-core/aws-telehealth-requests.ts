@@ -72,6 +72,8 @@ type AppointmentItem = {
   paymentPolicyVersion: "telehealth-payments/1"; paymentAuthorizationStatus: "not_authorized" | "authorized" | "withdrawn";
   paymentStatus: "not_due" | "processing" | "paid" | "failed" | "refunded" | "partially_refunded"; paymentIntentId: string | null;
   paidMinor: number; refundedMinor: number;
+  /** Private immutable input binding for hold-keyed creation replay. Not consent authority. */
+  bookingInputSha256?: string;
   /** Signed by the patient in the app when the visit was requested (null for older requests). */
   consent?: VisitConsent | null;
 };
@@ -185,6 +187,23 @@ async function createRequest(config: TelehealthConfiguration, actor: Actor, valu
   const visitType = value.visitType;
   if (!["initial", "follow_up", "urgent_question"].includes(String(visitType)) || !UUID.test(String(value.slotId)) || !UUID.test(String(value.holdId))
     || !(value.note === undefined || value.note === null || (typeof value.note === "string" && value.note.length <= 500))) throw new TelehealthError("request_invalid");
+  const requestId = String(value.holdId), key = { pk: `ORG#${actor.organizationId}`, sk: `REQ#${requestId}` };
+  const canonical = (input: unknown): unknown => Array.isArray(input) ? input.map(canonical)
+    : input !== null && typeof input === "object" ? Object.fromEntries(Object.keys(input).sort().map(name => [name, canonical((input as Record<string, unknown>)[name])])) : input;
+  const fingerprint = createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+  const recover = async () => {
+    const stored = await document.send(new GetCommand({ TableName: config.tableName, Key: key, ConsistentRead: true }));
+    if (!stored.Item) return null;
+    const found = stored.Item as AppointmentItem;
+    if (found.pk !== key.pk || found.sk !== key.sk || found.organizationId !== actor.organizationId || found.consumerPersonId !== actor.personId)
+      throw new TelehealthError("identity_refused");
+    if (found.requestId !== requestId || found.bookingInputSha256 !== fingerprint)
+      throw new TelehealthError("conflict");
+    // Return the current request, including cancellation, not a fabricated
+    // original receipt. This read does not renew consent or call a provider.
+    return publicItem(found, "consumer");
+  };
+  const prior = await recover(); if (prior) return prior;
   // The combined telehealth + recording/AI-notes consent is the last step of
   // "Request a virtual visit" in the patient app. It is optional on the wire
   // (older app builds), but a visit cannot START without it — see startVisit.
@@ -193,9 +212,9 @@ async function createRequest(config: TelehealthConfiguration, actor: Actor, valu
   const nowEpoch = Math.floor(Date.now() / 1000);
   if (slot.status !== "held" || slot.heldBy !== actor.personId || slot.holdId !== value.holdId || !slot.holdExpiresAt || slot.holdExpiresAt <= nowEpoch
     || !slot.visitTypes.includes(visitType as AppointmentItem["visitType"])) throw new TelehealthError("conflict");
-  const now = new Date().toISOString(); const requestId = randomUUID();
+  const now = new Date().toISOString();
   const item: AppointmentItem = {
-    pk: `ORG#${actor.organizationId}`, sk: `REQ#${now}#${requestId}`,
+    ...key, bookingInputSha256: fingerprint,
     gsi1pk: `PERSON#${actor.personId}`, gsi1sk: `REQ#${now}#${requestId}`,
     requestId, organizationId: actor.organizationId, consumerPersonId: actor.personId,
     status: "requested", visitType: visitType as AppointmentItem["visitType"], preferredSlots: [slot.start], timeZone: slot.timeZone,
@@ -208,10 +227,15 @@ async function createRequest(config: TelehealthConfiguration, actor: Actor, valu
     paymentPolicyVersion: "telehealth-payments/1", paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due", paymentIntentId: null,
     paidMinor: 0, refundedMinor: 0, consent,
   };
-  await document.send(new TransactWriteCommand({ TransactItems: [
+  try { await document.send(new TransactWriteCommand({ TransactItems: [
     { Put: { TableName: config.tableName, Item: item, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
     { Update: { TableName: config.tableName, Key: { pk: slot.pk, sk: slot.sk }, UpdateExpression: "SET #status=:booked", ConditionExpression: "#status=:held AND heldBy=:person AND holdId=:hold AND holdExpiresAt>:now", ExpressionAttributeNames: { "#status": "status" }, ExpressionAttributeValues: { ":booked": "booked", ":held": "held", ":person": actor.personId, ":hold": value.holdId, ":now": nowEpoch } } },
-  ] }));
+  ] })); } catch {
+    // A timeout or transaction conflict is not proof of non-commitment. The
+    // conditional key admits only one request for this hold across all devices.
+    const committed = await recover(); if (committed) return committed;
+    throw new TelehealthError("service_unavailable");
+  }
   return publicItem(item, "consumer");
 }
 
@@ -1420,6 +1444,7 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   const result: Partial<AppointmentItem> = { ...item };
   delete result.pk; delete result.sk; delete result.gsi1pk; delete result.gsi1sk;
   delete result.consumerEmail;
+  delete result.bookingInputSha256;
   if (pool === "consumer") delete result.paymentIntentId;
   if (pool === "consumer") delete result.consumerPersonId;
   return result;
