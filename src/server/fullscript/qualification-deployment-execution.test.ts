@@ -86,6 +86,11 @@ it('preparation recovery observes the same proposal and executes once, never cre
  const {p,stages}=ports();stages.push('create_admitted');vi.mocked(p.observe).mockReset().mockResolvedValueOnce(observation()).mockResolvedValueOnce(observation(true));
  await runFullscriptDeployment(plan,p,'execute-prepared');expect(p.create).not.toHaveBeenCalled();expect(p.execute).toHaveBeenCalledOnce();
 });
+it('explicit unadmitted recovery still requires absence of stack, proposal, function and routes',async()=>{
+ const {p}=ports();await runFullscriptDeployment(plan,p,'resume-unadmitted');expect(p.create).toHaveBeenCalledOnce();
+ const other=ports();vi.mocked(other.p.observe).mockReset().mockResolvedValue(observation());
+ await expect(runFullscriptDeployment(plan,other.p,'resume-unadmitted')).rejects.toThrow();expect(other.p.create).not.toHaveBeenCalled();
+});
 it('an admitted executor cannot be repeated by preparation recovery',async()=>{
  const {p,stages}=ports();stages.push('create_admitted','create_observed','execute_admitted');vi.mocked(p.observe).mockReset().mockResolvedValue(observation());
  await expect(runFullscriptDeployment(plan,p,'execute-prepared')).rejects.toThrow();expect(p.execute).not.toHaveBeenCalled();
