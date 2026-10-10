@@ -9,9 +9,10 @@ const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof
  ?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const command=resolve('dist/aws-clinical-core/fullscript-deployment-preflight/index.cjs');
+const nativeCommand=resolve('dist/aws-clinical-core/fullscript-deployment-operator/index.cjs');
 let directory,args,target,parameters,manifest;
 before(()=>{
- for(const script of ['build-fullscript-api.mjs','build-fullscript-qualification-template.mjs','build-fullscript-deployment-preflight.mjs'])
+ for(const script of ['build-fullscript-api.mjs','build-fullscript-qualification-template.mjs','build-fullscript-deployment-preflight.mjs','build-fullscript-deployment-operator.mjs'])
   execFileSync(process.execPath,['scripts/'+script],{encoding:'utf8',timeout:60000,windowsHide:true});
  manifest=JSON.parse(readFileSync('dist/aws-clinical-core/fullscript-api/artifact-manifest.json','utf8'));
  assert.equal(manifest.clean,true,'actual CLI acceptance requires clean committed source');
@@ -59,3 +60,21 @@ test('actual CLI refuses a changed parameter and returns no field values',()=>{
  const path=join(directory,'changed-parameters.json');writeFileSync(path,canonical(changed)+'\n');refused(run([...args.slice(0,5),path]));
 });
 test('actual CLI refuses outside the checked source repository',()=>refused(run(args,directory)));
+// These native-command cases deliberately stop before credentials or AWS.
+// No valid owner deployment review is fabricated to exercise a live write.
+function native(values,cwd=process.cwd()){
+ return spawnSync(process.execPath,[nativeCommand,...values],{cwd,encoding:'utf8',timeout:15000,windowsHide:true});
+}
+function nativeRefused(result){assert.equal(result.status,1);assert.equal(result.stdout,'');assert.equal(result.stderr.trim(),'fullscript_deployment_command_refused');}
+test('native artifact refuses absent explicit command and unknown modes before any cloud call',()=>{
+ for(const values of [[],['--deploy'],['--fictional-fullscript-deployment-only','production',...args.slice(1),'missing-review.json']])nativeRefused(native(values));
+});
+test('native artifact refuses relative or missing review files before credentials',()=>{
+ nativeRefused(native(['--fictional-fullscript-deployment-only','inspect',...args.slice(1),'relative-review.json']));
+ nativeRefused(native(['--fictional-fullscript-deployment-only','deploy',...args.slice(1),join(directory,'missing-review.json')]));
+});
+test('native artifact refuses an invalid review in every mode, with no field values printed',()=>{
+ const review=join(directory,'invalid-review.json');writeFileSync(review,'{"decision":"not-reviewed","private":"FICTIONAL"}\n');
+ for(const mode of ['inspect','deploy','resume-unadmitted','execute-prepared','observe'])
+  nativeRefused(native(['--fictional-fullscript-deployment-only',mode,...args.slice(1),review]));
+});
