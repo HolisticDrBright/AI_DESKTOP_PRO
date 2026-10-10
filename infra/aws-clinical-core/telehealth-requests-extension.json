@@ -783,6 +783,16 @@
         }
       }
     },
+    "ConsumerChangeOutcomeRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "POST /clinical-core/consumer/appointments/change-outcome",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "ConsumerAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${Integration}" }
+      }
+    },
     "ConsumerAvailabilityRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {

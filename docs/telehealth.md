@@ -379,6 +379,14 @@ These are stated so they are not mistaken for done:
   receipt-loss races against the deployed synthetic boundary are not run by
   this repository and remain required before activation.
 
+## Appointment change outcome recovery
+
+The consumer `POST /clinical-core/consumer/appointments/change-outcome` route is a read-only observation under the consumer JWT authorizer. The caller submits the original `appointment-change/1` operation ID and exact action input, wrapped as `consumer_action` or `authorize`. Current request ownership is checked before the strong operation read; organization, role, person, subject, request, version, kind and input digest must all match. The reply contains only a historical disposition and minimal receipt, never private fences, actor subjects, input hashes or provider credentials. This route does not read a secret, write data or contact Zoom, Stripe or the scheduler.
+
+A committed disposition identifies the original successor version, even if later changes altered the current appointment. A refused disposition requires a new durable `appointment-disposition/1` no-effects marker. Refusal settlement conditionally requires the operation to remain admitted with no reserved-slot evidence, and atomically removes the request and visit fences. A legacy refused row, pending dispatch or contradictory receipt remains unresolved. No row means unobserved, not non-admission. No status result allows a new writer to take over uncertain provider work.
+
+The matched V2 journal preserves its original intent until an explicit outcome check saves and verifies the exact completion or no-effects refusal receipt. New actions require refresh. The endpoint and client are source candidates, not deployed acceptance. Provider reconciliation, safe resolution of pre-admission refusals, cross-device discovery, complete pagination and slot lineage, cloud record lifecycle, chart integration, consent release, per-clinic hosts and hosted/device qualification remain required. PHI stays disabled.
+
 ## Open decisions (unchanged from the handoff)
 
 Consent wording and renewal (attorney review; California requires every

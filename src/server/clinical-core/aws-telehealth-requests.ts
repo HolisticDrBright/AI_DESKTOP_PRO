@@ -21,6 +21,7 @@ const MAX_BODY = 16_384;
 const CONSUMER_CREATE = "POST /clinical-core/consumer/appointments/requests";
 const CONSUMER_LIST = "GET /clinical-core/consumer/appointments/requests";
 const CONSUMER_ACTION = "POST /clinical-core/consumer/appointments/actions";
+const CONSUMER_CHANGE_OUTCOME = "POST /clinical-core/consumer/appointments/change-outcome";
 const CONSUMER_AVAILABILITY = "POST /clinical-core/consumer/appointments/availability";
 const CONSUMER_HOLD = "POST /clinical-core/consumer/appointments/holds";
 const WORKFORCE_LIST = "GET /clinical-core/workforce/appointments/requests";
@@ -159,6 +160,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
       if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
       if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
+      if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
       if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
       if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
       if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
@@ -337,6 +339,10 @@ type RequestOperationRow = {
   actorPersonId: string; actorSubject: string; pool: "consumer" | "workforce"; kind: string;
   expectedVersion: number; phase: "admitted" | "effects_started" | "committed" | "refused";
   admittedAt: string; committedAt?: string; committedVersion?: number; refusal?: TelehealthRefusal;
+  /** Only a conditional pre-effects refusal may issue this disposition. Old
+   * refused rows without it remain unresolved, not permission to abandon. */
+  dispositionProtocol?: "appointment-disposition/1"; sideEffects?: "none";
+  reservedSlotKey?: { pk: string; sk: string };
 };
 type RequestTransaction = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"]>;
 
@@ -348,6 +354,53 @@ function matchesOperation(row: RequestOperationRow, operation: AppointmentOperat
   return row.pk === operation.key.pk && row.sk === operation.key.sk && row.operationId === operation.operationId
     && row.inputSha256 === operation.inputSha256 && row.pool === operation.pool && row.actorPersonId === operation.actorPersonId
     && row.actorSubject === operation.actorSubject && row.expectedVersion === operation.expectedVersion;
+}
+
+/** An exact-input, owner-authorized observation. Missing or pending rows are
+ * never proof of non-admission; this path writes nothing and calls no provider.
+ * A refusal is resolvable only from the new conditional no-effects receipt. */
+async function readConsumerChangeOutcome(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["kind", "input"], ["kind", "input"]);
+  const kind = value.kind;
+  if (!["consumer_action", "authorize"].includes(String(kind)) || !value.input || typeof value.input !== "object" || Array.isArray(value.input))
+    throw new TelehealthError("request_invalid");
+  const input = value.input as Record<string, unknown>;
+  exact(input, kind === "authorize" ? ["requestId", "expectedVersion", "policyVersion", "authorized", "operationId", "operationProtocol"]
+    : ["requestId", "expectedVersion", "action", "slotId", "holdId", "operationId", "operationProtocol"],
+  ["requestId", "expectedVersion", "operationId", "operationProtocol"]);
+  if (!UUID.test(String(input.requestId)) || !UUID.test(String(input.operationId)) || input.operationProtocol !== "appointment-change/1"
+    || !Number.isSafeInteger(input.expectedVersion) || Number(input.expectedVersion) < 1) throw new TelehealthError("request_invalid");
+  const current = await find(config, actor.organizationId, String(input.requestId));
+  if (current.consumerPersonId !== actor.personId) throw new TelehealthError("identity_refused");
+  const identity = appointmentOperationIdentity("consumer", actor.personId, actor.subject, String(kind), input);
+  const key = { pk: `ORG#${actor.organizationId}`, sk: `REQOP#${input.requestId}#${identity.operationId}` };
+  const base = { protocol: "appointment-disposition/1", requestId: input.requestId, organizationId: actor.organizationId,
+    operationId: identity.operationId, expectedVersion: input.expectedVersion };
+  const row = await readRequestOperation(config, key);
+  if (!row) return { ...base, disposition: "unobserved" };
+  if (row.pk !== key.pk || row.sk !== key.sk || row.organizationId !== actor.organizationId || row.requestId !== input.requestId
+    || row.operationId !== identity.operationId || row.inputSha256 !== identity.inputSha256 || row.kind !== kind
+    || row.pool !== "consumer" || row.actorPersonId !== actor.personId || row.actorSubject !== actor.subject || row.expectedVersion !== input.expectedVersion)
+    throw new TelehealthError("conflict");
+  if (row.phase === "committed") {
+    if (row.committedVersion !== Number(input.expectedVersion) + 1 || current.version < row.committedVersion
+      || !Number.isSafeInteger(current.version) || !canonicalOutcomeTime(row.committedAt)) throw new TelehealthError("service_unavailable");
+    return { ...base, disposition: "committed", receipt: { protocol: "appointment-change/1", operationId: identity.operationId,
+      admittedVersion: input.expectedVersion, committedVersion: row.committedVersion, committedAt: row.committedAt } };
+  }
+  if (row.phase === "refused" && row.dispositionProtocol === "appointment-disposition/1" && row.sideEffects === "none"
+    && !Object.hasOwn(row, "reservedSlotKey") && row.committedVersion === input.expectedVersion && canonicalOutcomeTime(row.committedAt)
+    && Number.isSafeInteger(current.version) && current.version >= Number(input.expectedVersion)
+    && ["request_invalid", "identity_refused", "conflict", "provider_unavailable", "not_found"].includes(row.refusal ?? "")) {
+    return { ...base, disposition: "refused", refusal: { category: row.refusal, settledAt: row.committedAt,
+      sideEffects: "none", requestVersion: row.committedVersion } };
+  }
+  if (!["admitted", "effects_started", "refused"].includes(row.phase)) throw new TelehealthError("service_unavailable");
+  return { ...base, disposition: "pending" };
+}
+function canonicalOutcomeTime(value: string | undefined) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
 /** All appointment/payment writers enter the same durable admission. A pending
@@ -473,10 +526,11 @@ async function commitRequestMutation(config: TelehealthConfiguration, item: Appo
   request.ExpressionAttributeValues = { ...request.ExpressionAttributeValues, ":operation": operation.operationId };
   const committedAt = new Date().toISOString();
   actions.push({ Update: { TableName: config.tableName, Key: operation.key,
-    UpdateExpression: "SET #phase=:committed,committedVersion=:version,committedAt=:at" + (refusal ? ",refusal=:refusal" : ""),
-    ConditionExpression: "(#phase=:admitted OR #phase=:dispatched) AND inputSha256=:digest", ExpressionAttributeNames: { "#phase": "phase" },
+    UpdateExpression: "SET #phase=:committed,committedVersion=:version,committedAt=:at" + (refusal ? ",refusal=:refusal,dispositionProtocol=:protocol,sideEffects=:none" : ""),
+    ConditionExpression: (refusal ? "#phase=:admitted AND attribute_not_exists(reservedSlotKey)" : "(#phase=:admitted OR #phase=:dispatched)") + " AND inputSha256=:digest", ExpressionAttributeNames: { "#phase": "phase" },
     ExpressionAttributeValues: { ":committed": refusal ? "refused" : "committed", ":version": nextVersion, ":at": committedAt,
-      ":admitted": "admitted", ":dispatched": "effects_started", ":digest": operation.inputSha256, ...(refusal ? { ":refusal": refusal } : {}) } } });
+      ":admitted": "admitted", ...(!refusal ? { ":dispatched": "effects_started" } : {}), ":digest": operation.inputSha256,
+      ...(refusal ? { ":refusal": refusal, ":protocol": "appointment-disposition/1", ":none": "none" } : {}) } } });
   if (operation.visitKey && !actions.some(action => (action.Put?.Item?.pk === operation.visitKey!.pk && action.Put?.Item?.sk === operation.visitKey!.sk)
     || (action.Update?.Key?.pk === operation.visitKey!.pk && action.Update?.Key?.sk === operation.visitKey!.sk))) {
     actions.push({ Update: { TableName: config.tableName, Key: operation.visitKey, UpdateExpression: "SET #version=#version+:increment REMOVE mutationOperationId",

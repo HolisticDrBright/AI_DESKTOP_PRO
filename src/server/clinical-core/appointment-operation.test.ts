@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 const { send, secretSend } = vi.hoisted(() => ({ send: vi.fn(), secretSend: vi.fn() }));
 vi.mock("@aws-sdk/client-dynamodb", () => ({ DynamoDBClient: class {} }));
 vi.mock("@aws-sdk/lib-dynamodb", () => ({ DynamoDBDocumentClient: { from: () => ({ send }) },
@@ -140,6 +141,104 @@ it("known validation refusal is an atomic receipt and unlocks without provider w
   const invalid = cancel({ action: "invented" });
   expect((await run(invalid)).statusCode).toBe(400); expect(operations()[0].phase).toBe("refused"); expect(current()).not.toHaveProperty("mutationOperationId");
   expect((await run(invalid)).statusCode).toBe(400); expect(provider).not.toHaveBeenCalled();
+});
+const outcome = (input: Record<string, unknown> = cancel(), kind = "consumer_action", person = owner, cfg = config) =>
+  run({ kind, input }, cfg, "consumer", "change-outcome", person);
+it("reads an exact committed outcome without provider calls or a second write after later changes", async () => {
+  expect((await run()).statusCode).toBe(200);
+  store.seed({ ...current(), version: 8 });
+  const writes = store.commands.filter(cmd => /Write|Update|Put/.test(cmd.constructor.name)).length;
+  const result = await outcome(); expect(result.statusCode).toBe(200);
+  expect(JSON.parse(result.body).data).toMatchObject({ protocol: "appointment-disposition/1", disposition: "committed",
+    requestId, organizationId: org, operationId, expectedVersion: 4, receipt: { admittedVersion: 4, committedVersion: 5 } });
+  expect(store.commands.filter(cmd => /Write|Update|Put/.test(cmd.constructor.name))).toHaveLength(writes);
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("issues a durable no-effects refusal and status never depends on the current appointment status", async () => {
+  const input = cancel({ action: "invented" });
+  expect((await run(input)).statusCode).toBe(400);
+  expect(operations()[0]).toMatchObject({ phase: "refused", dispositionProtocol: "appointment-disposition/1", sideEffects: "none" });
+  store.seed({ ...current(), status: "cancelled", version: 10 });
+  const result = await outcome(input);
+  expect(JSON.parse(result.body).data).toMatchObject({ disposition: "refused", refusal: { category: "request_invalid", sideEffects: "none", requestVersion: 4 } });
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("supports exact authorization refusal without treating refusal as billing consent", async () => {
+  const input = { requestId, expectedVersion: 4, policyVersion: "telehealth-payments/1", authorized: true, operationId, operationProtocol: "appointment-change/1" };
+  expect((await run(input, config, "consumer", "payment-authorizations")).statusCode).toBe(503);
+  expect(JSON.parse((await outcome(input, "authorize")).body).data).toMatchObject({ disposition: "refused", refusal: { category: "provider_unavailable" } });
+  expect(current().paymentAuthorizationStatus).toBe("authorized");
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it("an absent row is unobserved, not refused or permission for a new identity", async () => {
+  const result = await outcome(); expect(result.statusCode).toBe(200);
+  expect(JSON.parse(result.body).data.disposition).toBe("unobserved"); expect(operations()).toHaveLength(0);
+  expect(store.commands.every(cmd => /Get|Query/.test(cmd.constructor.name))).toBe(true);
+});
+it.each(["admission_after", "commit_before", "reservation_after"] as const)("%s remains pending with no observation writes", async loss => {
+  store.transactionLoss = loss;
+  const input = loss === "reservation_after" ? cancel({ action: "request_reschedule", slotId: replacementId, holdId }) : cancel();
+  expect((await run(input)).statusCode).toBe(503);
+  const before = JSON.stringify([...store.rows]);
+  expect(JSON.parse((await outcome(input)).body).data.disposition).toBe("pending");
+  expect(JSON.stringify([...store.rows])).toBe(before); expect(provider).not.toHaveBeenCalled();
+});
+it("unknown provider work stays pending regardless of elapsed time", async () => {
+  store.seed(request({ providerMeetingId: "900000001" })); provider.mockRejectedValue(new Error("fictional_unknown"));
+  expect((await run(cancel(), zoom)).statusCode).toBe(503);
+  store.seed({ ...operations()[0], admittedAt: "2000-01-01T00:00:00.000Z" }); const count = provider.mock.calls.length;
+  expect(JSON.parse((await outcome()).body).data.disposition).toBe("pending");
+  expect(provider).toHaveBeenCalledTimes(count); expect(current().mutationOperationId).toBe(operationId);
+});
+it.each([{ dispositionProtocol: undefined }, { sideEffects: "unknown" }, { reservedSlotKey: { pk: `ORG#${org}`, sk: "SLOT#x" } },
+  { committedVersion: 5 }, { committedAt: "invalid" }, { refusal: "service_unavailable" }])("a legacy or contradictory refused receipt cannot clear recovery: %j", async patch => {
+  const input = cancel({ action: "invented" }); await run(input);
+  store.seed({ ...operations()[0], ...patch });
+  expect(JSON.parse((await outcome(input)).body).data.disposition).toBe("pending");
+});
+it.each([{ action: "request_reschedule", slotId: replacementId, holdId }, { expectedVersion: 3 }])("outcome refuses changed saved input: %j", async patch => {
+  await run(); expect((await outcome(cancel(patch))).statusCode).toBe(409);
+});
+it("checks current owner before reading an operation and rejects caller subject or clinic substitution", async () => {
+  await run(); send.mockClear();
+  expect((await outcome(cancel(), "consumer_action", replacementId)).statusCode).toBe(403);
+  expect(send.mock.calls.every(([cmd]) => cmd.constructor.name !== "GetCommand")).toBe(true);
+  const altered = event({ kind: "consumer_action", input: cancel() }, "consumer", "change-outcome");
+  const alteredClaims = (altered as unknown as { requestContext: { authorizer: { jwt: { claims: Record<string, string> } } } }).requestContext.authorizer.jwt.claims;
+  alteredClaims.sub = "fictional-other-subject";
+  expect((await createTelehealthHandler(config)(altered)).statusCode).toBe(409);
+  alteredClaims.sub = "fictional-consumer";
+  alteredClaims["custom:organization_id"] = replacementId;
+  expect((await createTelehealthHandler(config)(altered)).statusCode).toBe(404);
+});
+it.each([{ kind: "payment", input: cancel() }, { kind: "consumer_action", input: { ...cancel(), operationProtocol: "wrong" } },
+  { kind: "consumer_action", input: { ...cancel(), unexpected: true } }])("refuses invalid observation before database access: %j", async input => {
+  expect((await run(input, config, "consumer", "change-outcome")).statusCode).toBe(400); expect(send).not.toHaveBeenCalled();
+});
+it("a lost refusal settlement response still exposes only the same no-effects receipt", async () => {
+  store.transactionLoss = "commit_after"; const input = cancel({ action: "invented" });
+  expect((await run(input)).statusCode).toBe(400);
+  expect(JSON.parse((await outcome(input)).body).data.disposition).toBe("refused");
+});
+it("the published outcome route requires consumer JWT and does not open an unauthenticated status surface", () => {
+  const template = JSON.parse(readFileSync("infra/aws-clinical-core/telehealth-requests-extension.json", "utf8"));
+  expect(template.Resources.ConsumerChangeOutcomeRoute.Properties).toMatchObject({
+    RouteKey: "POST /clinical-core/consumer/appointments/change-outcome", AuthorizationType: "JWT", AuthorizerId: { Ref: "ConsumerAuthorizer" } });
+});
+it.each(["effects_started", "reservedSlotKey"])("refusal settlement cannot certify no-effects after durable %s evidence appears", async state => {
+  send.mockImplementation(async command => {
+    if (command.constructor.name === "TransactWriteCommand" && command.input.TransactItems.some((part: { Update?: { UpdateExpression?: string } }) => part.Update?.UpdateExpression?.includes("refusal=:refusal"))) {
+      const row = operations()[0]; store.seed({ ...row, ...(state === "effects_started" ? { phase: "effects_started" } : { reservedSlotKey: { pk: `ORG#${org}`, sk: "SLOT#x" } }) });
+    }
+    return store.send(command);
+  });
+  expect((await run(cancel({ action: "invented" }))).statusCode).toBe(503);
+  expect(operations()[0].phase).not.toBe("refused"); expect(current().mutationOperationId).toBe(operationId);
+  expect(JSON.parse((await outcome(cancel({ action: "invented" }))).body).data.disposition).toBe("pending");
+});
+it("the outcome cannot bypass production activation", async () => {
+  expect((await outcome(cancel(), "consumer_action", owner, { ...config, runtimeMode: "production" })).statusCode).toBe(503);
+  expect(send).not.toHaveBeenCalled(); expect(provider).not.toHaveBeenCalled();
 });
 it("historical receipts survive later versions without pretending to be current scheduling authority", async () => {
   expect((await run()).statusCode).toBe(200); store.seed({ ...current(), version: 8, paymentStatus: "paid" });
