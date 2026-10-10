@@ -63,8 +63,8 @@ async function inventory(tx: ClinicalCoreTransaction) {
 }
 async function otherLedgers(tx: ClinicalCoreTransaction) {
   const rows=(await tx.query<Table>(`select n.nspname schema_name,c.relname table_name,c.relkind::text kind,c.relrowsecurity rls,c.relforcerowsecurity forced
-    from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname=any($1::text[])
-    and c.relname='schema_migrations' and n.nspname<>'clinical_core' order by n.nspname,c.relname`,[schemas])).rows;
+    from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in (select jsonb_array_elements_text($1::jsonb))
+    and c.relname='schema_migrations' and n.nspname<>'clinical_core' order by n.nspname,c.relname`,[JSON.stringify(schemas)])).rows;
   if (rows.some(t=>t.kind!=='r')) fail('inventory_refused');
   rows.forEach(careErasurePreservation.qualified); return rows;
 }
@@ -103,21 +103,21 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[], references: 
   const global=(await tx.query<{digest:string}>(`select encode(sha256(convert_to(jsonb_build_object(
     'functions',(select jsonb_agg(jsonb_build_object('name',p.oid::regprocedure::text,'def',pg_get_functiondef(p.oid),
       'owner',p.proowner::regrole::text,'acl',coalesce(p.proacl,acldefault('f',p.proowner))::text) order by n.nspname,p.proname,p.oid::regprocedure::text)
-      from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname=any($1::text[]) and p.prokind in ('f','p')
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in (select jsonb_array_elements_text($1::jsonb)) and p.prokind in ('f','p')
       and not(n.nspname='clinical_core' and p.proname='production_telehealth_consent_request')),
-    'schemas',(select jsonb_agg(to_jsonb(n) order by n.nspname) from pg_namespace n where n.nspname=any($1::text[])),
+    'schemas',(select jsonb_agg(to_jsonb(n) order by n.nspname) from pg_namespace n where n.nspname in (select jsonb_array_elements_text($1::jsonb))),
     'types',(select jsonb_agg(jsonb_build_object('type',to_jsonb(t)-'oid',
       'constraints',(select jsonb_agg(jsonb_build_object('name',k.conname,'valid',k.convalidated,'def',pg_get_constraintdef(k.oid),
         'deferred',k.condeferred,'deferrable',k.condeferrable) order by k.conname) from pg_constraint k where k.contypid=t.oid),
       'enum',(select jsonb_agg(to_jsonb(e)-'oid' order by e.enumsortorder) from pg_enum e where e.enumtypid=t.oid)) order by n.nspname,t.typname)
-      from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname=any($1::text[])),
+      from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname in (select jsonb_array_elements_text($1::jsonb))),
     'other_relations',(select jsonb_agg(jsonb_build_object('schema',n.nspname,'name',c.relname,'kind',c.relkind,
       'owner',c.relowner::regrole::text,'acl',c.relacl::text,'view',case when c.relkind in ('v','m') then pg_get_viewdef(c.oid) else null end)
-      order by n.nspname,c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname=any($1::text[]) and c.relkind not in ('r','i','t')),
+      order by n.nspname,c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in (select jsonb_array_elements_text($1::jsonb)) and c.relkind not in ('r','i','t')),
     'default_acl',(select jsonb_agg(to_jsonb(d)-'oid' order by d.defaclrole,d.defaclnamespace,d.defaclobjtype) from pg_default_acl d),
     'roles',(select jsonb_agg(to_jsonb(r) order by r.oid) from pg_roles r),
     'memberships',(select jsonb_agg(to_jsonb(m) order by m.roleid,m.member,m.grantor) from pg_auth_members m)
-  )::text,'UTF8')),'hex') digest`,[schemas])).rows[0];
+  )::text,'UTF8')),'hex') digest`,[JSON.stringify(schemas)])).rows[0];
   if (rows.length!==names.length || rows.some(r=>!/^[a-f0-9]{64}$/.test(r.digest)) || !global || !/^[a-f0-9]{64}$/.test(global.digest)) fail('verification_failed');
   return sha(JSON.stringify({tables:rows,global:global.digest}));
 }

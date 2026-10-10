@@ -114,9 +114,9 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[]) {
       'triggers',(select jsonb_agg(jsonb_build_object('enabled',t.tgenabled,'internal',t.tgisinternal,'def',pg_get_triggerdef(t.oid)) order by t.tgname)
         from pg_trigger t where t.tgrelid=c.oid and not(t.tgisinternal and exists(select 1 from pg_constraint k
           where k.oid=t.tgconstraint and k.conrelid in (select cl.oid from pg_class cl join pg_namespace ns on ns.oid=cl.relnamespace
-            where ns.nspname||'.'||cl.relname=any($2::text[])))))
+            where ns.nspname||'.'||cl.relname in (select jsonb_array_elements_text($2::jsonb))))))
     )::text,'UTF8')),'hex') digest from jsonb_array_elements_text($1::jsonb) selected(name)
-    join pg_class c on c.oid=selected.name::regclass order by selected.name`, [JSON.stringify(names), addedTables])).rows;
+    join pg_class c on c.oid=selected.name::regclass order by selected.name`, [JSON.stringify(names), JSON.stringify(addedTables)])).rows;
   const r = (await tx.query<{ digest: string }>(`select encode(sha256(convert_to(jsonb_build_object(
     'functions',(select jsonb_agg(jsonb_build_object('name',p.oid::regprocedure::text,'def',pg_get_functiondef(p.oid),
       'owner',p.proowner::regrole::text,'acl',coalesce(p.proacl,acldefault('f',p.proowner))::text) order by n.nspname,p.proname,p.oid::regprocedure::text)

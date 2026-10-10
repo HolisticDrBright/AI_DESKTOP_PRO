@@ -9,6 +9,7 @@ import type { QualificationUpgradeConfiguration } from './qualification-schema-u
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import { FULLSCRIPT_UPGRADE, FULLSCRIPT_CONSENT_SUCCESSOR } from './fullscript-migration-release';
 import { runTelehealthConsentSchemaUpgrade } from './telehealth-consent-schema-upgrade';
+import { bindParameters } from './rds-data-database';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 let pg:PGlite,m:ClinicalCoreMigration[],org:string,person:string,patient:string;
@@ -21,6 +22,8 @@ type Intercept=(sql:string,tx:{query:(sql:string,args?:unknown[])=>Promise<unkno
 // RLS, canonical artifact, preservation and transaction rollback are exercised.
 const database=(intercept?:Intercept,name='clinical_core_qualification'):ClinicalCoreDatabase=>({transaction:work=>pg.transaction(async tx=>work({
   query:async(sql,args=[])=>{
+    // All source queries must be encodable by the actual AWS transport.
+    bindParameters(sql,args);
     if(intercept)await intercept(sql,tx);
     if(sql==='select current_database() as name')return {rows:[{name}]};
     return tx.query(sql,[...args]);

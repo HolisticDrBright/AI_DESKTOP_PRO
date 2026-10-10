@@ -9,6 +9,7 @@ import type { QualificationUpgradeConfiguration } from './qualification-schema-u
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import { FULLSCRIPT_UPGRADE, runFullscriptSchemaUpgrade } from './fullscript-schema-upgrade';
 import {verifyFullscriptUpgradeObservation} from './fullscript-upgrade-command';
+import { bindParameters } from './rds-data-database';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 let pg:PGlite,m:ClinicalCoreMigration[];
@@ -21,6 +22,9 @@ type Intercept=(sql:string,tx:{query:(sql:string,args?:unknown[])=>Promise<unkno
 // triggers, checks, fingerprints, transactions and rollback are real SQL.
 const database=(intercept?:Intercept,name='clinical_core_qualification'):ClinicalCoreDatabase=>({transaction:work=>pg.transaction(async tx=>work({
   query:async(sql,args=[])=>{
+    // Exercise the real Data API parameter encoder before embedded SQL.
+    // PGlite alone accepts arrays that the AWS transport refuses.
+    bindParameters(sql,args);
     if(intercept)await intercept(sql,tx);
     if(sql==='select current_database() as name')return {rows:[{name}]};
     return tx.query(sql,[...args]);
