@@ -40,6 +40,7 @@ type Obj=Record<string,unknown>;
 export type DeploymentObservation={stack:Obj|null;proposal:Obj|null;template:unknown;resources:Obj[];
  function:Obj|null;routes:Obj[];authorizers:Obj[];integrations:Obj[]};
 export type DeploymentStage='create_admitted'|'create_observed'|'execute_admitted'|'settled';
+export type DeploymentMode='deploy'|'resume-unadmitted'|'execute-prepared'|'observe';
 export interface DeploymentPorts{
  now():number;
  // Must reread current source/review/artifacts and reobserve actual STS and
@@ -115,7 +116,7 @@ export function verifyFullscriptDeployed(plan:DeploymentPlan,o:DeploymentObserva
 /** One new stack only. Writes are admitted durably BEFORE dispatch. An unknown
  * reply or an observation timeout leaves custody outstanding. Recovery is
  * read-only and never creates, executes, rolls back or deletes anything. */
-export async function runFullscriptDeployment(plan:DeploymentPlan,port:DeploymentPorts,mode:'deploy'|'execute-prepared'|'observe'){
+export async function runFullscriptDeployment(plan:DeploymentPlan,port:DeploymentPorts,mode:DeploymentMode){
  plan=structuredClone(plan);
  const observe=async()=>structuredClone(await port.observe(structuredClone(plan)));
  const guard=async()=>{await port.custody.verify();await port.guard(structuredClone(plan));};
@@ -126,7 +127,7 @@ export async function runFullscriptDeployment(plan:DeploymentPlan,port:Deploymen
    check(port.custody.stages().includes('execute_admitted'));await port.custody.finish(report);return report;
   }
   check(port.now()-Date.parse(plan.review.reviewedAt)<=24*60*60*1000);
-  if(mode==='deploy'){
+  if(mode==='deploy'||mode==='resume-unadmitted'){
    check(port.custody.stages().length===0&&o.stack===null&&o.proposal===null&&o.function===null&&o.resources.length===0);
    check(!o.routes.some(r=>r.RouteKey==='POST /clinical-core/consumer/fullscript/draft'||r.RouteKey==='POST /clinical-core/workforce/fullscript/draft'));
    await guard();await port.custody.record('create_admitted');await port.create(structuredClone(plan));o=await observe();
