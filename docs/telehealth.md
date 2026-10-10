@@ -42,6 +42,32 @@ multi-clinic provider acceptance remain launch requirements. These source checks
 do not constitute hosted acceptance, representative-authority verification or PHI
 activation.
 
+### October 10 credential snapshot and token bounds
+
+Each telehealth request uses one Secrets Manager response per secret for meeting
+lookup, creation/recovery and the SDK session's key/secret, OAuth client, account
+and host. Separate reads could mix old SDK credentials with a newly rotated OAuth
+host. Request-local asynchronous custody isolates concurrent requests, never
+shares credentials across invocations, refuses late continuations after closing
+and retains failed reads as refusals instead of reloading a rotated secret.
+The parsed snapshot is immutable and bounded to 16 KiB;
+objects, arrays, controls, malformed Unicode and the ambiguous `me` host are refused.
+REST-only operations do not require SDK credentials.
+
+OAuth and ZAK responses are read as bounded streams with a 64 KiB decoded limit,
+cancelled on overrun and refused on redirects. Tokens have their own 8,192-character
+bound and the [RFC 6750 bearer character set](https://www.rfc-editor.org/rfc/rfc6750#section-2.1),
+not the 500-character general display-field limit. SDK secret lookup, OAuth and ZAK
+share one 20-second deadline. No credential values appear in refusal messages.
+
+A consistent snapshot does not establish clinic authority, verify that an SDK
+app belongs to the intended Zoom account, pin a secret version for future visit
+operations or certify provider acceptance. Those belong to the remaining reviewed
+host registry and immutable meeting-host binding. A shared SDK app serving external
+Zoom accounts additionally needs the app review and user authorization described
+in [Zoom's SDK authorization requirements](https://developers.zoom.us/docs/meeting-sdk/auth/).
+The existing global host configuration is not a completed multi-clinic service.
+
 ### October 9 summary-boundary repair
 
 Summary import requires a known visit instance UUID and an exact matching UUID

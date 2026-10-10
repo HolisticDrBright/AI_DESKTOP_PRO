@@ -878,6 +878,79 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- one meeting per visit, with the real password */
 
+  it("keeps meeting lookup, create and SDK work on the same request-local credential snapshot", async () => {
+    const first = { accountId: "account-first", clientId: "client-first", clientSecret: "secret-first", userId: "host-first@example.test", sdkKey: "sdk-first", sdkSecret: "sdk-secret-first" };
+    secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify({ ...first, userId: "rotated@example.test", sdkKey: "sdk-rotated" }) });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
+    const hostCalls = calls.filter(call => call.url.includes("api.zoom.us/v2/users/"));
+    expect(hostCalls).toHaveLength(3);
+    expect(hostCalls.every(call => call.url.includes("host-first%40example.test"))).toBe(true);
+  });
+
+  it("uses one credential snapshot for both the SDK signature and its host OAuth/ZAK", async () => {
+    const first = { accountId: "account-first", clientId: "client-first", clientSecret: "secret-first", userId: "host-first@example.test", sdkKey: "sdk-first", sdkSecret: "sdk-secret-first" };
+    const rotated = { accountId: "account-rotated", clientId: "client-rotated", clientSecret: "secret-rotated", userId: "host-rotated@example.test", sdkKey: "sdk-rotated", sdkSecret: "sdk-secret-rotated" };
+    secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify(rotated) });
+    let oauthAuthorization = "";
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ token: (_url, init) => {
+      oauthAuthorization = (init?.headers as Record<string, string>).authorization;
+      return jsonResponse(200, { access_token: "first-access" });
+    } })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
+    expect(oauthAuthorization).toBe(`Basic ${Buffer.from("client-first:secret-first").toString("base64")}`);
+    expect(calls.find((call) => call.url.includes("/token?type=zak"))?.url).toContain("host-first%40example.test");
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect(result.body).not.toContain("sdk-secret-first");
+    expect(result.body).not.toContain("secret-first");
+  });
+
+  it("accepts bounded long OAuth and ZAK tokens rather than the unrelated 500-character general field limit", async () => {
+    const access = "a".repeat(1500), zak = "z".repeat(2000);
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ token: () => jsonResponse(200, { access_token: access }), zak: () => jsonResponse(200, { token: zak }) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.session.zak).toBe(zak);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(1);
+  });
+
+  it.each(["oauth", "zak"] as const)("refuses an oversized %s stream without returning a host session", async (stage) => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(`{"token":"${"x".repeat(65_536)}`)); },
+      cancel() { cancelled = true; },
+    });
+    const oversized = () => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes(stage === "oauth" ? { token: oversized } : { zak: oversized })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(cancelled).toBe(true);
+    expect(writes).toHaveLength(0);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(stage === "oauth" ? 0 : 1);
+  });
+
+  it.each(["oauth", "zak"] as const)("refuses redirected %s responses without exposing a session", async (stage) => {
+    const redirected = () => ({ ...jsonResponse(200, { access_token: "unexpected-access", token: "unexpected-zak" }), redirected: true });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes(stage === "oauth" ? { token: redirected } : { zak: redirected })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(result.body).not.toContain("unexpected-");
+    expect(writes).toHaveLength(0);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(stage === "oauth" ? 0 : 1);
+  });
+
   it("creates the provider meeting under a durable lease, binds it with Zoom's actual password (not the join-URL token), and refuses a racing start without a second meeting", async () => {
     const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
     queueGet(visitRecord());

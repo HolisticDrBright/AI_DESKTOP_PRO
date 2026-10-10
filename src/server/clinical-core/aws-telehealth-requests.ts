@@ -9,6 +9,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactW
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { boundedProviderJson } from "./bounded-provider-json";
+import { runZoomCredentialRequest, zoomCredentialsForRequest, zoomBearerToken } from "./zoom-credential-snapshot";
 import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from "../../contracts/telehealthConsent";
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
 import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
@@ -150,7 +151,7 @@ type BookingSlot = {
 
 export function createTelehealthHandler(config: TelehealthConfiguration) {
   validateConfiguration(config);
-  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+  const handler = async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (config.runtimeMode === "production" && !config.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
     const route = event.routeKey ?? "internal";
     try {
@@ -198,6 +199,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       return response(status, { error: category });
     }
   };
+  return (event: ApiGatewayV2Event) => runZoomCredentialRequest(() => handler(event));
 }
 
 async function createRequest(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
@@ -667,17 +669,18 @@ async function recoverConsumerChange(config: TelehealthConfiguration, actor: Act
 }
 
 async function recoveryZoomCredentials(config: TelehealthConfiguration, signal: AbortSignal) {
-  const secret = await recoveryAwait(signal, () => secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }), { abortSignal: signal }));
-  if (typeof secret.SecretString !== "string" || Buffer.byteLength(secret.SecretString) > 16384) throw new TelehealthError("appointment_change_pending");
-  let parsed: Record<string, unknown>; try { parsed = JSON.parse(secret.SecretString); } catch { throw new TelehealthError("appointment_change_pending"); }
-  const accountId = field(parsed, "accountId"), clientId = field(parsed, "clientId"), clientSecret = field(parsed, "clientSecret"), userId = field(parsed, "userId");
+  let credentials;
+  try { credentials = await zoomCredentialsForRequest(config.zoomSecretArn, async () =>
+    (await recoveryAwait(signal, () => secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }), { abortSignal: signal }))).SecretString); }
+  catch { throw new TelehealthError("appointment_change_pending"); }
+  const { accountId, clientId, clientSecret, userId } = credentials;
   const result = await recoveryAwait(signal, () => fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`, {
     method: "POST", redirect: "error", cache: "no-store", signal, headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` },
   }));
   if (result.status !== 200) throw new TelehealthError("appointment_change_pending");
   const token = await recoveryAwait(signal, () => boundedProviderJson(result, 65536));
-  if (!token || typeof token !== "object" || Array.isArray(token)) throw new TelehealthError("appointment_change_pending");
-  return { accessToken: field(token as Record<string, unknown>, "access_token"), userId };
+  try { return { accessToken: zoomBearerToken(token, "access_token"), userId }; }
+  catch { throw new TelehealthError("appointment_change_pending"); }
 }
 
 async function reconcileConsumerRecoveryProviders(config: TelehealthConfiguration, item: AppointmentItem, visit: VisitItem | null) {
@@ -950,14 +953,20 @@ async function scheduleRequest(config: TelehealthConfiguration, item: Appointmen
   return publicItem(next, "workforce");
 }
 
-async function zoomAccess(config: TelehealthConfiguration) {
-  const secret = await secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }));
-  let parsed: Record<string, unknown>; try { parsed = JSON.parse(secret.SecretString ?? "") as Record<string, unknown>; } catch { throw new TelehealthError("provider_unavailable"); }
-  const accountId = field(parsed, "accountId"); const clientId = field(parsed, "clientId"); const clientSecret = field(parsed, "clientSecret"); const userId = field(parsed, "userId");
-  const tokenResponse = await fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` } });
-  if (!tokenResponse.ok) throw new TelehealthError("provider_unavailable");
-  const token = await tokenResponse.json() as Record<string, unknown>; const accessToken = field(token, "access_token");
-  return { accessToken, userId };
+async function zoomAccess(config: TelehealthConfiguration, sdkRequired = false, signal = AbortSignal.timeout(10_000)) {
+  try {
+    const credentials = await zoomCredentialsForRequest(config.zoomSecretArn, async () =>
+      (await secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }), { abortSignal: signal })).SecretString, sdkRequired);
+    const { accountId, clientId, clientSecret, userId } = credentials;
+    const tokenResponse = await fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`, { method: "POST", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` } });
+    if (!tokenResponse.ok || tokenResponse.status !== 200 || tokenResponse.redirected) {
+      try { await tokenResponse.body?.cancel(); } catch { /* refusal retained */ }
+      throw new TelehealthError("provider_unavailable");
+    }
+    const accessToken = zoomBearerToken(await boundedProviderJson(tokenResponse, 65_536), "access_token");
+    if (signal.aborted) throw new TelehealthError("provider_unavailable");
+    return { accessToken, userId, credentials };
+  } catch { throw new TelehealthError("provider_unavailable"); }
 }
 
 async function createZoomMeeting(config: TelehealthConfiguration, input: { requestId: string; start: string; durationMinutes: number; timeZone: string }) {
@@ -1774,13 +1783,19 @@ async function zoomMeetingSummary(config: TelehealthConfiguration, meetingId: st
  * Manager, 2-hour TTL) plus the host's ZAK. The SDK secret never leaves here.
  */
 async function meetingSdkSession(config: TelehealthConfiguration, meetingId: string, passcode: string | null, hostDisplayName: string) {
-  const secret = await secrets.send(new GetSecretValueCommand({ SecretId: config.zoomSecretArn }));
-  let parsed: Record<string, unknown>; try { parsed = JSON.parse(secret.SecretString ?? "") as Record<string, unknown>; } catch { throw new TelehealthError("provider_unavailable"); }
-  const sdkKey = field(parsed, "sdkKey"); const sdkSecret = field(parsed, "sdkSecret");
-  const { accessToken, userId } = await zoomAccess(config);
-  const zakResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/token?type=zak`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
-  if (!zakResponse.ok) throw new TelehealthError("provider_unavailable");
-  const zak = field(await zakResponse.json() as Record<string, unknown>, "token");
+  const signal = AbortSignal.timeout(20_000);
+  const { accessToken, userId, credentials } = await zoomAccess(config, true, signal);
+  const { sdkKey, sdkSecret } = credentials;
+  if (!sdkKey || !sdkSecret) throw new TelehealthError("provider_unavailable");
+  const zakResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/token?type=zak`, { method: "GET", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}` } });
+  if (!zakResponse.ok || zakResponse.status !== 200 || zakResponse.redirected) {
+    try { await zakResponse.body?.cancel(); } catch { /* refusal retained */ }
+    throw new TelehealthError("provider_unavailable");
+  }
+  let zak: string;
+  try { zak = zoomBearerToken(await boundedProviderJson(zakResponse, 65_536), "token"); }
+  catch { throw new TelehealthError("provider_unavailable"); }
+  if (signal.aborted) throw new TelehealthError("provider_unavailable");
   const meetingNumber = meetingId.replace(/\D/g, "");
   if (!/^\d{9,12}$/.test(meetingNumber)) throw new TelehealthError("provider_unavailable");
   const issuedAt = Math.floor(Date.now() / 1000) - 30; const expiresAt = issuedAt + MEETING_SDK_SIGNATURE_TTL_SECONDS;
