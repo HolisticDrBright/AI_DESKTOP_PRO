@@ -9,6 +9,9 @@
   "scripts": {
     "test:migration-sql-bytes": "node --test scripts/migration-sql-bytes.test.mjs",
     "build:telehealth-consent-candidate": "node scripts/build-telehealth-consent-candidate.mjs",
+    "build:fullscript-candidate": "node scripts/build-fullscript-candidate.mjs",
+    "test:fullscript-candidate": "node --test scripts/fullscript-candidate.test.mjs",
+    "test:fullscript-schema-upgrade": "vitest run src/server/clinical-core/fullscript-schema-upgrade.database.test.ts",
     "build:catalog-forward-inspector": "node scripts/build-catalog-forward-inspector.mjs",
     "build:catalog-forward-rollback": "node scripts/build-catalog-forward-inspector.mjs --rollback-rehearsal",
     "test:catalog-forward-rollback": "node --test scripts/catalog-forward-rollback-custody.test.mjs",
@@ -80,7 +83,7 @@
     "rehearse:synthetic-care-post-parent": "node scripts/rehearse-synthetic-care-routing.mjs --rehearse-post-parent-fictional-receipts",
     "test:ci-browser-download": "node --test scripts/ci-browser-download.test.mjs",
     "test:protocol-cart-browser": "node --test scripts/protocol-cart-browser.test.mjs",
-    "test:fullscript-protocol-draft": "vitest run src/server/clinical-core/rds-data-database.test.ts src/server/fullscript/qualification-api.test.ts src/server/fullscript/client.test.ts src/server/fullscript/token-store.test.ts src/server/fullscript/runtime.test.ts src/server/fullscript/credential-binding.test.ts src/server/fullscript/oauth-installation.test.ts src/server/fullscript/protocol-draft.test.ts src/server/fullscript/protocol-draft-transport.test.ts src/server/fullscript/draft-provider.test.ts src/server/fullscript/draft-delivery.database.test.ts src/server/fullscript/canonical-draft-authority.database.test.ts src/contracts/protocolCarts.test.ts src/server/clinical-core/protocol-cart.database.test.ts src/server/clinical-core/canonical-protocol-cart.database.test.ts",
+    "test:fullscript-protocol-draft": "vitest run src/server/clinical-core/fullscript-schema-upgrade.database.test.ts src/server/clinical-core/rds-data-database.test.ts src/server/fullscript/qualification-api.test.ts src/server/fullscript/client.test.ts src/server/fullscript/token-store.test.ts src/server/fullscript/runtime.test.ts src/server/fullscript/credential-binding.test.ts src/server/fullscript/oauth-installation.test.ts src/server/fullscript/protocol-draft.test.ts src/server/fullscript/protocol-draft-transport.test.ts src/server/fullscript/draft-provider.test.ts src/server/fullscript/draft-delivery.database.test.ts src/server/fullscript/canonical-draft-authority.database.test.ts src/contracts/protocolCarts.test.ts src/server/clinical-core/protocol-cart.database.test.ts src/server/clinical-core/canonical-protocol-cart.database.test.ts",
     "upload:synthetic-care-release": "node scripts/upload-synthetic-care-release.mjs",
     "prepare:synthetic-care-code-change": "node scripts/prepare-synthetic-care-code-change.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",

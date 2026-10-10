@@ -1,5 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('Fullscript qualification API is server-only.');
 import {z} from 'zod';
+import {createHash} from 'node:crypto';
+import {FULLSCRIPT_UPGRADE} from '../clinical-core/fullscript-migration-release';
 import type {ApiGatewayV2Event,ApiGatewayV2Response} from '../clinical-core/aws-identity-api';
 import {ownedConsumerIdentity} from '../clinical-core/owned-consumer-api';
 import {recordingWorkforceIdentity} from '../clinical-core/recording-authority-api';
@@ -12,9 +14,11 @@ const uuid=z.string().uuid();
 const issuer=z.string().regex(/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/);
 const audience=z.string().regex(/^[A-Za-z0-9]{20,128}$/);
 const subject=z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/);
-const ledger=z.array(z.object({version:z.string().regex(/^\d{14}$/),name:z.string().min(1).max(200),sha256:hash}).strict()).min(110).max(200)
+const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
+const ledger=z.array(z.object({version:z.string().regex(/^\d{14}$/),name:z.string().regex(/^[a-z0-9_]{1,200}$/),sha256:hash}).strict()).length(111)
  .refine(rows=>rows.every((row,i)=>i===0||row.version>rows[i-1].version))
- .refine(rows=>rows.slice(-3).map(row=>row.name).join(',')==='production_fullscript_draft_ledger,production_canonical_protocol_carts,production_fullscript_canonical_authority');
+ .refine(rows=>digest(rows.map(r=>`${r.version}:${r.sha256}`).join('\n'))===FULLSCRIPT_UPGRADE.successor111)
+ .refine(rows=>digest(rows.map(r=>`${r.version}:${r.version}_${r.name}.sql:${r.sha256}`).join('\n'))===FULLSCRIPT_UPGRADE.successorArtifact);
 export const fullscriptQualificationTargetSchema=z.object({
  execution:z.literal('qualification'),account:z.literal('588966314750'),region:z.literal('us-east-2'),
  phiAllowed:z.literal(false),activation:z.literal('blocked'),reviewSha256:hash,sourceCommit:z.string().regex(/^[a-f0-9]{40}$/),

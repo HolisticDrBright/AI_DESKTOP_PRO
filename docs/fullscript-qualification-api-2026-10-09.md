@@ -55,16 +55,20 @@ Only `clinical_core_qualification` and `fullscript_draft_worker` are accepted.
 A worker-only, fixed-search-path function returns version/name/hash metadata from
 the actual migration ledger. No direct clinical-schema read or administrative
 fallback is granted. Missing, additional, renamed or altered ledger entries refuse.
-The reviewed ledger must finish with the three registered Fullscript migrations;
-the current 107-entry hosted target is insufficient for this new boundary.
+The reviewed ledger must equal the distinct 111-migration candidate, including
+the exact names and SQL hashes of every historical entry. Both the ledger hash
+and the filename-bound artifact hash are checked. Matching only the last three
+names is insufficient. The current 107-entry hosted target is insufficient.
 
 ## Candidate release work still required
 
-Register and hash the three Fullscript source candidates in dependency order,
-preserving the canonical release and the separate telehealth consent candidate.
-Do not splice their SQL into the existing 107 ledger or invent approval rows.
-Implement forward application and rollback, including the new narrow metadata
-function. Build the Lambda from exact source and record its zip hash and published
+The [111-migration candidate and SQL transition](fullscript-schema-release-2026-10-09.md)
+now register the three Fullscript source candidates after the exact telehealth108
+parent. The source engine supports a preserving 107/108-to-111 transition and an
+atomic rollback rehearsal. It is not an installed AWS migration command: native
+operator custody, interrupted-commit recovery and hosted qualification remain
+required. Never splice SQL into the existing 107 ledger or invent approval rows.
+Build the Lambda from exact source and record its zip hash and published
 version before filling the reviewed target. The target must be loaded from a
 separate reviewed server artifact; embedding the zip's own expected hash inside
 that zip would be circular and is not a valid release procedure.
