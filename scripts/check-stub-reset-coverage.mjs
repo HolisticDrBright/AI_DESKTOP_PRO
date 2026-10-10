@@ -47,6 +47,7 @@ const ALLOWED_IMMUTABLE = new Map([
   ["PROTOCOL_MEDICATIONS", "read-only medication reference rows"],
   ["INBOX_URGENT_TERMS", "read-only urgency term list"],
   ["INBOX_CATEGORIES", "read-only category list"],
+  ["TELEHEALTH_CONSENT_ARTIFACT", "read-only approved consent artifact reference"],
 ]);
 
 /** Mutable shapes worth policing. A scalar counter is as dangerous as a Map. */

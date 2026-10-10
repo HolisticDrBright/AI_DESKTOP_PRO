@@ -330,6 +330,20 @@ export class FullscriptApiClient {
     return this.request('GET', `/clinic/treatment_plans/${safeId(id)}`, undefined, undefined, undefined, 200);
   }
 
+  /** Clinic identity must be read with the actual credential, not selected by
+   * request JSON. Response decoding belongs to the installation observer. */
+  retrieveSandboxClinic() {
+    this.assertSandboxDraftScope('clinic:read');
+    return this.request('GET', '/clinic', undefined, undefined, undefined, 200);
+  }
+
+  /** Public server-side identifiers only; never access/refresh tokens/secrets. */
+  sandboxInstallationConfiguration() {
+    this.assertSandboxDraftScope('clinic:read');
+    return {apiOrigin:this.configuration.apiOrigin,clientId:this.configuration.clientId,
+      redirectUri:this.configuration.redirectUri};
+  }
+
   findTreatmentPlanByMetadata(idempotencyKey: string) {
     this.assertSandboxDraftScope('catalog:read');
     if (!/^alp-cart-[a-f0-9]{64}$/.test(idempotencyKey)) throw new FullscriptUnavailableError();

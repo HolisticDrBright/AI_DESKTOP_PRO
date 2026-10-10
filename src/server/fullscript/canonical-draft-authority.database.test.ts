@@ -1,4 +1,4 @@
-import {beforeAll,afterAll,beforeEach,describe,it,expect,vi} from 'vitest';
+import {beforeAll,afterAll,afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {execFileSync} from 'node:child_process';
@@ -10,6 +10,13 @@ import {createCanonicalProtocolCartWorkforce} from '../clinical-core/canonical-p
 import {createCanonicalDraftAuthority} from './canonical-draft-authority';
 import {createDraftDeliveryService,type DraftDeliveryActor} from './draft-delivery';
 import type {FullscriptSupplementDraftInput} from './protocol-draft';
+import type {RequestSession} from '../session';
+import {createCanonicalFullscriptDelivery} from './canonical-delivery-runtime';
+import * as credentialBinding from './credential-binding';
+import {DynamoDBClient} from '@aws-sdk/client-dynamodb';
+import {fullscriptActor} from './runtime';
+import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
+import type {StoredFullscriptConnection} from './token-store';
 
 // Actual immutable 106 prefix + unreleased candidates, real API/worker roles.
 // All reviews here are FICTIONAL fixtures, not deployment approvals. PGlite
@@ -35,7 +42,7 @@ const consentRequest=(request:unknown,a=actor(consumer,'consumer'))=>database().
   [JSON.stringify(a),JSON.stringify(request)])).rows[0].data);
 const provider={create:vi.fn(async(input:FullscriptSupplementDraftInput)=>({contract:'fullscript-draft-observation/1',planId:'fictional-plan-id',
  patientId:input.fullscriptPatientId,practitionerId:input.practitionerId,state:'draft',metadataId:input.idempotencyKey,labs:[],recommendations:input.recommendations})),
- findByMetadata:vi.fn(async()=>[] as unknown[])};
+ findByMetadata:vi.fn<(key:string)=>Promise<unknown[]>>(async()=>[])};
 const service=()=>createDraftDeliveryService(database(),createCanonicalDraftAuthority(cfg),provider);
 const prepare=()=>service().prepare(actor(),{manifestId,patientRecordId:patient});
 const deferred=<T>()=>{let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};};
@@ -68,10 +75,26 @@ beforeAll(async()=>{
   {encoding:'utf8',timeout:20_000,maxBuffer:8*1024*1024}));expect(manifest.migrations).toHaveLength(106);
  db=new PGlite({extensions:{pgcrypto}});
  for(const migration of manifest.migrations)await db.exec(files[migration.file]);
+ // Raw migration-file fixtures do not run the operator that creates its ledger.
+ // Reproduce that table and its exact generated entries before worker grants.
+ await db.exec(`create table clinical_core.schema_migrations(version text primary key,name text not null,
+  sha256 text not null check(sha256~'^[0-9a-f]{64}$'),applied_at timestamptz not null default clock_timestamp())`);
+ for(const migration of manifest.migrations)await db.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)',
+  [migration.version,migration.file.slice(15,-4),sha(files[migration.file])]);
  for(const name of ['fullscript-draft-ledger','canonical-protocol-carts','fullscript-canonical-authority'])
   await db.exec(readFileSync('infra/aws-clinical-core/source-candidates/'+name+'.sql','utf8'));
 },90_000);
 afterAll(async()=>{await db?.close();});
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
+it('worker has a narrow metadata function, not direct clinical-schema access',async()=>{
+ const rows=await database().transaction(tx=>tx.query<{ledger:Array<{version:string;name:string;sha256:string}>}>('select fullscript_delivery.migration_ledger() as ledger'));
+ expect(rows.rows[0].ledger).toHaveLength(106);
+ expect(Object.keys(rows.rows[0].ledger[0]).sort()).toEqual(['name','sha256','version']);
+ await expect(database().transaction(tx=>tx.query('select applied_at from clinical_core.schema_migrations'))).rejects.toThrow(/permission denied/);
+ await expect(database().transaction(tx=>tx.query("update clinical_core.schema_migrations set name='forged'"))).rejects.toThrow(/permission denied/);
+ await expect(database().transaction(tx=>tx.query('select * from clinical_core.patient_records'))).rejects.toThrow(/permission denied/);
+ await expect(database('clinical_core_api').transaction(tx=>tx.query('select fullscript_delivery.migration_ledger()'))).rejects.toThrow(/permission denied/);
+});
 beforeEach(async()=>{
  [org,staff,consumer,other,patient,connection,program,version,productVersion,batch,enrollment]=Array.from({length:11},()=>randomUUID());
  product='prd_fixture_'+randomUUID().replaceAll('-','');releases={};contents={};provider.create.mockClear();provider.findByMetadata.mockClear();
@@ -127,6 +150,23 @@ beforeEach(async()=>{
 });
 
 describe('same-target Fullscript authority with canonical SQL and fictional reviews',()=>{
+ it('returns only the current same-target provider release after full authority and actor checks',async()=>{
+  const authority=createCanonicalDraftAuthority(cfg);
+  await database().transaction(async tx=>{
+   const b=await authority.resolve(tx,actor(),{manifestId,patientRecordId:patient});
+   expect(await authority.providerRelease(tx,actor(),b)).toEqual(contents.provider);
+   await expect(authority.providerRelease(tx,actor(consumer,'consumer'),b)).rejects.toThrow('fullscript_delivery_refused');
+   await expect(authority.providerRelease(tx,actor(other,'workforce'),b)).rejects.toThrow('fullscript_delivery_refused');
+  });
+ });
+ it.each(['retirement','withdrawal','changed-review'])('does not load an obsolete provider release after %s',async mode=>{
+  const authority=createCanonicalDraftAuthority(cfg);
+  const b=await database().transaction(tx=>authority.resolve(tx,actor(),{manifestId,patientRecordId:patient}));
+  if(mode==='retirement')await db.query('update fullscript_delivery.authority_releases set retired_at=clock_timestamp() where id=$1',[releases.provider]);
+  if(mode==='withdrawal')await consentRequest({action:'withdraw',connectionId:connection,expectedRevision:1});
+  if(mode==='changed-review')await release('provider',org,{...contents.provider,tokenBindingSha256:'e'.repeat(64)},2);
+  await expect(database().transaction(tx=>authority.providerRelease(tx,actor(),b))).rejects.toThrow('fullscript_delivery_refused');
+ });
  it('prepares and replays from actual grants, published enrollment and reviewed mappings, sending once',async()=>{
   const a=await prepare(),b=await prepare();expect(b.id).toBe(a.id);
   const sent=await service().send(actor(),a.id);expect(sent).toMatchObject({state:'verified',includedCount:1,excludedCount:0,patientSent:false,phiAllowed:false});
@@ -265,6 +305,167 @@ describe('same-target Fullscript authority with canonical SQL and fictional revi
   await expect(db.query('delete from clinical_audit.fullscript_consent_events where organization_id=$1',[org])).rejects.toThrow('append_only_record');
   await revoke('hold');
   await expect(db.query("update fullscript_delivery.recipient_holds set reason='privacy_request' where organization_id=$1",[org])).rejects.toThrow('fullscript_hold_immutable');
+ });
+});
+
+describe('canonical delivery composition, fictional SQL and provider observations, not hosted qualification',()=>{
+ const session=():RequestSession=>({signedIn:true,email:'fictional.practitioner@example.test',orgId:org,
+  expired:false,expiresAt:null,token:'fictional-identity-token'});
+ const runtime=(a=actor(),s:RequestSession|null=session(),target=database(),providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>)=>createCanonicalFullscriptDelivery({
+  database:target,configuration:cfg,actor:a,session:s??undefined,providerEnvironment});
+ const bridge=(duringCredentialObservation?:()=>Promise<void>)=>vi.spyOn(credentialBinding,'createCredentialBoundFullscriptDraftProvider')
+  .mockImplementation((_s,_review,check)=>({
+   create:async input=>{await duringCredentialObservation?.();await check?.();return provider.create(input);},
+   findByMetadata:async key=>{await duringCredentialObservation?.();await check?.();return provider.findByMetadata(key);},
+  }));
+ it('joins canonical authority, durable admission and database-loaded credential review; replay sends once',async()=>{
+  const factory=bridge(),r=runtime(),p=await r.prepare({manifestId,patientRecordId:patient});
+  expect(factory).not.toHaveBeenCalled();
+  expect(await r.send(p.id)).toMatchObject({state:'verified',includedCount:1,patientSent:false});
+  expect(await r.send(p.id)).toMatchObject({state:'verified'});
+  expect(factory).toHaveBeenCalledOnce();expect(provider.create).toHaveBeenCalledOnce();
+  expect(factory.mock.calls[0][0]).toEqual(session());
+  expect(factory.mock.calls[0][1]).toEqual(contents.provider);
+  expect(typeof factory.mock.calls[0][2]).toBe('function');
+ });
+ it('consumer status, cancel and owner export use no provider credentials even with no session',async()=>{
+  const load=vi.fn(async()=>({...process.env})),factory=bridge(),p=await runtime(actor(),session(),database(),load).prepare({manifestId,patientRecordId:patient});
+  const owner=runtime(actor(consumer,'consumer'),null,database(),load);
+  expect(await owner.read(p.id)).toMatchObject({state:'prepared'});
+  expect(await owner.exportForOwner(p.id)).toMatchObject({contract:'fullscript-draft-owner-export/1'});
+  expect(await owner.cancel(p.id)).toMatchObject({state:'cancelled'});
+  await expect(owner.send(p.id)).rejects.toThrow('fullscript_delivery_refused');
+  await expect(owner.reconcile(p.id)).rejects.toThrow('fullscript_delivery_refused');
+  await expect(owner.prepare({manifestId,patientRecordId:patient})).rejects.toThrow('fullscript_delivery_refused');
+  expect(factory).not.toHaveBeenCalled();expect(provider.create).not.toHaveBeenCalled();expect(load).not.toHaveBeenCalled();
+ });
+ it.each(['external-consent','clinic-consent','enrollment','hold','deletion','consumer-identity','reviewer','catalog','link'])
+ ('rechecks %s loss during credential I/O before POST, settles withheld and emits no provider body',async reason=>{
+  const p=await runtime().prepare({manifestId,patientRecordId:patient});
+  const factory=bridge(()=>revoke(reason));
+  expect(await runtime().send(p.id)).toMatchObject({state:'withheld',providerPlanId:null,writerPending:false});
+  expect(factory).toHaveBeenCalledOnce();expect(provider.create).not.toHaveBeenCalled();
+  const row=(await db.query<{state:string;provider_plan_id:null}>('select state,provider_plan_id from fullscript_delivery.draft_intents where id=$1',[p.id])).rows[0];
+  expect(row).toEqual({state:'withheld',provider_plan_id:null});
+ });
+ it('preserves a positive external receipt if consent is withdrawn after admitted provider work',async()=>{
+  bridge();const r=runtime(),p=await r.prepare({manifestId,patientRecordId:patient});
+  provider.create.mockImplementationOnce(async request=>{
+   await revoke('external-consent');
+   return {contract:'fullscript-draft-observation/1',planId:'fictional-late-plan',patientId:request.fullscriptPatientId,
+    practitionerId:request.practitionerId,state:'draft',metadataId:request.idempotencyKey,labs:[],recommendations:request.recommendations};
+  });
+  expect(await r.send(p.id)).toMatchObject({state:'withheld',providerPlanId:null,writerPending:false});
+  const exported=await runtime(actor(consumer,'consumer'),null).exportForOwner(p.id);
+  expect(exported.externalCustody).toMatchObject({providerPlanId:'fictional-late-plan',providerCopyRemoval:'not_verified'});
+  expect(await r.send(p.id)).toMatchObject({state:'withheld'});expect(provider.create).toHaveBeenCalledOnce();
+ });
+ it('recovers through read-only metadata using the current database review; empty results never create again',async()=>{
+  const factory=bridge(),r=runtime(),p=await r.prepare({manifestId,patientRecordId:patient});
+  provider.create.mockRejectedValueOnce(new Error('fictional transport timeout'));
+  expect(await r.send(p.id)).toMatchObject({state:'uncertain',writerPending:false});
+  await expect(r.reconcile(p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect(await r.send(p.id)).toMatchObject({state:'uncertain'});
+  expect(provider.create).toHaveBeenCalledOnce();expect(provider.findByMetadata).toHaveBeenCalledOnce();
+  expect(factory.mock.calls[1][1]).toEqual(contents.provider);
+ });
+ it.each(['owner','clinic'])('refuses foreign %s reads before constructing a credential provider',async mode=>{
+  const factory=bridge(),p=await runtime().prepare({manifestId,patientRecordId:patient});
+  const a=mode==='owner'?actor(other,'consumer'):{...actor(consumer,'consumer'),organizationId:randomUUID()};
+  await expect(runtime(a,null).read(p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect(factory).not.toHaveBeenCalled();
+ });
+ it.each(['missing','expired','clinic','email'])('refuses a %s workforce session before database or provider access',mode=>{
+  const factory=bridge(),s=session();
+  if(mode==='expired')s.expired=true;
+  if(mode==='clinic')s.orgId=randomUUID();
+  if(mode==='email')s.email=null;
+  expect(()=>createCanonicalFullscriptDelivery({database:database(),configuration:cfg,actor:actor(),session:mode==='missing'?undefined:s}))
+   .toThrow('fullscript_delivery_refused');expect(factory).not.toHaveBeenCalled();
+ });
+ it('accepts actual Aurora string JSON cells without weakening exact admitted-input and actor binding',async()=>{
+  const factory=bridge();
+  const target:ClinicalCoreDatabase={transaction:work=>database().transaction(async tx=>{
+   const query:ClinicalCoreTransaction['query']=async<Row extends Record<string,unknown>>(sql:string,args:readonly unknown[]=[])=>{
+    const result=await tx.query<Row>(sql,args);
+    if(sql.startsWith('select manifest_id,patient_record_id'))return {...result,rows:result.rows.map(row=>({...row,
+     input:JSON.stringify(row.input),writer_actor:JSON.stringify(row.writer_actor)} as Row))};
+    return result;
+   };
+   return work({query});
+  })};
+  const r=runtime(actor(),session(),target),p=await r.prepare({manifestId,patientRecordId:patient});
+  expect(await r.send(p.id)).toMatchObject({state:'verified'});expect(factory).toHaveBeenCalledOnce();
+ });
+ it('rejects production construction rather than exposing the qualification adapter to PHI',()=>{
+  expect(()=>createCanonicalFullscriptDelivery({database:database(),configuration:{...cfg,execution:'production',phiAllowed:true},
+   actor:actor(),session:session()})).toThrow('fullscript_delivery_refused');
+ });
+ it('does not start POST when the admitted writer expires during credential observation',async()=>{
+  let expired=false;
+  const target:ClinicalCoreDatabase={transaction:work=>database().transaction(async tx=>{
+   const query:ClinicalCoreTransaction['query']=async<Row extends Record<string,unknown>>(sql:string,args:readonly unknown[]=[])=>{
+    const result=await tx.query<Row>(sql,args);
+    if(expired&&sql.startsWith('select manifest_id,patient_record_id'))return {...result,rows:result.rows.map(row=>({...row,writer_live:false} as Row))};
+    return result;
+   };return work({query});
+  })};
+  bridge(async()=>{expired=true;});const r=runtime(actor(),session(),target),p=await r.prepare({manifestId,patientRecordId:patient});
+  expect(await r.send(p.id)).toMatchObject({state:'uncertain',writerPending:false});
+  expect(provider.create).not.toHaveBeenCalled();
+  expect(await r.send(p.id)).toMatchObject({state:'uncertain'});expect(provider.create).not.toHaveBeenCalled();
+ });
+ it.each(['positive','withdrawal-during-clinic-read'])('composes actual SQL and native credential/HTTP decoders: %s',async mode=>{
+  // Only AWS/HTTP transports are fictional. The authority, ledger, credential
+  // store parser, observed-clinic binding and provider decoder are real code.
+  vi.stubEnv('FULLSCRIPT_ENVIRONMENT','sandbox_us');vi.stubEnv('FULLSCRIPT_CLIENT_ID','fictional-client-abcdefghijklmnopqrstuvwxyz');
+  vi.stubEnv('FULLSCRIPT_CLIENT_SECRET','fictional-secret-abcdefghijklmnopqrstuvwxyz');
+  vi.stubEnv('FULLSCRIPT_REDIRECT_URI','https://fictional.example.test/api/live/fullscript/oauth/callback');
+  vi.stubEnv('FULLSCRIPT_OAUTH_STATE_SECRET','fictional-state-secret-longer-than-32-characters');
+  vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','fictional-token-table');vi.stubEnv('AWS_REGION','us-east-2');
+  const saved:StoredFullscriptConnection={...fullscriptActor(session()),environment:'sandbox_us',
+   installationId:randomUUID(),oauthClientId:'fictional-client-abcdefghijklmnopqrstuvwxyz',
+   oauthRedirectUri:'https://fictional.example.test/api/live/fullscript/oauth/callback',
+   accessToken:'fictional-access-token-abcdefghijklmnopqrstuvwxyz',refreshToken:'fictional-refresh-token-abcdefghijklmnopqrstuvwxyz',
+   connectedAt:'2026-10-09T10:00:00.000Z',expiresAt:new Date(Date.now()+3600_000).toISOString(),
+   resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:[...FULLSCRIPT_DRAFT_SCOPES]};
+  vi.spyOn(DynamoDBClient.prototype,'send').mockImplementation(async()=>({Item:{payload:{S:JSON.stringify(saved)}}}) as never);
+  let withdraw=false;
+  const fetcher=vi.fn(async(url:string|URL|Request,init?:RequestInit)=>{
+   if(new URL(String(url)).pathname==='/api/clinic'){
+    if(withdraw)await consentRequest({action:'withdraw',connectionId:connection,expectedRevision:2});
+    return new Response(JSON.stringify({clinic:{id:'fictional-clinic-id'}}),{status:200,headers:{'content-type':'application/json'}});
+   }
+   if(init?.method!=='POST')throw new Error('unexpected fictional request');
+   const body=JSON.parse(String(init.body)),key=body.metadata.id;
+   return new Response(JSON.stringify({treatment_plan:{id:'fictional-native-plan',patient:{id:'fictional-patient-id'},
+    practitioner:{id:'fictional-practitioner-id'},state:'draft',available_at:null,metadata:{id:key},lab_recommendations:[],resources:[],
+    recommendations:[{variant_id:'fictional-variant-id',units_to_purchase:2,refill:false,dosage:{additional_info:'1 capsule daily'}}]}}),{status:201,headers:{'content-type':'application/json'}});
+  });vi.stubGlobal('fetch',fetcher);
+  const observed=await credentialBinding.observeFullscriptDraftInstallation(session());
+  contents.provider={...contents.provider,tokenBindingSha256:observed.tokenBindingSha256};
+  releases.provider=await release('provider',org,contents.provider,2);
+  for(const [kind,id] of [['recipient',patient],['practitioner',staff],['mapping',manifestId],['consent',releases.provider]]){
+   contents[kind]={...contents[kind],providerReleaseId:releases.provider};
+   releases[kind]=await release(kind,id,contents[kind],kind==='consent'?1:2);
+  }
+  await externalGrant();fetcher.mockClear();
+  const scoped={...process.env},load=vi.fn(async()=>scoped);
+  // Version-pinned secret values belong to this request, not shared globals.
+  vi.stubEnv('FULLSCRIPT_ENVIRONMENT','production_us');vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','untrusted-global-table');
+  const r=runtime(actor(),session(),database(),load),p=await r.prepare({manifestId,patientRecordId:patient});withdraw=mode!=='positive';
+  expect(load).not.toHaveBeenCalled();
+  const result=await r.send(p.id);
+  expect(load).toHaveBeenCalledOnce();
+  expect(result).toMatchObject({state:withdraw?'withheld':'verified',patientSent:false,phiAllowed:false});
+  expect(fetcher.mock.calls.filter(c=>c[1]?.method==='POST')).toHaveLength(withdraw?0:1);
+  if(!withdraw){
+   const post=fetcher.mock.calls.find(c=>c[1]?.method==='POST')!;
+   expect(String(post[0])).toBe('https://api-us-snd.fullscript.io/api/clinic/patients/fictional-patient-id/treatment_plans');
+   expect(post[1]).toMatchObject({redirect:'manual',headers:{authorization:'Bearer '+saved.accessToken}});
+   expect(result.providerPlanId).toBe('fictional-native-plan');
+  }
+  expect(provider.create).not.toHaveBeenCalled();
  });
 });
 

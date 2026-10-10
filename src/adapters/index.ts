@@ -37,6 +37,14 @@ import { executeLiveAction, type ActionContext, type ActionKind } from "./action
 import type { OptimalRange } from "./labs.types";
 import type { CreatePatientInput } from "./types";
 import type {
+  TelehealthConsentInput,
+  TelehealthEndInput,
+  TelehealthSignInput,
+  TelehealthTransferInput,
+  TelehealthStartInput,
+  TelehealthWithdrawInput,
+} from "./telehealth.types";
+import type {
   LiveAppointmentStatus,
   LiveAuditEvent,
   LiveBookInput,
@@ -130,6 +138,31 @@ export const api = {
      * is not computed at all. See docs/clinical-runtime-migration.md.
      */
     summary: notWired("The clinical summary score"),
+  },
+  telehealth: {
+    /**
+     * LIVE: the day's telehealth appointments from the Desktop-owned calendar
+     * RPC (in the viewer's time zone), merged with the AWS telehealth boundary
+     * (patient-app requests, consent receipts against the governed consent
+     * authority, the Zoom meeting, provider shutdown state, the post-visit
+     * note). Every action resolves its appointment through the calendar first;
+     * the boundary refuses starts without current consent authority; the
+     * embedded-meeting session is signed server-side and returned once.
+     */
+    day: async (date: string, timeZone: string) => liveClient.telehealthDay(date, timeZone),
+    visit: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthVisit(appointmentId, date, timeZone),
+    consentArtifact: async () => liveClient.telehealthConsentArtifact(),
+    recordConsent: async (input: TelehealthConsentInput) => liveClient.telehealthRecordConsent(input),
+    withdrawConsent: async (input: TelehealthWithdrawInput) => liveClient.telehealthWithdrawConsent(input),
+    start: async (input: TelehealthStartInput) => liveClient.telehealthStart(input),
+    end: async (input: TelehealthEndInput) => liveClient.telehealthEnd(input),
+    note: async (appointmentId: string) => liveClient.telehealthNote(appointmentId),
+    importNote: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthImportNote(appointmentId, date, timeZone),
+    signNote: async (input: TelehealthSignInput) => liveClient.telehealthSignNote(input),
+    /** Explicit, practitioner-initiated placement of a SIGNED visit record into the chart as an UNSIGNED draft; safe to repeat. */
+    transferToChart: async (input: TelehealthTransferInput) => liveClient.telehealthTransferToChart(input),
+    /** Read the chart's receipt back for an admitted transfer (no chart write). */
+    inspectTransfer: async (appointmentId: string) => liveClient.telehealthInspectTransfer(appointmentId),
   },
   schedule: {
     /**

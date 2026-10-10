@@ -1,0 +1,24 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {crc32} from './care-messaging-zip.mjs';
+test('the actual bundled qualification handler has a deterministic one-entry zip and no embedded reviewed target',async()=>{
+ const metadata=JSON.parse(execFileSync(process.execPath,['scripts/build-fullscript-api.mjs'],{encoding:'utf8',timeout:30000,maxBuffer:4096,windowsHide:true}));
+ const prefix='dist/aws-clinical-core/fullscript-api/',code=readFileSync(prefix+'index.js'),zip=readFileSync(prefix+'function.zip');
+ assert.equal(metadata.zipSha256,createHash('sha256').update(zip).digest('hex'));
+ assert.equal(metadata.codeSha256,createHash('sha256').update(zip).digest('base64'));
+ assert.equal(metadata.indexSha256,createHash('sha256').update(code).digest('hex'));
+ assert.equal(zip.readUInt32LE(0),0x04034b50);assert.equal(zip.readUInt32LE(14),crc32(code));
+ assert.equal(zip.readUInt32LE(18),code.length);assert.equal(zip.subarray(30,38).toString(),'index.js');
+ assert.ok(zip.subarray(38,38+code.length).equals(code));assert.equal(zip.readUInt16LE(zip.length-12),1);
+ assert.equal(metadata.targetEmbedded,false);assert.equal(metadata.deployed,false);assert.equal(metadata.phiAllowed,false);
+ assert.equal(metadata.activation,'blocked');assert.equal(metadata.hostedQualified,false);assert.equal(metadata.providerActionPerformed,false);
+ const apiModule=createRequire(import.meta.url)('../'+prefix+'index.js');
+ const result=await apiModule.handler({routeKey:'POST /unknown'},{invokedFunctionArn:'invalid',functionVersion:'$LATEST'});
+ assert.equal(result.statusCode,404);
+ const refusal=await apiModule.handler({routeKey:'POST /clinical-core/consumer/fullscript/draft'},{invokedFunctionArn:'invalid',functionVersion:'$LATEST'});
+ assert.equal(refusal.statusCode,503);assert.equal(JSON.parse(refusal.body).error,'fullscript_delivery_refused');
+});

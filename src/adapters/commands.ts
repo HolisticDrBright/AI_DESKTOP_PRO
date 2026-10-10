@@ -20,6 +20,7 @@ export function getCommandGroups(patientId?: string): CommandGroup[] {
         { label: "Patients", sub: "Live directory (org-scoped)", kbd: "G P", icon: "users", tone: "slate", href: "/patients" },
         { label: "Review queue", sub: "Open review items", kbd: "G Q", icon: "reasoning", tone: "slate", href: "/tasks" },
         { label: "Calendar", sub: "Live schedule", kbd: "G C", icon: "home", tone: "slate", href: "/calendar" },
+        { label: "Telehealth", sub: "Today's virtual visits", kbd: "G V", icon: "home", tone: "slate", href: "/telehealth" },
         { label: "Settings", sub: "Practice configuration", kbd: "G S", icon: "home", tone: "slate", href: "/settings" },
       ],
     },

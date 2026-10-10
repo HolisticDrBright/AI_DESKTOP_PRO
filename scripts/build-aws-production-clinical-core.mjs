@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeMigrationSql } from "./migration-sql-bytes.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDirectory = path.join(root, "infra", "aws-clinical-core", "migrations");
@@ -70,7 +71,7 @@ function assertProductionArtifact(file, sql) {
 const files = Object.create(null);
 const migrations = [];
 for (const entry of sourceManifest.migrations.filter((migration) => migration.production_transform !== false)) {
-  const source = readFileSync(path.join(sourceDirectory, entry.file), "utf8");
+  const source = normalizeMigrationSql(readFileSync(path.join(sourceDirectory, entry.file), "utf8"));
   const outputFile = renameFile(entry.file);
   const output = transformToProduction(source);
   assertProductionArtifact(outputFile, output);
@@ -83,7 +84,7 @@ if (overlayManifest.contract_version !== "clinical-core-production-overlays/1") 
   throw new Error("Unsupported production overlay manifest.");
 }
 for (const entry of overlayManifest.migrations) {
-  const source = readFileSync(path.join(overlayDirectory, entry.file), "utf8");
+  const source = normalizeMigrationSql(readFileSync(path.join(overlayDirectory, entry.file), "utf8"));
   assertProductionArtifact(entry.file, source);
   files[entry.file] = source;
   migrations.push(entry);

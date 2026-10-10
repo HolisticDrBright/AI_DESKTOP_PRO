@@ -1,6 +1,15 @@
 -- UNRELEASED. Requires canonical106, fullscript-draft-ledger.sql and
 -- canonical-protocol-carts.sql. No approval, consent or identity is seeded.
 -- Worker-only functions; there is no API route or production activation here.
+-- Read-only migration metadata for native SAME-TARGET qualification observation.
+-- No approval rows, patient tables, modification privilege or admin fallback.
+create function fullscript_delivery.migration_ledger() returns jsonb language sql stable security definer
+ set search_path=pg_catalog as $$
+ select coalesce(jsonb_agg(jsonb_build_object('version',version,'name',name,'sha256',sha256) order by version),'[]'::jsonb)
+ from clinical_core.schema_migrations
+$$;
+revoke all on function fullscript_delivery.migration_ledger() from public,clinical_core_api;
+grant execute on function fullscript_delivery.migration_ledger() to fullscript_draft_worker;
 create table fullscript_delivery.authority_releases (
  id uuid primary key default public.gen_random_uuid(),
  organization_id uuid not null references clinical_core.organizations(id),

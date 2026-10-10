@@ -20,6 +20,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - name: Migration byte normalization regression
+        run: npm run test:migration-sql-bytes
       - name: Canonical schema and covered-entity mapping (no seeded approvals)
         run: |
           npm run check:aws-production-clinical-core
@@ -29,6 +31,43 @@ jobs:
         run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
       - name: Fullscript draft compiler transport and existing cart exclusions (fictional only)
         run: npm run test:fullscript-protocol-draft
+      - name: Distinct Fullscript release identity and preserving rollback (no AWS or activation)
+        run: |
+          npm run test:fullscript-candidate
+          npm run build:fullscript-candidate
+      - name: Telehealth approved copy and versioned withdrawal (fictional database only)
+        run: |
+          npm run test:telehealth-consent-copy
+          npm run test:telehealth-consent-copy-candidate
+          npm run build:telehealth-consent-copy-candidate
+      - name: Separate patient consent Lambda and immutable blocked template (no AWS or approval)
+        run: |
+          npm run test:telehealth-consent-runtime
+          npm run test:telehealth-consent-deployment
+          npm run build:aws-telehealth-consent
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/telehealth-consent/template.json
+      - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
+        run: |
+          npm run test:fullscript-upgrade-operator
+          npm run build:fullscript-upgrade
+          npm run test:telehealth-consent-upgrade
+          npm run build:telehealth-consent-upgrade
+          npm run test:telehealth-consent-upgrade-artifact
+          npm run test:telehealth-consent-copy-registration
+          npm run build:telehealth-consent-copy-operator
+          npm run test:telehealth-consent-copy-operator-artifact
+      - name: Fullscript immutable target and actual API bundle (fictional AWS only)
+        run: |
+          npm run test:fullscript-target-runtime
+          npm run test:fullscript-api-build
+          npm run test:fullscript-qualification-template
+          npm run build:fullscript-qualification-template
+          npm run build:fullscript-qualification-template -- --telehealth-consent-copy
+          npm run test:fullscript-deployment-preflight
+          npm run test:fullscript-deployment-execution
+          npm run build:fullscript-deployment-preflight
+          npm run test:fullscript-deployment-command
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
@@ -105,6 +144,8 @@ jobs:
         run: |
           npm run build:aws-care-messaging
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/fullscript-api/template.json
+          cfn-lint dist/aws-clinical-core/fullscript-api/template-consent-112.json
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
@@ -233,6 +274,7 @@ jobs:
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint infra/aws-clinical-core/telehealth-requests-extension.json
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
       - name: Build and validate independent voice deployment candidate (no deployment)
         run: |
@@ -403,6 +445,28 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
+      # Positive Zoom Meeting SDK bootstrap against the REAL pinned CDN build.
+      # The live battery above aborts every source.zoom.us request and proves
+      # the honest failure state; this step proves the opposite half — the
+      # pinned embedded SDK plus its documented vendor scripts load under the
+      # visit route's headers, register, and initialize a client. Its own
+      # step, so a CDN outage is identifiable and never read as a product bug.
+      - name: Zoom Meeting SDK bootstraps (real pinned CDN build)
+        if: matrix.shard == 1
+        run: |
+          curl -fsS -X POST http://127.0.0.1:3999/__control/reset-all
+          E2E_LIVE=1 \
+          E2E_ZOOM_SDK=1 \
+          E2E_DEV_SERVER=1 \
+          APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- zoom-sdk-bootstrap
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server

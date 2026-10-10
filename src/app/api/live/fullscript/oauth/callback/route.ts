@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { exchangeFullscriptAuthorizationCode, fullscriptIntegrationReturnUrl, FullscriptUnavailableError, readFullscriptConfiguration, verifyFullscriptState } from "@/server/fullscript/client";
 import { createAwsFullscriptTokenStore } from "@/server/fullscript/token-store";
 
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest) {
       organizationId: verified.organizationId,
       environment: configuration.environment,
       connectedAt: new Date().toISOString(),
+      installationId: randomUUID(),
+      oauthClientId: configuration.clientId,
+      oauthRedirectUri: configuration.redirectUri,
     });
     target.searchParams.set("fullscript", "connected");
   } catch (error) {

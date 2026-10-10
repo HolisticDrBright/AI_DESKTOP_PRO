@@ -4,6 +4,7 @@ import {
   bindParameters,
   createRdsDataAdministrativeDatabase,
   createRdsDataClinicalCoreDatabase,
+  createRdsDataFullscriptDraftDatabase,
   RdsDataDatabaseError,
 } from "./rds-data-database";
 
@@ -35,6 +36,31 @@ function client(respond?: (seen: Seen) => Record<string, unknown> | Promise<Reco
 }
 
 describe("Aurora RDS Data API transaction adapter", () => {
+  test('Fullscript requests assume only the dedicated worker role, before any application query',async()=>{
+    const mock=client();
+    await createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(tx=>tx.query('select 1'));
+    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','ExecuteStatementCommand','CommitTransactionCommand']);
+    expect(mock.calls.filter(c=>c.name==='ExecuteStatementCommand').map(c=>c.input.sql))
+      .toEqual(['set local role fullscript_draft_worker','select 1']);
+  });
+  test('an unavailable worker role rolls back without falling back to API or administrative access',async()=>{
+    const mock=client(c=>{
+      if(c.name==='BeginTransactionCommand')return {transactionId:'fictional-worker-tx'};
+      if(c.name==='ExecuteStatementCommand')throw new Error('fictional role refused');
+      return {};
+    });
+    await expect(createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(tx=>tx.query('select 1')))
+      .rejects.toThrow('query_failed');
+    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','RollbackTransactionCommand']);
+    expect(mock.calls[1].input.sql).toBe('set local role fullscript_draft_worker');
+  });
+  test('a failed Fullscript request rolls back its worker transaction and preserves the opaque refusal',async()=>{
+    const mock=client();
+    await expect(createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(()=>{throw new Error('fullscript_delivery_refused');}))
+      .rejects.toThrow('fullscript_delivery_refused');
+    expect(mock.calls.at(-1)?.name).toBe('RollbackTransactionCommand');
+    expect(mock.calls.some(c=>c.input.sql==='set local role clinical_core_api')).toBe(false);
+  });
   test("accepts AWS-managed RDS secret ARNs containing an exclamation mark", () => {
     const mock = client();
     expect(() => createRdsDataAdministrativeDatabase({
@@ -209,6 +235,15 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["request_context_refused", "identity_refused"],
     ["production_context_refused", "identity_refused"],
     ["patient_access_refused", "identity_refused"],
+    ["zoom_host_binding_invalid", "request_invalid"],
+    ["zoom_host_binding_conflict", "conflict"],
+    ["zoom_host_actor_refused", "identity_refused"],
+    ["zoom_host_appointment_refused", "identity_refused"],
+    ["zoom_host_binding_refused", "identity_refused"],
+    ["zoom_host_current_release_required", "operation_refused"],
+    ["zoom_host_review_required", "operation_refused"],
+    ["zoom_host_release_immutable", "operation_refused"],
+    ["zoom_host_revocation_immutable", "operation_refused"],
     ["invitation_invalid_or_expired", "operation_refused"],
     ["production_patient_not_found", "operation_refused"],
     ["consumer_owner_required", "identity_refused"],
@@ -303,6 +338,16 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["consult_retention_forbidden", "identity_refused"],
     ["consult_contact_purged", "operation_refused"],
     ["consult_retention_immutable", "operation_refused"],
+    ["telehealth_admission_refused", "identity_refused"],
+    ["telehealth_admission_mismatch", "identity_refused"],
+    ["telehealth_transfer_refused", "identity_refused"],
+    ["appointment_patient_identity_immutable", "identity_refused"],
+    ["telehealth_transfer_invalid", "request_invalid"],
+    ["telehealth_transfer_id_reused", "request_invalid"],
+    ["appointment_required", "request_invalid"],
+    ["telehealth_transfer_source_changed", "conflict"],
+    ["telehealth_admission_unavailable", "operation_refused"],
+    ["appointment_not_found", "operation_refused"],
   ])("maps the authored %s marker without returning provider text", async (marker, category) => {
     const mock = client((call) => {
       if (call.name === "BeginTransactionCommand") return { transactionId: "tx-refused" };

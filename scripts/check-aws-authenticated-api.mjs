@@ -30,7 +30,7 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 55, "extension must expose exactly fifty-five routes");
+  assert(errors, routeEntries.length === 57, "extension must expose exactly fifty-seven routes");
   assert(errors, extension.Outputs?.RoutesEnabled?.Value === String(routeEntries.length), "route-count output must report the actual source routes");
   // Exactly one route on this API is unauthenticated, and it is named here rather than
   // inferred. A second one appearing without this list changing is the failure this guards.
@@ -50,6 +50,8 @@ export function validateAuthenticatedApi(foundation, extension) {
     "GET /clinical-core/workforce/labs/specimen-context",
     "GET /clinical-core/consumer/connection",
     "GET /clinical-core/consumer/consent-artifact",
+    "GET /clinical-core/workforce/consent-artifact",
+    "GET /clinical-core/workforce/consents/current",
     "GET /clinical-core/workforce/lab-imports",
     "POST /clinical-core/workforce/lab-imports/review",
     "GET /clinical-core/workforce/patient-labs",

@@ -43,6 +43,16 @@ export function createRdsDataClinicalCoreDatabase(
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
 
+/** Dedicated unreleased Fullscript worker. No caller-selected role or
+ * administrative migration connection is exposed to request code. The role
+ * must already exist on the reviewed target; missing membership fails closed. */
+export function createRdsDataFullscriptDraftDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  return createRdsDataDatabase(configuration, client, "fullscript_draft_worker");
+}
+
 /** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
@@ -58,7 +68,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api",
+  assumeRole?: "clinical_core_api" | "fullscript_draft_worker",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {
@@ -204,7 +214,8 @@ function assertConfiguration(configuration: RdsDataConfiguration) {
   }
 }
 
-function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
+/** Exported for embedded-database tests that stand the production dispatch in front of a real PGlite: the same classification, no other mapping. */
+export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
@@ -217,6 +228,17 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bcare_connection_approved_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_connection_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bcare_connection_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\btelehealth_consent_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\btelehealth_consent_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\btelehealth_consent_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\btelehealth_consent_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  // Chart transfer of a telehealth note: an unadmitted, forged, substituted or
+  // foreign source is a refusal; a changed source is a decided conflict; a chart
+  // with no registered admission key refuses the operation rather than failing.
+  if (/\b(telehealth_admission_refused|telehealth_admission_mismatch|telehealth_transfer_refused|appointment_patient_identity_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(telehealth_transfer_invalid|telehealth_transfer_id_reused|appointment_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\btelehealth_transfer_source_changed\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(telehealth_admission_unavailable|appointment_not_found)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   // A settled request id can never be admitted again; the caller must treat it as a
   // decided conflict, not as an identity problem it could retry past.
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
@@ -311,6 +333,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\brecording_cleanup_attempt_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bowned_account_deletion_write_blocked\b/.test(message)) return new ClinicalCoreDatabaseRejection("account_deletion_write_blocked");
+  if (/\bzoom_host_binding_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bzoom_host_binding_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(zoom_host_actor_refused|zoom_host_appointment_refused|zoom_host_binding_refused)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(zoom_host_current_release_required|zoom_host_review_required|zoom_host_release_immutable|zoom_host_revocation_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict|privacy_export_job_state|privacy_export_job_busy)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

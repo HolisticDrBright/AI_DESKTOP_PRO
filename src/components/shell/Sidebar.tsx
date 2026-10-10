@@ -18,6 +18,7 @@ import {
   User,
   Users,
   UsersRound,
+  Video,
   type LucideIcon,
 } from "lucide-react";
 import { Popover, PopoverDemoNote, PopoverHeader } from "@/components/ui/Popover";
@@ -49,6 +50,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "today", label: "Today", icon: Sun, href: "/today" },
       { id: "calendar", label: "Calendar", icon: Calendar, href: "/calendar" },
+      { id: "telehealth", label: "Telehealth", icon: Video, href: "/telehealth" },
       { id: "patients", label: "Patients", icon: Users, href: "/patients" },
       { id: "review", label: "Review Queue", icon: ClipboardCheck, href: "/tasks" },
       { id: "inbox", label: "Inbox", icon: Inbox, href: "/inbox" },
@@ -82,6 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
 function activeNavId(pathname: string): string {
   if (pathname === "/today") return "today";
   if (pathname.startsWith("/calendar")) return "calendar";
+  if (pathname.startsWith("/telehealth")) return "telehealth";
   if (pathname.startsWith("/patients")) return "patients";
   if (pathname.startsWith("/tasks")) return "review";
   if (pathname.startsWith("/inbox")) return "inbox";

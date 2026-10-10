@@ -4,7 +4,7 @@ import {z} from 'zod';
 import type {ClinicalCoreTransaction} from '../clinical-core/database';
 import {parseProtocolCartResponse} from '../../contracts/protocolCarts';
 import {compileFullscriptProtocolDraft} from './protocol-draft';
-import {DraftDeliveryRefused,type DraftDeliveryAuthority,type DraftDeliveryBinding} from './draft-delivery';
+import {DraftDeliveryRefused,type DraftDeliveryActor,type DraftDeliveryAuthority,type DraftDeliveryBinding} from './draft-delivery';
 import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 
 const uuid=z.string().uuid(), hash=z.string().regex(/^[a-f0-9]{64}$/).refine(v=>v!=='0'.repeat(64));
@@ -24,6 +24,10 @@ const snapshot=z.object({organizationId:uuid,consumerPersonId:uuid,patientRecord
 const provider=z.object({contract:z.literal('fullscript-sandbox-provider-release/1'),environment:z.literal('sandbox_us'),
  apiOrigin:z.literal('https://api-us-snd.fullscript.io/api'),clinicId:providerId,tokenBindingSha256:hash,
  scopes:z.array(z.enum(FULLSCRIPT_DRAFT_SCOPES)).length(FULLSCRIPT_DRAFT_SCOPES.length)}).strict();
+export type CanonicalDraftProviderRelease=z.infer<typeof provider>;
+export type CanonicalDraftAuthority=DraftDeliveryAuthority & {
+ providerRelease(tx:ClinicalCoreTransaction,actor:DraftDeliveryActor,binding:DraftDeliveryBinding):Promise<CanonicalDraftProviderRelease>;
+};
 const recipient=z.object({contract:z.literal('fullscript-recipient-binding/1'),patientRecordId:uuid,
  consumerPersonId:uuid,connectionId:uuid,providerReleaseId:uuid,fullscriptPatientId:providerId}).strict();
 const practitioner=z.object({contract:z.literal('fullscript-practitioner-binding/1'),practitionerPersonId:uuid,
@@ -69,7 +73,7 @@ function bindingFromSource(raw:unknown):DraftDeliveryBinding {
  * transaction: the delivery ledger can commit a withheld late receipt.
  * This does NOT verify OAuth credentials against tokenBindingSha256 or decode
  * real provider replies. Those remain the provider adapter's launch gates. */
-export function createCanonicalDraftAuthority(rawConfiguration:unknown):DraftDeliveryAuthority {
+export function createCanonicalDraftAuthority(rawConfiguration:unknown):CanonicalDraftAuthority {
  if(!z.object({execution:z.literal('qualification'),account:z.literal('588966314750'),phiAllowed:z.literal(false)})
   .strict().safeParse(rawConfiguration).success)throw new DraftDeliveryRefused();
  const source=async(tx:ClinicalCoreTransaction,sql:string,args:unknown[])=>{
@@ -77,6 +81,12 @@ export function createCanonicalDraftAuthority(rawConfiguration:unknown):DraftDel
   return bindingFromSource(raw);
  };
  const guard=async<T>(work:()=>Promise<T>)=>{try{return await work();}catch{throw new DraftDeliveryRefused();}};
+ const access=async(tx:ClinicalCoreTransaction,rawActor:DraftDeliveryActor,b:DraftDeliveryBinding)=>{
+  const a=actor.parse(rawActor);
+  const result=await tx.query<{allowed:boolean}>('select fullscript_delivery.actor_access($1::jsonb,$2::jsonb) as allowed',
+   [JSON.stringify(a),JSON.stringify(b)]);
+  if(result.rows[0]?.allowed!==true)throw new DraftDeliveryRefused();
+ };
  return {
   resolve:(tx,rawActor,rawSelector)=>guard(async()=>{
    const a=actor.parse(rawActor),q=selector.parse(rawSelector);
@@ -87,15 +97,23 @@ export function createCanonicalDraftAuthority(rawConfiguration:unknown):DraftDel
     ||b.patientRecordId!==q.patientRecordId)throw new DraftDeliveryRefused();
    return b;
   }),
-  assertAccess:(tx,rawActor,b)=>guard(async()=>{
-   const a=actor.parse(rawActor);
-   const result=await tx.query<{allowed:boolean}>('select fullscript_delivery.actor_access($1::jsonb,$2::jsonb) as allowed',
-    [JSON.stringify(a),JSON.stringify(b)]);
-   if(result.rows[0]?.allowed!==true)throw new DraftDeliveryRefused();
-  }),
+  assertAccess:(tx,a,b)=>guard(()=>access(tx,a,b)),
   assertCurrent:(tx,b)=>guard(async()=>{
    const current=await source(tx,'select fullscript_delivery.current_authority_source($1::jsonb) as data',[JSON.stringify(b)]);
    if(canonical(current)!==canonical(b))throw new DraftDeliveryRefused();
+  }),
+  providerRelease:(tx,rawActor,b)=>guard(async()=>{
+   const a=actor.parse(rawActor);
+   if(a.identityPool!=='workforce'||a.organizationId!==b.organizationId||a.personId!==b.practitionerPersonId)
+    throw new DraftDeliveryRefused();
+   await access(tx,a,b);
+   const raw=(await tx.query<{data:unknown}>('select fullscript_delivery.current_authority_source($1::jsonb) as data',
+    [JSON.stringify(b)])).rows[0]?.data;
+   const s=snapshot.parse(decoded(raw));
+   if(canonical(bindingFromSource(s))!==canonical(b))throw new DraftDeliveryRefused();
+   // Only the reviewed provider row from this complete, current snapshot is
+   // returned. It is never supplied by request JSON or an earlier cache.
+   return provider.parse(s.provider.content);
   }),
  };
 }
