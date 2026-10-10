@@ -75,6 +75,14 @@ export type TelehealthConfiguration = {
   stripeTestEnabled: boolean; stripeSecretArn: string; stripeSuccessUrl: string; stripeCancelUrl: string;
   /** The clinical API's own origin: the governed consent authority (identity extension) is read through it with the caller's JWT. */
   identityApiOrigin: string;
+  /**
+   * Secrets Manager secret `{ keyId, secret }` (hex, ≥32 bytes) under which this
+   * boundary signs chart ADMISSIONS; the chart database holds the same key in
+   * clinical_private.telehealth_admission_keys and verifies every transfer
+   * against it. Empty = chart transfer is not provisioned here (refused as
+   * `transfer_unavailable`, nothing written). The key never leaves this process.
+   */
+  chartAdmissionSecretArn: string;
 };
 
 type AppointmentItem = {
@@ -136,6 +144,8 @@ export type ChartTransfer = {
   admittedAt: string; admittedBy: string;
   encounterId: string | null; noteId: string | null; noteVersion: number | null; contentSha256: string | null;
   transferredAt: string | null; completedAt: string | null;
+  /** The last admission issued for this attempt: which key signed it, its digest and expiry (never the signature). */
+  admissionKeyId?: string | null; admissionSha256?: string | null; admissionExpiresAt?: string | null;
 };
 type VisitItem = {
   pk: string; sk: string; appointmentId: string; organizationId: string; requestId: string | null; consumerPersonId: string | null;
@@ -220,7 +230,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       console.warn(JSON.stringify({ event: "telehealth_request_refused", category }));
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
         : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch"].includes(category) ? 409
-        : ["provider_unavailable", "service_unavailable", "appointment_change_pending"].includes(category) ? 503 : 400;
+        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable"].includes(category) ? 503 : 400;
       return response(status, { error: category });
     }
   };
@@ -1802,14 +1812,70 @@ function transferSource(visit: VisitItem): TransferSource {
   return { revision: note.revision, digest, content, payload, provenance };
 }
 function publicTransfer(visit: VisitItem) { return { visit: publicVisit(visit), transfer: visit.chartTransfer ?? null }; }
+/* ---- source admission: what the chart verifies at its write boundary ---- */
+
+/** Admission contract: exactly these members, canonical JSON, HMAC-SHA256 over the exact bytes under a key the chart database also holds. */
+const CHART_ADMISSION_CONTRACT = "telehealth-chart-admission/1";
+/** Long enough for one desktop round trip to the chart, short enough that a leaked admission is not a standing credential; the chart refuses anything over one hour. */
+const CHART_ADMISSION_TTL_MS = 15 * 60_000;
+type AdmissionKey = { keyId: string; secret: Buffer };
+/**
+ * The boundary's admission key, read per request from Secrets Manager and
+ * never cached, logged, returned or sent anywhere. Not provisioned = the
+ * transfer is unavailable here, refused before anything is written.
+ */
+async function chartAdmissionKey(config: TelehealthConfiguration): Promise<AdmissionKey> {
+  if (!config.chartAdmissionSecretArn) throw new TelehealthError("transfer_unavailable");
+  let parsed: Record<string, unknown>;
+  try {
+    const secret = await secrets.send(new GetSecretValueCommand({ SecretId: config.chartAdmissionSecretArn }));
+    if (typeof secret.SecretString !== "string" || Buffer.byteLength(secret.SecretString) > 4096) throw new Error();
+    parsed = JSON.parse(secret.SecretString) as Record<string, unknown>;
+  } catch { throw new TelehealthError("transfer_unavailable"); }
+  const keyId = parsed.keyId, hex = parsed.secret;
+  if (typeof keyId !== "string" || !/^[a-z0-9][a-z0-9-]{7,63}$/.test(keyId) || typeof hex !== "string" || !/^(?:[0-9a-f]{2}){32,128}$/.test(hex)) throw new TelehealthError("transfer_unavailable");
+  return { keyId, secret: Buffer.from(hex, "hex") };
+}
+/** What the desktop carries to the chart: the exact bytes the boundary hashed, and the admission that binds them. */
+type SignedTransferSource = {
+  transferId: string; organizationId: string; patientRecordId: string; appointmentId: string; sourceRevision: number; sourceDigest: string;
+  contentText: string; sourcePayloadText: string; provenanceText: string; admission: string; admissionSignature: string; admissionExpiresAt: string;
+};
+/**
+ * Issue the admission the chart's `transfer_telehealth_note` requires. It is
+ * minted only here, only after the signed visit record, the retained-record
+ * authority (which resolved the practitioner's person id in the chart) and the
+ * exact source the caller reviewed have all been verified. It binds the
+ * organization, patient, appointment, practitioner, intent, source custody
+ * and record version, signed source revision and digest, and the SHA-256 of
+ * the exact content, payload and provenance bytes, with an issue time and a
+ * short expiry. A general caller of the chart RPC cannot produce or alter one.
+ */
+function admitSource(key: AdmissionKey, visit: VisitItem, authority: RecordAuthority, transferId: string, source: TransferSource): SignedTransferSource {
+  if (!visit.patientRecordId) throw new TelehealthError("identity_refused");
+  const contentText = canonicalJson(source.content), sourcePayloadText = canonicalJson(source.payload), provenanceText = canonicalJson(source.provenance);
+  const issuedAt = new Date(), expiresAt = new Date(issuedAt.getTime() + CHART_ADMISSION_TTL_MS);
+  const admission = canonicalJson({
+    contract: CHART_ADMISSION_CONTRACT, intent: "chart_draft", key_id: key.keyId, transfer_id: transferId,
+    organization_id: visit.organizationId, patient_record_id: visit.patientRecordId, appointment_id: visit.appointmentId, practitioner_person_id: authority.actor_person_id,
+    source_custody: "telehealth-visit-record", source_record_version: visit.version, source_revision: source.revision, source_digest: source.digest,
+    content_sha256: sha256Hex(contentText), payload_sha256: sha256Hex(sourcePayloadText), provenance_sha256: sha256Hex(provenanceText),
+    issued_at: issuedAt.toISOString(), expires_at: expiresAt.toISOString(),
+  });
+  const admissionSignature = createHmac("sha256", key.secret).update(admission, "utf8").digest("hex");
+  return { transferId, organizationId: visit.organizationId, patientRecordId: visit.patientRecordId, appointmentId: visit.appointmentId, sourceRevision: source.revision, sourceDigest: source.digest,
+    contentText, sourcePayloadText, provenanceText, admission, admissionSignature, admissionExpiresAt: expiresAt.toISOString() };
+}
 /**
  * Phase 1 — admit. Requires a completed visit with a SIGNED note, the
  * retained-record authority, and that the caller names the exact source it
  * reviewed (revision + digest): a stale screen is refused, never transferred.
  * Idempotent: a completed receipt is returned as is; a receipt the chart
  * already holds (lost response) is recorded and returned; an admitted attempt
- * is returned again with the SAME transfer id so the chart write is a repeat,
- * not a second note. Only then is a new admission written under the version.
+ * is re-admitted with the SAME transfer id (a fresh signature over the same
+ * bindings) so the chart write is a repeat, not a second note. Only then is a
+ * new admission written under the version. The admission itself is issued
+ * only after every check above and only under the boundary's own key.
  */
 async function transferVisitNote(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
   exact(value, ["appointmentId", "sourceRevision", "sourceDigest"], ["appointmentId", "sourceRevision", "sourceDigest"]);
@@ -1826,18 +1892,14 @@ async function transferVisitNote(config: TelehealthConfiguration, actor: Actor, 
     const settled = await recordCompletedTransfer(config, visit, existing, authority, source);
     return { ...publicTransfer(settled), source: null };
   }
-  if (existing?.state === "admitted") {
-    if (existing.sourceRevision !== source.revision || existing.sourceDigest !== source.digest) throw new TelehealthError("transfer_mismatch");
-    return { ...publicTransfer(visit), source: transferPayload(visit, existing, source) };
-  }
-  const admission: ChartTransfer = { transferId: randomUUID(), state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
-    admittedAt: new Date().toISOString(), admittedBy: actor.personId, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null };
+  if (existing?.state === "admitted" && (existing.sourceRevision !== source.revision || existing.sourceDigest !== source.digest)) throw new TelehealthError("transfer_mismatch");
+  const key = await chartAdmissionKey(config);
+  const signed = admitSource(key, visit, authority, existing?.state === "admitted" ? existing.transferId : randomUUID(), source);
+  const admission: ChartTransfer = { transferId: signed.transferId, state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
+    admittedAt: existing?.admittedAt ?? new Date().toISOString(), admittedBy: existing?.admittedBy ?? actor.personId, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null,
+    admissionKeyId: key.keyId, admissionSha256: sha256Hex(signed.admission), admissionExpiresAt: signed.admissionExpiresAt };
   const saved = await saveVisit(config, { ...visit, chartTransfer: admission }, visit.version, true);
-  return { ...publicTransfer(saved), source: transferPayload(saved, admission, source) };
-}
-function transferPayload(visit: VisitItem, admission: ChartTransfer, source: TransferSource) {
-  return { transferId: admission.transferId, organizationId: visit.organizationId, patientRecordId: visit.patientRecordId, appointmentId: visit.appointmentId,
-    sourceRevision: source.revision, sourceDigest: source.digest, content: source.content, sourcePayload: source.payload, provenance: source.provenance };
+  return { ...publicTransfer(saved), source: signed };
 }
 async function recordCompletedTransfer(config: TelehealthConfiguration, visit: VisitItem, existing: ChartTransfer | null, authority: RecordAuthority, source: TransferSource): Promise<VisitItem> {
   const chart = authority.transfer;
@@ -2340,7 +2402,7 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
 }
 function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
 type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
-  | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch"
+  | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch" | "transfer_unavailable"
   | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"
   | "provider_unavailable" | "service_unavailable";
 class TelehealthError extends Error { constructor(readonly category: TelehealthRefusal) { super(category); } }

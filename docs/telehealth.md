@@ -375,6 +375,19 @@ it. The visit record carries `chartTransfer` (admitted/completed, source
 revision and digest, destination ids) and, once signed, `chartTransferSource`
 (the revision and digest a transfer must name).
 
+Three audit findings (Codex, October 10, `aa08cb4`) were repaired in the same
+lane: the chart now verifies a **signed admission** the telehealth boundary
+issues only after it has checked the signed visit record — HMAC under a key
+the boundary holds in Secrets Manager and the chart database holds in a
+private key table, binding subject, practitioner, source and the exact bytes;
+a general caller of the chart RPC cannot fabricate a "signed visit". Receipt
+reads are bound to the requested patient (another same-clinic patient sees
+"not this patient's appointment", never the receipt). And the calendar
+correction contract is explicit: an appointment that carries clinical records
+keeps its patient identity (`appointment_patient_identity_immutable`);
+correction is a status correction plus a successor appointment, and the
+original record stays with its patient.
+
 ## Not integrated yet — blocking for PHI
 
 These are stated so they are not mistaken for done:
@@ -384,9 +397,11 @@ These are stated so they are not mistaken for done:
   chart* action, as an UNSIGNED draft on the telehealth encounter, bound and
   retry-safe (`docs/telehealth-chart-lifecycle-2026-10-10.md`). It depends on
   forward candidate 113 (`transfer_telehealth_note`,
-  `get_telehealth_record_authority`, the append-only transfer ledger), which
-  is proposed and byte-pinned, not registered, applied or deployed. Until the
-  candidate is released, the action has no chart function behind it.
+  `get_telehealth_record_authority`, the append-only transfer ledger, the
+  admission key table), which is proposed and byte-pinned, not registered,
+  applied or deployed. Until the candidate is released and an admission key is
+  provisioned on both sides, the action has no chart function behind it and
+  the boundary refuses the transfer as unavailable.
 - **Record lifecycle — inventoried, not resolved.** Every telehealth text
   location is enumerated with the control that reaches it
   (`src/contracts/telehealthRecordInventory.ts`) and each visit's inventory

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 const { send, secretsSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn() }));
 const secretSend = secretsSend;
@@ -60,6 +60,13 @@ const config: TelehealthConfiguration = {
   stripeSuccessUrl: "",
   stripeCancelUrl: "",
   identityApiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com",
+  chartAdmissionSecretArn: "arn:aws:secretsmanager:us-east-2:000000000000:secret:fictional-chart-admission",
+};
+/** The fictional admission key the boundary signs with; the chart fixture holds the same bytes. Never a real secret. */
+const ADMISSION_KEY = { keyId: "fictional-admission-key-1", secret: "ab".repeat(32) };
+const admissionSecretAnswer = (command: { input?: { SecretId?: string } }) => {
+  if (command?.input?.SecretId === config.chartAdmissionSecretArn) return Promise.resolve({ SecretString: JSON.stringify(ADMISSION_KEY) });
+  return Promise.reject(new Error("fictional secret not found"));
 };
 
 const claims = {
@@ -574,6 +581,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     return calls;
   };
   const PRACTITIONER_ID = "11111111-aaaa-4aaa-8aaa-111111111111";
+  const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
   /** The chart's answer to `get_telehealth_record_authority` (the retained-record read path). */
   const recordAuthority = (overrides: Record<string, unknown> = {}) => ({ authorized: true, actor_person_id: workforceClaims["custom:person_id"], patient_record_id: PATIENT, legal_hold: false,
     appointment: { id: APPOINTMENT, status: "completed", deleted: false, appointment_type: "telehealth", patient_matches: true, practitioner_person_id: PRACTITIONER_ID }, transfer: null, ...overrides });
@@ -1222,49 +1230,108 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(authorityCalls(calls)).toHaveLength(0);
   });
 
-  it("transfer: admits the exact signed source, returns the canonical chart content once, and is idempotent across a lost response", async () => {
-    const calls = fetchRouter(identityRoutes());
+  const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
+    : value && typeof value === "object" ? `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}` : JSON.stringify(value === undefined ? null : value);
+  type SignedSource = { transferId: string; organizationId: string; patientRecordId: string; appointmentId: string; sourceRevision: number; sourceDigest: string; contentText: string; sourcePayloadText: string; provenanceText: string; admission: string; admissionSignature: string; admissionExpiresAt: string };
+  it("transfer: admits the exact signed source under the boundary's key, returns the exact bytes and a verifiable admission once, and is idempotent across a lost response", async () => {
+    // The chart resolves the caller to ITS person id; the admission binds that, not the JWT claim (which the record's admittedBy keeps).
+    const calls = fetchRouter(identityRoutes({ authority: recordAuthority({ actor_person_id: PRACTITIONER_ID }) }));
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
     queueGet(completedVisit());
     const read = JSON.parse((await readNote()).body ?? "{}").data as { chartTransferSource: { sourceRevision: number; sourceDigest: string } };
     const source = read.chartTransferSource;
     queueGet(completedVisit());
+    const before = Date.now();
     const admitted = await transfer({ sourceRevision: source.sourceRevision, sourceDigest: source.sourceDigest });
     expect(admitted.statusCode).toBe(200);
-    const payload = JSON.parse(admitted.body ?? "{}").data as { transfer: Record<string, unknown>; source: Record<string, unknown> };
-    expect(payload.transfer).toMatchObject({ state: "admitted", sourceRevision: 2, sourceDigest: source.sourceDigest, admittedBy: workforceClaims["custom:person_id"], encounterId: null, noteId: null });
+    const payload = JSON.parse(admitted.body ?? "{}").data as { transfer: Record<string, unknown>; source: SignedSource };
+    expect(payload.transfer).toMatchObject({ state: "admitted", sourceRevision: 2, sourceDigest: source.sourceDigest, admittedBy: workforceClaims["custom:person_id"], encounterId: null, noteId: null, admissionKeyId: ADMISSION_KEY.keyId, admissionSha256: sha256(payload.source.admission) });
     expect(payload.source).toMatchObject({ transferId: payload.transfer.transferId, organizationId: ORG, patientRecordId: PATIENT, appointmentId: APPOINTMENT, sourceRevision: 2, sourceDigest: source.sourceDigest });
-    const text = String((payload.source.content as Record<string, string>).text);
-    expect(Object.keys(payload.source.content as object)).toEqual(["text"]); // the chart's narrative note is one section
-    for (const expected of ["## Telehealth visit — AI Companion summary (reviewed)\nFictional summary.", "## What the patient reported\nFictional report.", "## Plan discussed\nFictional plan.", "## Practitioner notes\nFictional practitioner text.", "- Order ferritin (approved)", "no order, task or protocol change was created", "Transferred UNSIGNED for chart review"]) expect(text).toContain(expected);
-    expect(text).not.toContain("## Results reviewed"); // an empty section is not invented
-    expect(payload.source.sourcePayload).toMatchObject({ aiOriginal: { meeting_id: 900000001 }, revision: 2, signedBy: workforceClaims["custom:person_id"], providerMeetingUuid: "uuid-900000001" });
-    expect((payload.source.provenance as Array<Record<string, unknown>>).every((entry) => ["telehealth_visit", "practitioner_entered"].includes(String(entry.refType)))).toBe(true);
-    expect(putItems().at(-1)).toMatchObject({ chartTransfer: { state: "admitted", transferId: payload.transfer.transferId } });
-    expect(secretsSend).not.toHaveBeenCalled();
+    // The exact bytes the chart will hash: canonical JSON, the narrative note's single `text` section.
+    const content = JSON.parse(payload.source.contentText) as Record<string, string>;
+    expect(Object.keys(content)).toEqual(["text"]);
+    expect(payload.source.contentText).toBe(canonicalJson(content));
+    for (const expected of ["## Telehealth visit — AI Companion summary (reviewed)\nFictional summary.", "## What the patient reported\nFictional report.", "## Plan discussed\nFictional plan.", "## Practitioner notes\nFictional practitioner text.", "- Order ferritin (approved)", "no order, task or protocol change was created", "Transferred UNSIGNED for chart review"]) expect(content.text).toContain(expected);
+    expect(content.text).not.toContain("## Results reviewed"); // an empty section is not invented
+    expect(JSON.parse(payload.source.sourcePayloadText)).toMatchObject({ aiOriginal: { meeting_id: 900000001 }, revision: 2, signedBy: workforceClaims["custom:person_id"], providerMeetingUuid: "uuid-900000001" });
+    expect((JSON.parse(payload.source.provenanceText) as Array<Record<string, unknown>>).every((entry) => ["telehealth_visit", "practitioner_entered"].includes(String(entry.refType)))).toBe(true);
+    // The admission: the contract's members exactly, bound to the chart-resolved practitioner, the exact bytes, a short window — and it verifies under the key, which never appears in the response.
+    const admission = JSON.parse(payload.source.admission) as Record<string, unknown>;
+    expect(Object.keys(admission).sort()).toEqual(["appointment_id", "content_sha256", "contract", "expires_at", "intent", "issued_at", "key_id", "organization_id", "patient_record_id", "payload_sha256", "practitioner_person_id", "provenance_sha256", "source_custody", "source_digest", "source_record_version", "source_revision", "transfer_id"]);
+    expect(admission).toMatchObject({ contract: "telehealth-chart-admission/1", intent: "chart_draft", key_id: ADMISSION_KEY.keyId, transfer_id: payload.transfer.transferId, organization_id: ORG, patient_record_id: PATIENT, appointment_id: APPOINTMENT,
+      practitioner_person_id: PRACTITIONER_ID, source_custody: "telehealth-visit-record", source_record_version: 6, source_revision: 2, source_digest: source.sourceDigest,
+      content_sha256: sha256(payload.source.contentText), payload_sha256: sha256(payload.source.sourcePayloadText), provenance_sha256: sha256(payload.source.provenanceText) });
+    const window = Date.parse(String(admission.expires_at)) - Date.parse(String(admission.issued_at));
+    expect(window).toBe(15 * 60_000); expect(Date.parse(String(admission.issued_at))).toBeGreaterThanOrEqual(before - 1000);
+    expect(payload.source.admissionSignature).toBe(createHmac("sha256", Buffer.from(ADMISSION_KEY.secret, "hex")).update(payload.source.admission, "utf8").digest("hex"));
+    expect(admitted.body).not.toContain(ADMISSION_KEY.secret);
+    expect(putItems().at(-1)).toMatchObject({ chartTransfer: { state: "admitted", transferId: payload.transfer.transferId, admissionKeyId: ADMISSION_KEY.keyId } });
+    expect(JSON.stringify(putItems().at(-1))).not.toContain(payload.source.admissionSignature);
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect((secretsSend.mock.calls[0][0] as { input: { SecretId: string } }).input.SecretId).toBe(config.chartAdmissionSecretArn);
     expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
 
-    // The same attempt again (the desktop lost its response before the chart write): the SAME transfer id, nothing rewritten.
-    writes.length = 0;
-    const admission = putItems().at(-1)?.chartTransfer ?? (JSON.parse(admitted.body ?? "{}").data.transfer as Record<string, unknown>);
-    queueGet(completedVisit({ chartTransfer: admission, version: 7 }));
+    // The same attempt again (the desktop lost its response before the chart write): the SAME transfer id under a fresh admission, the record rewritten only with the new admission digest.
+    writes.length = 0; secretsSend.mockClear();
+    const first = putItems().at(-1)?.chartTransfer ?? (JSON.parse(admitted.body ?? "{}").data.transfer as Record<string, unknown>);
+    queueGet(completedVisit({ chartTransfer: first, version: 7 }));
     const again = await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest });
-    expect(JSON.parse(again.body ?? "{}").data.source.transferId).toBe(payload.transfer.transferId);
-    expect(writes).toHaveLength(0);
+    const againSource = JSON.parse(again.body ?? "{}").data.source as SignedSource;
+    expect(againSource.transferId).toBe(payload.transfer.transferId);
+    expect(JSON.parse(againSource.admission)).toMatchObject({ transfer_id: payload.transfer.transferId, content_sha256: sha256(payload.source.contentText) });
+    expect(againSource.admissionSignature).toBe(createHmac("sha256", Buffer.from(ADMISSION_KEY.secret, "hex")).update(againSource.admission, "utf8").digest("hex"));
+    expect(JSON.parse(again.body ?? "{}").data.transfer).toMatchObject({ transferId: payload.transfer.transferId, admittedAt: (first as Record<string, unknown>).admittedAt, admittedBy: workforceClaims["custom:person_id"] });
+    expect(secretsSend).toHaveBeenCalledTimes(1);
 
-    // The chart now holds the receipt (the chart write landed; its response was lost): complete reads it back and records it.
+    // The chart now holds the receipt (the chart write landed; its response was lost): complete reads it back and records it; no admission is minted for a read.
+    const admissionRecord = putItems().at(-1)?.chartTransfer as Record<string, unknown>;
+    secretsSend.mockClear();
     fetchRouter(identityRoutes({ authority: recordAuthority({ transfer: { transfer_id: payload.transfer.transferId, encounter_id: "eeeeeeee-1111-4111-8111-111111111111", note_id: "aaaaaaaa-2222-4222-8222-222222222222", note_version: 1,
       source_note_revision: 2, source_digest: source.sourceDigest, content_sha256: "c".repeat(64), transferred_at: "2026-10-10T01:00:00.000Z", transferred_by_person_id: workforceClaims["custom:person_id"], note_status: "draft", note_current_version: 1, note_deleted: false } }) }));
-    queueGet(completedVisit({ chartTransfer: admission, version: 7 }));
+    queueGet(completedVisit({ chartTransfer: admissionRecord, version: 8 }));
     const completed = await complete();
     expect(completed.statusCode).toBe(200);
     expect(JSON.parse(completed.body ?? "{}").data.transfer).toMatchObject({ state: "completed", transferId: payload.transfer.transferId, encounterId: "eeeeeeee-1111-4111-8111-111111111111", noteId: "aaaaaaaa-2222-4222-8222-222222222222", noteVersion: 1 });
-    // Completed is terminal and idempotent: transfer and complete both return the receipt without any further admission.
+    // Completed is terminal and idempotent: transfer and complete both return the receipt without any further admission or secret read.
     writes.length = 0;
     const receipt = JSON.parse(completed.body ?? "{}").data.transfer as Record<string, unknown>;
-    queueGet(completedVisit({ chartTransfer: receipt, version: 8 }));
+    queueGet(completedVisit({ chartTransfer: receipt, version: 9 }));
     expect(JSON.parse((await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest })).body ?? "{}").data).toMatchObject({ transfer: { state: "completed" }, source: null });
-    queueGet(completedVisit({ chartTransfer: receipt, version: 8 }));
+    queueGet(completedVisit({ chartTransfer: receipt, version: 9 }));
     expect(JSON.parse((await complete()).body ?? "{}").data.transfer).toMatchObject({ state: "completed" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+  });
+
+  it("transfer is unavailable, with nothing written and nothing minted, when the boundary holds no admission key, cannot read it, or the secret is malformed; a refused authority or stale source never reads the secret", async () => {
+    fetchRouter(identityRoutes());
+    queueGet(completedVisit());
+    const source = (JSON.parse((await readNote()).body ?? "{}").data as { chartTransferSource: { sourceDigest: string } }).chartTransferSource;
+    const attempt = (handlerConfig: TelehealthConfiguration) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/transfer", { appointmentId: APPOINTMENT, sourceRevision: 2, sourceDigest: source.sourceDigest }, workforceClaims));
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
+    queueGet(completedVisit());
+    const unprovisioned = await attempt({ ...config, chartAdmissionSecretArn: "" });
+    expect(unprovisioned.statusCode).toBe(503);
+    expect(JSON.parse(unprovisioned.body ?? "{}")).toEqual({ error: "transfer_unavailable" });
+    expect(secretsSend).not.toHaveBeenCalled();
+    for (const answer of [Promise.reject(new Error("fictional secrets outage")), Promise.resolve({ SecretString: "{not json" }), Promise.resolve({ SecretString: JSON.stringify({ keyId: "fictional-admission-key-1", secret: "too-short" }) }),
+      Promise.resolve({ SecretString: JSON.stringify({ keyId: "Bad Key", secret: "ab".repeat(32) }) }), Promise.resolve({ SecretBinary: new Uint8Array(4) })]) {
+      secretsSend.mockReset(); secretsSend.mockImplementation(() => answer);
+      queueGet(completedVisit());
+      const result = await attempt(config);
+      expect(result.statusCode).toBe(503);
+      expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "transfer_unavailable" });
+      expect(result.body).not.toContain("fictional secrets outage");
+    }
+    expect(writes).toHaveLength(0);
+    // Refusals that come first never touch the secret.
+    secretsSend.mockReset(); secretsSend.mockImplementation(admissionSecretAnswer);
+    queueGet(completedVisit());
+    expect((await transfer({ sourceRevision: 1, sourceDigest: "a".repeat(64) })).statusCode).toBe(409);
+    fetchRouter(identityRoutes({ authority: null }));
+    queueGet(completedVisit());
+    expect((await transfer({ sourceRevision: 2, sourceDigest: source.sourceDigest })).statusCode).toBe(403);
+    expect(secretsSend).not.toHaveBeenCalled();
     expect(writes).toHaveLength(0);
   });
 

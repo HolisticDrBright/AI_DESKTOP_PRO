@@ -19,7 +19,7 @@ const config: TelehealthConfiguration = { tableName: "fictional", consumerIssuer
   workforceAudience: "staff-client", runtimeMode: "synthetic", phiAllowed: false, zoomEnabled: false, zoomBaaVerified: false, zoomSecretArn: "",
   remindersEnabled: false, reminderSender: "", reminderConfigurationSet: "", reminderScheduleGroup: "", reminderSchedulerRoleArn: "", reminderTargetArn: "",
   reminderEventsTopicArn: "", stripeTestEnabled: false, stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "",
-  identityApiOrigin: "https://fictional.execute-api.us-east-2.amazonaws.com" };
+  identityApiOrigin: "https://fictional.execute-api.us-east-2.amazonaws.com", chartAdmissionSecretArn: "" };
 const zoom = { ...config, zoomEnabled: true, zoomBaaVerified: true, zoomSecretArn: "arn:fictional" };
 const stripe = { ...config, stripeTestEnabled: true, stripeSecretArn: "arn:fictional", stripeSuccessUrl: "https://example.test/ok", stripeCancelUrl: "https://example.test/cancel" };
 const request = (patch: Record<string, unknown> = {}) => ({ pk: `ORG#${org}`, sk: `REQ#${requestId}`, requestId, organizationId: org, consumerPersonId: owner,

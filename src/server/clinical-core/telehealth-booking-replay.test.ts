@@ -15,7 +15,7 @@ const config: TelehealthConfiguration = { tableName: "fictional", consumerIssuer
   workforceIssuer: "fictional-workforce", workforceAudience: "fictional-staff", runtimeMode: "synthetic", phiAllowed: false,
   zoomEnabled: false, zoomBaaVerified: false, zoomSecretArn: "", remindersEnabled: false, reminderSender: "", reminderConfigurationSet: "",
   reminderScheduleGroup: "", reminderSchedulerRoleArn: "", reminderTargetArn: "", reminderEventsTopicArn: "", stripeTestEnabled: false,
-  stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "", identityApiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com" };
+  stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "", identityApiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com", chartAdmissionSecretArn: "" };
 const input = () => ({ visitType: "follow_up", slotId, holdId, note: "Fictional scheduling note", replayProtocol: "hold-booking/1" });
 function event(body: Record<string, unknown>, person = owner) { return { routeKey: "POST /clinical-core/consumer/appointments/requests",
   headers: { "content-type": "application/json" }, body: JSON.stringify(body), requestContext: { authorizer: { jwt: { claims: {

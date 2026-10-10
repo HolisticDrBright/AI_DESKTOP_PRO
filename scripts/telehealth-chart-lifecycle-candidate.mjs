@@ -4,8 +4,8 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 export const TELEHEALTH_CHART_LIFECYCLE_PARENT = Object.freeze({ count: 112,
   ledger: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4',
   assembly: '6cc191355442ae2c2349cab50466979eaab0e45961a4e1547f34785294dce4b9' });
-export const TELEHEALTH_CHART_LIFECYCLE_SQL_SHA256 = 'afeb523f3f96c9e7285d498a2a6f1293b51493a487e69cc5486b5d0e49c61938';
-export const TELEHEALTH_CHART_LIFECYCLE_FILE = '20261010110000_production_telehealth_chart_lifecycle.sql';
+export const TELEHEALTH_CHART_LIFECYCLE_SQL_SHA256 = '1afc499793172f0a3ce76ca465bc857063dd2105044c9009fff73498dfa1d070';
+export const TELEHEALTH_CHART_LIFECYCLE_FILE = '20261010150000_production_telehealth_chart_lifecycle.sql';
 const ledger = a => sha(a.manifest.migrations.map(m => m.version + ':' + sha(a.files[m.file])).join('\n'));
 const assembly = a => sha(a.manifest.migrations.map(m => m.version + ':' + m.file + ':' + sha(a.files[m.file])).join('\n'));
 /**
@@ -37,9 +37,9 @@ export function telehealthChartLifecycleCandidate(parent, source) {
   const manifest = { ...parent.manifest, migrations: [...rows, { version: file.slice(0, 14), file }] };
   const files = { ...parent.files, [file]: sql }, artifact = { manifest, files };
   return { ...artifact, releaseHash: assembly(artifact), candidate: {
-    contract: 'telehealth-chart-lifecycle-candidate/1', parentMigrationCount: p.count, parentMigrationReleaseSha256: p.ledger,
+    contract: 'telehealth-chart-lifecycle-candidate/2', parentMigrationCount: p.count, parentMigrationReleaseSha256: p.ledger,
     parentArtifactSha256: p.assembly, migrationCount: 113, migrationReleaseSha256: ledger(artifact),
     extensionSha256: sha(sql), deployment: 'not_deployed', activation: 'blocked', phiAllowed: false,
-    seededApprovals: false, seededConsents: false, seededTransfers: false,
+    seededApprovals: false, seededConsents: false, seededTransfers: false, seededAdmissionKeys: false,
   } };
 }

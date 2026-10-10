@@ -2,8 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
+import { createAwsProductionDesktopAdapter, ProductionDesktopError, type ProductionRequestContext } from './aws-production-desktop';
+import { classifyDatabaseRejection } from './rds-data-database';
 import type { ClinicalCoreDatabase } from './database';
 
 /**
@@ -15,8 +17,11 @@ import type { ClinicalCoreDatabase } from './database';
  */
 type Artifact = { manifest: { migrations: { version: string; file: string }[] }; files: Record<string, string>; releaseHash: string; candidate: Record<string, unknown> };
 const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
-let pg: PGlite, artifact: Artifact;
-let org: string, foreignOrg: string, practitioner: string, colleague: string, staff: string, outsider: string, patient: string, otherPatient: string, appointment: string;
+let pg: PGlite, artifact: Artifact, admin: ClinicalCoreDatabase;
+let org: string, foreignOrg: string, practitioner: string, colleague: string, staff: string, outsider: string, admin_: string, patient: string, otherPatient: string, appointment: string;
+/** A fictional admission key, registered with a privileged connection exactly as an operator would — never through any API role. */
+const ADMISSION_KEY = { keyId: 'fictional-admission-key-1', secret: Buffer.from('ab'.repeat(32), 'hex') };
+const RETIRED_KEY = { keyId: 'fictional-admission-key-0', secret: Buffer.from('cd'.repeat(32), 'hex') };
 
 type Caller = { who?: string; organization?: string; pool?: string };
 async function call<T = unknown>(sql: string, args: unknown[] = [], caller: Caller = {}) {
@@ -44,11 +49,51 @@ const provenance = (appointmentId: string) => [
   { sectionKey: 'practitioner_notes', refType: 'practitioner_entered', refId: null, label: 'Practitioner notes during the visit' },
 ];
 const digestOf = (value: unknown) => sha(JSON.stringify(value));
-const transfer = (overrides: Partial<{ transferId: string; appointmentId: string; patientId: string; revision: number; digest: string; organization: string }> = {}, caller: Caller = {}) =>
-  call<Transfer>('select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb) as result', [
-    overrides.organization ?? org, overrides.transferId ?? randomUUID(), overrides.appointmentId ?? appointment, overrides.patientId ?? patient,
-    overrides.revision ?? 2, overrides.digest ?? digestOf(payload), JSON.stringify(content), JSON.stringify(payload), JSON.stringify(provenance(overrides.appointmentId ?? appointment)),
-  ], caller);
+/** Deterministic JSON (sorted keys): what the telehealth boundary signs and sends, byte for byte. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+  return JSON.stringify(value === undefined ? null : value);
+}
+type TransferArgs = { organization: string; transferId: string; appointmentId: string; patientId: string; revision: number; digest: string;
+  content: unknown; payload: unknown; provenance: unknown; practitioner: string; key: { keyId: string; secret: Buffer };
+  issuedAt: string; expiresAt: string; admissionOverrides: Record<string, unknown> };
+/**
+ * What the telehealth boundary does after it has verified the signed visit
+ * record and the caller's retained-record authority: hash the exact bytes it
+ * will send and sign the admission under its key. The test is the boundary.
+ */
+function admit(args: TransferArgs) {
+  const contentText = canonicalJson(args.content), payloadText = canonicalJson(args.payload), provenanceText = canonicalJson(args.provenance);
+  const admission = canonicalJson({
+    contract: 'telehealth-chart-admission/1', intent: 'chart_draft', key_id: args.key.keyId, transfer_id: args.transferId,
+    organization_id: args.organization, patient_record_id: args.patientId, appointment_id: args.appointmentId, practitioner_person_id: args.practitioner,
+    source_custody: 'telehealth-visit-record', source_record_version: 6, source_revision: args.revision, source_digest: args.digest,
+    content_sha256: sha(contentText), payload_sha256: sha(payloadText), provenance_sha256: sha(provenanceText),
+    issued_at: args.issuedAt, expires_at: args.expiresAt, ...args.admissionOverrides,
+  });
+  const signature = createHmac('sha256', args.key.secret).update(admission, 'utf8').digest('hex');
+  return { contentText, payloadText, provenanceText, admission, signature };
+}
+function transferArgs(overrides: Partial<TransferArgs> = {}): TransferArgs {
+  const now = Date.now();
+  const appointmentId = overrides.appointmentId ?? appointment;
+  return { organization: org, transferId: randomUUID(), appointmentId, patientId: patient, revision: 2, digest: digestOf(payload),
+    content, payload, provenance: provenance(appointmentId), practitioner, key: ADMISSION_KEY,
+    issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 15 * 60_000).toISOString(), admissionOverrides: {}, ...overrides };
+}
+const TRANSFER_SQL = 'select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as result';
+const transfer = (overrides: Partial<TransferArgs> = {}, caller: Caller = {}, signature?: string) => {
+  const args = transferArgs(overrides); const signed = admit(args);
+  return call<Transfer>(TRANSFER_SQL, [args.organization, args.transferId, args.appointmentId, args.patientId, args.revision, args.digest,
+    signed.contentText, signed.payloadText, signed.provenanceText, signed.admission, signature ?? signed.signature], caller);
+};
+/** The same call with the admission minted for one set of values and the SQL arguments carrying another (a substitution). */
+const substituted = (admitted: Partial<TransferArgs>, sent: Partial<TransferArgs & { contentText: string; payloadText: string; provenanceText: string }>, caller: Caller = {}) => {
+  const args = transferArgs(admitted); const signed = admit(args); const s = { ...args, ...sent };
+  return call<Transfer>(TRANSFER_SQL, [s.organization, s.transferId, s.appointmentId, s.patientId, s.revision, s.digest,
+    sent.contentText ?? signed.contentText, sent.payloadText ?? signed.payloadText, sent.provenanceText ?? signed.provenanceText, signed.admission, signed.signature], caller);
+};
 const authority = (overrides: Partial<{ appointmentId: string; patientId: string; organization: string }> = {}, caller: Caller = {}) =>
   call<Authority>('select clinical_core.get_telehealth_record_authority($1,$2,$3) as result', [overrides.organization ?? org, overrides.patientId ?? patient, overrides.appointmentId ?? appointment], caller);
 
@@ -66,7 +111,7 @@ beforeAll(async () => {
   pg = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version,
     name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
-  const admin: ClinicalCoreDatabase = { transaction: work => pg.transaction(tx => work({ query: (sql, parameters = []) => tx.query(sql, [...parameters]) })) };
+  admin = { transaction: work => pg.transaction(tx => work({ query: (sql, parameters = []) => tx.query(sql, [...parameters]) })) };
   await applyProductionClinicalCoreMigrations(admin, migrations.slice(0, 106));
   // Forward source rehearsal only: 107..113 are fictional in-memory ledger rows, not a reviewed preserving upgrade.
   for (const entry of migrations.slice(106)) {
@@ -75,12 +120,14 @@ beforeAll(async () => {
     await pg.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)', [entry.version, entry.name, entry.sha256]);
   }
   expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.telehealth_note_transfers')).rows[0].n).toBe(0);
+  // The artifact seeds no key: before an operator registers one, every transfer is unavailable (proven below), then the fictional keys are registered.
+  expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_private.telehealth_admission_keys')).rows[0].n).toBe(0);
 }, 120000);
 afterAll(async () => { await pg?.close(); });
 beforeEach(async () => {
-  [org, foreignOrg, practitioner, colleague, staff, outsider, patient, otherPatient] = Array.from({ length: 8 }, () => randomUUID());
+  [org, foreignOrg, practitioner, colleague, staff, outsider, admin_, patient, otherPatient] = Array.from({ length: 9 }, () => randomUUID());
   for (const id of [org, foreignOrg]) await pg.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL')", [id]);
-  for (const [id, role, organization] of [[practitioner, 'practitioner', org], [colleague, 'practitioner', org], [staff, 'staff', org], [outsider, 'practitioner', foreignOrg]] as const) {
+  for (const [id, role, organization] of [[practitioner, 'practitioner', org], [colleague, 'practitioner', org], [staff, 'staff', org], [outsider, 'practitioner', foreignOrg], [admin_, 'admin', org]] as const) {
     await pg.query('insert into clinical_core.persons(id,subject_key) values($1,$2)', [id, 'subject_' + id.replaceAll('-', '')]);
     await pg.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'workforce',$2,true)", [id, 'subject-' + id]);
     await pg.query('insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,$3)', [organization, id, role]);
@@ -89,6 +136,11 @@ beforeEach(async () => {
     await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','PATIENT')", [id, organization, 'patient_' + id.replaceAll('-', '')]);
   }
   appointment = await bookAppointment();
+  if ((await pg.query<{ n: number }>('select count(*)::int n from clinical_private.telehealth_admission_keys')).rows[0].n === 0) {
+    expect(await refusal(transfer())).toMatch(/telehealth_admission_unavailable/);
+    for (const key of [RETIRED_KEY, ADMISSION_KEY]) await pg.query('insert into clinical_private.telehealth_admission_keys(key_id,secret) values($1,$2)', [key.keyId, key.secret]);
+    await pg.query('update clinical_private.telehealth_admission_keys set retired_at=now() where key_id=$1', [RETIRED_KEY.keyId]);
+  }
 });
 
 describe('transfer of a reviewed telehealth note into the chart as an unsigned draft', () => {
@@ -104,12 +156,15 @@ describe('transfer of a reviewed telehealth note into the chart as an unsigned d
     expect(version.content).toEqual(content); expect(version.save_kind).toBe('manual'); expect(version.content_sha256).toBe(receipt.content_sha256);
     const refs = (await pg.query<{ ref_type: string; ref_id: string | null; section_key: string }>('select ref_type,ref_id,section_key from clinical_core.note_provenance_refs where note_id=$1 order by section_key', [receipt.note_id])).rows;
     expect(refs).toEqual([{ ref_type: 'practitioner_entered', ref_id: null, section_key: 'practitioner_notes' }, { ref_type: 'telehealth_visit', ref_id: appointment, section_key: 'telehealth_summary' }]);
-    const row = (await pg.query<{ source_payload: unknown; source_note_revision: number; source_digest: string; patient_record_id: string; transferred_by_person_id: string }>(
-      'select source_payload,source_note_revision,source_digest,patient_record_id,transferred_by_person_id from clinical_core.telehealth_note_transfers where id=$1', [receipt.transfer_id])).rows[0];
-    expect(row).toMatchObject({ source_payload: payload, source_note_revision: 2, source_digest: digestOf(payload), patient_record_id: patient, transferred_by_person_id: practitioner });
+    const row = (await pg.query<{ source_payload: unknown; source_note_revision: number; source_digest: string; patient_record_id: string; transferred_by_person_id: string; admission_key_id: string; admission: Record<string, unknown>; admission_sha256: string }>(
+      'select source_payload,source_note_revision,source_digest,patient_record_id,transferred_by_person_id,admission_key_id,admission,admission_sha256 from clinical_core.telehealth_note_transfers where id=$1', [receipt.transfer_id])).rows[0];
+    expect(row).toMatchObject({ source_payload: payload, source_note_revision: 2, source_digest: digestOf(payload), patient_record_id: patient, transferred_by_person_id: practitioner, admission_key_id: ADMISSION_KEY.keyId });
+    expect(row.admission).toMatchObject({ contract: 'telehealth-chart-admission/1', intent: 'chart_draft', transfer_id: receipt.transfer_id, practitioner_person_id: practitioner, content_sha256: sha(canonicalJson(content)) });
+    expect(row.admission_sha256).toMatch(/^[0-9a-f]{64}$/);
     const audit = (await pg.query<{ action: string; resource_id: string }>("select action,resource_id from clinical_audit.events where action in ('telehealth.note_transferred','note.draft_created','encounter.started') and organization_id=$1 order by action", [org])).rows;
     expect(audit.map(e => e.action)).toEqual(['encounter.started', 'note.draft_created', 'telehealth.note_transferred']);
     expect(audit.find(e => e.action === 'telehealth.note_transferred')?.resource_id).toBe(receipt.note_id);
+    expect((await pg.query<{ m: Record<string, unknown> }>("select safe_metadata m from clinical_audit.events where action='telehealth.note_transferred' and organization_id=$1", [org])).rows[0].m).toMatchObject({ admission_key_id: ADMISSION_KEY.keyId });
     expect((await pg.query('select 1 from clinical_core.note_signatures where note_id=$1', [receipt.note_id])).rows).toHaveLength(0);
   });
 
@@ -130,7 +185,7 @@ describe('transfer of a reviewed telehealth note into the chart as an unsigned d
     const repeat = await transfer({ transferId: '22222222-2222-4222-8222-222222222222' });
     expect(repeat).toMatchObject({ transfer_id: first.transfer_id, encounter_id: first.encounter_id, note_id: first.note_id, note_version: 1, created: false });
     // A second caller (the other order of a race, or a retry that lost its id) with the same source.
-    const racer = await transfer({ transferId: randomUUID() }, { who: colleague });
+    const racer = await transfer({ transferId: randomUUID(), practitioner: colleague }, { who: colleague });
     expect(racer).toMatchObject({ transfer_id: first.transfer_id, note_id: first.note_id, created: false });
     expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.clinical_notes where encounter_id=$1', [first.encounter_id])).rows[0].n).toBe(1);
     // Reconciliation read: the authoritative receipt for this appointment.
@@ -148,9 +203,9 @@ describe('transfer of a reviewed telehealth note into the chart as an unsigned d
 
   it('binds the transfer server-side: foreign clinic, staff role, wrong patient, patient/appointment mismatch, non-telehealth and deleted appointments are refused with nothing written', async () => {
     const cases: Array<[string, () => Promise<unknown>, RegExp]> = [
-      ['foreign clinic member', () => transfer({}, { who: outsider }), /request_context_refused|clinical_role_required|membership/],
-      ['foreign organization claim', () => transfer({ organization: foreignOrg }, { who: outsider, organization: foreignOrg }), /patient_not_found/],
-      ['staff role', () => transfer({}, { who: staff }), /clinical_role_required/],
+      ['foreign clinic member', () => transfer({ practitioner: outsider }, { who: outsider }), /request_context_refused|clinical_role_required|membership/],
+      ['foreign organization claim', () => transfer({ organization: foreignOrg, practitioner: outsider }, { who: outsider, organization: foreignOrg }), /patient_not_found/],
+      ['staff role', () => transfer({ practitioner: staff }, { who: staff }), /clinical_role_required/],
       ['patient of another clinic', () => transfer({ patientId: otherPatient }), /patient_not_found/],
       ['consumer pool', () => transfer({}, { pool: 'consumer' }), /request_context_refused|clinical_role_required/],
     ];
@@ -174,8 +229,11 @@ describe('transfer of a reviewed telehealth note into the chart as an unsigned d
     expect(await refusal(transfer({ transferId: '33333333-3333-4333-8333-333333333333', appointmentId: second }))).toMatch(/telehealth_transfer_id_reused/);
     expect(await refusal(transfer({ appointmentId: second, digest: 'not-a-digest' }))).toMatch(/telehealth_transfer_invalid/);
     expect(await refusal(transfer({ appointmentId: second, revision: 0 }))).toMatch(/telehealth_transfer_invalid/);
-    expect(await refusal(call('select clinical_core.transfer_telehealth_note($1,$2,$3,$4,1,$5,$6::jsonb,$7::jsonb,$8::jsonb) as result',
-      [org, randomUUID(), second, patient, digestOf(payload), '[]', JSON.stringify(payload), '[]']))).toMatch(/telehealth_transfer_invalid/);
+    expect(await refusal(transfer({ appointmentId: second, content: [] })), 'content not an object').toMatch(/telehealth_transfer_invalid/);
+    expect(await refusal(transfer({ appointmentId: second, provenance: {} })), 'provenance not an array').toMatch(/telehealth_transfer_invalid/);
+    expect(await refusal(call(TRANSFER_SQL, [org, randomUUID(), second, patient, 2, digestOf(payload), '{not json', '{}', '[]', '{}', 'f'.repeat(64)])), 'unparseable content').toMatch(/telehealth_transfer_invalid/);
+    expect(await refusal(call(TRANSFER_SQL, [org, randomUUID(), second, patient, 2, digestOf(payload), '{}', '{}', '[]', '{"key_id":1}', 'zz'])), 'malformed signature').toMatch(/telehealth_transfer_invalid/);
+    expect(await refusal(call(TRANSFER_SQL, [org, randomUUID(), second, patient, 2, digestOf(payload), '{}', '{}', '[]', '{"transfer_id":"not-a-uuid"}', 'f'.repeat(64)])), 'unparseable admission binding').toMatch(/telehealth_transfer_invalid/);
     expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.telehealth_note_transfers where organization_id=$1', [org])).rows[0].n).toBe(1);
     expect(first.created).toBe(true);
   });
@@ -213,22 +271,59 @@ describe('retained-record read authority for completed visits', () => {
     expect((await authority()).legal_hold).toBe(true);
   });
 
-  it('survives calendar changes: a deleted, moved or re-patiented appointment does not erase access to the retained record, and says so', async () => {
+  it('survives calendar changes: a rescheduled or deleted appointment does not erase access to the retained record, and says so', async () => {
     const receipt = await transfer();
     await pg.query("update clinical_core.appointments set starts_at='2025-01-01T17:00:00Z',ends_at='2025-01-01T17:30:00Z' where id=$1", [appointment]);
     expect((await authority()).transfer?.transfer_id).toBe(receipt.transfer_id);
-    const unrelated = randomUUID();
-    await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','OTHER')", [unrelated, org, 'patient_' + unrelated.replaceAll('-', '')]);
-    await pg.query('update clinical_core.appointments set patient_record_id=$2 where id=$1', [appointment, unrelated]).catch(() => undefined);
-    const moved = await authority();
-    expect(moved.authorized).toBe(true);
-    if (moved.appointment) expect(typeof moved.appointment.patient_matches).toBe('boolean');
     await pg.query('update clinical_core.appointments set deleted_at=now() where id=$1', [appointment]);
     const deleted = await authority();
     expect(deleted.authorized).toBe(true);
     expect(deleted.appointment?.deleted).toBe(true);
     expect(deleted.transfer?.note_id).toBe(receipt.note_id);
     expect((await authority({ appointmentId: randomUUID() })).appointment).toBeNull();
+  });
+
+  it('Codex A2: never returns another same-clinic patient\'s transfer receipt, and describes their appointment only as not this patient\'s', async () => {
+    const receipt = await transfer();
+    const unrelated = randomUUID();
+    await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','OTHER')", [unrelated, org, 'patient_' + unrelated.replaceAll('-', '')]);
+    const response = await authority({ patientId: unrelated });
+    expect(response).toMatchObject({ authorized: true, patient_record_id: unrelated, transfer: null });
+    expect(response.appointment).toEqual({ id: appointment, patient_matches: false });
+    expect(JSON.stringify(response)).not.toContain(receipt.note_id);
+    expect(JSON.stringify(response)).not.toContain(receipt.transfer_id);
+    expect(JSON.stringify(response)).not.toContain(receipt.encounter_id);
+    // The original patient's read is unchanged.
+    expect((await authority()).transfer).toMatchObject({ transfer_id: receipt.transfer_id, note_id: receipt.note_id });
+    expect((await authority()).appointment).toMatchObject({ id: appointment, patient_matches: true, status: 'completed' });
+  });
+
+  it('Codex A3 — the correction contract: patient identity of an appointment that carries clinical records is immutable; correction is a status correction plus a successor appointment, and the original record stays with its patient', async () => {
+    const receipt = await transfer();
+    const unrelated = randomUUID();
+    await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','OTHER')", [unrelated, org, 'patient_' + unrelated.replaceAll('-', '')]);
+    // A raw re-patienting of the original appointment is refused by name, with a privileged connection, before any foreign key.
+    expect(await refusal(pg.query('update clinical_core.appointments set patient_record_id=$2 where id=$1', [appointment, unrelated]))).toMatch(/appointment_patient_identity_immutable/);
+    expect((await pg.query<{ p: string }>('select patient_record_id p from clinical_core.appointments where id=$1', [appointment])).rows[0].p).toBe(patient);
+    // An appointment with NO clinical record is not what this guard is about: the foreign keys and the absence of any re-patienting operation govern it; the guard lets it through.
+    const bare = await bookAppointment();
+    await pg.query('update clinical_core.appointments set patient_record_id=$2 where id=$1', [bare, unrelated]);
+    // No governed operation re-patients: the scheduling corrections change status (admin, with reason, audited) and never the patient.
+    const corrected = await call<{ ok: boolean; status: string }>("select clinical_core.correct_appointment_status($1,'cancelled','Fictional: booked under the wrong patient',null) as result", [appointment], { who: admin_ });
+    expect(corrected).toMatchObject({ ok: true, status: 'cancelled' });
+    expect(await refusal(call("select clinical_core.correct_appointment_status($1,'cancelled','Fictional',null) as result", [bare], { who: practitioner }))).toMatch(/organization_admin_required|correction_refused/);
+    const successor = await bookAppointment(unrelated);
+    // The original record stays with the patient it was recorded for, under the corrected appointment.
+    const original = await authority();
+    expect(original.transfer).toMatchObject({ transfer_id: receipt.transfer_id, note_id: receipt.note_id, note_status: 'draft' });
+    expect(original.appointment).toMatchObject({ id: appointment, status: 'cancelled', patient_matches: true });
+    expect((await pg.query<{ action: string }>("select action from clinical_audit.events where resource_id=$1 and action='appointment.corrected'", [appointment])).rows).toHaveLength(1);
+    // The right patient's successor appointment carries no transfer; the original appointment is "not this patient's" for them.
+    expect(await authority({ patientId: unrelated, appointmentId: successor })).toMatchObject({ transfer: null, appointment: { id: successor, patient_matches: true, status: 'completed' } });
+    expect((await authority({ patientId: unrelated })).appointment).toEqual({ id: appointment, patient_matches: false });
+    // A transfer to the successor needs its own admitted signed source; the original admission is bound to the original appointment and patient.
+    expect(await refusal(substituted({}, { appointmentId: successor, patientId: unrelated }))).toMatch(/telehealth_admission_mismatch/);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.telehealth_note_transfers where organization_id=$1', [org])).rows[0].n).toBe(1);
   });
 
   it('refuses revoked membership, wrong clinic, wrong patient, a staff-only role and a consumer caller; a missing authority response is a refusal', async () => {
@@ -248,5 +343,143 @@ describe('retained-record read authority for completed visits', () => {
     expect(await refusal(authority({}, { who: colleague })), 'removed membership').toMatch(/request_context_refused|clinical_role_required|membership/);
     await pg.query("update clinical_core.patient_records set status='archived' where id=$1", [patient]);
     expect(await refusal(authority({}, { who: staff })), 'archived patient, staff').toMatch(/clinical_role_required/);
+  });
+});
+
+describe('Codex A1: source admission at the chart write boundary', () => {
+  const noWrites = async () => {
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.telehealth_note_transfers where organization_id=$1', [org])).rows[0].n).toBe(0);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.clinical_notes where organization_id=$1', [org])).rows[0].n).toBe(0);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.encounters where organization_id=$1', [org])).rows[0].n).toBe(0);
+  };
+
+  it('refuses forged source/signature claims with no admitted signed visit: no admission, a self-made admission, a retired or unknown key', async () => {
+    const forged = { text: 'FABRICATED signed telehealth source' };
+    const forgedPayload = { signedAt: '2026-10-10T00:00:00Z', signedBy: colleague, aiOriginal: 'Fabricated provider summary' };
+    const forgedProvenance = [{ sectionKey: 'text', refType: 'telehealth_visit', refId: appointment, label: 'Fabricated signed source' }];
+    // The audit's reproduction: valid workforce context, completed calendar appointment, fabricated revision 99, digest, payload and provenance — and no admission.
+    expect(await refusal(call(TRANSFER_SQL, [org, randomUUID(), appointment, patient, 99, sha('unverified source claim'),
+      JSON.stringify(forged), JSON.stringify(forgedPayload), JSON.stringify(forgedProvenance), '{}', 'f'.repeat(64)]))).toMatch(/telehealth_admission_refused|telehealth_transfer_invalid/);
+    // The same claim under an admission the caller wrote and signed with a key of its own.
+    expect(await refusal(transfer({ content: forged, payload: forgedPayload, provenance: forgedProvenance, revision: 99, digest: sha('unverified source claim'), key: { keyId: ADMISSION_KEY.keyId, secret: Buffer.from('99'.repeat(32), 'hex') } }))).toMatch(/telehealth_admission_refused/);
+    // A key id this database never registered, and a retired key.
+    expect(await refusal(transfer({ key: { keyId: 'fictional-unknown-key', secret: ADMISSION_KEY.secret } }))).toMatch(/telehealth_admission_refused/);
+    expect(await refusal(transfer({ key: RETIRED_KEY }))).toMatch(/telehealth_admission_refused/);
+    // A correctly signed admission whose signature is then tampered.
+    const args = transferArgs(); const signed = admit(args);
+    expect(await refusal(call(TRANSFER_SQL, [org, args.transferId, appointment, patient, 2, args.digest, signed.contentText, signed.payloadText, signed.provenanceText, signed.admission, signed.signature.replace(/^./, (c) => c === '0' ? '1' : '0')]))).toMatch(/telehealth_admission_refused/);
+    expect(await refusal(call(TRANSFER_SQL, [org, args.transferId, appointment, patient, 2, args.digest, signed.contentText, signed.payloadText, signed.provenanceText, signed.admission.replace('chart_draft', 'chart_draft '), signed.signature]))).toMatch(/telehealth_admission_refused|telehealth_transfer_invalid/);
+    await noWrites();
+  });
+
+  it('refuses substituted text under the same digest claim, a substituted signer/provenance, another clinic/patient/appointment, another practitioner and a reused intent', async () => {
+    const cases: Array<[string, () => Promise<unknown>, RegExp]> = [
+      ['substituted content bytes (admission for the real content)', () => substituted({}, { contentText: canonicalJson({ text: 'SUBSTITUTED after admission' }) }), /telehealth_admission_mismatch/],
+      ['substituted payload (another signer claimed)', () => substituted({}, { payloadText: canonicalJson({ ...payload, signedBy: colleague, signedAt: '2026-10-10T00:00:00Z' }) }), /telehealth_admission_mismatch/],
+      ['substituted provenance', () => substituted({}, { provenanceText: canonicalJson([{ sectionKey: 'text', refType: 'telehealth_visit', refId: appointment, label: 'Fabricated' }]) }), /telehealth_admission_mismatch/],
+      ['substituted source revision', () => substituted({}, { revision: 3 }), /telehealth_admission_mismatch/],
+      ['substituted source digest', () => substituted({}, { digest: sha('other source') }), /telehealth_admission_mismatch/],
+      ['substituted transfer id', () => substituted({}, { transferId: randomUUID() }), /telehealth_admission_mismatch/],
+      ['admission for another practitioner', () => transfer({ practitioner: colleague }), /telehealth_admission_mismatch/],
+      ['presented by another practitioner', () => transfer({}, { who: colleague }), /telehealth_admission_mismatch/],
+      ['admission naming another patient', () => transfer({ admissionOverrides: { patient_record_id: otherPatient } }), /telehealth_admission_mismatch/],
+      ['admission naming another clinic', () => transfer({ admissionOverrides: { organization_id: foreignOrg } }), /telehealth_admission_mismatch/],
+      ['admission for another intent', () => transfer({ admissionOverrides: { intent: 'chart_signed' } }), /telehealth_admission_mismatch/],
+      ['admission under another contract', () => transfer({ admissionOverrides: { contract: 'telehealth-chart-admission/0' } }), /telehealth_admission_mismatch/],
+      ['admission from another custody', () => transfer({ admissionOverrides: { source_custody: 'spreadsheet' } }), /telehealth_admission_mismatch/],
+      ['admission with an extra member', () => transfer({ admissionOverrides: { signed_by_chart: true } }), /telehealth_admission_mismatch/],
+      ['admission with a member missing', () => transfer({ admissionOverrides: { source_record_version: undefined } }), /telehealth_admission_mismatch|telehealth_transfer_invalid/],
+    ];
+    for (const [label, attempt, pattern] of cases) expect(await refusal(attempt()), label).toMatch(pattern);
+    const otherAppointment = await bookAppointment();
+    expect(await refusal(substituted({}, { appointmentId: otherAppointment })), 'admission for another appointment').toMatch(/telehealth_admission_mismatch/);
+    // Authority withdrawn between admission and the chart write: the chart re-checks it and refuses, whatever the admission says.
+    const minted = transferArgs(); const signed = admit(minted);
+    await pg.query("update clinical_core.organization_memberships set status='suspended' where person_id=$1", [practitioner]);
+    expect(await refusal(call(TRANSFER_SQL, [org, minted.transferId, appointment, patient, 2, minted.digest, signed.contentText, signed.payloadText, signed.provenanceText, signed.admission, signed.signature])), 'withdrawn authority').toMatch(/request_context_refused|clinical_role_required|membership/);
+    await pg.query("update clinical_core.patient_records set status='archived' where id=$1", [patient]);
+    expect(await refusal(transfer({ practitioner: colleague }, { who: colleague })), 'archived patient').toMatch(/patient_not_found|clinical_role_required/);
+    await noWrites();
+  });
+
+  it('refuses an expired, not-yet-issued or over-long admission; a valid one within its window is accepted once and its exact retry returns the receipt', async () => {
+    const now = Date.now();
+    expect(await refusal(transfer({ issuedAt: new Date(now - 3_600_000).toISOString(), expiresAt: new Date(now - 60_000).toISOString() })), 'expired').toMatch(/telehealth_admission_mismatch/);
+    expect(await refusal(transfer({ issuedAt: new Date(now + 3_600_000).toISOString(), expiresAt: new Date(now + 7_200_000).toISOString() })), 'issued in the future').toMatch(/telehealth_admission_mismatch/);
+    expect(await refusal(transfer({ issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 2 * 3_600_000).toISOString() })), 'window over one hour').toMatch(/telehealth_admission_mismatch/);
+    await noWrites();
+    const args = transferArgs(); const signed = admit(args);
+    const params = [org, args.transferId, appointment, patient, 2, args.digest, signed.contentText, signed.payloadText, signed.provenanceText, signed.admission, signed.signature];
+    const first = await call<Transfer>(TRANSFER_SQL, params);
+    expect(first.created).toBe(true);
+    // The exact same admitted bytes again (a lost response): the original receipt, nothing written.
+    expect(await call<Transfer>(TRANSFER_SQL, params)).toMatchObject({ transfer_id: first.transfer_id, note_id: first.note_id, created: false });
+    // A fresh admission for the same source (the boundary re-issues on retry): the original receipt.
+    expect(await transfer({ transferId: args.transferId })).toMatchObject({ transfer_id: first.transfer_id, created: false });
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.clinical_notes where organization_id=$1', [org])).rows[0].n).toBe(1);
+    // Retiring the key afterwards revokes every admission under it (a replacement key is registered first, as a rotation would); the receipt it produced stands.
+    const retired = { ...ADMISSION_KEY };
+    ADMISSION_KEY.keyId = 'fictional-admission-key-' + Date.now().toString(36);
+    await pg.query('insert into clinical_private.telehealth_admission_keys(key_id,secret) values($1,$2)', [ADMISSION_KEY.keyId, ADMISSION_KEY.secret]);
+    await pg.query('update clinical_private.telehealth_admission_keys set retired_at=now() where key_id=$1', [retired.keyId]);
+    expect(await refusal(transfer({ transferId: args.transferId, key: retired }))).toMatch(/telehealth_admission_refused/);
+    expect(await transfer({ transferId: args.transferId })).toMatchObject({ transfer_id: first.transfer_id, created: false });
+    expect((await authority()).transfer?.transfer_id).toBe(first.transfer_id);
+    // A key is never rewritten, deleted or un-retired.
+    expect(await refusal(pg.query('update clinical_private.telehealth_admission_keys set secret=$2 where key_id=$1', [retired.keyId, Buffer.alloc(32, 1)]))).toMatch(/append_only_record/);
+    expect(await refusal(pg.query('delete from clinical_private.telehealth_admission_keys where key_id=$1', [retired.keyId]))).toMatch(/append_only_record/);
+    expect(await refusal(pg.query('update clinical_private.telehealth_admission_keys set retired_at=null where key_id=$1', [retired.keyId]))).toMatch(/append_only_record/);
+  });
+
+  it('the key table is reachable by no API role, and a transfer without any registered key is unavailable, not refused as forged', async () => {
+    for (const sql of ['select key_id from clinical_private.telehealth_admission_keys', "insert into clinical_private.telehealth_admission_keys(key_id,secret) values('fictional-api-key-1',decode('00','hex'))"]) {
+      expect(await refusal(call(sql))).toMatch(/permission denied/);
+    }
+  });
+});
+
+describe('the authenticated desktop dispatch (aws-production-desktop) in front of the same SQL', () => {
+  const context = (who = practitioner): ProductionRequestContext => ({ actorPersonId: who, organizationId: org, identityPool: 'workforce', identitySubject: 'subject-' + who,
+    purpose: 'clinical_data', environment: 'production-clinical', dataClassification: 'clinical_phi', containsPhi: true, realPatientData: true, productionBound: true });
+  // The production connection IS the restricted API role; the dispatcher only sets the request context.
+  // The production connection IS the restricted API role, and the production database wrapper classifies authored refusals (and nothing else) as rejections.
+  const api: ClinicalCoreDatabase = { transaction: work => pg.transaction(async tx => { await tx.exec('set local role clinical_core_api'); return work({ query: async (sql, parameters = []) => {
+    // Typed uuid parameters are unwrapped exactly as the RDS Data wrapper encodes them.
+    const values = parameters.map((value) => value && typeof value === 'object' && (value as { kind?: string }).kind === 'uuid' ? (value as { value: string }).value : value);
+    try { return await tx.query(sql, values); }
+    catch (error) { throw classifyDatabaseRejection({ name: 'DatabaseErrorException', message: `ERROR: ${error instanceof Error ? error.message : String(error)}` }) ?? error; }
+  } }); }) };
+  const dispatch = (args: Record<string, unknown>, who = practitioner) => createAwsProductionDesktopAdapter(api).execute(context(who), { kind: 'rpc', functionName: 'transfer_telehealth_note', args });
+  const rpcArgs = (overrides: Partial<TransferArgs> = {}, sent: Record<string, unknown> = {}) => {
+    const args = transferArgs(overrides); const signed = admit(args);
+    return { _organization_id: args.organization, _transfer_id: args.transferId, _appointment_id: args.appointmentId, _patient_id: args.patientId, _source_revision: args.revision, _source_digest: args.digest,
+      _content: signed.contentText, _source_payload: signed.payloadText, _provenance: signed.provenanceText, _admission: signed.admission, _admission_signature: signed.signature, ...sent };
+  };
+  const category = async (promise: Promise<unknown>) => { try { await promise; } catch (error) { return error instanceof ProductionDesktopError ? error.category : String(error); } return 'no_error'; };
+
+  it('passes the exact admitted bytes through and creates the draft; the receipt reads back patient-bound', async () => {
+    const receipt = await dispatch(rpcArgs()) as Transfer;
+    expect(receipt).toMatchObject({ created: true, note_version: 1 });
+    const read = await createAwsProductionDesktopAdapter(api).execute(context(), { kind: 'rpc', functionName: 'get_telehealth_record_authority', args: { _organization_id: org, _patient_id: patient, _appointment_id: appointment } }) as Authority;
+    expect(read.transfer).toMatchObject({ transfer_id: receipt.transfer_id, note_id: receipt.note_id, note_status: 'draft' });
+    const unrelated = randomUUID();
+    await pg.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','OTHER')", [unrelated, org, 'patient_' + unrelated.replaceAll('-', '')]);
+    const other = await createAwsProductionDesktopAdapter(api).execute(context(), { kind: 'rpc', functionName: 'get_telehealth_record_authority', args: { _organization_id: org, _patient_id: unrelated, _appointment_id: appointment } }) as Authority;
+    expect(other.transfer).toBeNull();
+    expect(other.appointment).toEqual({ id: appointment, patient_matches: false });
+  });
+
+  it('refuses, through the dispatcher, a missing admission, a forged one, substituted bytes, another practitioner and a foreign organization claim — and shapes before the database', async () => {
+    expect(await category(dispatch(rpcArgs({}, { _admission: undefined, _admission_signature: undefined })))).toBe('request_invalid');
+    expect(await category(dispatch(rpcArgs({}, { _admission: '{}', _admission_signature: 'f'.repeat(64) })))).toBe('request_invalid');
+    expect(await category(dispatch(rpcArgs({ key: { keyId: ADMISSION_KEY.keyId, secret: Buffer.alloc(32, 7) } })))).toBe('operation_refused');
+    expect(await category(dispatch(rpcArgs({}, { _content: canonicalJson({ text: 'SUBSTITUTED' }) })))).toBe('operation_refused');
+    expect(await category(dispatch(rpcArgs({}, { _content: '{not json' })))).toBe('request_invalid');
+    expect(await category(dispatch(rpcArgs({ practitioner: colleague })))).toBe('operation_refused');
+    expect(await category(dispatch(rpcArgs(), colleague))).toBe('operation_refused');
+    expect(await category(dispatch(rpcArgs({}, { _organization_id: foreignOrg })))).toBe('request_invalid');
+    expect(await category(dispatch(rpcArgs({ practitioner: staff }), staff))).toBe('operation_refused');
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.telehealth_note_transfers where organization_id=$1', [org])).rows[0].n).toBe(0);
+    expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.clinical_notes where organization_id=$1', [org])).rows[0].n).toBe(0);
   });
 });

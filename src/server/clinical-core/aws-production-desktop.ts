@@ -668,18 +668,26 @@ async function executeCoreRpc(
   if (name === "transfer_telehealth_note") {
     exactKeys(args, [
       "_organization_id", "_transfer_id", "_appointment_id", "_patient_id", "_source_revision", "_source_digest",
-      "_content", "_source_payload", "_provenance",
+      "_content", "_source_payload", "_provenance", "_admission", "_admission_signature",
     ]);
     if (args._organization_id !== context.organizationId) throw invalid();
     const digest = requiredString(args._source_digest, 64);
     if (!/^[0-9a-f]{64}$/.test(digest)) throw invalid();
+    // The content, payload, provenance and admission are the EXACT bytes the
+    // telehealth boundary hashed and signed: validated here for shape, passed
+    // through unchanged so the database can recompute every hash over them.
+    const contentText = requiredString(args._content, 262_144); boundedNoteContent(parsedJson(contentText));
+    const payloadText = requiredString(args._source_payload, 524_288); boundedTransferPayload(parsedJson(payloadText));
+    const provenanceText = requiredString(args._provenance, 65_536); boundedProvenance(parsedJson(provenanceText));
+    const admissionText = requiredString(args._admission, 8_192); boundedAdmission(parsedJson(admissionText));
+    const signature = requiredString(args._admission_signature, 64);
+    if (!/^[0-9a-f]{64}$/.test(signature)) throw invalid();
     const row = first(await tx.query<{ data: unknown }>(
-      "select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb) as data",
+      "select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as data",
       [
         clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._transfer_id)), clinicalUuid(requiredUuid(args._appointment_id)),
         clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._source_revision, 1, 1_000_000), digest,
-        JSON.stringify(boundedNoteContent(args._content)), JSON.stringify(boundedTransferPayload(args._source_payload)),
-        JSON.stringify(boundedProvenance(args._provenance)),
+        contentText, payloadText, provenanceText, admissionText, signature,
       ],
     ));
     return decodeJson(row.data);
@@ -1816,6 +1824,28 @@ function boundedNoteContent(value: unknown): Record<string, string> {
     || typeof content !== "string" || content.length > 65_536)) throw invalid();
   if (JSON.stringify(value).length > 262_144) throw invalid();
   return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function parsedJson(text: string): unknown {
+  try { return JSON.parse(text) as unknown; } catch { throw invalid(); }
+}
+
+/** The boundary's admission (telehealth-chart-admission/1): exactly its members, every id a UUID, every hash hex; the database verifies the signature and bindings. */
+function boundedAdmission(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const admission = value as Record<string, unknown>;
+  exactKeys(admission, [
+    "contract", "intent", "key_id", "transfer_id", "organization_id", "patient_record_id", "appointment_id", "practitioner_person_id",
+    "source_custody", "source_record_version", "source_revision", "source_digest", "content_sha256", "payload_sha256", "provenance_sha256",
+    "issued_at", "expires_at",
+  ]);
+  if (admission.contract !== "telehealth-chart-admission/1" || admission.intent !== "chart_draft" || admission.source_custody !== "telehealth-visit-record") throw invalid();
+  if (!/^[a-z0-9][a-z0-9-]{7,63}$/.test(requiredString(admission.key_id, 64))) throw invalid();
+  for (const key of ["transfer_id", "organization_id", "patient_record_id", "appointment_id", "practitioner_person_id"]) requiredUuid(admission[key]);
+  for (const key of ["source_digest", "content_sha256", "payload_sha256", "provenance_sha256"]) if (!/^[0-9a-f]{64}$/.test(requiredString(admission[key], 64))) throw invalid();
+  boundedInteger(admission.source_revision, 1, 1_000_000); boundedInteger(admission.source_record_version, 0, 1_000_000_000);
+  for (const key of ["issued_at", "expires_at"]) if (Number.isNaN(Date.parse(requiredString(admission[key], 40)))) throw invalid();
+  return admission;
 }
 
 /** The complete telehealth source kept beside a chart draft: a JSON object under the ledger's 512 KiB bound, never a string or array. */

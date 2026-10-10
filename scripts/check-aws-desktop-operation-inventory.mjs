@@ -35,5 +35,5 @@ if (errors.length) {
   const providerBound = committed.operations.filter((operation) => operation.legacyDefinitions.some(
     (definition) => Object.values(definition.providerDependencies).some(Boolean),
   )).length;
-  console.log(`Desktop operation inventory passed: 226 live operations, all 226 implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
+  console.log(`Desktop operation inventory passed: ${committed.counts.total} live operations, all ${committed.counts.productionImplemented} implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
 }

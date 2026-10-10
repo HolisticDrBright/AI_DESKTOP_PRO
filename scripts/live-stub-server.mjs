@@ -22,7 +22,7 @@
  *        npx next start -p 3114
  */
 import { createServer } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { fixtureJsonResponse as json } from "./fixture-json-response.mjs";
 
 const PORT = Number(process.env.STUB_PORT ?? 3999);
@@ -934,6 +934,9 @@ const scheduleAppointments = [];
 const telehealthVisits = new Map();
 /** Chart-side transfer receipts (the authoritative store), keyed by appointment id — what `transfer_telehealth_note` writes. */
 const telehealthTransfers = new Map();
+/** The fictional admission key: what the telehealth boundary signs admissions with and what the chart fixture verifies them against (clinical_private.telehealth_admission_keys). Never a real secret. */
+const TELEHEALTH_ADMISSION_KEY = Object.freeze({ keyId: "fixture-admission-key-1", secret: Buffer.from("ab".repeat(32), "hex") });
+const TELEHEALTH_ADMISSION_MEMBERS = ["appointment_id", "content_sha256", "contract", "expires_at", "intent", "issued_at", "key_id", "organization_id", "patient_record_id", "payload_sha256", "practitioner_person_id", "provenance_sha256", "source_custody", "source_digest", "source_record_version", "source_revision", "transfer_id"];
 /** Test control: when > 0, the next `transfer/complete` reads fail as a lost response (then decrement). Reset with everything else. */
 const telehealthControl = new Map([["loseCompletions", 0]]);
 /** The organization's one approved telehealth consent artifact (version + hash), as the identity authority would return it. */
@@ -5516,33 +5519,55 @@ createServer(async (req, res) => {
       if (!patient) return json(res, 404, { code: "P0002", message: "patient_not_found" });
       if (!body._appointment_id) return json(res, 400, { code: "22023", message: "appointment_required" });
       const appointment = scheduleAppointments.find((row) => row.id === body._appointment_id && row.organizationId === organizationId) ?? null;
-      const transfer = telehealthTransfers.get(String(body._appointment_id)) ?? null;
+      // The receipt is THIS patient's or it is not reported; another patient's appointment is "not this patient's" and nothing more.
+      const held = telehealthTransfers.get(String(body._appointment_id)) ?? null;
+      const transfer = held && held.patientId === patient.id ? held : null;
       const note = transfer ? emrNotes.get(transfer.noteId) ?? null : null;
       return json(res, 200, {
         authorized: true, actor_person_id: PRACTITIONER_USER_ID, patient_record_id: patient.id, legal_hold: false,
-        appointment: appointment ? { id: appointment.id, status: appointment.status, deleted: false, appointment_type: appointment.appointmentType, patient_matches: appointment.patientId === patient.id, practitioner_person_id: appointment.practitionerUserId } : null,
+        appointment: !appointment ? null : appointment.patientId !== patient.id ? { id: appointment.id, patient_matches: false }
+          : { id: appointment.id, status: appointment.status, deleted: false, appointment_type: appointment.appointmentType, patient_matches: true, practitioner_person_id: appointment.practitionerUserId },
         transfer: transfer ? { transfer_id: transfer.transferId, encounter_id: transfer.encounterId, note_id: transfer.noteId, note_version: transfer.noteVersion, source_note_revision: transfer.sourceRevision,
           source_digest: transfer.sourceDigest, content_sha256: transfer.contentSha256, transferred_at: transfer.transferredAt, transferred_by_person_id: PRACTITIONER_USER_ID,
           note_status: note?.status ?? null, note_current_version: note?.currentVersion ?? null, note_deleted: false } : null,
       });
     }
     if (url.pathname === "/rest/v1/rpc/transfer_telehealth_note" && req.method === "POST") {
-      // Idempotent on (organization, appointment): the same source returns the original destination; another source is refused.
+      // Idempotent on (organization, appointment, patient): the same admitted source returns the original destination; another source is refused.
+      // Every transfer needs the boundary's ADMISSION: signature under the registered key, every binding recomputed over the exact bytes received.
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");
       const patient = PATIENTS.find((item) => item.id === body._patient_id && item.organization_id === organizationId);
       if (!memberOrgIds.includes(organizationId)) return json(res, 403, { code: "42501", message: "clinical_role_required" });
       if (!patient) return json(res, 404, { code: "P0002", message: "patient_not_found" });
       const digest = String(body._source_digest ?? "");
-      if (!/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(body._source_revision) || body._source_revision < 1 || !body._content || typeof body._content !== "object"
-        || !body._source_payload || typeof body._source_payload !== "object" || !Array.isArray(body._provenance) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(body._transfer_id ?? ""))) {
+      const texts = [body._content, body._source_payload, body._provenance, body._admission];
+      if (!/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(body._source_revision) || body._source_revision < 1 || texts.some((text) => typeof text !== "string")
+        || typeof body._admission_signature !== "string" || !/^[0-9a-f]{64}$/.test(body._admission_signature)
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(body._transfer_id ?? ""))) {
         return json(res, 400, { code: "22023", message: "telehealth_transfer_invalid" });
       }
+      let content, sourcePayload, provenance, admission;
+      try { [content, sourcePayload, provenance, admission] = texts.map((text) => JSON.parse(text)); } catch { return json(res, 400, { code: "22023", message: "telehealth_transfer_invalid" }); }
+      if (!content || typeof content !== "object" || Array.isArray(content) || !sourcePayload || typeof sourcePayload !== "object" || !Array.isArray(provenance) || !admission || typeof admission !== "object" || Array.isArray(admission)) {
+        return json(res, 400, { code: "22023", message: "telehealth_transfer_invalid" });
+      }
+      if (admission.key_id !== TELEHEALTH_ADMISSION_KEY.keyId) return json(res, 403, { code: "42501", message: "telehealth_admission_refused" });
+      if (createHmac("sha256", TELEHEALTH_ADMISSION_KEY.secret).update(body._admission, "utf8").digest("hex") !== body._admission_signature) return json(res, 403, { code: "42501", message: "telehealth_admission_refused" });
+      const now = Date.now(), issued = Date.parse(admission.issued_at), expires = Date.parse(admission.expires_at);
+      const bound = Object.keys(admission).sort().join(",") === TELEHEALTH_ADMISSION_MEMBERS.join(",")
+        && admission.contract === "telehealth-chart-admission/1" && admission.intent === "chart_draft" && admission.source_custody === "telehealth-visit-record"
+        && Number.isInteger(admission.source_record_version) && admission.transfer_id === body._transfer_id && admission.organization_id === organizationId
+        && admission.patient_record_id === patient.id && admission.appointment_id === body._appointment_id && admission.practitioner_person_id === PRACTITIONER_USER_ID
+        && admission.source_revision === body._source_revision && admission.source_digest === digest
+        && admission.content_sha256 === sha256hex(body._content) && admission.payload_sha256 === sha256hex(body._source_payload) && admission.provenance_sha256 === sha256hex(body._provenance)
+        && Number.isFinite(issued) && Number.isFinite(expires) && issued <= now + 300_000 && expires > now && expires - issued <= 3_600_000;
+      if (!bound) return json(res, 403, { code: "42501", message: "telehealth_admission_mismatch" });
       const appointment = scheduleAppointments.find((row) => row.id === body._appointment_id && row.organizationId === organizationId);
       if (!appointment) return json(res, 404, { code: "P0002", message: "appointment_not_found" });
       if (appointment.patientId !== patient.id || appointment.appointmentType !== "telehealth") return json(res, 403, { code: "42501", message: "telehealth_transfer_refused" });
       const existing = telehealthTransfers.get(appointment.id);
-      if (existing) {
+      if (existing && existing.patientId === patient.id) {
         if (existing.sourceRevision === body._source_revision && existing.sourceDigest === digest) {
           return json(res, 200, { transfer_id: existing.transferId, encounter_id: existing.encounterId, note_id: existing.noteId, note_version: existing.noteVersion, content_sha256: existing.contentSha256, created: false, transferred_at: existing.transferredAt });
         }
@@ -5561,14 +5586,14 @@ createServer(async (req, res) => {
       emrSeq += 1;
       const noteId = `eeeeeeee-3333-4444-5555-${String(444444444400 + emrSeq)}`;
       const savedAt = nowIso();
-      const note = { id: noteId, encounterId: encounter.id, patientId: patient.id, organizationId, noteType: "narrative", status: "draft", currentVersion: 1, versions: new Map(), signature: null, addenda: [], provenance: body._provenance, statusReason: null, createdAt: savedAt, updatedAt: savedAt };
-      note.versions.set(1, { content: body._content, savedAt });
+      const note = { id: noteId, encounterId: encounter.id, patientId: patient.id, organizationId, noteType: "narrative", status: "draft", currentVersion: 1, versions: new Map(), signature: null, addenda: [], provenance, statusReason: null, createdAt: savedAt, updatedAt: savedAt };
+      note.versions.set(1, { content, savedAt });
       emrNotes.set(noteId, note);
       emrAudit("note.draft_created", noteId, "Draft note created", patient.id);
-      const contentSha256 = sha256hex(JSON.stringify(body._content));
-      const receipt = { transferId: body._transfer_id, encounterId: encounter.id, noteId, noteVersion: 1, sourceRevision: body._source_revision, sourceDigest: digest, contentSha256, transferredAt: savedAt, sourcePayload: body._source_payload };
+      const contentSha256 = sha256hex(JSON.stringify(content));
+      const receipt = { transferId: body._transfer_id, patientId: patient.id, encounterId: encounter.id, noteId, noteVersion: 1, sourceRevision: body._source_revision, sourceDigest: digest, contentSha256, transferredAt: savedAt, sourcePayload, admissionKeyId: admission.key_id, admissionSha256: sha256hex(body._admission) };
       telehealthTransfers.set(appointment.id, receipt);
-      pushAudit("telehealth.note_transferred", "clinical_note", noteId, "Telehealth visit note transferred to the chart as an unsigned draft", { transfer_id: receipt.transferId, appointment_id: appointment.id, encounter_id: encounter.id, source_note_revision: receipt.sourceRevision }, patient.id, organizationId);
+      pushAudit("telehealth.note_transferred", "clinical_note", noteId, "Telehealth visit note transferred to the chart as an unsigned draft", { transfer_id: receipt.transferId, appointment_id: appointment.id, encounter_id: encounter.id, source_note_revision: receipt.sourceRevision, admission_key_id: admission.key_id }, patient.id, organizationId);
       return json(res, 200, { transfer_id: receipt.transferId, encounter_id: encounter.id, note_id: noteId, note_version: 1, content_sha256: contentSha256, created: true, transferred_at: savedAt });
     }
     if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
@@ -11642,7 +11667,7 @@ createServer(async (req, res) => {
 
   // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====
   // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts
-  // (contract telehealth-requests/7). Zoom is "enabled" here only in the sense
+  // (contract telehealth-requests/8). Zoom is "enabled" here only in the sense
   // that start returns a fixture session and end confirms a fixture shutdown:
   // the browser suite aborts the SDK download, so no meeting ever exists.
   if (url.pathname.startsWith("/clinical-core/workforce/appointments/")) {
@@ -11718,7 +11743,8 @@ createServer(async (req, res) => {
     const retainedAuthority = (visit) => {
       const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
       if (!visit.patientRecordId || revokedBearers.has(bearer) || !memberOrgIdsForBearer(bearer).includes("org-fixture")) return { error: 403, code: "identity_refused" };
-      return { ok: true, transfer: telehealthTransfers.get(visit.appointmentId) ?? null };
+      const held = telehealthTransfers.get(visit.appointmentId) ?? null;
+      return { ok: true, transfer: held && held.patientId === visit.patientRecordId ? held : null };
     };
     if (sub === "visits/notes" && req.method === "GET") {
       const visit = telehealthVisits.get(url.searchParams.get("appointmentId") ?? "");
@@ -11870,11 +11896,23 @@ createServer(async (req, res) => {
         const saved = save({ ...visit, chartTransfer: completed });
         return json(res, 200, { data: { visit: withTransferSource(saved), transfer: completed, source: null } });
       }
-      const admission = existing?.state === "admitted" ? existing : { transferId: `cccccccc-7777-4777-8777-${String(777777777700 + telehealthVisits.size)}`, state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
-        admittedAt: nowIso(), admittedBy: PRACTITIONER_USER_ID, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null };
-      const saved = existing?.state === "admitted" ? visit : save({ ...visit, chartTransfer: admission });
-      return json(res, 200, { data: { visit: withTransferSource(saved), transfer: admission, source: { transferId: admission.transferId, organizationId: "org-fixture", patientRecordId: visit.patientRecordId, appointmentId,
-        sourceRevision: source.revision, sourceDigest: source.digest, content: source.content, sourcePayload: source.payload, provenance: source.provenance } } });
+      if (existing?.state === "admitted" && (existing.sourceRevision !== source.revision || existing.sourceDigest !== source.digest)) return json(res, 409, { error: "transfer_mismatch" });
+      // The admission: issued only here, only now, under the boundary's key — the exact bytes the chart will hash, bound to this transfer, subject, practitioner and source, with a 15-minute window.
+      const transferId = existing?.state === "admitted" ? existing.transferId : `cccccccc-7777-4777-8777-${String(777777777700 + telehealthVisits.size)}`;
+      const contentText = canonicalJson(source.content), sourcePayloadText = canonicalJson(source.payload), provenanceText = canonicalJson(source.provenance);
+      const issuedAt = new Date(), expiresAt = new Date(issuedAt.getTime() + 15 * 60_000);
+      const admissionText = canonicalJson({ contract: "telehealth-chart-admission/1", intent: "chart_draft", key_id: TELEHEALTH_ADMISSION_KEY.keyId, transfer_id: transferId,
+        organization_id: "org-fixture", patient_record_id: visit.patientRecordId, appointment_id: appointmentId, practitioner_person_id: PRACTITIONER_USER_ID,
+        source_custody: "telehealth-visit-record", source_record_version: visit.version, source_revision: source.revision, source_digest: source.digest,
+        content_sha256: sha256hex(contentText), payload_sha256: sha256hex(sourcePayloadText), provenance_sha256: sha256hex(provenanceText),
+        issued_at: issuedAt.toISOString(), expires_at: expiresAt.toISOString() });
+      const admissionSignature = createHmac("sha256", TELEHEALTH_ADMISSION_KEY.secret).update(admissionText, "utf8").digest("hex");
+      const admission = { transferId, state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
+        admittedAt: existing?.admittedAt ?? nowIso(), admittedBy: PRACTITIONER_USER_ID, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null,
+        admissionKeyId: TELEHEALTH_ADMISSION_KEY.keyId, admissionSha256: sha256hex(admissionText), admissionExpiresAt: expiresAt.toISOString() };
+      const saved = save({ ...visit, chartTransfer: admission });
+      return json(res, 200, { data: { visit: withTransferSource(saved), transfer: admission, source: { transferId, organizationId: "org-fixture", patientRecordId: visit.patientRecordId, appointmentId,
+        sourceRevision: source.revision, sourceDigest: source.digest, contentText, sourcePayloadText, provenanceText, admission: admissionText, admissionSignature, admissionExpiresAt: expiresAt.toISOString() } } });
     }
     if (sub === "visits/notes/transfer/complete") {
       const visit = telehealthVisits.get(appointmentId);

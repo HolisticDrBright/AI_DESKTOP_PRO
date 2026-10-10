@@ -250,7 +250,8 @@ function calendarRow(appointment: LiveAppointment, visit: TelehealthVisit | null
 
 type TelehealthTransferSource = {
   transferId: string; organizationId: string; patientRecordId: string; appointmentId: string; sourceRevision: number; sourceDigest: string;
-  content: Record<string, string>; sourcePayload: Record<string, unknown>; provenance: Array<{ sectionKey: string; refType: string; refId: string | null; label: string }>;
+  /** The EXACT bytes the boundary hashed and signed, and the admission that binds them: passed to the chart unchanged, never re-serialized. */
+  contentText: string; sourcePayloadText: string; provenanceText: string; admission: string; admissionSignature: string; admissionExpiresAt: string;
 };
 
 /**
@@ -502,9 +503,11 @@ export const telehealthLive = {
       _patient_id: source.patientRecordId,
       _source_revision: source.sourceRevision,
       _source_digest: source.sourceDigest,
-      _content: source.content,
-      _source_payload: source.sourcePayload,
-      _provenance: source.provenance,
+      _content: source.contentText,
+      _source_payload: source.sourcePayloadText,
+      _provenance: source.provenanceText,
+      _admission: source.admission,
+      _admission_signature: source.admissionSignature,
     }, token);
     return request<TelehealthTransferResult>("/clinical-core/workforce/appointments/visits/notes/transfer/complete", token, { body: { appointmentId: input.appointmentId } });
   },
