@@ -51,6 +51,9 @@ jobs:
         run: |
           npm run test:fullscript-upgrade-operator
           npm run build:fullscript-upgrade
+          npm run test:telehealth-consent-upgrade
+          npm run build:telehealth-consent-upgrade
+          npm run test:telehealth-consent-upgrade-artifact
       - name: Fullscript immutable target and actual API bundle (fictional AWS only)
         run: |
           npm run test:fullscript-target-runtime

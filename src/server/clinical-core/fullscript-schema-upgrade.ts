@@ -149,12 +149,21 @@ const addedTables = ['clinical_audit.fullscript_consent_events','clinical_audit.
   'fullscript_delivery.authority_releases','fullscript_delivery.draft_events','fullscript_delivery.draft_intents',
   'fullscript_delivery.external_consents','fullscript_delivery.protocol_manifests','fullscript_delivery.recipient_holds'];
 async function extensions(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
+  // The original 107/108 -> 111 admission still requires unused extension
+  // tables. Later preserving upgrades may validate this same schema without
+  // treating legitimate recipient holds or provider rows as corruption.
+  const tables = (await tx.query<Table>(careErasurePreservation.tableQuery.replace("'commercial_reference'", "'commercial_reference','fullscript_delivery'"))).rows;
+  const empty = await careErasurePreservation.fingerprint(tx,tables.filter(t=>addedTables.includes(careErasurePreservation.tableName(t))));
+  if (empty.rows!==0) fail('verification_failed');
+  await verifyFullscriptExtensionSchema(tx,m);
+}
+/** Read-only canonical 111 extension validation. Does not admit a migration,
+ * certify empty tables, or approve any provider/consent/activation row. */
+export async function verifyFullscriptExtensionSchema(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
   const rows = (await tx.query<Table>(careErasurePreservation.tableQuery.replace("'commercial_reference'", "'commercial_reference','fullscript_delivery'"))).rows;
   const added = rows.filter(t=>addedTables.includes(careErasurePreservation.tableName(t)));
   if (rows.length!==217 || added.length!==8 || added.some(t=>t.kind!=='r'
     || t.rls!==!['draft_events','draft_intents'].includes(t.table_name) || t.forced!==t.rls)) fail('verification_failed');
-  const empty = await careErasurePreservation.fingerprint(tx,added);
-  if (empty.rows!==0) fail('verification_failed');
   const shape=(await tx.query<{digest:string}>(`select encode(sha256(convert_to(coalesce(jsonb_agg(jsonb_build_object(
     'name',selected.name,'kind',c.relkind,'rls',c.relrowsecurity,'forced',c.relforcerowsecurity,
     'columns',(select jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),

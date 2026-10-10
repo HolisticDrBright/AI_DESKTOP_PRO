@@ -588,6 +588,11 @@ phones and a real two-participant fictional Zoom visit. Chart integration,
 record lifecycle, clinic-host authorization and the executed provider review
 remain separate requirements. PHI remains disabled.
 
+The preserving 111-to-112 schema operator and its review, custody and recovery
+requirements are documented in [Preserving telehealth consent database upgrade](telehealth-consent-upgrade-operator.md).
+Its local tests do not establish a hosted upgrade. Exact consent-copy registration
+and matched deployed and physical acceptance remain separate prerequisites.
+
 ## Reminder revision isolation
 
 Each new scheduling operation gives its reminders a private generation equal to
