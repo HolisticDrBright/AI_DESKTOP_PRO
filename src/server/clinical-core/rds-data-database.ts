@@ -325,6 +325,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\brecording_cleanup_attempt_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bowned_account_deletion_write_blocked\b/.test(message)) return new ClinicalCoreDatabaseRejection("account_deletion_write_blocked");
+  if (/\bzoom_host_binding_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bzoom_host_binding_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(zoom_host_actor_refused|zoom_host_appointment_refused|zoom_host_binding_refused)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(zoom_host_current_release_required|zoom_host_review_required|zoom_host_release_immutable|zoom_host_revocation_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict|privacy_export_job_state|privacy_export_job_busy)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

@@ -20,10 +20,20 @@ Run `npx vitest run src/server/clinical-core/zoom-host-authority.database.test.t
 
 The suite builds the actual canonical 112 source artifact, applies the real initial migration operator and subsequent SQL to in-memory PostgreSQL, then executes this candidate under the restricted API role. All records, review hashes and identities are fictional. It covers empty configuration, replay, clinic isolation, current and retained authority, expiry, revocation, identity withdrawal, calendar corrections, invalid secret configuration and table privileges. This is not AWS, Zoom, browser, device, rollback-upgrade or production activation evidence.
 
+## Typed database interface
+
+`src/server/clinical-core/zoom-host-registry.ts` now composes the actual SQL with a typed server-only interface. The interface checks 15 function bodies and their signatures, result types, languages, volatility, security mode and search paths against pins supplied by the compiled source artifact. It checks the candidate function inventory, API and PUBLIC permissions, forced RLS, absence of table policies and the six required triggers before setting request context. It refuses altered response identity, configuration hashes, unexpected fields and any provider-authorization claim. A malformed response aborts the transaction, including a newly inserted binding.
+
+The compiled execution target pins mode, AWS account and Ohio region. Qualification code refuses production configuration. It retains the original secret version on a cleanup-metadata read after rotation; that metadata remains explicitly unauthorized for provider actions. Actual RDS database errors map to bounded categories without exposing provider or database details.
+
+The real-SQL suite now contains 70 passing tests, including 22 tests of the composed interface. Five focused registry, driver, host-observation, credential and telehealth suites pass 483 tests without skips. TypeScript, targeted ESLint and diff checks pass. These are local checks only.
+
+This interface is not a JWT/MFA verifier or an authenticated HTTP route. Its drift checks protect the specified contract surface; they do not independently verify every parent table, constraint, role membership, migration ledger or assembly identity. Those checks remain required in the release and authenticated execution boundary. No runtime credential or provider action uses this unreleased registry yet.
+
 ## Remaining integration
 
 1. Create a distinct successor assembly and preserving upgrade with exact hashes, counts, security inspection and rollback acceptance. Preserve every canonical parent byte and obtain any required review of changed operators. Do not silently append this candidate to the approved 107-to-112 sequence.
-2. Implement an authenticated, MFA-protected typed server binding with full schema/function identity checks. Add a reviewed release/revocation operator that verifies actual target, clinic and reviewer, provider account, SDK authorization and evidence artifacts. Do not give patients or the general API role release-write privileges.
+2. Wire the typed interface into an authenticated, MFA-protected handler with full schema and release identity checks. Add a reviewed release/revocation operator that verifies actual target, clinic and reviewer, provider account, SDK authorization and evidence artifacts. Do not give patients or the general API role release-write privileges.
 3. Resolve credentials using the reviewed secret ARN and explicit Secrets Manager `VersionId`. Check the returned version and actual account/client/host/SDK fields against the binding. Pin IAM to reviewed secrets; do not use a caller-supplied ARN or `AWSCURRENT` as historical custody.
 4. Carry the binding through durable meeting creation, adoption, cancellation, end, summary import and recovery. Resolve the database/provider-store admission gap with explicit durable reconciliation and fencing. Database locks and repeated provider observations are not an atomic Zoom lock.
 5. Implement separately reviewed cleanup-only provider authority. Retained metadata cannot grant a destructive provider action or certify deletion. Keep current consent, calendar assignment and independent historical-record authorization intact.
