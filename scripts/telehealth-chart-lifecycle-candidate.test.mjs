@@ -15,6 +15,9 @@ test('copies all 112 parent bytes unchanged and appends exactly one blocked forw
   assert.equal(a.candidate.phiAllowed, false); assert.equal(a.candidate.activation, 'blocked');
   assert.equal(a.candidate.deployment, 'not_deployed'); assert.equal(a.candidate.seededApprovals, false);
   assert.equal(a.candidate.seededTransfers, false);
+  assert.equal(a.candidate.seededAdmissionKeys, false);
+  assert.equal(a.candidate.contract, 'telehealth-chart-lifecycle-candidate/4');
+  assert.equal(TELEHEALTH_CHART_LIFECYCLE_FILE, '20261010190000_production_telehealth_chart_lifecycle.sql');
   assert.equal(a.candidate.parentMigrationReleaseSha256, parent.candidate.migrationReleaseSha256);
   assert.deepEqual(telehealthChartLifecycleCandidate(parent, sql.replaceAll('\n', '\r\n')), a);
 });
@@ -43,4 +46,5 @@ test('refuses a changed extension even when the parent and posture are exact', (
   assert.throws(() => telehealthChartLifecycleCandidate(parent, sql + '\nselect 1;'), /artifact_refused/);
   assert.throws(() => telehealthChartLifecycleCandidate(parent, sql.replace('telehealth.note_transferred', 'telehealth.note_signed')), /artifact_refused/);
   assert.throws(() => telehealthChartLifecycleCandidate(parent, null), /artifact_refused/);
+  assert.throws(() => telehealthChartLifecycleCandidate(parent, sql.replace('_now := clock_timestamp();', '_now := transaction_timestamp();')), /artifact_refused/);
 });

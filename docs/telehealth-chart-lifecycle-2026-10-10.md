@@ -10,6 +10,38 @@ piece of telehealth text under a stated lifecycle control. Nothing here is
 deployed, applied, activated or PHI-enabled; no AWS write, migration
 application, secret, Zoom call or paid build happened.
 
+## Codex expiry completion repair
+
+Codex's separate `agent/telehealth-admission-expiry-repair-20261010` branch
+extends the source checks rather than claiming the returned candidate complete.
+The exact Claude return `13b38d33f63aaa4d41ab1e02616e70ee2307c234`
+passed its original 20 SQL tests, but two additional controlled-delay tests
+failed: expiry within `save_note_draft` and expiry in the transfer audit insert
+both returned `created:true`. No candidate SQL was changed in that audit.
+
+This source repair resolves authority again after serialization, reads a fresh
+wall clock for the admission check, checks expiry after the actual draft write,
+and checks again after the receipt/audit writes. A late refusal raises within
+the same transaction and rolls back the encounter, draft, receipt and clinical
+audit. The five added cases cover original authority-delay and slow-destination
+expiry, late draft and audit expiry with no writes, and a still-current short admission. They
+are embedded real-role SQL tests with controlled delays, not a hosted lock race.
+
+The revised standalone proposal is `telehealth-chart-lifecycle-candidate/4`,
+`20261010190000_production_telehealth_chart_lifecycle.sql`, SQL SHA-256
+`78f03a282b3f5ba97af2f50683aeab0fc1e20d19d77ec7111fc28116ede7bab7`.
+All 112 parent bytes remain exact. The `/3` identity from Claude is retained as
+historical source, not reused for different bytes. No identity is registered.
+The production pilot exclusions, key custody, provider and retention reviews
+remain unchanged; the admission key is not provisioned.
+
+Verification of this Codex successor: 23 real-SQL cases pass; six focused
+regression files pass all 365 cases; the candidate validator passes all 18.
+Actual TypeScript and targeted ESLint checks pass, as does the rebuilt operation
+inventory (228 implemented, all activation-blocked, zero enabled). A full
+successor run and CI must be recorded separately after source is committed;
+the earlier Claude or integration full-suite results do not qualify it.
+
 ## What was built
 
 ### 1. Chart integration (an explicit, bound, retry-safe transfer)
@@ -154,10 +186,10 @@ erase access to a retained record.
 ## The forward candidate (113)
 
 `infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql`
-→ `20261010150000_production_telehealth_chart_lifecycle.sql` (candidate
-contract `telehealth-chart-lifecycle-candidate/2`; the repaired SQL is a
-distinct candidate identity from the audited `20261010110000` / `…/1`, which
-was never registered), built by
+→ `20261010190000_production_telehealth_chart_lifecycle.sql` (candidate
+contract `telehealth-chart-lifecycle-candidate/4`; the expiry completion repair is a
+distinct candidate identity from the audited `20261010110000` / `…/1` and
+`20261010150000` / `…/2` and `20261010170000` / `…/3`, none registered), built by
 `npm run build:telehealth-chart-lifecycle-candidate` on top of the EXACT 112
 telehealth-consent-copy candidate (parent pins in
 `scripts/telehealth-chart-lifecycle-candidate.mjs`: count 112, ledger
@@ -177,7 +209,7 @@ access, empty), the `appointments` patient-identity guard, provenance
 executable by `clinical_core_api` only.
 
 Release mapping to coordinate with Codex: the migration number
-(`20261010150000`) and the 113 position are proposed, not registered; the
+(`20261010190000`) and the 113 position are proposed, not registered; the
 distinct successor must get its own exact release mapping (no count-based
 widening of 105/106/111/112 registrars); `clinical_core.telehealth_note_transfers`
 must be added to `covered-entity-coverage.json` as an append-only
@@ -214,7 +246,7 @@ registration), rollback rehearsal and durable custody are Codex's.
   these RPCs, as it includes no chart RPC; the pilot refuses them until that
   scope decision is made.
 
-## Verification (local, synthetic, fictional identities only)
+## Historical verification of the admission repair at 7ff170b
 
 | Check | Result |
 | --- | --- |

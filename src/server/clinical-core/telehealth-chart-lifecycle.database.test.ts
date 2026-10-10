@@ -402,6 +402,107 @@ describe('Codex A1: source admission at the chart write boundary', () => {
     await noWrites();
   });
 
+  it('Codex B1 refuses an admission that expires while current clinical authority is being resolved', async () => {
+    // Leave the candidate transfer function unchanged. A controlled delay in
+    // its real SQL authority dependency models work before the admission check;
+    // no network, identity or signature is mocked. Its start-time snapshot must
+    // not stand in for current time after that delay (or an advisory-lock wait).
+    await pg.exec(`alter function clinical_private.require_clinical_patient(uuid,uuid) rename to codex_authority_before_delay;
+      create function clinical_private.require_clinical_patient(uuid,uuid) returns uuid
+      language plpgsql security definer set search_path='' as $$
+      declare actor uuid;
+      begin
+        actor:=clinical_private.codex_authority_before_delay($1,$2);
+        perform pg_catalog.pg_sleep(0.25);
+        return actor;
+      end $$;`);
+    try {
+      const start=(await pg.query<{at:string}>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      const issuedAt=new Date(Date.parse(start)-1000).toISOString();
+      const expiresAt=new Date(Date.parse(start)+100).toISOString();
+      await expect(transfer({issuedAt,expiresAt})).rejects.toThrow('telehealth_admission_mismatch');
+      await noWrites();
+    } finally {
+      await pg.exec(`drop function clinical_private.require_clinical_patient(uuid,uuid);
+        alter function clinical_private.codex_authority_before_delay(uuid,uuid) rename to require_clinical_patient;`);
+    }
+  });
+
+  it('Codex B1 rolls back the encounter and draft when admission expires inside the real note write', async () => {
+    await pg.exec(`alter function clinical_core.save_note_draft(uuid,uuid,text,jsonb,integer,uuid,text,jsonb) rename to codex_draft_before_delay;
+      create function clinical_core.save_note_draft(uuid,uuid,text,jsonb,integer,uuid,text,jsonb) returns jsonb
+      language plpgsql security definer set search_path='' as $$
+      declare saved jsonb;
+      begin
+        saved:=clinical_core.codex_draft_before_delay($1,$2,$3,$4,$5,$6,$7,$8);
+        perform pg_catalog.pg_sleep(0.4);
+        return saved;
+      end $$;`);
+    try {
+      const start=(await pg.query<{at:string}>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      const began=Date.now();
+      await expect(transfer({issuedAt:new Date(Date.parse(start)-1000).toISOString(),expiresAt:new Date(Date.parse(start)+200).toISOString()})).rejects.toThrow('telehealth_admission_mismatch');
+      // A refusal before the note call would not prove rollback of its writes.
+      expect(Date.now()-began).toBeGreaterThanOrEqual(400);
+      await noWrites();
+      expect((await pg.query("select 1 from clinical_audit.events where organization_id=$1 and action in ('encounter.started','note.draft_created','telehealth.note_transferred')",[org])).rows).toHaveLength(0);
+    } finally {
+      await pg.exec(`drop function clinical_core.save_note_draft(uuid,uuid,text,jsonb,integer,uuid,text,jsonb);
+        alter function clinical_core.codex_draft_before_delay(uuid,uuid,text,jsonb,integer,uuid,text,jsonb) rename to save_note_draft;`);
+    }
+  });
+
+  it('Codex B1 rolls back destination and receipt when admission expires during the transfer audit write', async () => {
+    await pg.exec(`create function clinical_private.codex_audit_delay() returns trigger
+      language plpgsql set search_path='' as $$
+      begin
+        if new.action='telehealth.note_transferred' then perform pg_catalog.pg_sleep(0.4); end if;
+        return new;
+      end $$;
+      create trigger codex_audit_delay before insert on clinical_audit.events
+      for each row execute function clinical_private.codex_audit_delay();`);
+    try {
+      const start=(await pg.query<{at:string}>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      const began=Date.now();
+      await expect(transfer({issuedAt:new Date(Date.parse(start)-1000).toISOString(),expiresAt:new Date(Date.parse(start)+200).toISOString()})).rejects.toThrow('telehealth_admission_mismatch');
+      expect(Date.now()-began).toBeGreaterThanOrEqual(400);
+      await noWrites();
+      expect((await pg.query("select 1 from clinical_audit.events where organization_id=$1 and action in ('encounter.started','note.draft_created','telehealth.note_transferred')",[org])).rows).toHaveLength(0);
+    } finally {
+      await pg.exec(`drop trigger codex_audit_delay on clinical_audit.events;
+        drop function clinical_private.codex_audit_delay();`);
+    }
+  });
+
+  it('refuses an admission that expires between the admission check and the mutation (a slow destination), with nothing written', async () => {
+    // The destination path (start_encounter) is delayed past the admission's expiry; the second clock read at the mutation point must refuse.
+    await pg.exec(`alter function clinical_core.start_encounter(uuid,uuid,text,uuid) rename to codex_start_before_delay;
+      create function clinical_core.start_encounter(_organization_id uuid,_patient_id uuid,_visit_type text,_appointment_id uuid) returns uuid
+      language plpgsql security definer set search_path='' as $$
+      declare id uuid;
+      begin
+        perform pg_catalog.pg_sleep(0.25);
+        id:=clinical_core.codex_start_before_delay(_organization_id,_patient_id,_visit_type,_appointment_id);
+        return id;
+      end $$;`);
+    try {
+      const start = (await pg.query<{ at: string }>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      await expect(transfer({ issuedAt: new Date(Date.parse(start) - 1000).toISOString(), expiresAt: new Date(Date.parse(start) + 150).toISOString() })).rejects.toThrow('telehealth_admission_mismatch');
+      await noWrites();
+    } finally {
+      await pg.exec(`drop function clinical_core.start_encounter(uuid,uuid,text,uuid);
+        alter function clinical_core.codex_start_before_delay(uuid,uuid,text,uuid) rename to start_encounter;`);
+    }
+  });
+
+  it('Codex B1 accepts a still-current short admission after actual authority work', async () => {
+    const start=(await pg.query<{at:string}>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+    const result=await transfer({issuedAt:new Date(Date.parse(start)-1000).toISOString(),expiresAt:new Date(Date.parse(start)+5000).toISOString()});
+    expect(result.created).toBe(true);
+    const timestamp=(await pg.query<{created_at:string}>("select created_at::text from clinical_core.telehealth_note_transfers where id=$1",[result.transfer_id])).rows[0].created_at;
+    expect(Date.parse(timestamp)).toBeGreaterThanOrEqual(Date.parse(start));
+  });
+
   it('refuses an expired, not-yet-issued or over-long admission; a valid one within its window is accepted once and its exact retry returns the receipt', async () => {
     const now = Date.now();
     expect(await refusal(transfer({ issuedAt: new Date(now - 3_600_000).toISOString(), expiresAt: new Date(now - 60_000).toISOString() })), 'expired').toMatch(/telehealth_admission_mismatch/);

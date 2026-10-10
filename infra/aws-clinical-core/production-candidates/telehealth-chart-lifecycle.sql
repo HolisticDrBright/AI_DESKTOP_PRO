@@ -257,7 +257,7 @@ declare _actor uuid; _appointment clinical_core.appointments%rowtype;
   _key clinical_private.telehealth_admission_keys%rowtype; _expected_signature text;
   _a_transfer uuid; _a_org uuid; _a_patient uuid; _a_appointment uuid; _a_practitioner uuid;
   _a_revision integer; _a_issued timestamptz; _a_expires timestamptz;
-  _payload_sha text; _content_sha text; _admission_sha text; _now timestamptz := clock_timestamp();
+  _payload_sha text; _content_sha text; _admission_sha text; _now timestamptz;
 begin
   -- Current clinical authority at the moment of the write: membership, a clinical
   -- role and an active patient record in THIS organization.
@@ -286,6 +286,10 @@ begin
   -- One transfer per appointment is decided under a lock, so two concurrent
   -- attempts (any order) resolve to one chart note.
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('telehealth-transfer:'||_appointment_id::text,0));
+  -- The first check authorizes entry, not waiting indefinitely. Resolve the
+  -- actor again after serialization, then use wall-clock time after all work
+  -- preceding the admission check. Transaction/statement start time is stale.
+  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
   -- Source admission: the boundary's signature over the exact admission bytes,
   -- under a registered, unretired key. No key at all = the feature is not
   -- provisioned here; an unknown, retired or wrong key = refused.
@@ -301,6 +305,7 @@ begin
   -- over a different transfer, subject, source, practitioner or bytes is refused.
   _content_sha := pg_catalog.encode(public.digest(pg_catalog.convert_to(_content,'UTF8'),'sha256'),'hex');
   _payload_sha := pg_catalog.encode(public.digest(pg_catalog.convert_to(_source_payload,'UTF8'),'sha256'),'hex');
+  _now := clock_timestamp();
   if (select count(*) from jsonb_object_keys(_a))<>17
     or _a->>'contract' is distinct from 'telehealth-chart-admission/1' or _a->>'intent' is distinct from 'chart_draft'
     or _a->>'source_custody' is distinct from 'telehealth-visit-record'
@@ -344,7 +349,15 @@ begin
   end if;
   -- The chart's own draft path: version 1, status draft, provenance recorded,
   -- note.draft_created audited. Nothing here signs.
+  _now := clock_timestamp();
+  if _a_expires<=_now then
+    raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
   _saved := clinical_core.save_note_draft(_organization_id,_encounter_id,'narrative',_content_json,0,null,'manual',_provenance_json);
+  -- Encounter/note authority checks, row locks and triggers may also wait.
+  -- An expiry here raises in the same transaction and rolls back their writes.
+  _now := clock_timestamp();
+  if _a_expires<=_now then
+    raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
   _admission_sha := pg_catalog.encode(public.digest(pg_catalog.convert_to(_admission,'UTF8'),'sha256'),'hex');
   insert into clinical_core.telehealth_note_transfers(id,organization_id,patient_record_id,appointment_id,
     source_note_revision,source_digest,source_payload,source_payload_sha256,encounter_id,note_id,note_version,
@@ -360,6 +373,11 @@ begin
     jsonb_build_object('transfer_id',_transfer_id,'appointment_id',_appointment_id,'encounter_id',_encounter_id,
       'source_note_revision',_source_revision,'note_version',(_saved->>'version')::integer,
       'admission_key_id',_key.key_id,'admission_sha256',_admission_sha));
+  -- Even receipt/audit work can block. Do not return a successful transfer
+  -- when the admission expired during that work; the exception rolls back the
+  -- destination, receipt and audit together, never certifying a partial write.
+  if _a_expires<=clock_timestamp() then
+    raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
   return jsonb_build_object('transfer_id',_transfer_id,'encounter_id',_encounter_id,
     'note_id',(_saved->>'note_id')::uuid,'note_version',(_saved->>'version')::integer,
     'content_sha256',pg_catalog.encode(public.digest(pg_catalog.convert_to(_content_json::text,'UTF8'),'sha256'),'hex'),

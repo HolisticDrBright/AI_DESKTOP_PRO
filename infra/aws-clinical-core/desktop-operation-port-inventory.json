@@ -5355,7 +5355,7 @@
       "productionEvidence": {
         "implementation": "native_production_function",
         "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql",
-        "sourceSha256": "1afc499793172f0a3ce76ca465bc857063dd2105044c9009fff73498dfa1d070",
+        "sourceSha256": "78f03a282b3f5ba97af2f50683aeab0fc1e20d19d77ec7111fc28116ede7bab7",
         "activationState": "phi_disabled"
       }
     },
@@ -11549,7 +11549,7 @@
       "productionEvidence": {
         "implementation": "native_production_function",
         "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql",
-        "sourceSha256": "1afc499793172f0a3ce76ca465bc857063dd2105044c9009fff73498dfa1d070",
+        "sourceSha256": "78f03a282b3f5ba97af2f50683aeab0fc1e20d19d77ec7111fc28116ede7bab7",
         "activationState": "phi_disabled"
       }
     },
