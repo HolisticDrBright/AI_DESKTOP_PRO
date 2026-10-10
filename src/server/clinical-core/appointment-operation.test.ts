@@ -56,6 +56,75 @@ const run = (input: Record<string, unknown> = cancel(), cfg = config, pool: "con
 const current = () => store.get({ pk: `ORG#${org}`, sk: `REQ#${requestId}` })!;
 const operations = () => [...store.rows.values()].filter(row => String(row.sk).startsWith("REQOP#"));
 
+const discover = (person = owner) => run({ requestId }, config, "consumer", "pending-change", person);
+it("discovery preserves the supplied UUID casing and original request hash", async () => {
+  const upper = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+  store.transactionLoss = "admission_after"; await run(cancel({ operationId: upper }));
+  const data = JSON.parse((await discover()).body).data;
+  expect(data.pending.input.operationId).toBe(upper);
+  expect(JSON.parse((await outcome(cancel({ operationId: upper }))).body).data.disposition).toBe("pending");
+});
+it("only structured scheduling choices are captured, not invalid action text", async () => {
+  store.transactionLoss = "admission_after"; await run(cancel({ action: "fictional free text" }));
+  expect(operations()[0]).not.toHaveProperty("consumerRecoveryInput");
+  expect(JSON.parse((await discover()).body).data.disposition).toBe("unrecoverable");
+});
+it.each([
+  cancel(), cancel({ action: "request_reschedule", slotId: replacementId, holdId }),
+  { requestId, expectedVersion: 4, operationId, operationProtocol: "appointment-change/1", policyVersion: "telehealth-payments/1", authorized: false },
+])("a second consumer device discovers the exact pending identity without dispatch: %j", async input => {
+  store.transactionLoss = "admission_after";
+  const path = "authorized" in input ? "payment-authorizations" : "actions";
+  expect((await run(input, config, "consumer", path)).statusCode).toBe(503);
+  const before = JSON.stringify([...store.rows]); send.mockClear();
+  const result = await discover(); expect(result.statusCode).toBe(200);
+  const data = JSON.parse(result.body).data;
+  expect(data).toMatchObject({ protocol: "appointment-pending-discovery/1", requestId, organizationId: org, observedVersion: 4, disposition: "recoverable" });
+  expect(data.pending.input).toEqual("authorized" in input
+    ? { requestId, expectedVersion: 4, operationId, operationProtocol: "appointment-change/1", kind: "payment_authorization", authorized: false }
+    : { requestId, expectedVersion: 4, operationId, operationProtocol: "appointment-change/1", kind: input.action,
+      ...(input.action === "request_reschedule" ? { slotId: replacementId, holdId } : {}) });
+  expect(JSON.stringify([...store.rows])).toBe(before);
+  expect(send.mock.calls.every(([command]) => /Get|Query/.test(command.constructor.name))).toBe(true);
+  expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+  for (const privateName of ["actorSubject", "inputSha256", "reservedSlotKey", "consumerRecoveryInput", "consumerEmail"])
+    expect(result.body).not.toContain(privateName);
+});
+it("discovery never treats a missing current fence as failed admission", async () => {
+  expect(JSON.parse((await discover()).body).data.disposition).toBe("none");
+  await run(); expect(JSON.parse((await discover()).body).data.disposition).toBe("none");
+});
+it("legacy pending rows cannot fabricate the original input", async () => {
+  store.transactionLoss = "admission_after"; await run();
+  const { consumerRecoveryInput: omitted, ...legacy } = operations()[0]; void omitted; store.seed(legacy);
+  expect(JSON.parse((await discover()).body).data.disposition).toBe("unrecoverable");
+  expect(current().mutationOperationId).toBe(operationId);
+});
+it.each([{ pool: "workforce" }, { actorPersonId: replacementId }, { actorSubject: "fictional-other-subject" }])("another actor's pending input is never exposed: %j", async patch => {
+  store.transactionLoss = "admission_after"; await run(); store.seed({ ...operations()[0], ...patch });
+  const response = await discover(); expect(JSON.parse(response.body).data.disposition).toBe("other_action");
+  expect(JSON.parse(response.body).data).not.toHaveProperty("pending");
+});
+it.each([{ inputSha256: "wrong" }, { expectedVersion: 3 }, { admittedAt: "invalid" }, { phase: "unknown" }, { organizationId: replacementId }])("corrupt discovery is refused without provider access: %j", async patch => {
+  store.transactionLoss = "admission_after"; await run(); store.seed({ ...operations()[0], ...patch });
+  expect((await discover()).statusCode).toBe(503); expect(provider).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
+});
+it.each(["committed", "refused"])("settlement between request and operation reads is reported as changed: %s", async phase => {
+  store.transactionLoss = "admission_after"; await run(); store.seed({ ...operations()[0], phase });
+  expect(JSON.parse((await discover()).body).data.disposition).toBe("changed");
+});
+it("discovery authorizes the current owner before reading any operation", async () => {
+  store.transactionLoss = "admission_after"; await run(); send.mockClear();
+  expect((await discover(replacementId)).statusCode).toBe(403);
+  expect(send.mock.calls.every(([command]) => command.constructor.name !== "GetCommand")).toBe(true);
+});
+it("the discovery route requires consumer JWT and preserves blocked production", async () => {
+  const template = JSON.parse(readFileSync("infra/aws-clinical-core/telehealth-requests-extension.json", "utf8"));
+  expect(template.Resources.ConsumerPendingChangeRoute.Properties).toMatchObject({ RouteKey: "POST /clinical-core/consumer/appointments/pending-change",
+    AuthorizationType: "JWT", AuthorizerId: { Ref: "ConsumerAuthorizer" } });
+  expect((await run({ requestId }, { ...config, runtimeMode: "production" }, "consumer", "pending-change")).statusCode).toBe(503);
+});
+
 it("atomically settles cancellation with a durable historical receipt, and a restarted handler performs no second write", async () => {
   const first = await run(); expect(first.statusCode).toBe(200);
   expect(JSON.parse(first.body).data).toMatchObject({ status: "cancelled", version: 5, operationReceipt: { operationId, admittedVersion: 4, committedVersion: 5 } });

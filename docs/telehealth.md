@@ -387,6 +387,16 @@ A committed disposition identifies the original successor version, even if later
 
 The matched V2 journal preserves its original intent until an explicit outcome check saves and verifies the exact completion or no-effects refusal receipt. New actions require refresh. The endpoint and client are source candidates, not deployed acceptance. Provider reconciliation, safe resolution of pre-admission refusals, cross-device discovery, complete pagination and slot lineage, cloud record lifecycle, chart integration, consent release, per-clinic hosts and hosted/device qualification remain required. PHI stays disabled.
 
+## Recovery on another consumer device
+
+The consumer JWT route `POST /clinical-core/consumer/appointments/pending-change` observes the operation named by the current request fence. It verifies current owner and clinic before the operation read, then binds its organization, request, consumer identity, version and exact input digest. New explicit consumer operations privately retain only structured scheduling choices needed to recover the original action. Workforce and legacy implicit operations do not capture recovery input. Unsupported or invalid choices are not converted into a recoverable action.
+
+The response exposes only the original consumer action identity and its admission time. Another actor's input is withheld. An absent fence means none observed, not that a device's unconfirmed change failed; a settled read race means changed, not a substitute receipt. Older pending records without the original input remain unrecoverable and fenced. Discovery performs only reads, with no secrets, provider calls, reservations, cancellation or billing writes.
+
+The matched V2 screen first displays the original action for review. Explicit adoption rechecks the exact observation and saves and verifies it in the existing sealed journal without redispatch, generating a UUID, overwriting a local intent or changing payment authorization. The owner can then check the original outcome. A changed observation or lost access refuses adoption. Backgrounding removes the preview, and owner erasure drains late writers.
+
+This implements discovery of newly captured pending consumer actions, not a history browser, legacy reconstruction, provider reconciliation or a two-device hosted acceptance result. The new private operation input also requires the still-open cloud lifecycle integration. Deploy the matched authorizer, handler and V2 candidate together; keep PHI disabled until the broader activation requirements are met.
+
 ## Open decisions (unchanged from the handoff)
 
 Consent wording and renewal (attorney review; California requires every

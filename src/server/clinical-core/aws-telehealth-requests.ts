@@ -22,6 +22,7 @@ const CONSUMER_CREATE = "POST /clinical-core/consumer/appointments/requests";
 const CONSUMER_LIST = "GET /clinical-core/consumer/appointments/requests";
 const CONSUMER_ACTION = "POST /clinical-core/consumer/appointments/actions";
 const CONSUMER_CHANGE_OUTCOME = "POST /clinical-core/consumer/appointments/change-outcome";
+const CONSUMER_PENDING_CHANGE = "POST /clinical-core/consumer/appointments/pending-change";
 const CONSUMER_AVAILABILITY = "POST /clinical-core/consumer/appointments/availability";
 const CONSUMER_HOLD = "POST /clinical-core/consumer/appointments/holds";
 const WORKFORCE_LIST = "GET /clinical-core/workforce/appointments/requests";
@@ -161,6 +162,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
       if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
       if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
+      if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
       if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
       if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
       if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
@@ -343,6 +345,9 @@ type RequestOperationRow = {
    * refused rows without it remain unresolved, not permission to abandon. */
   dispositionProtocol?: "appointment-disposition/1"; sideEffects?: "none";
   reservedSlotKey?: { pk: string; sk: string };
+  /** Private exact input for another device of the same consumer identity.
+   * Never captured for workforce or legacy implicit-identity writes. */
+  consumerRecoveryInput?: Record<string, unknown>;
 };
 type RequestTransaction = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"]>;
 
@@ -354,6 +359,13 @@ function matchesOperation(row: RequestOperationRow, operation: AppointmentOperat
   return row.pk === operation.key.pk && row.sk === operation.key.sk && row.operationId === operation.operationId
     && row.inputSha256 === operation.inputSha256 && row.pool === operation.pool && row.actorPersonId === operation.actorPersonId
     && row.actorSubject === operation.actorSubject && row.expectedVersion === operation.expectedVersion;
+}
+function consumerRecoveryPayload(pool: string, kind: string, input: Record<string, unknown>) {
+  if (pool !== "consumer" || input.operationProtocol !== "appointment-change/1") return undefined;
+  const valid = kind === "authorize" ? input.policyVersion === "telehealth-payments/1" && typeof input.authorized === "boolean"
+    : kind === "consumer_action" && ((input.action === "cancel" && !Object.hasOwn(input, "slotId") && !Object.hasOwn(input, "holdId"))
+      || (input.action === "request_reschedule" && UUID.test(String(input.slotId)) && UUID.test(String(input.holdId))));
+  return valid ? structuredClone(input) : undefined;
 }
 
 /** An exact-input, owner-authorized observation. Missing or pending rows are
@@ -403,6 +415,50 @@ function canonicalOutcomeTime(value: string | undefined) {
     && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
+/** Discover the operation named by the current fence, not an unbounded history.
+ * Absence/changed/legacy/other-actor observations never authorize dropping a
+ * device journal. All reads are owner-authorized; no provider is contacted. */
+async function readConsumerPendingChange(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["requestId"], ["requestId"]);
+  if (!UUID.test(String(value.requestId))) throw new TelehealthError("request_invalid");
+  const current = await find(config, actor.organizationId, String(value.requestId));
+  if (current.consumerPersonId !== actor.personId) throw new TelehealthError("identity_refused");
+  if (!Number.isSafeInteger(current.version) || current.version < 1) throw new TelehealthError("service_unavailable");
+  const base = { protocol: "appointment-pending-discovery/1", requestId: current.requestId,
+    organizationId: actor.organizationId, observedVersion: current.version };
+  if (!current.mutationOperationId) return { ...base, disposition: "none" };
+  if (!UUID.test(current.mutationOperationId)) throw new TelehealthError("service_unavailable");
+  const key = { pk: `ORG#${actor.organizationId}`, sk: `REQOP#${current.requestId}#${current.mutationOperationId}` };
+  const row = await readRequestOperation(config, key);
+  if (!row || row.pk !== key.pk || row.sk !== key.sk || row.organizationId !== actor.organizationId || row.requestId !== current.requestId
+    || row.operationId !== current.mutationOperationId) throw new TelehealthError("service_unavailable");
+  if (row.pool !== "consumer" || row.actorPersonId !== actor.personId || row.actorSubject !== actor.subject)
+    return { ...base, disposition: "other_action" };
+  // A terminal operation may have settled after the request snapshot was read.
+  if (["committed", "refused"].includes(row.phase)) return { ...base, disposition: "changed" };
+  if (!["admitted", "effects_started"].includes(row.phase) || row.expectedVersion !== current.version
+    || !canonicalOutcomeTime(row.admittedAt)) throw new TelehealthError("service_unavailable");
+  const input = row.consumerRecoveryInput;
+  if (!input || !["consumer_action", "authorize"].includes(row.kind)) return { ...base, disposition: "unrecoverable" };
+  exact(input, row.kind === "authorize" ? ["requestId", "expectedVersion", "policyVersion", "authorized", "operationId", "operationProtocol"]
+    : ["requestId", "expectedVersion", "action", "slotId", "holdId", "operationId", "operationProtocol"],
+  ["requestId", "expectedVersion", "operationId", "operationProtocol"]);
+  if (input.requestId !== row.requestId || input.expectedVersion !== row.expectedVersion || String(input.operationId).toLowerCase() !== row.operationId
+    || input.operationProtocol !== "appointment-change/1"
+    || appointmentOperationIdentity("consumer", actor.personId, actor.subject, row.kind, input).inputSha256 !== row.inputSha256)
+    throw new TelehealthError("service_unavailable");
+  const common = { requestId: row.requestId, expectedVersion: row.expectedVersion, operationId: input.operationId, operationProtocol: "appointment-change/1" };
+  let saved: Record<string, unknown>;
+  if (row.kind === "authorize" && input.policyVersion === "telehealth-payments/1" && typeof input.authorized === "boolean")
+    saved = { ...common, kind: "payment_authorization", authorized: input.authorized };
+  else if (row.kind === "consumer_action" && input.action === "cancel" && !Object.hasOwn(input, "slotId") && !Object.hasOwn(input, "holdId"))
+    saved = { ...common, kind: "cancel" };
+  else if (row.kind === "consumer_action" && input.action === "request_reschedule" && UUID.test(String(input.slotId)) && UUID.test(String(input.holdId)))
+    saved = { ...common, kind: "request_reschedule", slotId: input.slotId, holdId: input.holdId };
+  else return { ...base, disposition: "unrecoverable" };
+  return { ...base, disposition: "recoverable", pending: { preparedAt: row.admittedAt, input: saved } };
+}
+
 /** All appointment/payment writers enter the same durable admission. A pending
  * operation is NEVER automatically redispatched or unlocked on elapsed time.
  * The current request is returned separately from its historical receipt. */
@@ -449,9 +505,11 @@ async function requestOperation(config: TelehealthConfiguration, actor: Actor, p
   const visit = item.appointmentId ? await findVisit(config, actor.organizationId, item.appointmentId) : null;
   if (visit && (visit.mutationOperationId || ((kind === "consumer_action" || kind === "workforce_action")
     && (visit.status !== "scheduled" || visit.meetingLease)))) throw new TelehealthError("conflict");
+  const recoveryInput = consumerRecoveryPayload(pool, kind, supplied);
   const row: RequestOperationRow = { ...operation.key, operationId, inputSha256, requestId: item.requestId,
     organizationId: item.organizationId, actorPersonId: actor.personId, actorSubject: actor.subject, pool, kind,
-    expectedVersion: item.version, phase: "admitted", admittedAt: operation.admittedAt };
+    expectedVersion: item.version, phase: "admitted", admittedAt: operation.admittedAt,
+    ...(recoveryInput ? { consumerRecoveryInput: recoveryInput } : {}) };
   const admission: RequestTransaction = [
     { Put: { TableName: config.tableName, Item: row, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
     { Update: { TableName: config.tableName, Key: operation.requestKey,
