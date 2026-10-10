@@ -17,6 +17,15 @@ const bindingSchema=z.object({organizationId:uuid,consumerPersonId:uuid,patientR
  .refine(v=>v.input.idempotencyKey==='alp-cart-'+v.intentSha256);
 export type DraftDeliveryBinding=z.infer<typeof bindingSchema>;
 type State='prepared'|'dispatching'|'uncertain'|'verified'|'cancelled'|'withheld';
+const stateSchema=z.enum(['prepared','dispatching','uncertain','verified','cancelled','withheld']);
+const eventIdSchema=z.string().regex(/^[1-9][0-9]{0,18}$/).refine(v=>BigInt(v)<=BigInt('9223372036854775807'));
+const auditPageSchema=z.object({events:z.array(z.object({eventId:eventIdSchema,
+ action:z.enum(['prepared','transition','custody','status_read','owner_export_read']),actorPersonId:uuid,
+ actorPool:z.enum(['consumer','workforce']),actorSource:z.enum(['caller','admitted_writer']),
+ previousState:stateSchema.nullable(),nextState:stateSchema,writerPending:z.boolean(),providerReceiptKnown:z.boolean(),
+ happenedAt:z.string().min(1).max(80)}).strict()).max(100),nextBefore:eventIdSchema.nullable()}).strict()
+ .refine(p=>p.events.every((e,i)=>i===0||BigInt(e.eventId)<BigInt(p.events[i-1].eventId))
+  &&(p.nextBefore===null||p.events.length===100&&p.nextBefore===p.events[99].eventId));
 export type DraftDeliveryStatus={id:string;state:State;includedCount:number;excludedCount:number;
  providerPlanId:string|null;writerPending:boolean;patientSent:false;phiAllowed:false};
 type Row=Record<string,unknown>&{id:string;binding:unknown;state:State;writer_id:string|null;
@@ -77,12 +86,17 @@ export function parseFullscriptDraftObservation(raw:unknown,input:FullscriptSupp
  * POST; reconciliation is read-only. Cancellation preserves the writer token,
  * since it cannot revoke an already admitted request at the provider. */
 export function createDraftDeliveryService(database:ClinicalCoreDatabase,authority:DraftDeliveryAuthority,provider:DraftDeliveryProvider){
+ const auditActor=async(tx:ClinicalCoreTransaction,actor:DraftDeliveryActor,source:'caller'|'admitted_writer'='caller')=>{
+  await tx.query("select set_config('alp.fullscript_audit_actor',$1,true)",[JSON.stringify({organizationId:actor.organizationId,
+   personId:actor.personId,identityPool:actor.identityPool,source})]);
+ };
  const load=async(tx:ClinicalCoreTransaction,actor:DraftDeliveryActor,id:string)=>{
   const result=await tx.query<Row>(`select ${projection} from fullscript_delivery.draft_intents
    where id=$1::uuid and organization_id=$2::uuid for update`,[uuid.parse(id),actor.organizationId]);
   const row=result.rows[0];if(!row)throw new DraftDeliveryRefused();
   const binding=bindingSchema.parse(row.binding);
   await authority.assertAccess(tx,actor,copy(binding));
+  await auditActor(tx,actor);
   return {row,binding};
  };
  const status=(row:Row,b:DraftDeliveryBinding):DraftDeliveryStatus=>({id:row.id,state:row.state,
@@ -109,6 +123,7 @@ export function createDraftDeliveryService(database:ClinicalCoreDatabase,authori
   const found=await tx.query<Row>(`select ${projection} from fullscript_delivery.draft_intents where id=$1::uuid for update`,[id]);
   const row=found.rows[0];if(!row||row.writer_id!==writer)throw new DraftDeliveryRefused();
   const b=bindingSchema.parse(row.binding);
+  await auditActor(tx,actorSchema.parse(row.writer_actor),'admitted_writer');
   let receipt:ReturnType<typeof verifiedObservation>|null=null;
   try{receipt=verifiedObservation(observation,b.input);}catch{ /* Unverified is not a receipt. */ }
   const valid=await stillAuthorized(tx,row,b);
@@ -133,6 +148,7 @@ export function createDraftDeliveryService(database:ClinicalCoreDatabase,authori
     if(b.organizationId!==actor.organizationId||b.manifestId!==selector.manifestId||b.patientRecordId!==selector.patientRecordId)
      throw new DraftDeliveryRefused();
     await authority.assertAccess(tx,actor,copy(b));await authority.assertCurrent(tx,copy(b));
+    await auditActor(tx,actor);
     await tx.query(`insert into fullscript_delivery.draft_intents(id,organization_id,consumer_person_id,patient_record_id,
      connection_id,practitioner_person_id,manifest_id,authority_sha256,intent_sha256,input,excluded_count)
      values($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8,$9,$10::jsonb,$11)
@@ -177,7 +193,33 @@ export function createDraftDeliveryService(database:ClinicalCoreDatabase,authori
    return database.transaction(async tx=>{
     const {row,binding:b}=await load(tx,actor,id);
     if(!(await stillAuthorized(tx,row,b)))await withhold(tx,row);
+    await tx.query('select fullscript_delivery.record_draft_access($1::uuid,$2)',[id,'status_read']);
     return status(row,b);
+   });
+  }),
+  /** Unreleased owner-only export port. Includes one immutable intent and a
+   * bounded, descending live audit page, not an account-wide snapshot or a
+   * deletion/recall guarantee. No raw provider response or URL is exported. */
+  exportForOwner:(rawActor:unknown,id:string,rawBefore:unknown=null)=>guarded(async()=>{
+   const actor=actorSchema.parse(rawActor);
+   if(actor.identityPool!=='consumer')throw new DraftDeliveryRefused();
+   const before=eventIdSchema.nullable().parse(rawBefore);
+   return database.transaction(async tx=>{
+    const {row,binding:b}=await load(tx,actor,id);
+    if(actor.personId!==b.consumerPersonId)throw new DraftDeliveryRefused();
+    if(!(await stillAuthorized(tx,row,b)))await withhold(tx,row);
+    // Export is historical owner access, not renewed delivery authorization.
+    // Keep known external custody visible even for a withheld receipt.
+    const page=auditPageSchema.parse((await tx.query<{data:unknown}>('select fullscript_delivery.owner_event_page($1::uuid,$2::bigint) as data',
+     [id,before])).rows[0]?.data);
+    const data={contract:'fullscript-draft-owner-export/1',coverage:'single_intent_live_audit_page',
+     intentId:row.id,state:row.state,manifestId:b.manifestId,input:copy(b.input),excludedCount:b.excludedCount,
+     externalCustody:{providerPlanId:row.provider_plan_id,receiptSha256:row.receipt_sha256,
+      writerPending:row.writer_id!==null&&!row.writer_settled,providerCopyRemoval:'not_verified',backupRemoval:'not_verified'},
+     audit:page,phiAllowed:false};
+    if(Buffer.byteLength(JSON.stringify(data),'utf8')>256*1024)throw new DraftDeliveryRefused();
+    await tx.query('select fullscript_delivery.record_draft_access($1::uuid,$2)',[id,'owner_export_read']);
+    return data;
    });
   }),
   reconcile:(rawActor:unknown,id:string)=>guarded(async()=>{

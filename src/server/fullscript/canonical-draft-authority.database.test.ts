@@ -202,6 +202,25 @@ describe('same-target Fullscript authority with canonical SQL and fictional revi
   await expect(prepare()).rejects.toThrow('fullscript_delivery_refused');
   expect(provider.create).not.toHaveBeenCalled();
  });
+ it('exports withheld historical custody only to its original active owner under the actual worker/authority roles',async()=>{
+  const p=await prepare();await service().send(actor(),p.id);await revoke('link');
+  await db.query("insert into clinical_core.patient_connections(organization_id,patient_record_id,consumer_person_id,state,verified_at) values($1,$2,$3,'verified',clock_timestamp())",[org,patient,other]);
+  const exported=await service().exportForOwner(actor(consumer,'consumer'),p.id);
+  expect(exported).toMatchObject({state:'withheld',phiAllowed:false,externalCustody:{providerPlanId:'fictional-plan-id',
+   providerCopyRemoval:'not_verified',backupRemoval:'not_verified'}});
+  expect(exported.audit.events.some(e=>e.nextState==='withheld')).toBe(true);
+  await expect(service().exportForOwner(actor(other,'consumer'),p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect(provider.create).toHaveBeenCalledOnce();expect(provider.findByMetadata).not.toHaveBeenCalled();
+ });
+ it('refuses wrong actual subject and disabled owner exports; the API role cannot call private owner-page functions',async()=>{
+  const p=await prepare();
+  await expect(service().exportForOwner({...actor(consumer,'consumer'),identitySubject:subject(other)},p.id)).rejects.toThrow('fullscript_delivery_refused');
+  await expect(database('clinical_core_api').transaction(tx=>tx.query('select fullscript_delivery.owner_event_page($1::uuid,null)',[p.id])))
+   .rejects.toThrow('permission denied');
+  await revoke('consumer-identity');
+  await expect(service().exportForOwner(actor(consumer,'consumer'),p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect((await db.query("select event_id from fullscript_delivery.draft_events where intent_id=$1::uuid and action='owner_export_read'",[p.id])).rows).toHaveLength(0);
+ });
  it('withdrawal remains possible after the reviewed provider/consent copy disappears',async()=>{
   await db.query('update fullscript_delivery.authority_releases set retired_at=clock_timestamp() where id=$1',[releases.provider]);
   expect(await consentRequest({action:'read',connectionId:connection})).toMatchObject({currentGrant:false,release:null});

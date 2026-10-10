@@ -83,3 +83,118 @@ end $$;
 revoke all on function fullscript_delivery.protect_intent() from public;
 create trigger protect_draft_intent before insert or update or delete on fullscript_delivery.draft_intents
  for each row execute function fullscript_delivery.protect_intent();
+
+-- Recipient-specific, identifier-only history. It is not a provider deletion
+-- receipt. The worker cannot read, insert, rewrite or delete raw audit rows.
+-- Caller context is set only AFTER same-transaction authority checks. A late
+-- provider result is attributed to the persisted admitted writer, not falsely
+-- to a newly authenticated caller or a currently active practitioner.
+create table fullscript_delivery.draft_events (
+ event_id bigint generated always as identity primary key,
+ intent_id uuid not null references fullscript_delivery.draft_intents(id),
+ organization_id uuid not null,
+ actor_person_id uuid not null,
+ actor_pool text not null check(actor_pool in ('consumer','workforce')),
+ actor_source text not null check(actor_source in ('caller','admitted_writer')),
+ action text not null check(action in ('prepared','transition','custody','status_read','owner_export_read')),
+ previous_state text,
+ next_state text not null,
+ writer_pending boolean not null,
+ provider_receipt_known boolean not null,
+ happened_at timestamptz not null default clock_timestamp()
+);
+create index draft_events_intent_page_idx on fullscript_delivery.draft_events(intent_id,event_id desc);
+revoke all on fullscript_delivery.draft_events from public,fullscript_draft_worker;
+
+create function fullscript_delivery.audit_actor(_intent fullscript_delivery.draft_intents) returns jsonb
+language plpgsql set search_path='' as $$
+declare a jsonb;
+begin
+ a:=nullif(current_setting('alp.fullscript_audit_actor',true),'')::jsonb;
+ if current_setting('role',true) is distinct from 'fullscript_draft_worker'
+  or a is null or jsonb_typeof(a)<>'object' or (select count(*) from jsonb_object_keys(a))<>4
+  or (a->>'organizationId')::uuid is distinct from _intent.organization_id
+  or coalesce(a->>'identityPool','') not in ('consumer','workforce')
+  or coalesce(a->>'source','') not in ('caller','admitted_writer')
+  or (a->>'personId')::uuid is null then raise exception 'fullscript_audit_actor_required'; end if;
+ if a->>'identityPool'='consumer' and (a->>'personId')::uuid<>_intent.consumer_person_id
+  then raise exception 'fullscript_audit_actor_required'; end if;
+ if a->>'source'='admitted_writer' and (a->>'identityPool'<>'workforce'
+  or (a->>'personId')::uuid is distinct from (_intent.writer_actor->>'personId')::uuid)
+  then raise exception 'fullscript_audit_actor_required'; end if;
+ return a;
+exception when others then raise exception 'fullscript_audit_actor_required';
+end $$;
+revoke all on function fullscript_delivery.audit_actor(fullscript_delivery.draft_intents) from public,fullscript_draft_worker;
+
+create function fullscript_delivery.audit_draft_change() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare a jsonb; prior text; event_action text;
+begin
+ if tg_op='UPDATE' and row(new.state,new.writer_id,new.writer_settled,new.provider_plan_id,new.receipt_sha256)
+  is not distinct from row(old.state,old.writer_id,old.writer_settled,old.provider_plan_id,old.receipt_sha256)
+  then return new; end if;
+ a:=fullscript_delivery.audit_actor(new);
+ prior:=case when tg_op='INSERT' then null else old.state end;
+ event_action:=case when tg_op='INSERT' then 'prepared' when old.state<>new.state then 'transition' else 'custody' end;
+ insert into fullscript_delivery.draft_events(intent_id,organization_id,actor_person_id,actor_pool,actor_source,
+  action,previous_state,next_state,writer_pending,provider_receipt_known)
+ values(new.id,new.organization_id,(a->>'personId')::uuid,a->>'identityPool',a->>'source',event_action,
+  prior,new.state,new.writer_id is not null and not new.writer_settled,new.provider_plan_id is not null);
+ return new;
+end $$;
+revoke all on function fullscript_delivery.audit_draft_change() from public,fullscript_draft_worker;
+create trigger audit_draft_change after insert or update on fullscript_delivery.draft_intents
+ for each row execute function fullscript_delivery.audit_draft_change();
+
+create function fullscript_delivery.protect_draft_event() returns trigger
+language plpgsql set search_path='' as $$
+begin raise exception 'fullscript_audit_immutable'; end $$;
+revoke all on function fullscript_delivery.protect_draft_event() from public,fullscript_draft_worker;
+create trigger protect_draft_event before update or delete on fullscript_delivery.draft_events
+ for each row execute function fullscript_delivery.protect_draft_event();
+
+-- Only the original owner may export this history; a replacement connection
+-- never changes the immutable owner. API wiring must still authenticate the
+-- actual issuer and use the mandatory canonical authority before setting the
+-- private worker context. These functions are not public identity endpoints.
+create function fullscript_delivery.owner_event_page(_id uuid,_before bigint) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare item fullscript_delivery.draft_intents; a jsonb; events jsonb; more boolean; next_id text;
+begin
+ select * into item from fullscript_delivery.draft_intents where id=_id for share;
+ if not found then raise exception 'fullscript_delivery_refused'; end if;
+ a:=fullscript_delivery.audit_actor(item);
+ if a->>'source'<>'caller' or a->>'identityPool'<>'consumer'
+  or (a->>'personId')::uuid<>item.consumer_person_id or (_before is not null and _before<=0)
+  then raise exception 'fullscript_delivery_refused'; end if;
+ with page as (select * from fullscript_delivery.draft_events
+  where intent_id=_id and (_before is null or event_id<_before) order by event_id desc limit 101),
+ visible as (select * from page order by event_id desc limit 100)
+ select coalesce((select jsonb_agg(jsonb_build_object('eventId',event_id::text,'action',action,
+   'actorPersonId',actor_person_id,'actorPool',actor_pool,'actorSource',actor_source,
+   'previousState',previous_state,'nextState',next_state,'writerPending',writer_pending,
+   'providerReceiptKnown',provider_receipt_known,'happenedAt',happened_at) order by event_id desc) from visible),'[]'::jsonb),
+  (select count(*)>100 from page),(select min(event_id)::text from visible) into events,more,next_id;
+ return jsonb_build_object('events',events,'nextBefore',case when more then next_id else null end);
+end $$;
+revoke all on function fullscript_delivery.owner_event_page(uuid,bigint) from public;
+grant execute on function fullscript_delivery.owner_event_page(uuid,bigint) to fullscript_draft_worker;
+
+create function fullscript_delivery.record_draft_access(_id uuid,_action text) returns void
+language plpgsql security definer set search_path='' as $$
+declare item fullscript_delivery.draft_intents; a jsonb;
+begin
+ select * into item from fullscript_delivery.draft_intents where id=_id for share;
+ if not found then raise exception 'fullscript_delivery_refused'; end if;
+ a:=fullscript_delivery.audit_actor(item);
+ if a->>'source'<>'caller' or _action not in ('status_read','owner_export_read') or _action is null
+  or (_action='owner_export_read' and (a->>'identityPool'<>'consumer'
+   or (a->>'personId')::uuid<>item.consumer_person_id)) then raise exception 'fullscript_delivery_refused'; end if;
+ insert into fullscript_delivery.draft_events(intent_id,organization_id,actor_person_id,actor_pool,actor_source,
+  action,next_state,writer_pending,provider_receipt_known)
+ values(item.id,item.organization_id,(a->>'personId')::uuid,a->>'identityPool','caller',_action,item.state,
+  item.writer_id is not null and not item.writer_settled,item.provider_plan_id is not null);
+end $$;
+revoke all on function fullscript_delivery.record_draft_access(uuid,text) from public;
+grant execute on function fullscript_delivery.record_draft_access(uuid,text) to fullscript_draft_worker;

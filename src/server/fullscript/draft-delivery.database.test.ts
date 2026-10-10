@@ -44,16 +44,106 @@ beforeEach(async()=>{
  await db.exec(readFileSync('infra/aws-clinical-core/source-candidates/fullscript-draft-ledger.sql','utf8'));
  await db.exec(`create table fixture_authority(active boolean,actor_active boolean,connection_id uuid);
   insert into fixture_authority values(true,true,'${id(5)}')`);
- database={transaction:work=>db.transaction(tx=>work({query:async<Row extends Record<string,unknown>>(sql:string,parameters?:readonly unknown[])=>{
+ await db.exec('grant select on fixture_authority to fullscript_draft_worker');
+ database={transaction:work=>db.transaction(async tx=>{await tx.exec('set local role fullscript_draft_worker');return work({query:async<Row extends Record<string,unknown>>(sql:string,parameters?:readonly unknown[])=>{
   const result=await tx.query<Row>(sql,parameters?[...parameters]:[]);
   return {rows:result.rows};
- }}))};
+ }});})};
  provider.create.mockReset();provider.create.mockImplementation(async()=>observation());
  provider.findByMetadata.mockReset();provider.findByMetadata.mockImplementation(async()=>[observation()]);
 });
 afterEach(async()=>{await db.close();});
 
 describe('unreleased Fullscript durable ledger with actual SQL and fictional authority/provider',()=>{
+ it('atomically records state/custody with caller versus admitted-writer attribution and no clinical payload',async()=>{
+  const p=await prepare();await service().send(actor,p.id);await service().read(owner,p.id);
+  const events=(await db.query<Record<string,unknown>>('select * from fullscript_delivery.draft_events order by event_id')).rows;
+  expect(events.map(e=>[e.action,e.previous_state,e.next_state,e.actor_source,e.actor_pool]))
+   .toEqual([['prepared',null,'prepared','caller','workforce'],['transition','prepared','dispatching','caller','workforce'],
+    ['transition','dispatching','verified','admitted_writer','workforce'],['status_read',null,'verified','caller','consumer']]);
+  const text=JSON.stringify(events);
+  for(const forbidden of ['Original fictional directions',id(7),id(11),'identitySubject','fullscriptPatientId'])expect(text).not.toContain(forbidden);
+ });
+ it('records owner cancellation separately from late-writer custody after withdrawal',async()=>{
+  const p=await prepare(),started=deferred<void>(),reply=deferred<unknown>();
+  provider.create.mockImplementation(async()=>{started.resolve();return reply.promise;});
+  const sending=service().send(actor,p.id);await started.promise;await service().cancel(owner,p.id);
+  await db.exec('update fixture_authority set actor_active=false');reply.resolve(observation());await sending;
+  const events=(await db.query<Record<string,unknown>>('select action,actor_pool,actor_source,next_state,provider_receipt_known from fullscript_delivery.draft_events order by event_id')).rows;
+  expect(events.slice(-2)).toEqual([{action:'transition',actor_pool:'consumer',actor_source:'caller',next_state:'withheld',provider_receipt_known:false},
+   {action:'custody',actor_pool:'workforce',actor_source:'admitted_writer',next_state:'withheld',provider_receipt_known:true}]);
+ });
+ it('exports original-owner intent and withheld external custody without claiming recall, deletion or delivery',async()=>{
+  const p=await prepare();await service().send(actor,p.id);await service().cancel(owner,p.id);
+  await db.exec('update fixture_authority set active=false');
+  const exported=await service().exportForOwner(owner,p.id);
+  expect(exported).toMatchObject({contract:'fullscript-draft-owner-export/1',coverage:'single_intent_live_audit_page',
+   state:'withheld',input:binding().input,externalCustody:{providerPlanId:id(11),writerPending:false,
+    providerCopyRemoval:'not_verified',backupRemoval:'not_verified'},phiAllowed:false});
+  expect(exported.audit.events).toHaveLength(4);expect(exported.audit.nextBefore).toBeNull();
+  expect((await db.query<Record<string,unknown>>('select action from fullscript_delivery.draft_events order by event_id desc limit 1')).rows[0].action).toBe('owner_export_read');
+ });
+ it('owner export refuses workforce, wrong owner/clinic and malformed cursors without provider calls',async()=>{
+  const p=await prepare();
+  for(const a of [actor,{...owner,personId:id(90)},{...owner,organizationId:id(90)}])
+   await expect(service().exportForOwner(a,p.id)).rejects.toThrow('fullscript_delivery_refused');
+  for(const cursor of ['0','-1','1e3','9223372036854775808',1,{},'1;select 1'])
+   await expect(service().exportForOwner(owner,p.id,cursor)).rejects.toThrow('fullscript_delivery_refused');
+  expect(provider.create).not.toHaveBeenCalled();expect(provider.findByMetadata).not.toHaveBeenCalled();
+ });
+ it('export commits a withdrawal hold but preserves original-owner custody without a provider call',async()=>{
+  const p=await prepare();await service().send(actor,p.id);await db.exec('update fixture_authority set active=false');
+  expect(await service().exportForOwner(owner,p.id)).toMatchObject({state:'withheld',externalCustody:{providerPlanId:id(11)}});
+  expect((await db.query<Record<string,unknown>>('select state from fullscript_delivery.draft_intents')).rows[0].state).toBe('withheld');
+  expect(provider.create).toHaveBeenCalledOnce();expect(provider.findByMetadata).not.toHaveBeenCalled();
+ });
+ it('refuses an oversized inline export without truncating or recording a successful export read',async()=>{
+  const b=binding();b.input.recommendations=Array.from({length:200},(_,i)=>({variantId:id(200+i),unitsToPurchase:'1',instructions:'x'.repeat(2000)}));
+  const large=createDraftDeliveryService(database,{...authority,resolve:async()=>b},provider);
+  const p=await large.prepare(actor,selector);
+  await expect(large.exportForOwner(owner,p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect((await db.query('select event_id from fullscript_delivery.draft_events')).rows).toHaveLength(1);
+  expect(provider.create).not.toHaveBeenCalled();
+ });
+ it.each(['absent','extra-field','duplicate-event','unsorted','bad-cursor'])('refuses %s audit-page results instead of issuing an incomplete export',async reason=>{
+  const p=await prepare();const event={eventId:'2',action:'prepared',actorPersonId:actor.personId,actorPool:'workforce',actorSource:'caller',
+   previousState:null,nextState:'prepared',writerPending:false,providerReceiptKnown:false,happenedAt:'2026-10-09T00:00:00Z'};
+  const page=reason==='absent'?undefined:reason==='extra-field'?{events:[event],nextBefore:null,rawProviderBody:'must not leak'}
+   :reason==='duplicate-event'?{events:[event,event],nextBefore:null}:reason==='unsorted'?{events:[{...event,eventId:'1'},event],nextBefore:null}
+   :{events:[event],nextBefore:'2'};
+  const broken:ClinicalCoreDatabase={transaction:work=>database.transaction(tx=>work({query:async<Row extends Record<string,unknown>>(sql:string,args?:readonly unknown[])=>
+   sql.includes('owner_event_page')?{rows:[{data:page} as unknown as Row]}:tx.query<Row>(sql,args)}))};
+  await expect(createDraftDeliveryService(broken,authority,provider).exportForOwner(owner,p.id)).rejects.toThrow('fullscript_delivery_refused');
+  expect((await db.query('select event_id from fullscript_delivery.draft_events')).rows).toHaveLength(1);
+  expect(provider.create).not.toHaveBeenCalled();
+ });
+ it('bounds audit pages and uses descending keysets so intervening reads do not duplicate old events',async()=>{
+  const p=await prepare();for(let i=0;i<105;i++)await service().read(owner,p.id);
+  const first=await service().exportForOwner(owner,p.id);expect(first.audit.events).toHaveLength(100);
+  expect(first.audit.nextBefore).toBe(first.audit.events[99].eventId);
+  await service().read(owner,p.id);
+  const second=await service().exportForOwner(owner,p.id,first.audit.nextBefore);
+  expect(second.audit.events).toHaveLength(6);expect(second.audit.nextBefore).toBeNull();
+  expect(new Set([...first.audit.events,...second.audit.events].map(e=>e.eventId)).size).toBe(106);
+ });
+ it('raw audit rows are inaccessible to the worker/API and immutable even to the local table owner',async()=>{
+  await prepare();await db.exec('create role clinical_core_api nologin');
+  for(const role of ['fullscript_draft_worker','clinical_core_api'])for(const sql of ['select * from fullscript_delivery.draft_events',
+   'delete from fullscript_delivery.draft_events',"update fullscript_delivery.draft_events set action='owner_export_read'"])
+   await expect(db.transaction(async tx=>{await tx.exec('set local role '+role);await tx.exec(sql);})).rejects.toThrow('permission denied');
+  for(const sql of ['delete from fullscript_delivery.draft_events',"update fullscript_delivery.draft_events set action='owner_export_read'"])
+   await expect(db.exec(sql)).rejects.toThrow('fullscript_audit_immutable');
+ });
+ it('rolls back a valid transition if actor audit context is missing, malformed or cross-clinic',async()=>{
+  const p=await prepare();
+  for(const context of ['', '{}', 'not-json',JSON.stringify({organizationId:id(99),personId:owner.personId,identityPool:'consumer',source:'caller'})])
+   await expect(db.transaction(async tx=>{await tx.exec('set local role fullscript_draft_worker');
+    await tx.query("select set_config('alp.fullscript_audit_actor',$1,true)",[context]);
+    await tx.query("update fullscript_delivery.draft_intents set state='cancelled' where id=$1::uuid",[p.id]);
+   })).rejects.toThrow('fullscript_audit_actor_required');
+  expect((await db.query<Record<string,unknown>>('select state from fullscript_delivery.draft_intents')).rows[0].state).toBe('prepared');
+  expect((await db.query('select event_id from fullscript_delivery.draft_events')).rows).toHaveLength(1);
+ });
  it.each(['reply','lost-reply'])('settles the documented HTTP %s through the real ledger, never a second POST',async mode=>{
   const input=binding().input;
   const raw={treatment_plan:{id:id(11),patient:{id:input.fullscriptPatientId},practitioner:{id:input.practitionerId},
