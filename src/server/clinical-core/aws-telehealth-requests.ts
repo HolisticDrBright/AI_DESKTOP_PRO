@@ -171,9 +171,10 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
       return response(404, { error: "route_not_found" });
     } catch (error) {
-      console.warn(JSON.stringify({ event: "telehealth_request_refused", route, errorName: error instanceof Error ? error.name : "UnknownError",
-        errorMessage: error instanceof Error ? error.message.replace(/[\r\n]/g, " ").slice(0, 300) : "unknown" }));
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
+      // Provider/SDK exception names and messages can contain credentials,
+      // contact details or submitted clinical text. Log fixed labels only.
+      console.warn(JSON.stringify({ event: "telehealth_request_refused", category }));
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
         : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable"].includes(category) ? 409
         : category === "provider_unavailable" || category === "service_unavailable" ? 503 : 400;
@@ -183,7 +184,8 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
 }
 
 async function createRequest(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
-  exact(value, ["visitType", "slotId", "holdId", "note", "consent"], ["visitType", "slotId", "holdId"]);
+  exact(value, ["visitType", "slotId", "holdId", "note", "consent", "replayProtocol"], ["visitType", "slotId", "holdId"]);
+  if (value.replayProtocol !== undefined && value.replayProtocol !== "hold-booking/1") throw new TelehealthError("request_invalid");
   const visitType = value.visitType;
   if (!["initial", "follow_up", "urgent_question"].includes(String(visitType)) || !UUID.test(String(value.slotId)) || !UUID.test(String(value.holdId))
     || !(value.note === undefined || value.note === null || (typeof value.note === "string" && value.note.length <= 500))) throw new TelehealthError("request_invalid");

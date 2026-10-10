@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const { send, secretSend } = vi.hoisted(() => ({ send: vi.fn(), secretSend: vi.fn() }));
 vi.mock("@aws-sdk/client-dynamodb", () => ({ DynamoDBClient: class {} }));
 vi.mock("@aws-sdk/lib-dynamodb", () => ({ DynamoDBDocumentClient: { from: () => ({ send }) },
@@ -16,7 +16,7 @@ const config: TelehealthConfiguration = { tableName: "fictional", consumerIssuer
   zoomEnabled: false, zoomBaaVerified: false, zoomSecretArn: "", remindersEnabled: false, reminderSender: "", reminderConfigurationSet: "",
   reminderScheduleGroup: "", reminderSchedulerRoleArn: "", reminderTargetArn: "", reminderEventsTopicArn: "", stripeTestEnabled: false,
   stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "", identityApiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com" };
-const input = () => ({ visitType: "follow_up", slotId, holdId, note: "Fictional scheduling note" });
+const input = () => ({ visitType: "follow_up", slotId, holdId, note: "Fictional scheduling note", replayProtocol: "hold-booking/1" });
 function event(body: Record<string, unknown>, person = owner) { return { routeKey: "POST /clinical-core/consumer/appointments/requests",
   headers: { "content-type": "application/json" }, body: JSON.stringify(body), requestContext: { authorizer: { jwt: { claims: {
     iss: config.consumerIssuer, aud: config.consumerAudience, token_use: "id", sub: "fictional-owner", email: "fictional@example.test",
@@ -46,6 +46,7 @@ beforeEach(() => {
   });
 });
 const handler = () => createTelehealthHandler(config);
+afterEach(() => vi.restoreAllMocks());
 it("uses one conditional hold identity and replays the current booking without a second transaction", async () => {
   const run = handler(), first = await run(event(input())), second = await run(event(input()));
   expect(first.statusCode).toBe(201); expect(second.statusCode).toBe(201); expect(writes).toBe(1);
@@ -68,7 +69,7 @@ it.each(["note", "visitType", "slotId"])("rejects changing %s under the original
 });
 it("does not confuse property order with changed immutable input", async () => {
   const run = handler(); await run(event(input()));
-  const value = input(); const result = await run(event({ note: value.note, holdId, slotId, visitType: value.visitType }));
+  const value = input(); const result = await run(event({ replayProtocol: value.replayProtocol, note: value.note, holdId, slotId, visitType: value.visitType }));
   expect(result.statusCode).toBe(201); expect(writes).toBe(1);
 });
 it("refuses another owner's replay without returning the booking", async () => {
@@ -100,4 +101,17 @@ it("replays the current rescheduled request using its original input binding", a
   expect(result.statusCode).toBe(201);
   expect(JSON.parse(result.body).data).toMatchObject({ status: "reschedule_requested", version: 2, slotId: saved.slotId });
   expect(writes).toBe(1);
+});
+it("logs fixed refusal labels without provider exception names, messages or request text", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const failure = new Error("Bearer fictional-secret fictional@example.test health-payload");
+  failure.name = "credential_fictional-secret";
+  send.mockRejectedValueOnce(failure);
+  expect((await handler()(event(input()))).statusCode).toBe(503);
+  expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "telehealth_request_refused", category: "service_unavailable" }));
+  expect(JSON.stringify(warn.mock.calls)).not.toMatch(/fictional-secret|fictional@example|health-payload|Scheduling|scheduling/);
+});
+it("refuses unsupported replay protocols before any read, write or provider request", async () => {
+  expect((await handler()(event({ ...input(), replayProtocol: "unsupported/1" }))).statusCode).toBe(400);
+  expect(send).not.toHaveBeenCalled(); expect(secretSend).not.toHaveBeenCalled();
 });
