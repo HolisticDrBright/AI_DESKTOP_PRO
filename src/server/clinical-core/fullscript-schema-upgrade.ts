@@ -14,7 +14,7 @@ const ledger = 'clinical_core.schema_migrations';
 const baseScopes = ['programs','protocols_supplements','nutrition','appointments','messaging','forms_checkins',
   'symptoms_adherence','wearables','reproductive_health','lab_summaries','lab_results_import','lab_specimen_context','billing_links','research_n_of_1'];
 type Category = 'boundary_refused' | 'artifact_refused' | 'history_refused' | 'inventory_refused' | 'upgrade_busy'
-  | 'admission_changed' | 'verification_failed' | 'upgrade_failed' | 'recovery_required';
+  | 'admission_changed' | 'verification_failed' | 'upgrade_failed' | 'recovery_required' | 'custody_refused' | 'recovery_refused';
 export class FullscriptUpgradeError extends Error {
   constructor(readonly category: Category, readonly stage?: string) { super(stage ? `${category}:${stage}` : category); }
 }
@@ -27,7 +27,7 @@ export type FullscriptUpgradeObservation = {
   fromReleaseSha256: string; toReleaseSha256: string;
 };
 export type FullscriptUpgradeResult = Omit<FullscriptUpgradeObservation, 'observedMigrationCount'> & {
-  observedMigrationCount: 107 | 108 | 111; command: 'inspect' | 'rehearse' | 'upgrade';
+  observedMigrationCount: 107 | 108 | 111; command: 'inspect' | 'inspect-settled' | 'rehearse' | 'upgrade';
   applied: boolean; rolledBack: boolean; dataPreserved: true; historicalSchemaPreserved: true;
   // A rollback rehearsal is not a reviewed receipt or hosted acceptance.
   newTableCount: number; newRows: number;
@@ -46,6 +46,12 @@ function artifact(c: QualificationUpgradeConfiguration, m: ClinicalCoreMigration
     || sha(m.map(r=>`${r.version}:${r.version}_${r.name}.sql:${r.sha256}`).join('\n')) !== p.successorArtifact
     || m.slice(-3).map(r=>r.name).join(',') !== 'production_fullscript_draft_ledger,production_canonical_protocol_carts,production_fullscript_canonical_authority') fail('artifact_refused');
 }
+export const assertFullscriptUpgrade = artifact;
+export function fullscriptConsentConstraintSha256(count: 107 | 108 | 111) {
+  const scopes=[...baseScopes,...(count>=108?['telehealth_recording']:[])];
+  const definition=`CHECK ((scope = ANY (ARRAY[${scopes.map(s=>`'${s}'::text`).join(', ')}])))`;
+  return sha(JSON.stringify(['consent_artifacts_scope_check','consent_grants_scope_check'].map(name=>({name,definition,valid:true}))));
+}
 async function history(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], allowSuccessor = false) {
   const rows = (await tx.query<{ version: string; name: string; sha256: string }>(`select version,name,sha256 from ${ledger} order by version`)).rows;
   if (rows.length === 111 && !allowSuccessor) fail('recovery_required');
@@ -53,8 +59,9 @@ async function history(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], 
     || rows.some((r,i) => r.version !== m[i].version || r.name !== m[i].name || r.sha256 !== m[i].sha256)) fail('history_refused');
   return rows.length as 107 | 108 | 111;
 }
-async function inventory(tx: ClinicalCoreTransaction) {
-  const tables = (await tx.query<Table>(careErasurePreservation.tableQuery)).rows;
+async function inventory(tx: ClinicalCoreTransaction, successor = false) {
+  const tables = (await tx.query<Table>(careErasurePreservation.tableQuery)).rows
+    .filter(t => !successor || !addedTables.includes(careErasurePreservation.tableName(t)));
   if (tables.length !== 209 || tables.some(t => t.kind !== 'r')
     || sha(tables.map(careErasurePreservation.tableName).join('\n')) !== FULLSCRIPT_UPGRADE.historicalTableNames) fail('inventory_refused');
   tables.forEach(careErasurePreservation.qualified);
@@ -120,6 +127,9 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[]) {
       'acl',coalesce(n.nspacl,acldefault('n',n.nspowner))::text) order by n.nspname) from pg_namespace n where n.nspname in
       ('clinical_core','clinical_private','clinical_audit','clinical_reference','commercial_reference')),
     'types',(select jsonb_agg(jsonb_build_object('type',to_jsonb(t)-'oid',
+      'domain_constraints',(select jsonb_agg(jsonb_build_object('name',k.conname,'valid',k.convalidated,
+        'def',pg_get_constraintdef(k.oid),'deferred',k.condeferred,'deferrable',k.condeferrable) order by k.conname)
+        from pg_constraint k where k.contypid=t.oid),
       'enum',(select jsonb_agg(to_jsonb(e)-'oid' order by e.enumsortorder) from pg_enum e where e.enumtypid=t.oid)) order by n.nspname,t.typname)
       from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname in
       ('clinical_core','clinical_private','clinical_audit','clinical_reference','commercial_reference')
@@ -205,10 +215,10 @@ class Rehearsal extends Error { constructor(readonly before: FullscriptUpgradeOb
  * AWS command is installed. It never downgrades committed custody or clears an
  * uncertain writer. A completed/lost-commit receipt requires explicit recovery. */
 export async function runFullscriptSchemaUpgrade(database: ClinicalCoreDatabase, supplied: ClinicalCoreMigration[],
-  configuration: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade', admission?: FullscriptUpgradeObservation): Promise<FullscriptUpgradeResult> {
+  configuration: QualificationUpgradeConfiguration, command: 'inspect' | 'inspect-settled' | 'rehearse' | 'upgrade', admission?: FullscriptUpgradeObservation): Promise<FullscriptUpgradeResult> {
   const m = supplied.map(r=>({...r})), c={...configuration}, a=admission?{...admission}:undefined;
   artifact(c,m);
-  if (!['inspect','rehearse','upgrade'].includes(command) || (command==='upgrade' && (!a || a.contract!=='fullscript-schema-upgrade/1'
+  if (!['inspect','inspect-settled','rehearse','upgrade'].includes(command) || (command==='upgrade' && (!a || a.contract!=='fullscript-schema-upgrade/1'
     || a.execution!=='qualification' || a.phiAllowed!==false || a.activation!=='blocked' || a.fromReleaseSha256!==c.fromReleaseSha256
     || a.toReleaseSha256!==c.toReleaseSha256))) fail('boundary_refused');
   let stage='transaction_start';
@@ -220,20 +230,22 @@ export async function runFullscriptSchemaUpgrade(database: ClinicalCoreDatabase,
     if (command!=='inspect') for(const key of ['ai-desktop-pro:production-clinical-core-migrations','ai-desktop-pro:qualification-fixtures']) {
       if ((await tx.query<{ acquired:boolean }>('select pg_try_advisory_xact_lock(hashtext($1)) as acquired',[key])).rows[0]?.acquired!==true) fail('upgrade_busy');
     }
-    stage='history'; const count=await history(tx,m);
-    if (productionArtifactReleaseHash(m.slice(0,count))!==c.fromReleaseSha256) fail('history_refused');
-    stage='inventory'; await fresh(tx); const tables=await inventory(tx);
+    stage='history'; const count=await history(tx,m,command==='inspect-settled');
+    const prefix=c.fromReleaseSha256===FULLSCRIPT_UPGRADE.parent107?107:108;
+    if (count!==111 && count!==prefix) fail('history_refused');
+    stage='inventory'; if(count!==111)await fresh(tx); const tables=await inventory(tx,count===111);
     if (command!=='inspect') {
       await tx.query(`lock table ${[...tables.map(careErasurePreservation.qualified),ledger].sort().join(',')} in share row exclusive mode`);
-      if (await history(tx,m)!==count || JSON.stringify(await inventory(tx))!==JSON.stringify(tables)) fail('inventory_refused');
-      await fresh(tx);
+      if (await history(tx,m,command==='inspect-settled')!==count || JSON.stringify(await inventory(tx,count===111))!==JSON.stringify(tables)) fail('inventory_refused');
+      if(count!==111)await fresh(tx);
     }
-    stage='before_evidence'; const beforeData=await data(tx,tables,count), beforeSchema=await schema(tx,tables), beforeConsent=await constraints(tx,count);
+    stage='before_evidence'; const beforeData=await data(tx,tables,prefix), beforeSchema=await schema(tx,tables), beforeConsent=await constraints(tx,count);
     const before: FullscriptUpgradeObservation={ contract:'fullscript-schema-upgrade/1',execution:'qualification',phiAllowed:false,activation:'blocked',
-      observedMigrationCount:count as 107|108,historicalTableCount:209,rowCount:beforeData.rows,dataSha256:beforeData.digest,
+      observedMigrationCount:prefix,historicalTableCount:209,rowCount:beforeData.rows,dataSha256:beforeData.digest,
       historicalSchemaSha256:beforeSchema,consentConstraintSha256:beforeConsent,fromReleaseSha256:c.fromReleaseSha256,toReleaseSha256:c.toReleaseSha256 };
     if (command==='upgrade' && Object.keys(before).some(k=>before[k as keyof typeof before]!==a![k as keyof typeof before])) fail('admission_changed');
-    if(command!=='inspect') {
+    if(count===111) { stage='settled_extensions'; await extensions(tx,m); }
+    if(command==='rehearse' || command==='upgrade') {
       stage='extension_ddl';
       for(const r of m.slice(count)) {
         for(const statement of splitPostgresStatements(r.sql)) await tx.query(statement);
@@ -250,8 +262,11 @@ export async function runFullscriptSchemaUpgrade(database: ClinicalCoreDatabase,
       stage='after_extensions'; await extensions(tx,m);
       if(command==='rehearse') throw new Rehearsal(before);
     }
-    return { ...before,observedMigrationCount:command==='upgrade'?111:before.observedMigrationCount,command,
-      applied:command==='upgrade',rolledBack:false,dataPreserved:true,historicalSchemaPreserved:true,newTableCount:command==='inspect'?0:8,newRows:0 };
+    return { ...before,observedMigrationCount:command==='upgrade'?111:count,command,
+      // Report the actually observed successor constraint, not the old scope check.
+      consentConstraintSha256:command==='upgrade'?await constraints(tx,111):beforeConsent,
+      applied:command==='upgrade',rolledBack:false,dataPreserved:true,historicalSchemaPreserved:true,
+      newTableCount:count===111 || command==='upgrade'?8:0,newRows:0 };
   }); } catch(error) {
     if(error instanceof Rehearsal) {
       const after=await runFullscriptSchemaUpgrade(database,m,c,'inspect');

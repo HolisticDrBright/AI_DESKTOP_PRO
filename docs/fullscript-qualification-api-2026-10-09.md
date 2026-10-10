@@ -65,9 +65,10 @@ names is insufficient. The current 107-entry hosted target is insufficient.
 The [111-migration candidate and SQL transition](fullscript-schema-release-2026-10-09.md)
 now register the three Fullscript source candidates after the exact telehealth108
 parent. The source engine supports a preserving 107/108-to-111 transition and an
-atomic rollback rehearsal. It is not an installed AWS migration command: native
-operator custody, interrupted-commit recovery and hosted qualification remain
-required. Never splice SQL into the existing 107 ledger or invent approval rows.
+atomic rollback rehearsal. The separate [native operator](fullscript-upgrade-operator-2026-10-09.md)
+now implements qualification-only command/custody/reconciliation source. Exact
+operator/target review and actual AWS qualification remain required. Never splice
+SQL into the existing 107 ledger or invent approval rows.
 Build the Lambda from exact source and record its zip hash and published
 version before filling the reviewed target. The target must be loaded from a
 separate reviewed server artifact; embedding the zip's own expected hash inside

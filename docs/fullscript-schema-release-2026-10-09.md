@@ -79,10 +79,12 @@ The final production migration gate and three newline regression tests passed.
 These results do not qualify the separate native AWS transition or a provider
 operation.
 
-Remaining release engineering is the native command: actual STS/foundation and
-reviewed-target observations, exact operator artifact, durable writer custody,
-interrupted-commit reconciliation and settled readback. Then run its preserving
-transition against the actual qualification database. The local shape pin must
+The separate [native qualification operator](fullscript-upgrade-operator-2026-10-09.md)
+now supplies current STS/foundation and exact-target binding, local durable writer
+custody, interrupted-commit reconciliation and settled readback. Its source and
+local tests are not hosted qualification. Review the exact clean operator and
+target, then run its preserving transition against the actual qualification database.
+The local shape pin must
 match the actual Aurora engine; a mismatch is a finding, not permission to ignore
 metadata or relabel the test as passed. Configure the reviewed separate target
 loader and published Lambda/route/IAM candidate, without embedding its own zip

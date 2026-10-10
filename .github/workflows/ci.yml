@@ -35,6 +35,10 @@ jobs:
         run: |
           npm run test:fullscript-candidate
           npm run build:fullscript-candidate
+      - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
+        run: |
+          npm run test:fullscript-upgrade-operator
+          npm run build:fullscript-upgrade
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)
