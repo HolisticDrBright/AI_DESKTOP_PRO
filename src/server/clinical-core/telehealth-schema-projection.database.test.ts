@@ -172,6 +172,12 @@ describe('read only exact source and qualification identity inspection',()=>{
     const changed=structuredClone(source) as unknown as Record<string,unknown>;changed[key]='changed';
     expect(()=>assertTelehealthSchemaSource(changed as TelehealthSchemaSource,migrations())).toThrow('artifact_refused');
   });
+  it('does not admit a restricted local source contract as runtime authority',()=>{
+    const changed={...structuredClone(source),contract:'telehealth-restricted-owner-source/1',
+      postgresVersion:'17.7',ownerProfile:{owner:'clinical_admin',sourceOnly:true,runtimeAdmission:false,
+        managedRoleSemanticsVerified:false,upgradeAuthorized:false,providerAuthorized:false,phiAllowed:false,activation:'blocked'}};
+    expect(()=>assertTelehealthSchemaSource(changed as unknown as TelehealthSchemaSource,migrations())).toThrow('artifact_refused');
+  });
   it('refuses metadata learned from another target even with a recomputed digest',()=>{
     const changed=structuredClone(source);changed.snapshots[2].projection[0].digest='a'.repeat(64);
     changed.snapshots[2].schemaSha256=sha(JSON.stringify(changed.snapshots[2].projection));

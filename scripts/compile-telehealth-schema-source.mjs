@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { projectTelehealthSchema, TELEHEALTH_SCHEMA_PROJECTION } from './telehealth-schema-projection.mjs';
+import { assertRestrictedSourceOwnerIdentity, RESTRICTED_SOURCE_OWNER_IDENTITY_SQL } from './telehealth-restricted-source-owner.mjs';
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const root=fileURLToPath(new URL('../',import.meta.url));
 async function loadCompilationPlan() {
@@ -65,4 +66,20 @@ export async function compileTelehealthSchemaNativeSource(db) {
   if(existing.length!==1||existing[0].namespaces!==0||existing[0].roles!==0||existing[0].public_relations!==0)
     throw Error('telehealth_native_source_not_empty');
   return compilePrefixes(db,await loadCompilationPlan());
+}
+
+/** Independent local non-superuser source compilation. This contract is not
+ * accepted by the existing runtime inspector and cannot admit AWS targets. */
+export async function compileTelehealthSchemaRestrictedOwnerSource(db) {
+  const ownerProfile=assertRestrictedSourceOwnerIdentity((await db.query(RESTRICTED_SOURCE_OWNER_IDENTITY_SQL)).rows);
+  const existing=(await db.query(`select
+    (select count(*) from pg_namespace where nspname like 'clinical\\_%' escape '\\' or nspname in('commercial_reference','fullscript_delivery'))::int namespaces,
+    (select count(*) from pg_roles where (rolname like 'clinical\\_%' escape '\\' or rolname like 'fullscript\\_%' escape '\\') and rolname<>'clinical_admin')::int roles,
+    (select count(*) from pg_auth_members where member=(select oid from pg_roles where rolname=current_user))::int memberships,
+    (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind in('r','p','f','v','m','S'))::int public_relations`)).rows;
+  if(existing.length!==1||Object.keys(existing[0]).sort().join(',')!=='memberships,namespaces,public_relations,roles'
+    ||Object.values(existing[0]).some(value=>value!==0))throw Error('telehealth_restricted_source_not_empty');
+  const compiled=await compilePrefixes(db,await loadCompilationPlan());
+  assertRestrictedSourceOwnerIdentity((await db.query(RESTRICTED_SOURCE_OWNER_IDENTITY_SQL)).rows);
+  return {...compiled,contract:'telehealth-restricted-owner-source/1',ownerProfile};
 }
