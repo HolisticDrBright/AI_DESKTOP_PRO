@@ -34,6 +34,7 @@ vi.mock("@aws-sdk/client-scheduler", () => ({
 }));
 
 import { createTelehealthHandler, signMeetingSdkJwt, type TelehealthConfiguration } from "./aws-telehealth-requests";
+import { FictionalAppointmentStore } from "./appointment-operation-store.test-support";
 
 const config: TelehealthConfiguration = {
   tableName: "synthetic-appointments",
@@ -106,35 +107,37 @@ function stripeIntent(patch: Record<string, unknown>) {
     metadata: { organization_id: workforceClaims["custom:organization_id"], request_id: "33333333-3333-4333-8333-333333333333" }, ...patch };
 }
 describe("workforce payment failure reconciliation", () => {
-  beforeEach(() => { send.mockReset(); secretSend.mockReset(); secretSend.mockResolvedValue({ SecretString: JSON.stringify({ secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic" }) }); });
+  const resetRequest = (patch: Record<string, unknown> = {}) => {
+    send.mockReset(); const store = new FictionalAppointmentStore().seed({ ...processingItem(), ...patch }); send.mockImplementation(store.send); return store;
+  };
+  beforeEach(() => { resetRequest(); secretSend.mockReset(); secretSend.mockResolvedValue({ SecretString: JSON.stringify({ secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic" }) }); });
   const reconcile = (intent: Record<string, unknown>, expectedVersion = 4, ok = true) => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok, json: async () => intent })));
     return createTelehealthHandler(stripeConfig)(event("POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion }, workforceClaims));
   };
   it("settles a processing charge from the official intent only when its metadata names this request", async () => {
-    send.mockResolvedValueOnce({ Items: [processingItem()] }).mockResolvedValueOnce({});
     const paid = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000 }));
     expect(paid.statusCode).toBe(200);
     expect(JSON.parse(paid.body ?? "{}").data).toMatchObject({ reconciliation: "settled_paid", paymentStatus: "paid", paidMinor: 15000, version: 5 });
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    resetRequest();
     const foreign = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000, metadata: { organization_id: workforceClaims["custom:organization_id"], request_id: "44444444-4444-4444-8444-444444444444" } }));
-    expect(foreign.statusCode).toBe(503); expect(send).toHaveBeenCalledTimes(1);
+    expect(foreign.statusCode).toBe(503);
+    expect(send.mock.calls.filter(([cmd]) => cmd.constructor.name === "UpdateCommand")).toHaveLength(0);
   });
   it("records a terminal failure, leaves unfinished intents untouched and refuses stale versions or overpayment", async () => {
-    send.mockResolvedValueOnce({ Items: [processingItem()] }).mockResolvedValueOnce({});
     expect(JSON.parse((await reconcile(stripeIntent({ status: "requires_payment_method", last_payment_error: { code: "card_declined" } }))).body ?? "{}").data).toMatchObject({ reconciliation: "settled_failed", paymentStatus: "failed" });
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    resetRequest();
     expect(JSON.parse((await reconcile(stripeIntent({ status: "requires_action" }))).body ?? "{}").data).toMatchObject({ reconciliation: "still_processing", paymentStatus: "processing" });
-    expect(send).toHaveBeenCalledTimes(1);
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    expect(send.mock.calls.filter(([cmd]) => cmd.constructor.name === "TransactWriteCommand")).toHaveLength(2);
+    resetRequest();
     expect((await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000 }), 3)).statusCode).toBe(409);
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    resetRequest();
     expect((await reconcile(stripeIntent({ status: "succeeded", amount_received: 99999 }))).statusCode).toBe(503);
   });
   it("does nothing for a request that is not processing and refuses without the Stripe test boundary", async () => {
-    send.mockResolvedValueOnce({ Items: [{ ...processingItem(), paymentStatus: "paid", paidMinor: 15000 }] });
+    resetRequest({ paymentStatus: "paid", paidMinor: 15000 });
     expect(JSON.parse((await reconcile(stripeIntent({}))).body ?? "{}").data).toMatchObject({ reconciliation: "not_processing", paymentStatus: "paid" });
-    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    resetRequest();
     const disabled = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion: 4 }, workforceClaims));
     expect(disabled.statusCode).toBe(503); expect(secretSend).not.toHaveBeenCalled();
   });
@@ -225,26 +228,28 @@ describe("AWS telehealth request boundary", () => {
 
   it("continues an empty filtered request page and pins a strongly consistent same-clinic lookup", async () => {
     const row = { ...processingItem(), status: "cancelled" }, cursor = { pk: row.pk, sk: "REQ#fictional-page-1" };
-    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor }).mockResolvedValueOnce({ Items: [row] });
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor }).mockResolvedValueOnce({ Items: [row] });
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
       requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
     expect(result.statusCode).toBe(409); expect(JSON.parse(result.body).error).toBe("conflict");
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[0][0].input).toMatchObject({ ConsistentRead: true, Limit: 200 });
-    expect(send.mock.calls[1][0].input).toMatchObject({ ConsistentRead: true, ExclusiveStartKey: cursor });
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[0][0].input).toMatchObject({ ConsistentRead: true, Key: { sk: expect.stringMatching(/^REQOP#/) } });
+    expect(send.mock.calls[1][0].input).toMatchObject({ ConsistentRead: true, Limit: 200 });
+    expect(send.mock.calls[2][0].input).toMatchObject({ ConsistentRead: true, ExclusiveStartKey: cursor });
     expect(secretSend).not.toHaveBeenCalled();
   });
 
   it("reports missing only after the final filtered request page", async () => {
     const row = processingItem();
-    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { pk: row.pk, sk: "REQ#fictional-page-1" } }).mockResolvedValueOnce({ Items: [] });
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { pk: row.pk, sk: "REQ#fictional-page-1" } }).mockResolvedValueOnce({ Items: [] });
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
       requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
-    expect(result.statusCode).toBe(404); expect(send).toHaveBeenCalledTimes(2); expect(secretSend).not.toHaveBeenCalled();
+    expect(result.statusCode).toBe(404); expect(send).toHaveBeenCalledTimes(3); expect(secretSend).not.toHaveBeenCalled();
   });
 
   it.each(["cycle", "foreign-cursor", "invalid-cursor", "budget", "duplicate", "foreign-row"])("refuses %s request lookup without a write or provider call", async mode => {
     const row = { ...processingItem(), status: "cancelled" }, cursor = { pk: row.pk, sk: "REQ#fictional-page-1" };
+    send.mockResolvedValueOnce({});
     if (mode === "cycle") send.mockResolvedValue({ Items: [], LastEvaluatedKey: cursor });
     if (mode === "foreign-cursor") send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { ...cursor, pk: "ORG#other" } });
     if (mode === "invalid-cursor") send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { ...cursor, sk: "VISIT#foreign-domain" } });
@@ -254,8 +259,9 @@ describe("AWS telehealth request boundary", () => {
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
       requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
     expect(result.statusCode).toBe(503); expect(JSON.parse(result.body).error).toBe("service_unavailable");
-    expect(send.mock.calls.every(([command]) => command.constructor.name === "QueryCommand")).toBe(true);
-    expect(send.mock.calls.length).toBeLessThanOrEqual(20); expect(secretSend).not.toHaveBeenCalled();
+    expect(send.mock.calls[0][0].constructor.name).toBe("GetCommand");
+    expect(send.mock.calls.slice(1).every(([command]) => command.constructor.name === "QueryCommand")).toBe(true);
+    expect(send.mock.calls.length).toBeLessThanOrEqual(21); expect(secretSend).not.toHaveBeenCalled();
   });
 
   it("will not enable Stripe without an exact test secret and hosted return URLs", () => {
@@ -317,7 +323,7 @@ describe("AWS telehealth request boundary", () => {
   });
 
   it("will not revive a cancelled request from the workforce queue", async () => {
-    send.mockResolvedValueOnce({ Items: [{
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [{
       pk: `ORG#${workforceClaims["custom:organization_id"]}`,
       sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
       gsi1pk: `PERSON#${claims["custom:person_id"]}`,
@@ -350,11 +356,11 @@ describe("AWS telehealth request boundary", () => {
     }, workforceClaims));
     expect(result.statusCode).toBe(409);
     expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "conflict" });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("aliases DynamoDB's reserved timeZone name when scheduling the canonical appointment", async () => {
-    send.mockResolvedValueOnce({ Items: [{
+    const store = new FictionalAppointmentStore().seed({
       pk: `ORG#${workforceClaims["custom:organization_id"]}`, sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
       gsi1pk: `PERSON#${claims["custom:person_id"]}`, gsi1sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
       requestId: "33333333-3333-4333-8333-333333333333", organizationId: workforceClaims["custom:organization_id"], consumerPersonId: claims["custom:person_id"],
@@ -364,13 +370,13 @@ describe("AWS telehealth request boundary", () => {
       priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24, cancellationFeeDueMinor: 0,
       reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1", paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due",
       paymentIntentId: null, paidMinor: 0, refundedMinor: 0,
-    }] }).mockResolvedValueOnce({});
+    }); send.mockImplementation(store.send);
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/actions", {
       requestId: "33333333-3333-4333-8333-333333333333", action: "schedule", expectedVersion: 1,
       scheduledStart: "2026-09-03T17:00:00.000Z", scheduledEnd: "2026-09-03T17:45:00.000Z", timeZone: "America/Los_Angeles",
     }, workforceClaims));
     expect(result.statusCode).toBe(200);
-    const command = send.mock.calls[1]?.[0] as { input?: { TransactItems?: Array<{ Update?: { UpdateExpression?: string; ExpressionAttributeNames?: Record<string,string> } }> } };
+    const command = send.mock.calls.map(([cmd]) => cmd).find(cmd => cmd.input.TransactItems?.[0]?.Update?.UpdateExpression?.includes("#timeZone=:zone")) as { input?: { TransactItems?: Array<{ Update?: { UpdateExpression?: string; ExpressionAttributeNames?: Record<string,string> } }> } };
     expect(command.input?.TransactItems?.[0]?.Update?.UpdateExpression).toContain("#timeZone=:zone");
     expect(command.input?.TransactItems?.[0]?.Update?.ExpressionAttributeNames).toMatchObject({ "#timeZone": "timeZone" });
   });
@@ -467,6 +473,11 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     const index = writes.push(command.input) - 1;
     const error = failWrite?.(command.input, index);
     if (error) throw error;
+    if (command.constructor.name === "TransactWriteCommand") {
+      const parts = command.input.TransactItems as Array<{ Put?: Record<string, unknown>; ConditionCheck?: Record<string, unknown> }>;
+      for (const part of parts) if (part.Put) writes.push(part.Put);
+      if (parts.some(part => part.Put)) expect(parts.some(part => part.ConditionCheck?.ConditionExpression === "#version=:expected AND attribute_not_exists(mutationOperationId)")).toBe(true);
+    }
     return {};
   });
   const putItems = () => writes.filter((write) => "Item" in write).map((write) => write.Item as Record<string, unknown>);
@@ -648,12 +659,12 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(payload.data).toMatchObject({ consentSigned: true, version: 2 });
     expect((payload.data.consents as Array<Record<string, unknown>>).map((consent) => consent.status)).toEqual(["granted", "granted"]);
     expect(payload.data).not.toHaveProperty("passcode");
-    expect(writes[0].ConditionExpression).toBe("#version = :expected");
+    expect(writes[0].ConditionExpression).toBe("#version = :expected AND attribute_not_exists(mutationOperationId)");
   });
 
   it("records the governed grant through the identity API when the patient has an app connection", async () => {
     const calls = fetchRouter(identityRoutes({ grant: { status: "none", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }));
-    queueGet(undefined); queueQuery({ Items: [requestRecord()] });
+    queueGet(undefined); queueQuery({ Items: [requestRecord()] }, { Items: [requestRecord()] });
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
       appointmentId: APPOINTMENT, requestId: REQUEST, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, signerName: "Signer", agreed: true,
     }, workforceClaims));
@@ -854,6 +865,20 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(writes).toHaveLength(0);
   });
 
+  it("an unresolved payment fence cannot prevent a practitioner from ending a running call", async () => {
+    const mutationOperationId = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
+    queueGet(visitRecord({ status: "in_visit", providerMeetingId: "900000001", version: 3, mutationOperationId }));
+    const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/end", { appointmentId: APPOINTMENT, expectedVersion: 3 }, workforceClaims));
+    expect(result.statusCode).toBe(200); expect(JSON.parse(result.body).data.status).toBe("ended");
+    expect(JSON.parse(result.body).data).not.toHaveProperty("mutationOperationId");
+    expect(putItems().at(-1)).toMatchObject({ status: "ended", mutationOperationId });
+    expect(calls.some(call => call.method === "PUT" && call.url.endsWith("/status"))).toBe(true);
+    // The unresolved PAYMENT operation stays fenced; ending the call does not
+    // settle the charge or clear its provider uncertainty.
+    expect(writes.every(write => String(write.ConditionExpression).includes("#version"))).toBe(true);
+  });
+
   /* ---------------------------------------------------- the AI summary */
 
   it("imports the current unified summary as unreviewed source text and refuses summaries that do not name this meeting instance", async () => {
@@ -1012,7 +1037,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     const grant = { status: "granted", patientRecordId: PATIENT, connectionId: "44444444-4444-4444-8444-444444444444", artifactId: ARTIFACT.artifactId, artifactStatus: "approved" };
     const calls = fetchRouter([...identityRoutes({ grant }), ...zoomRoutes()]);
     queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"], patientRecordId: null }));
-    queueQuery(...Array.from({ length: 3 }, () => ({ Items: [requestRecord()] })));
+    queueQuery(...Array.from({ length: 8 }, () => ({ Items: [requestRecord()] })));
     const result = await start();
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body ?? "{}").data.visit.patientRecordId).toBe(PATIENT);
@@ -1035,12 +1060,14 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   it("closes a visit when its booking is cancelled, deleting a meeting the visit itself created", async () => {
     const calls = fetchRouter([...zoomRoutes()]);
-    queueQuery({ Items: [requestRecord({ providerMeetingId: null })] }, { Items: [{ pk: `ORG#${ORG}`, sk: "SLOT#x", slotId: "55555555-5555-4555-8555-555555555555", start: "2026-10-09T17:00:00.000Z", cancellationWindowHours: 24, status: "booked" }] });
-    queueGet(visitRecord({ status: "scheduled", providerMeetingId: "900000003", joinUrl: "https://zoom.us/j/900000003" }));
+    const store = new FictionalAppointmentStore().seed(requestRecord({ providerMeetingId: null }),
+      { pk: `ORG#${ORG}`, sk: "SLOT#x", slotId: "55555555-5555-4555-8555-555555555555", start: "2026-10-09T17:00:00.000Z", cancellationWindowHours: 24, status: "booked" },
+      visitRecord({ status: "scheduled", providerMeetingId: "900000003", joinUrl: "https://zoom.us/j/900000003" }));
+    send.mockImplementation(store.send);
     const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/actions", { requestId: REQUEST, action: "cancel", expectedVersion: 2 }, workforceClaims));
     expect(result.statusCode).toBe(200);
     expect(deletes(calls).some((call) => call.url.includes("/meetings/900000003"))).toBe(true);
-    expect(putItems().at(-1)).toMatchObject({ status: "cancelled", providerMeetingId: null, meetingLease: null });
+    expect(store.get({ pk: `ORG#${ORG}`, sk: `VISIT#${APPOINTMENT}` })).toMatchObject({ status: "cancelled", providerMeetingId: null, meetingLease: null });
   });
 
   it("signs a Meeting SDK JWT with the SDK key as appKey and HS256", () => {
