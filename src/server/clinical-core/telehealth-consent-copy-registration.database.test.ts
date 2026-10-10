@@ -11,7 +11,11 @@ import {parseTelehealthConsentCopy,runTelehealthConsentCopyRegistration,type Tel
 import {runCareConsentCopyRegistration} from './care-consent-copy-registration';
 import {inspectRetainedTelehealthConsentCopy} from './telehealth-consent-copy-retained';
 import {bindParameters} from './rds-data-database';
-import {resolve} from 'node:path';
+import {resolve,join,sep} from 'node:path';
+import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {spawn,type ChildProcess} from 'node:child_process';
+import {createNativeTelehealthCopyCustody,openNativeTelehealthCopyRecovery,readTelehealthCopyOperatorFile} from './telehealth-consent-copy-native-custody';
 import {executeTelehealthCopyCommand,type TelehealthCopyCommandDependencies,type TelehealthCopyEvidence,
   type TelehealthCopyStage} from './telehealth-consent-copy-command';
 import type {TelehealthConsentCopyReceipt} from './telehealth-consent-copy-registration';
@@ -66,7 +70,7 @@ function fictionalCommandPorts(){
   const args=(command:string)=>[command,'--target',resolve('FICTIONAL-target.json'),'--target-sha256',sha(bytes(target)),
     '--copy',resolve('FICTIONAL-copy.json'),'--copy-sha256',sha(bytes(copy)),
     command==='reconcile'?'--reconcile-fictional-telehealth-copy':'--confirm-fictional-telehealth-copy'];
-  return {d,writer,args};
+  return {d,writer,args,target};
 }
 beforeAll(async()=>{
   m=migrations();pg=new PGlite({extensions:{pgcrypto}});
@@ -291,5 +295,59 @@ describe('distinct telehealth-only approved-copy source registrar',()=>{
     expect(observed).toMatchObject({observation:'exact_retained_copy_observed',originalWriteOutcome:'unknown',
       databaseMutationPerformed:false,retryPerformed:false,approvalAuthorityCertified:false,deletionCertified:false});
     expect(writes).toBe(1);expect(await count()).toBe(1);await expect(run('inspect')).rejects.toThrow('approval_required');
+  });
+  it.each([false,true])('actual SQL/encoder and actual file custody compose; initial copy present=%s (AWS/fence remain fictional)',async present=>{
+    await approved();if(present)await run();
+    const root=mkdtempSync(join(tmpdir(),'alp-copy-sql-custody-'));
+    try{
+      const s=fictionalCommandPorts(),operatorFile=join(root,'operator.cjs'),copyFile=join(root,'copy.json'),targetFile=join(root,'target.json');
+      writeFileSync(operatorFile,'FICTIONAL native operator');s.target.operatorSha256=sha('FICTIONAL native operator');
+      writeFileSync(copyFile,bytes(copy));writeFileSync(targetFile,bytes(s.target));
+      s.d.operatorSha256=()=>sha(readFileSync(operatorFile));s.d.readTarget=file=>readTelehealthCopyOperatorFile(file);
+      s.d.readCopy=file=>readTelehealthCopyOperatorFile(file,131072);
+      s.d.createCustody=(binding,baseline,fence)=>createNativeTelehealthCopyCustody({root,operatorFile,copyFile},binding,baseline,fence);
+      const args=['register','--target',targetFile,'--target-sha256',sha(bytes(s.target)),
+        '--copy',copyFile,'--copy-sha256',sha(bytes(copy)),'--confirm-fictional-telehealth-copy'];
+      const result=await executeTelehealthCopyCommand(args,build,s.d);
+      expect(result).toMatchObject({copyPresent:true,copyInserted:!present,custodySettled:true,approvalsCreated:false,grantsCreated:false});
+      expect(existsSync(join(root,'operator.lock'))).toBe(false);expect(await count()).toBe(1);
+    }finally{
+      if(!resolve(root).startsWith(resolve(tmpdir())+sep+'alp-copy-sql-custody-'))throw Error('fixture_cleanup_scope');
+      rmSync(root,{recursive:true,force:true});
+    }
+  });
+  it('actual SQL lost reply/approval loss composes with original native journal and stopped-process recovery (fictional AWS/fence)',async()=>{
+    await approved();const root=mkdtempSync(join(tmpdir(),'alp-copy-sql-custody-'));let child:ChildProcess|undefined;
+    try{
+      child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});
+      await new Promise<void>((done,fail)=>{child!.once('spawn',()=>done());child!.once('error',fail);});
+      let now=Date.now(),writes=0,observations=0;
+      const s=fictionalCommandPorts(),operatorFile=join(root,'operator.cjs'),copyFile=join(root,'copy.json'),targetFile=join(root,'target.json');
+      writeFileSync(operatorFile,'FICTIONAL native operator');s.target.operatorSha256=sha('FICTIONAL native operator');
+      writeFileSync(copyFile,bytes(copy));writeFileSync(targetFile,bytes(s.target));
+      s.d.operatorSha256=()=>sha(readFileSync(operatorFile));s.d.readTarget=file=>readTelehealthCopyOperatorFile(file);
+      s.d.readCopy=file=>readTelehealthCopyOperatorFile(file,131072);
+      const options=(pid:number)=>({root,operatorFile,copyFile,runtime:{pid,host:'FICTIONAL same host',now:()=>now}});
+      s.d.createCustody=(binding,baseline,fence)=>createNativeTelehealthCopyCustody(options(child!.pid!),binding,baseline,fence);
+      s.d.openRecoveryCustody=(binding,fence)=>openNativeTelehealthCopyRecovery(options(process.pid),binding,fence);
+      s.d.run=async(...args)=>{const result=await runTelehealthConsentCopyRegistration(...args);
+        if(args[3]==='register'){writes++;await pg.query("update clinical_core.consent_artifacts set status='retired' where id=$1",[copy.artifactId]);
+          throw Error('FICTIONAL interrupted committed reply');}return result;};
+      s.d.inspectRetained=async(...args)=>{observations++;return inspectRetainedTelehealthConsentCopy(...args);};
+      const args=(mode:string)=>[mode,'--target',targetFile,'--target-sha256',sha(bytes(s.target)),
+        '--copy',copyFile,'--copy-sha256',sha(bytes(copy)),mode==='reconcile'?'--reconcile-fictional-telehealth-copy':'--confirm-fictional-telehealth-copy'];
+      await expect(executeTelehealthCopyCommand(args('register'),build,s.d)).rejects.toThrow('FICTIONAL interrupted committed reply');
+      expect(existsSync(join(root,'operator.lock'))).toBe(true);
+      await new Promise<void>(done=>{child!.once('exit',()=>done());child!.kill();});now+=61000;
+      const recovered=await executeTelehealthCopyCommand(args('reconcile'),build,s.d);
+      expect(recovered).toMatchObject({observation:'exact_retained_copy_observed',originalWriteOutcome:'unknown',
+        retryPerformed:false,databaseMutationPerformed:false,approvalAuthorityCertified:false,deletionCertified:false});
+      expect(writes).toBe(1);expect(observations).toBe(3);expect(await count()).toBe(1);
+      expect(existsSync(join(root,'operator.lock'))).toBe(false);await expect(run('inspect')).rejects.toThrow('approval_required');
+    }finally{
+      if(child&&child.exitCode===null&&child.signalCode===null)await new Promise<void>(done=>{child!.once('exit',()=>done());child!.kill();});
+      if(!resolve(root).startsWith(resolve(tmpdir())+sep+'alp-copy-sql-custody-'))throw Error('fixture_cleanup_scope');
+      rmSync(root,{recursive:true,force:true});
+    }
   });
 });

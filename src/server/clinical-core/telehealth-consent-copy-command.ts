@@ -85,8 +85,8 @@ function readCanonical(bytes:Buffer,digest:string,maximum:number):unknown{
   if(!bytes.equals(Buffer.from(canonical(value)+'\n')))fail('target_refused');
   return value;
 }
-/** Orchestration source only until fixed native ports/custody and an exact
- * embedded clean builder are supplied. Never borrow a schema-only review. */
+/** Source-bound native orchestration. Positive AWS qualification remains
+ * separate; never borrow a schema-only review to approve exact wording. */
 export async function executeTelehealthCopyCommand(args:readonly string[],supplied:TelehealthCopyBuild,d:TelehealthCopyCommandDependencies){
   const build={...supplied},[command,targetKey,targetFile,shaKey,targetSha256,copyKey,copyFile,copyShaKey,copySha256,confirmation,...extra]=args;
   if(extra.length||!['inspect','rehearse','register','reconcile'].includes(command)||targetKey!=='--target'
