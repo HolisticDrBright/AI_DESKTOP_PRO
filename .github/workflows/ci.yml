@@ -35,6 +35,11 @@ jobs:
         run: |
           npm run test:fullscript-candidate
           npm run build:fullscript-candidate
+      - name: Telehealth approved copy and versioned withdrawal (fictional database only)
+        run: |
+          npm run test:telehealth-consent-copy
+          npm run test:telehealth-consent-copy-candidate
+          npm run build:telehealth-consent-copy-candidate
       - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
         run: |
           npm run test:fullscript-upgrade-operator
