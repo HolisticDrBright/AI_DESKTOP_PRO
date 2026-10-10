@@ -45,6 +45,9 @@ jobs:
           npm run test:fullscript-api-build
           npm run test:fullscript-qualification-template
           npm run build:fullscript-qualification-template
+          npm run test:fullscript-deployment-preflight
+          npm run build:fullscript-deployment-preflight
+          npm run test:fullscript-deployment-command
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Unreleased connection and exact-copy consent port (fictional embedded database only)

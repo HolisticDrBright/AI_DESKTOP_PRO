@@ -149,7 +149,40 @@ only from real reviews. The template contains no release rows, consent grants,
 provider approval or fictional identities. A deployment and acceptance operator,
 live permission checks and real fictional sandbox journeys remain required.
 
-## Evidence and remaining work
+## Offline deployment preflight
+
+Build the local inspector with `npm run build:fullscript-deployment-preflight`
+from the same clean committed source as the API ZIP and template. Run its
+`dist/aws-clinical-core/fullscript-deployment-preflight/index.cjs` with
+`--inspect-fictional-fullscript-deployment-only`, followed by five absolute
+paths in order: artifact manifest, ZIP, generated template, reviewed target,
+and explicit CloudFormation parameters. The parameter file is a canonical
+compact JSON array of `ParameterKey` and `ParameterValue` rows, followed by LF.
+Include every parameter, including the two empty optional KMS values. Duplicate
+keys, `UsePreviousValue`, unknown or missing parameters are refused.
+
+The inspector verifies actual ZIP bytes, the generated template, source commit,
+target hash, all 111 migration identities and the exact function, API, pools,
+organization, database and credential bindings. It requires immutable object
+versions, separate authorizers and sandbox credentials. The fixed report contains
+only digests, source and status, never credentials or target contents.
+`locally_consistent` is not deployment approval: authorizer configuration,
+S3 object versions, KMS keys, token-table schema, SQL privileges and provider
+registration must still be inspected in AWS and independently reviewed. The
+report explicitly leaves `approvedForDeployment=false`, `awsObserved=false`
+and `ownerDeploymentReviewRequired=true`. The inspector performs no AWS call,
+secret read, review creation, upload, stack change or provider operation.
+
+## Local verification
+
+The offline preflight adds 39 unit checks. Its combined loader/runtime/API group
+passed 218 tests in five files. The broad source group passed 629 tests in 21
+files, no skips, in 179.78 seconds starting at 22:07:52 PDT on October 9.
+Typecheck and targeted lint pass. The first parameter-count assertion expected
+29 instead of the generated template's 27 and failed; the corrected assertion
+passes. Built-command acceptance is a separate check, not implied by these
+module results. All targets, transports and review attestations in tests are
+fictional; no actual review or AWS deployment is established.
 
 The credential and restricted-template increment passed the broad source group:
 590 tests in 20 files, no skips, in 167.87 seconds starting at 21:52:12 PDT on
