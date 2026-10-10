@@ -192,6 +192,35 @@ describe("AWS telehealth request boundary", () => {
       .toThrow("telehealth_configuration_invalid");
   });
 
+  it("validates patient booking consent through the consumer identity route with that patient's token", async () => {
+    const artifact = { artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scope: "telehealth_recording", artifactVersion: "fictional/1",
+      contentSha256: "b".repeat(64), jurisdiction: "US-CA", approvedAt: "2026-10-01T00:00:00.000Z" };
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe(config.identityApiOrigin + "/clinical-core/consumer/consent-artifact?scope=telehealth_recording");
+      expect(init?.headers).toMatchObject({ authorization: "Bearer fictional-consumer-token" });
+      return new Response(JSON.stringify({ data: artifact }), { headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    send.mockResolvedValueOnce({ Items: [{
+      pk: `ORG#${claims["custom:organization_id"]}`, sk: "SLOT#fictional", slotId: "33333333-3333-4333-8333-333333333333",
+      organizationId: claims["custom:organization_id"], start: "2026-10-11T17:00:00.000Z", end: "2026-10-11T17:45:00.000Z",
+      timeZone: "America/Los_Angeles", visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Fictional policy",
+      cancellationWindowHours: 24, status: "held", heldBy: claims["custom:person_id"], holdId: "44444444-4444-4444-8444-444444444444",
+      holdExpiresAt: Math.floor(Date.now() / 1000) + 600,
+    }] }).mockResolvedValueOnce({});
+    const input = event("POST /clinical-core/consumer/appointments/requests", { visitType: "follow_up",
+      slotId: "33333333-3333-4333-8333-333333333333", holdId: "44444444-4444-4444-8444-444444444444",
+      consent: { artifactId: artifact.artifactId, artifactVersion: artifact.artifactVersion, contentSha256: artifact.contentSha256,
+        signerName: "Fictional Signer", representativeAuthority: "self", agreed: true } });
+    (input as unknown as { headers: Record<string, string> }).headers.authorization = "Bearer fictional-consumer-token";
+    const result = await createTelehealthHandler(config)(input);
+    expect(result.statusCode).toBe(201); expect(fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(result.body).data.consent).toMatchObject({ method: "patient_app", status: "granted", recordedBy: claims["custom:person_id"] });
+    // A booking receipt is not a governed sharing grant or provider activation.
+    expect(JSON.parse(result.body).data.consent.grantId).toBeNull();
+    expect(secretSend).not.toHaveBeenCalled();
+  });
+
   it("will not enable Stripe without an exact test secret and hosted return URLs", () => {
     expect(() => createTelehealthHandler({ ...config, stripeTestEnabled: true }))
       .toThrow("telehealth_configuration_invalid");

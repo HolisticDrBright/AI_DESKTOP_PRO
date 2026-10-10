@@ -553,7 +553,7 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
 type ArtifactRecord = { artifactId: string; scope: string; artifactVersion: string; contentSha256: string; jurisdiction: string; approvedAt: string };
 type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null };
 const currentArtifact = (config: TelehealthConfiguration, actor: Actor) =>
-  identityApi<ArtifactRecord>(config, actor, `/clinical-core/workforce/consent-artifact?scope=${CONSENT_SCOPE}`, undefined, "consent_artifact_unavailable");
+  identityApi<ArtifactRecord>(config, actor, `/clinical-core/${actor.pool}/consent-artifact?scope=${CONSENT_SCOPE}`, undefined, "consent_artifact_unavailable");
 const currentGrant = (config: TelehealthConfiguration, actor: Actor, consumerPersonId: string) =>
   identityApi<CurrentConsentRecord>(config, actor, `/clinical-core/workforce/consents/current?scope=${CONSENT_SCOPE}&consumerPersonId=${encodeURIComponent(consumerPersonId)}`);
 
@@ -1376,7 +1376,7 @@ async function handleStripeWebhook(config: TelehealthConfiguration, event: ApiGa
   return { received: true };
 }
 
-type Actor = { personId: string; organizationId: string; subject: string; email: string; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
+type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
 function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, pool: "consumer" | "workforce"): Actor {
   const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
   const issuer = pool === "consumer" ? config.consumerIssuer : config.workforceIssuer; const audience = pool === "consumer" ? config.consumerAudience : config.workforceAudience;
@@ -1385,7 +1385,7 @@ function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, poo
     || (pool === "consumer" && !/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(email))
     || (config.runtimeMode === "synthetic" ? claim("custom:synthetic_attested") !== "true" || claim("custom:production_bound") === "true" : claim("custom:production_bound") !== "true")) throw new TelehealthError("identity_refused");
   const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
-  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, bearer: authorization.replace(/^Bearer\s+/i, "") };
+  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, pool, bearer: authorization.replace(/^Bearer\s+/i, "") };
 }
 
 function body(event: ApiGatewayV2Event): Record<string, unknown> { const content = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "content-type")?.[1]; if (!content?.startsWith("application/json") || typeof event.body !== "string" || Buffer.byteLength(event.body) > MAX_BODY) throw new TelehealthError("request_invalid"); try { const value = JSON.parse(event.body); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new TelehealthError("request_invalid"); } }
