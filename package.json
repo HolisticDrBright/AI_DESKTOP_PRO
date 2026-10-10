@@ -22,6 +22,8 @@
     "test:telehealth-schema-source": "vitest run src/server/clinical-core/telehealth-schema-projection.database.test.ts --no-file-parallelism",
     "test:telehealth-native-source": "node --test scripts/telehealth-native-source.test.mjs",
     "qualify:telehealth-native-source": "node scripts/qualify-telehealth-native-source.mjs",
+    "build:telehealth-key-fence-candidate": "node scripts/build-telehealth-transfer-key-fence-candidate.mjs",
+    "test:telehealth-key-fence-candidate": "node --test scripts/telehealth-transfer-key-fence-candidate.test.mjs scripts/telehealth-native-races.test.mjs",
     "build:aws-telehealth-consent": "node scripts/build-aws-telehealth-consent.mjs",
     "test:telehealth-consent-runtime": "vitest run src/server/clinical-core/telehealth-consent-deployment.test.ts src/server/clinical-core/telehealth-consent-copy.database.test.ts src/server/clinical-core/production-telehealth-consent-api.test.ts --no-file-parallelism",
     "test:telehealth-consent-deployment": "node --test scripts/telehealth-consent-deployment.test.mjs",

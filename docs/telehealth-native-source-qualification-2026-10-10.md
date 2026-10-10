@@ -81,6 +81,11 @@ and raw source reports are local artifacts, not committed runtime assets.
 
 ## Tests and remaining work
 
+The separate [native race and key retirement increment](telehealth-native-races-and-key-retirement-2026-10-10.md)
+adds an optional fictional matrix and a distinct forward repair; the default
+empty-source run and embedded inspector pins remain unchanged. Matrix reports
+do not assert the fixture-filled final database is empty.
+
 `npm run test:telehealth-native-source` contains 22 credential-free negative
 tests: rejected engine/owner/database identities, nonempty or malformed catalog
 observations, and unsupported CLI inputs. Those tests assert no SQL mutation is

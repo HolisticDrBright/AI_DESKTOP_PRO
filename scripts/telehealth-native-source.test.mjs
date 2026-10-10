@@ -33,7 +33,11 @@ test('native source refuses existing/invalid catalog '+JSON.stringify(patch),asy
 const root=fileURLToPath(new URL('../',import.meta.url));
 for(const args of [[],['--target','production'],['--connection-string','postgres://remote/db'],
   ['--binary-directory','relative','--driver-directory','relative'],
-  ['--binary-directory','/tmp','--driver-directory','/tmp','--phi','true']])
+  ['--binary-directory','/tmp','--driver-directory','/tmp','--phi','true'],
+  ['--binary-directory',root,'--driver-directory',root,'--matrix','other'],
+  ['--binary-directory',root,'--driver-directory',root,'--candidate','key-fence'],
+  ['--binary-directory',root,'--driver-directory',root,'--matrix','telehealth-transfer','--candidate','other'],
+  ['--binary-directory',root,'--driver-directory',root,'--matrix','telehealth-transfer','--phi','true']])
 test('native CLI refuses unsupported inputs '+JSON.stringify(args),()=>{
   const run=spawnSync(process.execPath,['scripts/qualify-telehealth-native-source.mjs',...args],{
     cwd:root,encoding:'utf8',timeout:15_000,windowsHide:true});
