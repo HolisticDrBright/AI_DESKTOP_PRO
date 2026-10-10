@@ -202,6 +202,7 @@ describe("AWS telehealth request boundary", () => {
       return new Response(JSON.stringify({ data: artifact }), { headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetch);
+    send.mockResolvedValueOnce({}); // Exact-key booking recovery has no existing request.
     send.mockResolvedValueOnce({ Items: [{
       pk: `ORG#${claims["custom:organization_id"]}`, sk: "SLOT#fictional", slotId: "33333333-3333-4333-8333-333333333333",
       organizationId: claims["custom:organization_id"], start: "2026-10-11T17:00:00.000Z", end: "2026-10-11T17:45:00.000Z",
