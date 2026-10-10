@@ -274,10 +274,32 @@ async function listWorkforce(config: TelehealthConfiguration, actor: Actor) {
 
 async function find(config: TelehealthConfiguration, organizationId: string, requestId: string): Promise<AppointmentItem> {
   if (!UUID.test(requestId)) throw new TelehealthError("request_invalid");
-  const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk = :org AND begins_with(sk, :request)", FilterExpression: "requestId = :id", ExpressionAttributeValues: { ":org": `ORG#${organizationId}`, ":request": "REQ#", ":id": requestId }, Limit: 200 }));
-  const item = result.Items?.[0] as AppointmentItem | undefined;
-  if (!item) throw new TelehealthError("not_found");
-  return item;
+  const partition = `ORG#${organizationId}`, seen = new Set<string>();
+  let cursor: Record<string, unknown> | undefined, match: AppointmentItem | undefined;
+  // DynamoDB filters after its page limit. An empty filtered page is not
+  // evidence of absence while a LastEvaluatedKey remains.
+  for (let page = 0; page < 20; page++) {
+    const result = await document.send(new QueryCommand({ TableName: config.tableName,
+      KeyConditionExpression: "pk = :org AND begins_with(sk, :request)", FilterExpression: "requestId = :id",
+      ExpressionAttributeValues: { ":org": partition, ":request": "REQ#", ":id": requestId }, Limit: 200,
+      ConsistentRead: true, ...(cursor ? { ExclusiveStartKey: cursor } : {}) }));
+    if (result.Items !== undefined && !Array.isArray(result.Items)) throw new TelehealthError("service_unavailable");
+    for (const value of result.Items ?? []) {
+      if (match || value.pk !== partition || value.organizationId !== organizationId || value.requestId !== requestId
+        || typeof value.sk !== "string" || !value.sk.startsWith("REQ#")) throw new TelehealthError("service_unavailable");
+      match = value as AppointmentItem;
+    }
+    const next = result.LastEvaluatedKey;
+    if (!next || Object.keys(next).length === 0) {
+      if (!match) throw new TelehealthError("not_found");
+      return match;
+    }
+    if (Object.keys(next).length !== 2 || next.pk !== partition || typeof next.sk !== "string"
+      || !next.sk.startsWith("REQ#") || next.sk.length > 1024 || seen.has(next.sk)) throw new TelehealthError("service_unavailable");
+    seen.add(next.sk); cursor = next;
+  }
+  // A bounded, unfinished lookup cannot report not-found or admit a mutation.
+  throw new TelehealthError("service_unavailable");
 }
 
 async function consumerAction(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {

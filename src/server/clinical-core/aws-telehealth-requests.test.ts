@@ -192,6 +192,41 @@ describe("AWS telehealth request boundary", () => {
       .toThrow("telehealth_configuration_invalid");
   });
 
+  it("continues an empty filtered request page and pins a strongly consistent same-clinic lookup", async () => {
+    const row = { ...processingItem(), status: "cancelled" }, cursor = { pk: row.pk, sk: "REQ#fictional-page-1" };
+    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor }).mockResolvedValueOnce({ Items: [row] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
+      requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
+    expect(result.statusCode).toBe(409); expect(JSON.parse(result.body).error).toBe("conflict");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][0].input).toMatchObject({ ConsistentRead: true, Limit: 200 });
+    expect(send.mock.calls[1][0].input).toMatchObject({ ConsistentRead: true, ExclusiveStartKey: cursor });
+    expect(secretSend).not.toHaveBeenCalled();
+  });
+
+  it("reports missing only after the final filtered request page", async () => {
+    const row = processingItem();
+    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { pk: row.pk, sk: "REQ#fictional-page-1" } }).mockResolvedValueOnce({ Items: [] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
+      requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
+    expect(result.statusCode).toBe(404); expect(send).toHaveBeenCalledTimes(2); expect(secretSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["cycle", "foreign-cursor", "invalid-cursor", "budget", "duplicate", "foreign-row"])("refuses %s request lookup without a write or provider call", async mode => {
+    const row = { ...processingItem(), status: "cancelled" }, cursor = { pk: row.pk, sk: "REQ#fictional-page-1" };
+    if (mode === "cycle") send.mockResolvedValue({ Items: [], LastEvaluatedKey: cursor });
+    if (mode === "foreign-cursor") send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { ...cursor, pk: "ORG#other" } });
+    if (mode === "invalid-cursor") send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { ...cursor, sk: "VISIT#foreign-domain" } });
+    if (mode === "budget") for (let i = 0; i < 20; i++) send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { ...cursor, sk: `REQ#fictional-page-${i}` } });
+    if (mode === "duplicate") send.mockResolvedValueOnce({ Items: [row], LastEvaluatedKey: cursor }).mockResolvedValueOnce({ Items: [row] });
+    if (mode === "foreign-row") send.mockResolvedValueOnce({ Items: [{ ...row, organizationId: "other" }] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/actions", {
+      requestId: row.requestId, expectedVersion: row.version, action: "cancel" }));
+    expect(result.statusCode).toBe(503); expect(JSON.parse(result.body).error).toBe("service_unavailable");
+    expect(send.mock.calls.every(([command]) => command.constructor.name === "QueryCommand")).toBe(true);
+    expect(send.mock.calls.length).toBeLessThanOrEqual(20); expect(secretSend).not.toHaveBeenCalled();
+  });
+
   it("will not enable Stripe without an exact test secret and hosted return URLs", () => {
     expect(() => createTelehealthHandler({ ...config, stripeTestEnabled: true }))
       .toThrow("telehealth_configuration_invalid");
