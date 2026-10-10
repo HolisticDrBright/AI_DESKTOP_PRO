@@ -47,4 +47,48 @@ const calendarNetwork = fixture((d) => {
   writeFileSync(path, readFileSync(path, "utf8") + '\nfetch("https://fictional.invalid");\n');
 });
 assert.equal(calendarNetwork.status, 1); assert.match(calendarNetwork.stderr, /must stay credential-free and make no provider call/);
+
+function reminderFixture(before, after) {
+  return fixture((d) => {
+    const path = join(d, "src/server/clinical-core/aws-telehealth-requests.ts");
+    const source = readFileSync(path, "utf8").replaceAll("\r\n", "\n");
+    assert.ok(source.includes(before), `mutation must touch executable source: ${before}`);
+    writeFileSync(path, source.replace(before, after));
+  });
+}
+const reminderMutations = [
+  ['if (item.mutationOperationId) return "change_pending";', '// if (item.mutationOperationId) return "change_pending";'],
+  ['item.reminderStatus !== "scheduled" || ', ''],
+  ['!["scheduled", "awaiting_provider"].includes(item.status)', '!["scheduled", "awaiting_provider", "cancelled"].includes(item.status)'],
+  ['|| item.scheduledStart !== event.scheduledStart', ''],
+  ['event.reminderProtocol === undefined && event.reminderGeneration === undefined ? null : "stale"', 'null'],
+  ['typeof item.reminderGeneration === "string" && UUID.test(item.reminderGeneration)', 'true'],
+  ['event.reminderProtocol === "appointment-reminder/2"', 'true'],
+  ['event.reminderGeneration === item.reminderGeneration ? null : "stale"', 'true ? null : "stale"'],
+  ['const refusal = reminderRefusal(item, event);', 'const refusal = null; // reminderRefusal(item, event);'],
+  ['if (refusal) return { sent: false, reason: refusal };', '// if (refusal) return { sent: false, reason: refusal };'],
+  ['if (await emailSuppressed(config, item.consumerEmail)) return { sent: false, reason: "suppressed" };', '// suppression ignored'],
+  ['const current = await find(config, String(event.organizationId), String(event.requestId));', 'const current = item;'],
+  ['const currentRefusal = reminderRefusal(current, event);', 'const currentRefusal = null;'],
+  ['if (currentRefusal) return { sent: false, reason: currentRefusal };', '// current refusal ignored'],
+  ['current.version !== item.version || ', ''],
+  ['current.consumerPersonId !== item.consumerPersonId', 'false'],
+  ['current.consumerEmail !== item.consumerEmail', 'false'],
+  ['current.joinUrl !== item.joinUrl', 'false'],
+  ['ToAddresses: [current.consumerEmail]', 'ToAddresses: [item.consumerEmail]'],
+  // The expected guard text elsewhere must not satisfy an absent executable helper.
+  ['function reminderRefusal(item:', 'function ignoredReminderRefusal(item:'],
+  ['async function sendAppointmentReminder(config:', 'async function ignoredSendAppointmentReminder(config:'],
+  ['if (!config.remindersEnabled || !UUID.test(String(event.organizationId))', 'if (!UUID.test(String(event.organizationId))'],
+];
+for (const [before, after] of reminderMutations) {
+  const result = reminderFixture(before, after);
+  assert.equal(result.status, 1, `gate admitted unsafe reminder mutation: ${before}`);
+  assert.match(result.stderr, /reminders must/);
+}
+const formatted = reminderFixture('if (item.mutationOperationId) return "change_pending";',
+  'if ( /* reviewed comment */ item.mutationOperationId )\n    return "change_pending";');
+assert.equal(formatted.status, 0, formatted.stderr);
+const malformed = reminderFixture('function reminderRefusal(item:', 'function reminderRefusal(]:');
+assert.equal(malformed.status, 1); assert.match(malformed.stderr, /reminder source must parse/);
 console.log("check-aws-provider-configuration tests passed");

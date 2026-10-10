@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import ts from "typescript";
 
 /** Matched provider configuration gate.
  *
@@ -45,7 +46,48 @@ if (telehealth) {
 }
 const handler = read("src/server/clinical-core/aws-telehealth-requests.ts");
 require(handler.includes('(config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn))'), "Zoom must require the recorded BAA gate and secret before enabling");
-require(handler.includes('if (item.status === "cancelled" || item.scheduledStart !== event.scheduledStart) return { sent: false, reason: "stale" };'), "reminders must refuse stale or cancelled appointments");
+// Compare parsed executable statements, not a source substring that can survive
+// in a comment or an unrelated function. This is a deliberately reviewed
+// source-shape gate, not a substitute for the reminder race/runtime tests.
+const parsedHandler = ts.createSourceFile("telehealth.ts", handler, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed });
+const statements = (nodes, source) => nodes.map(node => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n");
+function functionStatements(name) {
+  const declarations = parsedHandler.statements.filter(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  return declarations.length === 1 && declarations[0].body ? declarations[0].body.statements : [];
+}
+function reviewedStatements(source) {
+  const parsed = ts.createSourceFile("reviewed.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  return statements([...parsed.statements], parsed);
+}
+require(parsedHandler.parseDiagnostics.length === 0, "reminder source must parse before its safety gate can pass");
+const refusalStatements = functionStatements("reminderRefusal");
+require(statements([...refusalStatements], parsedHandler) === reviewedStatements(`
+  if (item.mutationOperationId) return "change_pending";
+  if (item.reminderStatus !== "scheduled" || !["scheduled", "awaiting_provider"].includes(item.status)
+    || item.scheduledStart !== event.scheduledStart) return "stale";
+  if (item.reminderGeneration === undefined) {
+    return event.reminderProtocol === undefined && event.reminderGeneration === undefined ? null : "stale";
+  }
+  return typeof item.reminderGeneration === "string" && UUID.test(item.reminderGeneration)
+    && event.reminderProtocol === "appointment-reminder/2" && event.reminderGeneration === item.reminderGeneration ? null : "stale";
+`), "reminders must refuse pending, stale, cancelled and mismatched-generation appointments");
+const deliveryStatements = functionStatements("sendAppointmentReminder");
+require(statements([...deliveryStatements].slice(0, 9), parsedHandler) === reviewedStatements(`
+  if (!config.remindersEnabled || !UUID.test(String(event.organizationId)) || !UUID.test(String(event.requestId)) || !date(String(event.scheduledStart))) throw new TelehealthError("service_unavailable");
+  const item = await find(config, String(event.organizationId), String(event.requestId));
+  const refusal = reminderRefusal(item, event);
+  if (refusal) return { sent: false, reason: refusal };
+  if (await emailSuppressed(config, item.consumerEmail)) return { sent: false, reason: "suppressed" };
+  const current = await find(config, String(event.organizationId), String(event.requestId));
+  const currentRefusal = reminderRefusal(current, event);
+  if (currentRefusal) return { sent: false, reason: currentRefusal };
+  if (current.version !== item.version || current.consumerPersonId !== item.consumerPersonId
+    || current.consumerEmail !== item.consumerEmail || current.joinUrl !== item.joinUrl) return { sent: false, reason: "stale" };
+`), "reminders must enforce both refusal checks and a fresh revision after suppression lookup");
+const delivery = statements([...deliveryStatements], parsedHandler);
+require(delivery.includes("ToAddresses: [current.consumerEmail]") && !delivery.includes("ToAddresses: [item.consumerEmail]"),
+  "reminders must deliver only to the rechecked recipient");
 require(handler.includes('if (parsed.livemode === true) throw new TelehealthError("request_invalid");'), "Stripe webhooks must refuse live-mode events");
 require(handler.includes('Math.abs(Date.now() / 1000 - epoch) > 300'), "Stripe webhook signatures must enforce a five-minute replay window");
 require(handler.includes('if (!secretKey.startsWith("sk_test_") && !secretKey.startsWith("rk_test_")) throw new TelehealthError("provider_unavailable");'), "Stripe credentials must be test-mode only");
