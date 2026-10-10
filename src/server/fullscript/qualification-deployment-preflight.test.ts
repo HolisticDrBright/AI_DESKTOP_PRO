@@ -3,6 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fullscriptQualificationTemplate} from '../../../scripts/fullscript-qualification-template.mjs';
 import {preflightFullscriptDeployment} from './qualification-deployment-preflight';
+import {prepareFullscriptDeployment} from './qualification-deployment-execution';
 const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'
  ?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical((v as Record<string,unknown>)[k])).join(',')+'}':JSON.stringify(v);
 const bytes=(v:unknown)=>Buffer.from(canonical(v)+'\n'),pretty=(v:unknown)=>Buffer.from(JSON.stringify(v,null,2)+'\n');
@@ -45,6 +46,18 @@ it('binds all explicit parameters but never reports deployment approval or hoste
  const report=preflightFullscriptDeployment(fixture);expect(report).toMatchObject({verdict:'locally_consistent',awsObserved:false,
   ownerDeploymentReviewRequired:true,approvedForDeployment:false,deployed:false,hostedQualified:false,phiAllowed:false});
  expect(JSON.stringify(report)).not.toContain('fictional-provider');expect(report.parameterCount).toBe(27);
+});
+it('the execution plan delegates to the real artifact preflight and requires a separate exact write review',()=>{
+ const p=preflightFullscriptDeployment(fixture);
+ const review={contract:'fullscript-qualification-deployment-review/1',reviewer:'Brandon Bright',reviewedAt:'2026-10-09T20:59:00.000Z',
+  decision:'approved',scope:'create-one-fictional-fullscript-stack-only',sourceCommit:p.sourceCommit,zipSha256:p.zipSha256,
+  templateSha256:p.templateSha256,targetSha256:p.targetSha256,parameterSha256:p.parameterSha256,
+  stackName:'alp-fullscript-qualification-fictional',runId:'1'.repeat(32),resourceReviewSha256:'2'.repeat(64),
+  sqlPrivilegeReviewSha256:'3'.repeat(64),credentialReviewSha256:'4'.repeat(64),phiAllowed:false,activation:'blocked',providerActionsAllowed:false};
+ const input={...fixture,reviewBytes:bytes(review)};
+ expect(prepareFullscriptDeployment(input)).toMatchObject({phiAllowed:false,providerActionsAllowed:false,sourceCommit:fixture.sourceCommit});
+ expect(()=>prepareFullscriptDeployment({...input,zipBytes:Buffer.from('changed')})).toThrow();
+ expect(()=>prepareFullscriptDeployment({...input,reviewBytes:fixture.targetBytes})).toThrow();
 });
 it.each(['FunctionName','ApiId','OrganizationId','ConsumerPoolId','WorkforcePoolId','ConsumerAudience','WorkforceAudience','DatabaseName','DatabaseClusterArn','DatabaseSecretArn',
  'ProviderSecretArn','ProviderSecretVersion','TokenTableName','RedirectUri','TargetReviewSha256','SourceCommit','CodeSha256','CodeKey',

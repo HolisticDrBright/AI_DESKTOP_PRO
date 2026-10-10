@@ -46,6 +46,7 @@ jobs:
           npm run test:fullscript-qualification-template
           npm run build:fullscript-qualification-template
           npm run test:fullscript-deployment-preflight
+          npm run test:fullscript-deployment-execution
           npm run build:fullscript-deployment-preflight
           npm run test:fullscript-deployment-command
       - name: Build explicitly non-deployable source artifact
