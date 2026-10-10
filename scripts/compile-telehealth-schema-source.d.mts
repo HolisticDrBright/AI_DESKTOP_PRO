@@ -8,3 +8,6 @@ export type NativeSourceDatabase = {
   transaction<T>(work: (transaction: NativeSourceDatabase) => Promise<T>): Promise<T>;
 };
 export function compileTelehealthSchemaNativeSource(db: NativeSourceDatabase): Promise<TelehealthSchemaSource>;
+export function compileTelehealthSchemaRestrictedOwnerSource(db: NativeSourceDatabase): Promise<Omit<TelehealthSchemaSource,'contract'> & {
+  contract:'telehealth-restricted-owner-source/1';ownerProfile:Record<string,unknown>;
+}>;

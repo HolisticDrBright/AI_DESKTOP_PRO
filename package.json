@@ -20,7 +20,7 @@
     "test:zoom-host-authority": "vitest run src/server/clinical-core/zoom-host-authority.database.test.ts src/server/clinical-core/zoom-host-authority-rehearsal.database.test.ts --no-file-parallelism",
     "build:telehealth-schema-source": "node scripts/build-telehealth-schema-source.mjs",
     "test:telehealth-schema-source": "vitest run src/server/clinical-core/telehealth-schema-projection.database.test.ts --no-file-parallelism",
-    "test:telehealth-native-source": "node --test scripts/telehealth-native-source.test.mjs",
+    "test:telehealth-native-source": "node --test scripts/telehealth-native-source.test.mjs scripts/telehealth-restricted-source-owner.test.mjs",
     "qualify:telehealth-native-source": "node scripts/qualify-telehealth-native-source.mjs",
     "build:telehealth-key-fence-candidate": "node scripts/build-telehealth-transfer-key-fence-candidate.mjs",
     "test:telehealth-key-fence-candidate": "node --test scripts/telehealth-transfer-key-fence-candidate.test.mjs scripts/telehealth-native-races.test.mjs",

@@ -8,16 +8,17 @@ import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileTelehealthSchemaNativeSource } from './compile-telehealth-schema-source.mjs';
+import { compileTelehealthSchemaNativeSource, compileTelehealthSchemaRestrictedOwnerSource } from './compile-telehealth-schema-source.mjs';
 import { TELEHEALTH_SCHEMA_NAMES,projectTelehealthSchema } from './telehealth-schema-projection.mjs';
 import { runTelehealthNativeRaces } from './telehealth-native-races.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const refuse=()=>{throw Error('telehealth_native_source_arguments_refused');};
 const args=process.argv.slice(2);
+const restrictedOwner=args.length===6&&args[4]==='--owner-profile'&&args[5]==='clinical-admin';
 const keyFence=args.length===8&&args[6]==='--candidate'&&args[7]==='key-fence';
 const matrix=(args.length===6||keyFence)&&args[4]==='--matrix'&&args[5]==='telehealth-transfer';
-if(process.platform!=='win32'||!(args.length===4||matrix)||args[0]!=='--binary-directory'||args[2]!=='--driver-directory'
+if(process.platform!=='win32'||!(args.length===4||matrix||restrictedOwner)||args[0]!=='--binary-directory'||args[2]!=='--driver-directory'
   ||!isAbsolute(args[1])||!isAbsolute(args[3]))refuse();
 const bin=realpathSync(args[1]),driver=realpathSync(args[3]);
 const binary=name=>join(bin,name+'.exe');
@@ -44,8 +45,9 @@ const runs=join(root,'dist','native-source-runs');mkdirSync(runs,{recursive:true
 const runDirectory=mkdtempSync(join(runs,'pg17-')),data=join(runDirectory,'cluster');
 const password=randomBytes(32).toString('hex'),passwordFile=join(runDirectory,'bootstrap-password');
 writeFileSync(passwordFile,password+'\n',{flag:'wx',mode:0o600});
-const databaseName='alp_source_'+randomUUID().replaceAll('-','');
-let startAttempted=false,client,report,stage='bootstrap';
+const databaseName=(restrictedOwner?'alp_owner_source_':'alp_source_')+randomUUID().replaceAll('-','');
+const ownerPassword=restrictedOwner?randomBytes(32).toString('hex'):undefined;
+let startAttempted=false,client,inventoryClient,report,stage='bootstrap',lastDatabaseErrorCode;
 try {
   run('initdb',['-D',data,'-U','postgres','--encoding=UTF8','--locale=C','--auth=scram-sha-256','--pwfile='+passwordFile,'--data-checksums']);
   unlinkSync(passwordFile);
@@ -58,8 +60,14 @@ try {
     options:'-c statement_timeout=60000 -c search_path=pg_catalog,public',replication:false};
   client=new Client(configuration);await client.connect();
   // Database identifier is generated here, never supplied by the caller.
-  await client.query(`create database "${databaseName}"`);await client.end();
-  client=new Client({...configuration,database:databaseName});await client.connect();
+  if(restrictedOwner){
+    // Own local cluster only: bootstrap creates the source owner and its fresh
+    // database, then disconnects. No migration/projection runs as postgres.
+    await client.query(`create role clinical_admin login nosuperuser inherit createdb createrole noreplication nobypassrls password '${ownerPassword}'`);
+  }
+  await client.query(`create database "${databaseName}"${restrictedOwner?' owner clinical_admin':''}`);await client.end();
+  const ownerConfiguration={...configuration,database:databaseName,...(restrictedOwner?{user:'clinical_admin',password:ownerPassword}:{})};
+  client=new Client(ownerConfiguration);await client.connect();
   stage='compile';
   // Match the embedded compiler's explicitly installed public pgcrypto. With
   // pg_catalog first in search_path, an unqualified fresh CREATE EXTENSION
@@ -68,24 +76,39 @@ try {
   // Deliberately perturb object OIDs without adding objects to projected schemas.
   await client.query('create schema alp_source_oid_noise; create table alp_source_oid_noise.unrelated(id integer primary key)');
   const connection=client;
-  const db={query:(sql,args=[])=>connection.query(sql,[...args]),exec:sql=>connection.query(sql),
+  const execute=async(sql,args=[])=>{try{return await connection.query(sql,[...args]);}
+    catch(error){if(/^[A-Z0-9]{5}$/.test(error?.code??''))lastDatabaseErrorCode=error.code;throw error;}};
+  const db={query:execute,exec:sql=>execute(sql),
     transaction:async work=>{await connection.query('begin');try{const value=await work(db);await connection.query('commit');return value;}
       catch(error){await connection.query('rollback');throw error;}}};
-  const compiled=await compileTelehealthSchemaNativeSource(db);
+  const compiled=await (restrictedOwner?compileTelehealthSchemaRestrictedOwnerSource(db):compileTelehealthSchemaNativeSource(db));
   stage='empty-inventory';
   if(compiled.postgresVersion!=='17.7'||compiled.snapshots.map(s=>s.migrationCount).join(',')!=='112,113,114')refuse();
-  const tables=(await client.query(`select n.nspname,c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
+  // Forced-RLS/private tables cannot all be counted by the restricted owner.
+  // A separately identified local bootstrap auditor checks only row counts,
+  // in a read-only transaction. It does not compile, project, grant or migrate.
+  let inventory=client;
+  if(restrictedOwner){
+    inventoryClient=new Client({...configuration,database:databaseName});await inventoryClient.connect();
+    inventory=inventoryClient;
+    await inventory.query('begin read only');
+    const auditor=(await inventory.query("select current_user::text owner,session_user::text session_owner,rolsuper from pg_roles where rolname=current_user")).rows;
+    if(auditor.length!==1||auditor[0].owner!=='postgres'||auditor[0].session_owner!=='postgres'||auditor[0].rolsuper!==true)refuse();
+  }
+  const tables=(await inventory.query(`select n.nspname,c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
     where n.nspname in(select jsonb_array_elements_text($1::jsonb)) and c.relkind in('r','p')
     and not(n.nspname='clinical_core' and c.relname='schema_migrations') order by n.nspname,c.relname`,[JSON.stringify(TELEHEALTH_SCHEMA_NAMES)])).rows;
   if(tables.length<150||tables.length>500)throw Error('telehealth_native_source_table_count_refused');
   const quote=name=>'"'+name.replaceAll('"','""')+'"';
   for(const table of tables){
-    const count=(await client.query(`select count(*)::int count from ${quote(table.nspname)}.${quote(table.relname)}`)).rows;
+    const count=(await inventory.query(`select count(*)::int count from ${quote(table.nspname)}.${quote(table.relname)}`)).rows;
     if(count.length!==1||count[0].count!==0)throw Error('telehealth_native_source_seeded_records_refused');
   }
-  report={contract:'telehealth-native-source-qualification/1',execution:'local_empty_source',
+  if(inventoryClient){await inventoryClient.query('rollback');await inventoryClient.end();inventoryClient=undefined;}
+  report={contract:'telehealth-native-source-qualification/1',execution:restrictedOwner?'local_restricted_owner_source':'local_empty_source',
     sourceOnly:true,phiAllowed:false,activation:'blocked',providerAuthorized:false,upgradeAuthorized:false,
-    databaseOwner:'postgres',postgresVersion:'17.7',driverVersion:'8.16.3',
+    databaseOwner:restrictedOwner?'clinical_admin':'postgres',postgresVersion:'17.7',driverVersion:'8.16.3',
+    ...(restrictedOwner?{managedRoleSemanticsVerified:false,runtimeAdmission:false,emptyInventoryOwner:'postgres',emptyInventoryReadOnly:true}:{}),
     binarySha256:hash(readFileSync(binary('postgres'))),emptyApplicationTables:true,applicationTableCount:tables.length,compiled};
   if(matrix){
     stage='race-matrix';
@@ -116,12 +139,14 @@ try {
   const failure=new Error('telehealth_native_source_run_failed');
   failure.stage=stage;
   if(/^[A-Z0-9]{5}$/.test(error?.code??''))failure.databaseErrorCode=error.code;
+  else if(lastDatabaseErrorCode)failure.databaseErrorCode=lastDatabaseErrorCode;
   if(/^telehealth_native_race_[a-z_]+$/.test(error?.message??''))failure.raceRefusal=error.message;
   if(['migration_failed','history_mismatch','verification_failed'].includes(error?.category))failure.category=error.category;
   if(/^\d{14}$/.test(error?.version??''))failure.migrationVersion=error.version;
   if(Number.isSafeInteger(error?.statementIndex))failure.statementIndex=error.statementIndex;
   throw failure;
 } finally {
+  if(inventoryClient)await inventoryClient.end().catch(()=>{});
   if(client)await client.end().catch(()=>{});
   if(startAttempted){
     const status=spawnSync(binary('pg_ctl'),['-D',data,'status'],{env:childEnv,encoding:'utf8',timeout:10_000,windowsHide:true});
