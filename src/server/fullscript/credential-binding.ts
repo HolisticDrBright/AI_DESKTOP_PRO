@@ -25,8 +25,8 @@ const clinicResponse=z.object({clinic:z.object({id:providerId}).passthrough()}).
 const guarded=async<T>(work:()=>Promise<T>):Promise<T>=>{
   try{return await work();}catch{throw new DraftDeliveryRefused();}
 };
-async function assertCredentialCustody(session:RequestSession,connection:StoredFullscriptConnection){
-  const store=createAwsFullscriptTokenStore();
+async function assertCredentialCustody(session:RequestSession,connection:StoredFullscriptConnection,env?:NodeJS.ProcessEnv){
+  const store=createAwsFullscriptTokenStore(env);
   if(!store)throw new DraftDeliveryRefused();
   const actor=fullscriptActor(session),saved=await store.get(actor.actorKey,actor.organizationId);
   if(!saved||JSON.stringify(parseStoredFullscriptConnection(saved,actor))
@@ -39,8 +39,8 @@ async function assertCredentialCustody(session:RequestSession,connection:StoredF
  * Legacy records need reauthorization, not an invented installation ID.
  * Practitioner-only until separate staff delegation is implemented/reviewed.
  */
-async function observed(session:RequestSession){
-  const {client,connection}=await connectedFullscriptClient(session,true);
+async function observed(session:RequestSession,env?:NodeJS.ProcessEnv){
+  const {client,connection}=await connectedFullscriptClient(session,true,env);
   if(connection.environment!=='sandbox_us'||!connection.installationId
     ||!connection.oauthClientId||!connection.oauthRedirectUri
     ||connection.resourceOwner.type!=='Practitioner')throw new DraftDeliveryRefused();
@@ -57,7 +57,7 @@ async function observed(session:RequestSession){
     clinicId,resourceOwner:connection.resourceOwner,scopes:[...connection.scope].sort()};
   const tokenBindingSha256=createHash('sha256').update(JSON.stringify(binding),'utf8').digest('hex');
   // Reconnect/disconnect/rotation during clinic I/O invalidates this observation.
-  await assertCredentialCustody(session,connection);
+  await assertCredentialCustody(session,connection,env);
   return {client,connection,observation:{contract:'fullscript-installation-observation/1' as const,
     environment:'sandbox_us' as const,apiOrigin:configuration.apiOrigin,clinicId,tokenBindingSha256,
     scopes:[...connection.scope].sort()}};
@@ -74,16 +74,17 @@ export function observeFullscriptDraftInstallation(session:RequestSession){
  * Production, staff delegation and patient-send are deliberately unavailable.
  */
 export function createCredentialBoundFullscriptDraftProvider(session:RequestSession,rawRelease:unknown,
-  beforeProviderRequest?:()=>Promise<void>):DraftDeliveryProvider{
+  beforeProviderRequest?:()=>Promise<void>,loadEnvironment?:()=>Promise<NodeJS.ProcessEnv>):DraftDeliveryProvider{
   const principal={...session};
   let reviewed:z.infer<typeof release>;
   try{reviewed=release.parse(rawRelease);}catch{throw new DraftDeliveryRefused();}
   const current=()=>guarded(async()=>{
-    const result=await observed(principal),o=result.observation;
+    const env=loadEnvironment?await loadEnvironment():undefined;
+    const result=await observed(principal,env),o=result.observation;
     if(o.environment!==reviewed.environment||o.apiOrigin!==reviewed.apiOrigin
       ||o.clinicId!==reviewed.clinicId||o.tokenBindingSha256!==reviewed.tokenBindingSha256)
       throw new DraftDeliveryRefused();
-    return result;
+    return {...result,env};
   });
   return {
     create:input=>guarded(async()=>{
@@ -92,13 +93,13 @@ export function createCredentialBoundFullscriptDraftProvider(session:RequestSess
       // Credential observation performs I/O. Recheck same-target authority
       // after it, immediately before handing the admitted intent to transport.
       await beforeProviderRequest?.();
-      await assertCredentialCustody(principal,result.connection);
+      await assertCredentialCustody(principal,result.connection,result.env);
       return createFullscriptDraftProvider(result.client).create(input);
     }),
     findByMetadata:key=>guarded(async()=>{
       const result=await current();
       await beforeProviderRequest?.();
-      await assertCredentialCustody(principal,result.connection);
+      await assertCredentialCustody(principal,result.connection,result.env);
       return createFullscriptDraftProvider(result.client).findByMetadata(key);
     }),
   };

@@ -125,10 +125,10 @@ export function createFullscriptQualificationObserver(input:{target:unknown;data
 /** Source-only entry point for the separately built candidate. Published numeric
  * versions only; no $LATEST/alias and no active production mode. No existing
  * HTTP stack installs it and no reviewed target is fabricated by this module. */
-export function createNativeFullscriptQualificationApi(rawTarget:unknown){
+export function createNativeFullscriptQualificationApi(rawTarget:unknown,providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>){
  const target=fullscriptQualificationTargetSchema.parse(structuredClone(rawTarget));
  const database=createRdsDataFullscriptDraftDatabase(target);
  const observe=createFullscriptQualificationObserver({target,database});
  return createQualificationFullscriptApi({target,observe,operations:who=>createCanonicalFullscriptDelivery({database,
-  configuration:{execution:'qualification',account:target.account,phiAllowed:false},actor:who.actor,session:who.session})});
+  configuration:{execution:'qualification',account:target.account,phiAllowed:false},actor:who.actor,session:who.session,providerEnvironment})});
 }

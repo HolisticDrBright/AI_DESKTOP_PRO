@@ -69,12 +69,12 @@ export function beginFullscriptAuthorization(session: RequestSession) {
   });
 }
 
-export async function connectedFullscriptClient(session: RequestSession, requireDraftInstallation = false): Promise<{
+export async function connectedFullscriptClient(session: RequestSession, requireDraftInstallation = false, env: NodeJS.ProcessEnv = process.env): Promise<{
   client: FullscriptApiClient;
   connection: StoredFullscriptConnection;
 }> {
-  const configuration = readFullscriptConfiguration();
-  const store = createAwsFullscriptTokenStore();
+  const configuration = readFullscriptConfiguration(env);
+  const store = createAwsFullscriptTokenStore(env);
   if (!store) throw new FullscriptUnavailableError();
   const actor = fullscriptActor(session);
   let connection = await store.get(actor.actorKey, actor.organizationId);
