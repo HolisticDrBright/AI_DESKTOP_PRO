@@ -431,6 +431,49 @@ describe('Codex A1: source admission at the chart write boundary', () => {
     expect(await refusal(pg.query('update clinical_private.telehealth_admission_keys set retired_at=null where key_id=$1', [retired.keyId]))).toMatch(/append_only_record/);
   });
 
+  it('Codex B1 refuses an admission that expires while current clinical authority is being resolved', async () => {
+    await pg.exec(`alter function clinical_private.require_clinical_patient(uuid,uuid) rename to codex_authority_before_delay;
+      create function clinical_private.require_clinical_patient(uuid,uuid) returns uuid
+      language plpgsql security definer set search_path='' as $$
+      declare actor uuid;
+      begin
+        actor:=clinical_private.codex_authority_before_delay($1,$2);
+        perform pg_catalog.pg_sleep(0.25);
+        return actor;
+      end $$;`);
+    try {
+      const start = (await pg.query<{ at: string }>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      const issuedAt = new Date(Date.parse(start) - 1000).toISOString();
+      const expiresAt = new Date(Date.parse(start) + 100).toISOString();
+      await expect(transfer({ issuedAt, expiresAt })).rejects.toThrow('telehealth_admission_mismatch');
+      await noWrites();
+    } finally {
+      await pg.exec(`drop function clinical_private.require_clinical_patient(uuid,uuid);
+        alter function clinical_private.codex_authority_before_delay(uuid,uuid) rename to require_clinical_patient;`);
+    }
+  });
+
+  it('refuses an admission that expires between the admission check and the mutation (a slow destination), with nothing written', async () => {
+    // The destination path (start_encounter) is delayed past the admission's expiry; the second clock read at the mutation point must refuse.
+    await pg.exec(`alter function clinical_core.start_encounter(uuid,uuid,text,uuid) rename to codex_start_before_delay;
+      create function clinical_core.start_encounter(_organization_id uuid,_patient_id uuid,_visit_type text,_appointment_id uuid) returns uuid
+      language plpgsql security definer set search_path='' as $$
+      declare id uuid;
+      begin
+        perform pg_catalog.pg_sleep(0.25);
+        id:=clinical_core.codex_start_before_delay(_organization_id,_patient_id,_visit_type,_appointment_id);
+        return id;
+      end $$;`);
+    try {
+      const start = (await pg.query<{ at: string }>(`select to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`)).rows[0].at;
+      await expect(transfer({ issuedAt: new Date(Date.parse(start) - 1000).toISOString(), expiresAt: new Date(Date.parse(start) + 150).toISOString() })).rejects.toThrow('telehealth_admission_mismatch');
+      await noWrites();
+    } finally {
+      await pg.exec(`drop function clinical_core.start_encounter(uuid,uuid,text,uuid);
+        alter function clinical_core.codex_start_before_delay(uuid,uuid,text,uuid) rename to start_encounter;`);
+    }
+  });
+
   it('the key table is reachable by no API role, and a transfer without any registered key is unavailable, not refused as forged', async () => {
     for (const sql of ['select key_id from clinical_private.telehealth_admission_keys', "insert into clinical_private.telehealth_admission_keys(key_id,secret) values('fictional-api-key-1',decode('00','hex'))"]) {
       expect(await refusal(call(sql))).toMatch(/permission denied/);

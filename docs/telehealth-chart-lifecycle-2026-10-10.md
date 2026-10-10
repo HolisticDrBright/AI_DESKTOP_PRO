@@ -106,8 +106,13 @@ under it). The browser never holds it. `transfer_telehealth_note` takes the
 content, payload, provenance and admission as **text**, recomputes every hash
 over the bytes it received, verifies the signature and every binding against
 its own arguments and the actor it resolved, checks the window (not expired,
-not issued in the future, at most one hour), and only then proceeds under the
-existing appointment binding and one-per-appointment lock. Refusals:
+not issued in the future, at most one hour) against a database clock read
+AFTER authority resolution and the lock wait, re-reads the clock at the
+mutation point after destination resolution and refuses there too if the
+admission has meanwhile expired (Codex B1: the first repair compared expiry
+to a clock captured at function entry, so an admission that expired while the
+call was blocked could still create the draft), and only then proceeds under
+the existing appointment binding and one-per-appointment lock. Refusals:
 `telehealth_admission_unavailable` (no key registered at all),
 `telehealth_admission_refused` (unknown/retired key, bad signature),
 `telehealth_admission_mismatch` (any binding differs). A retry presents the
@@ -154,10 +159,10 @@ erase access to a retained record.
 ## The forward candidate (113)
 
 `infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql`
-→ `20261010150000_production_telehealth_chart_lifecycle.sql` (candidate
-contract `telehealth-chart-lifecycle-candidate/2`; the repaired SQL is a
-distinct candidate identity from the audited `20261010110000` / `…/1`, which
-was never registered), built by
+→ `20261010170000_production_telehealth_chart_lifecycle.sql` (candidate
+contract `telehealth-chart-lifecycle-candidate/3`; each repair is a distinct
+candidate identity — the audited `20261010110000` / `…/1` and the rechecked
+`20261010150000` / `…/2` were never registered), built by
 `npm run build:telehealth-chart-lifecycle-candidate` on top of the EXACT 112
 telehealth-consent-copy candidate (parent pins in
 `scripts/telehealth-chart-lifecycle-candidate.mjs`: count 112, ledger
@@ -177,7 +182,7 @@ access, empty), the `appointments` patient-identity guard, provenance
 executable by `clinical_core_api` only.
 
 Release mapping to coordinate with Codex: the migration number
-(`20261010150000`) and the 113 position are proposed, not registered; the
+(`20261010170000`) and the 113 position are proposed, not registered; the
 distinct successor must get its own exact release mapping (no count-based
 widening of 105/106/111/112 registrars); `clinical_core.telehealth_note_transfers`
 must be added to `covered-entity-coverage.json` as an append-only
@@ -219,7 +224,7 @@ registration), rollback rehearsal and durable custody are Codex's.
 | Check | Result |
 | --- | --- |
 | `npm run test:telehealth-chart-lifecycle-candidate` | 18 pass (byte-exact parent, refusals) |
-| `src/server/clinical-core/telehealth-chart-lifecycle.database.test.ts` (PGlite, real 113 artifact, actual `clinical_core_api` role) | 18 pass: draft creation, encounter reuse, timeline, retry in both orders, stale/changed source, tenant/patient/role/appointment binding, malformed input, append-only ledger, chart signature and addendum, retained authority after reschedule/deletion, refusals (foreign clinic, staff, wrong patient, consumer, suspended/removed membership, archived patient); **A1** forged claims with no admission / self-signed / unknown or retired key / tampered signature, substituted content, payload, provenance, revision, digest, transfer id, practitioner, patient, clinic, appointment, intent, contract, custody, extra or missing member, expired / future / over-long windows, exact retry, key retirement and retire-only custody, no API-role access to the key table, no key = unavailable; **A2** same-clinic second patient sees no receipt; **A3** the correction contract end to end; and the production desktop dispatcher (`aws-production-desktop.ts` in front of the same PGlite under the API role) accepting the exact bytes and refusing missing/forged/substituted/foreign/other-practitioner attempts |
+| `src/server/clinical-core/telehealth-chart-lifecycle.database.test.ts` (PGlite, real 113 artifact, actual `clinical_core_api` role) | 20 pass: draft creation, encounter reuse, timeline, retry in both orders, stale/changed source, tenant/patient/role/appointment binding, malformed input, append-only ledger, chart signature and addendum, retained authority after reschedule/deletion, refusals (foreign clinic, staff, wrong patient, consumer, suspended/removed membership, archived patient); **A1** forged claims with no admission / self-signed / unknown or retired key / tampered signature, substituted content, payload, provenance, revision, digest, transfer id, practitioner, patient, clinic, appointment, intent, contract, custody, extra or missing member, expired / future / over-long windows, **B1** expiry during a delayed authority resolution and expiry between the admission check and a delayed destination (both fail against the previous SQL, both leave no writes), exact retry, key retirement and retire-only custody, no API-role access to the key table, no key = unavailable; **A2** same-clinic second patient sees no receipt; **A3** the correction contract end to end; and the production desktop dispatcher (`aws-production-desktop.ts` in front of the same PGlite under the API role) accepting the exact bytes and refusing missing/forged/substituted/foreign/other-practitioner attempts |
 | `aws-telehealth-requests.test.ts` | 95 pass (retained reads, lists withhold, transfer admit with a verifiable admission bound to the chart-resolved practitioner, exact bytes, fresh admission on retry with the same transfer id, no secret read for completed/refused/stale paths, unprovisioned or unreadable or malformed key = 503 with nothing written, complete/mismatch/lost response, sign under retained authority, inventory, withdrawal, no deletion route, consumer refused) |
 | `rds-data-database.test.ts` | the ten transfer refusal markers classified |
 | `src/contracts/telehealthRecordInventory.test.ts` | 4 pass |
@@ -228,7 +233,10 @@ registration), rollback rehearsal and durable custody are Codex's.
 
 Embedded Postgres cannot run two transactions concurrently, so the transfer
 race is proven as both orders plus the advisory lock in the SQL, not as a true
-interleaving. Hosted concurrent races remain Codex's.
+interleaving; the expiry-during-blocking cases are proven with a controlled
+dependency delay, not a real lock wait. Hosted concurrent races, a real
+PostgreSQL lock-wait negative, and revoked-authority / retired-key race
+behaviour remain Codex's hosted qualification.
 
 ## What remains, and for whom
 
