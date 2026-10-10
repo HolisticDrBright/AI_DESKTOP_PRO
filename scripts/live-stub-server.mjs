@@ -932,6 +932,10 @@ const scheduleAppointments = [];
 // Telehealth VISIT records (AWS telehealth-requests Lambda contract, workforce
 // routes): appointmentId → { consents, status, meeting, flags, quickNotes, note }.
 const telehealthVisits = new Map();
+/** Chart-side transfer receipts (the authoritative store), keyed by appointment id — what `transfer_telehealth_note` writes. */
+const telehealthTransfers = new Map();
+/** Test control: when > 0, the next `transfer/complete` reads fail as a lost response (then decrement). Reset with everything else. */
+const telehealthControl = new Map([["loseCompletions", 0]]);
 /** The organization's one approved telehealth consent artifact (version + hash), as the identity authority would return it. */
 const TELEHEALTH_CONSENT_ARTIFACT = {
   artifactId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", artifactVersion: "telehealth-recording/1", contentSha256: "b".repeat(64),
@@ -2817,7 +2821,7 @@ const SNAPSHOT_COLLECTIONS = {
   scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
   scribeTranscripts, scribeGenerations, scribeAccessLog,
   lensEvaluations, lensQuestions, lensBlocks, lensFeedbackRows,
-  scheduleAppointments, apptTransitionKeys, telehealthVisits,
+  scheduleAppointments, apptTransitionKeys, telehealthVisits, telehealthTransfers, telehealthControl,
   protocols, protocolTemplates, protocolVersions,
   programs, programTemplates, programVersions, programOffers,
   programEnrollments, programProgressRows, programEvents,
@@ -3081,6 +3085,10 @@ createServer(async (req, res) => {
   // what makes the one-process battery order-independent. Per-domain resets are
   // kept for the tests that reset mid-run, but no suite depends on them for
   // isolation any more.
+  if (url.pathname === "/__control/telehealth-lose-completion" && req.method === "POST") {
+    telehealthControl.set("loseCompletions", 1);
+    return json(res, 200, { ok: true });
+  }
   if (url.pathname === "/__control/reset-all" && req.method === "POST") {
     resetAllFixtures();
     return json(res, 200, { ok: true });
@@ -5499,6 +5507,70 @@ createServer(async (req, res) => {
       });
     }
 
+    if (url.pathname === "/rest/v1/rpc/get_telehealth_record_authority" && req.method === "POST") {
+      // The retained-record read path: clinical role in THIS organization + an active patient record. Independent of the calendar.
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      const patient = PATIENTS.find((item) => item.id === body._patient_id && item.organization_id === organizationId);
+      if (!memberOrgIds.includes(organizationId)) return json(res, 403, { code: "42501", message: "clinical_role_required" });
+      if (!patient) return json(res, 404, { code: "P0002", message: "patient_not_found" });
+      if (!body._appointment_id) return json(res, 400, { code: "22023", message: "appointment_required" });
+      const appointment = scheduleAppointments.find((row) => row.id === body._appointment_id && row.organizationId === organizationId) ?? null;
+      const transfer = telehealthTransfers.get(String(body._appointment_id)) ?? null;
+      const note = transfer ? emrNotes.get(transfer.noteId) ?? null : null;
+      return json(res, 200, {
+        authorized: true, actor_person_id: PRACTITIONER_USER_ID, patient_record_id: patient.id, legal_hold: false,
+        appointment: appointment ? { id: appointment.id, status: appointment.status, deleted: false, appointment_type: appointment.appointmentType, patient_matches: appointment.patientId === patient.id, practitioner_person_id: appointment.practitionerUserId } : null,
+        transfer: transfer ? { transfer_id: transfer.transferId, encounter_id: transfer.encounterId, note_id: transfer.noteId, note_version: transfer.noteVersion, source_note_revision: transfer.sourceRevision,
+          source_digest: transfer.sourceDigest, content_sha256: transfer.contentSha256, transferred_at: transfer.transferredAt, transferred_by_person_id: PRACTITIONER_USER_ID,
+          note_status: note?.status ?? null, note_current_version: note?.currentVersion ?? null, note_deleted: false } : null,
+      });
+    }
+    if (url.pathname === "/rest/v1/rpc/transfer_telehealth_note" && req.method === "POST") {
+      // Idempotent on (organization, appointment): the same source returns the original destination; another source is refused.
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      const patient = PATIENTS.find((item) => item.id === body._patient_id && item.organization_id === organizationId);
+      if (!memberOrgIds.includes(organizationId)) return json(res, 403, { code: "42501", message: "clinical_role_required" });
+      if (!patient) return json(res, 404, { code: "P0002", message: "patient_not_found" });
+      const digest = String(body._source_digest ?? "");
+      if (!/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(body._source_revision) || body._source_revision < 1 || !body._content || typeof body._content !== "object"
+        || !body._source_payload || typeof body._source_payload !== "object" || !Array.isArray(body._provenance) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(body._transfer_id ?? ""))) {
+        return json(res, 400, { code: "22023", message: "telehealth_transfer_invalid" });
+      }
+      const appointment = scheduleAppointments.find((row) => row.id === body._appointment_id && row.organizationId === organizationId);
+      if (!appointment) return json(res, 404, { code: "P0002", message: "appointment_not_found" });
+      if (appointment.patientId !== patient.id || appointment.appointmentType !== "telehealth") return json(res, 403, { code: "42501", message: "telehealth_transfer_refused" });
+      const existing = telehealthTransfers.get(appointment.id);
+      if (existing) {
+        if (existing.sourceRevision === body._source_revision && existing.sourceDigest === digest) {
+          return json(res, 200, { transfer_id: existing.transferId, encounter_id: existing.encounterId, note_id: existing.noteId, note_version: existing.noteVersion, content_sha256: existing.contentSha256, created: false, transferred_at: existing.transferredAt });
+        }
+        return json(res, 409, { code: "40001", message: "telehealth_transfer_source_changed" });
+      }
+      if ([...telehealthTransfers.values()].some((row) => row.transferId === body._transfer_id)) return json(res, 400, { code: "22023", message: "telehealth_transfer_id_reused" });
+      let encounter = [...encounters.values()].find((row) => row.appointmentId === appointment.id && ["in_progress", "completed"].includes(row.status));
+      if (!encounter) {
+        emrSeq += 1;
+        const id = `eeeeeeee-2222-3333-4444-${String(444444444400 + emrSeq)}`;
+        const createdAt = nowIso();
+        encounter = { id, organizationId, patientId: patient.id, appointmentId: appointment.id, visitType: "telehealth", status: "in_progress", startedAt: createdAt, endedAt: null, statusReason: null, createdAt };
+        encounters.set(id, encounter);
+        emrAudit("encounter.started", id, "Encounter started", patient.id);
+      }
+      emrSeq += 1;
+      const noteId = `eeeeeeee-3333-4444-5555-${String(444444444400 + emrSeq)}`;
+      const savedAt = nowIso();
+      const note = { id: noteId, encounterId: encounter.id, patientId: patient.id, organizationId, noteType: "narrative", status: "draft", currentVersion: 1, versions: new Map(), signature: null, addenda: [], provenance: body._provenance, statusReason: null, createdAt: savedAt, updatedAt: savedAt };
+      note.versions.set(1, { content: body._content, savedAt });
+      emrNotes.set(noteId, note);
+      emrAudit("note.draft_created", noteId, "Draft note created", patient.id);
+      const contentSha256 = sha256hex(JSON.stringify(body._content));
+      const receipt = { transferId: body._transfer_id, encounterId: encounter.id, noteId, noteVersion: 1, sourceRevision: body._source_revision, sourceDigest: digest, contentSha256, transferredAt: savedAt, sourcePayload: body._source_payload };
+      telehealthTransfers.set(appointment.id, receipt);
+      pushAudit("telehealth.note_transferred", "clinical_note", noteId, "Telehealth visit note transferred to the chart as an unsigned draft", { transfer_id: receipt.transferId, appointment_id: appointment.id, encounter_id: encounter.id, source_note_revision: receipt.sourceRevision }, patient.id, organizationId);
+      return json(res, 200, { transfer_id: receipt.transferId, encounter_id: encounter.id, note_id: noteId, note_version: 1, content_sha256: contentSha256, created: true, transferred_at: savedAt });
+    }
     if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");
@@ -11570,7 +11642,7 @@ createServer(async (req, res) => {
 
   // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====
   // Same wire contract as src/server/clinical-core/aws-telehealth-requests.ts
-  // (contract telehealth-requests/6). Zoom is "enabled" here only in the sense
+  // (contract telehealth-requests/7). Zoom is "enabled" here only in the sense
   // that start returns a fixture session and end confirms a fixture shutdown:
   // the browser suite aborts the SDK download, so no meeting ever exists.
   if (url.pathname.startsWith("/clinical-core/workforce/appointments/")) {
@@ -11612,10 +11684,51 @@ createServer(async (req, res) => {
       return json(res, 200, { data: { visits: [...telehealthVisits.values()].map(summaryVisit), complete: true } });
     }
     if (sub === "visits/consent-artifact" && req.method === "GET") return json(res, 200, { data: TELEHEALTH_CONSENT_ARTIFACT });
+    const canonicalJson = (value) => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
+      : value && typeof value === "object" ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`
+      : JSON.stringify(value === undefined ? null : value);
+    const SECTION_HEADINGS = { summary: "Telehealth visit — AI Companion summary (reviewed)", patient_reported: "What the patient reported", results_reviewed: "Results reviewed", plan_discussed: "Plan discussed" };
+    /** Same canonical source as the Lambda: the signed note's chart sections, complete payload, provenance and digest. */
+    const transferSource = (visit) => {
+      const note = visit.note;
+      const parts = [];
+      for (const key of Object.keys(SECTION_HEADINGS)) { const text = (note.aiSections[key] ?? "").trim(); if (text) parts.push(`## ${SECTION_HEADINGS[key]}\n${text}`); }
+      if (note.practitionerNotes.trim()) parts.push(`## Practitioner notes\n${note.practitionerNotes.trim()}`);
+      if (note.actionItems.length) parts.push(`## Action items (decisions only — no order, task or protocol change was created)\n${note.actionItems.map((item) => `- ${item.text} (${item.status})`).join("\n")}`);
+      parts.push(`Source: Telehealth visit record revision ${note.revision}, signed ${note.signedAt ?? "unknown"} by ${note.signedBy ?? "unknown"}. Zoom AI Companion summary ${note.zoomSummaryId ?? "(no provider id)"} reviewed by the practitioner. Transferred UNSIGNED for chart review.`);
+      const content = { text: parts.join("\n\n") };
+      const payload = { appointmentId: visit.appointmentId, patientRecordId: visit.patientRecordId, practitionerUserId: visit.practitionerUserId, revision: note.revision, importedAt: note.importedAt, signedAt: note.signedAt, signedBy: note.signedBy,
+        zoomSummaryId: note.zoomSummaryId, aiOriginal: note.aiOriginal, aiSections: note.aiSections, practitionerNotes: note.practitionerNotes, actionItems: note.actionItems, quickNotes: visit.quickNotes, flags: visit.flags,
+        consents: visit.consents.map((consent) => ({ consentId: consent.consentId, artifactId: consent.artifactId, artifactVersion: consent.artifactVersion, method: consent.method, status: consent.status, signedAt: consent.signedAt, withdrawnAt: consent.withdrawnAt })),
+        providerMeetingId: visit.providerMeetingId, providerMeetingUuid: visit.providerMeetingUuid };
+      const provenance = [
+        ...Object.keys(SECTION_HEADINGS).filter((key) => (note.aiSections[key] ?? "").trim()).map((key) => ({ sectionKey: "text", refType: "telehealth_visit", refId: visit.appointmentId, label: `${SECTION_HEADINGS[key]}: Zoom AI Companion summary, reviewed in telehealth visit record revision ${note.revision}` })),
+        { sectionKey: "text", refType: "practitioner_entered", refId: null, label: "Practitioner notes entered during the telehealth visit" },
+        { sectionKey: "text", refType: "telehealth_visit", refId: visit.appointmentId, label: "Action-item decisions from the telehealth visit record (suggestions, not orders)" },
+        { sectionKey: "text", refType: "telehealth_visit", refId: visit.appointmentId, label: `Telehealth visit record revision ${note.revision}: source provenance` },
+      ];
+      return { revision: note.revision, digest: sha256hex(canonicalJson({ revision: note.revision, content, payload })), content, payload, provenance };
+    };
+    const withTransferSource = (visit) => {
+      const base = publicVisit(visit);
+      const source = visit.note?.status === "signed" ? transferSource(visit) : null;
+      return { ...base, chartTransfer: visit.chartTransfer ?? null, chartTransferSource: source ? { sourceRevision: source.revision, sourceDigest: source.digest } : null };
+    };
+    /** The retained-record read path for a COMPLETED visit: the chart's authority, not the calendar. */
+    const retainedAuthority = (visit) => {
+      const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+      if (!visit.patientRecordId || revokedBearers.has(bearer) || !memberOrgIdsForBearer(bearer).includes("org-fixture")) return { error: 403, code: "identity_refused" };
+      return { ok: true, transfer: telehealthTransfers.get(visit.appointmentId) ?? null };
+    };
     if (sub === "visits/notes" && req.method === "GET") {
       const visit = telehealthVisits.get(url.searchParams.get("appointmentId") ?? "");
       if (!visit) return json(res, 404, { error: "not_found" });
-      return json(res, 200, { data: publicVisit(visit) });
+      if (["ended", "cancelled"].includes(visit.status)) {
+        const authority = retainedAuthority(visit);
+        if (authority.error) return json(res, authority.error, { error: authority.code });
+        return json(res, 200, { data: withTransferSource(visit) });
+      }
+      return json(res, 200, { data: withTransferSource(visit) });
     }
     if (req.method !== "POST") return json(res, 404, { error: "route_not_found" });
     const body = await readBody(req);
@@ -11739,6 +11852,48 @@ createServer(async (req, res) => {
       const saved = save({ ...visit, note, noteHistory: [...visit.noteHistory, visit.note] });
       pushAudit("telehealth.note.signed", "appointment", appointmentId, "Telehealth visit note signed", { revision: note.revision }, PATIENTS[0].id, "org-fixture");
       return json(res, 200, { data: publicVisit(saved) });
+    }
+    if (sub === "visits/notes/transfer") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      if (visit.status !== "ended" || !visit.note || visit.note.status !== "signed") return json(res, 409, { error: "conflict" });
+      const authority = retainedAuthority(visit);
+      if (authority.error) return json(res, authority.error, { error: authority.code });
+      const source = transferSource(visit);
+      if (body.sourceRevision !== source.revision || body.sourceDigest !== source.digest) return json(res, 409, { error: "transfer_source_stale" });
+      const existing = visit.chartTransfer ?? null;
+      if (existing?.state === "completed") return json(res, 200, { data: { visit: withTransferSource(visit), transfer: existing, source: null } });
+      if (authority.transfer) {
+        if (authority.transfer.sourceDigest !== source.digest || (existing && existing.transferId !== authority.transfer.transferId)) return json(res, 409, { error: "transfer_mismatch" });
+        const completed = { transferId: authority.transfer.transferId, state: "completed", sourceRevision: source.revision, sourceDigest: source.digest, admittedAt: existing?.admittedAt ?? authority.transfer.transferredAt, admittedBy: PRACTITIONER_USER_ID,
+          encounterId: authority.transfer.encounterId, noteId: authority.transfer.noteId, noteVersion: authority.transfer.noteVersion, contentSha256: authority.transfer.contentSha256, transferredAt: authority.transfer.transferredAt, completedAt: nowIso() };
+        const saved = save({ ...visit, chartTransfer: completed });
+        return json(res, 200, { data: { visit: withTransferSource(saved), transfer: completed, source: null } });
+      }
+      const admission = existing?.state === "admitted" ? existing : { transferId: `cccccccc-7777-4777-8777-${String(777777777700 + telehealthVisits.size)}`, state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
+        admittedAt: nowIso(), admittedBy: PRACTITIONER_USER_ID, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null };
+      const saved = existing?.state === "admitted" ? visit : save({ ...visit, chartTransfer: admission });
+      return json(res, 200, { data: { visit: withTransferSource(saved), transfer: admission, source: { transferId: admission.transferId, organizationId: "org-fixture", patientRecordId: visit.patientRecordId, appointmentId,
+        sourceRevision: source.revision, sourceDigest: source.digest, content: source.content, sourcePayload: source.payload, provenance: source.provenance } } });
+    }
+    if (sub === "visits/notes/transfer/complete") {
+      const visit = telehealthVisits.get(appointmentId);
+      if (!visit) return json(res, 404, { error: "not_found" });
+      const authority = retainedAuthority(visit);
+      if (authority.error) return json(res, authority.error, { error: authority.code });
+      if ((telehealthControl.get("loseCompletions") ?? 0) > 0) { telehealthControl.set("loseCompletions", telehealthControl.get("loseCompletions") - 1); return json(res, 503, { error: "service_unavailable" }); }
+      const existing = visit.chartTransfer ?? null;
+      if (existing?.state === "completed") return json(res, 200, { data: { visit: withTransferSource(visit), transfer: existing } });
+      if (!authority.transfer) {
+        if (!existing) return json(res, 409, { error: "conflict" });
+        return json(res, 200, { data: { visit: withTransferSource(visit), transfer: existing } });
+      }
+      const source = transferSource(visit);
+      if (authority.transfer.sourceDigest !== source.digest || (existing && existing.transferId !== authority.transfer.transferId)) return json(res, 409, { error: "transfer_mismatch" });
+      const completed = { transferId: authority.transfer.transferId, state: "completed", sourceRevision: source.revision, sourceDigest: source.digest, admittedAt: existing?.admittedAt ?? authority.transfer.transferredAt, admittedBy: PRACTITIONER_USER_ID,
+        encounterId: authority.transfer.encounterId, noteId: authority.transfer.noteId, noteVersion: authority.transfer.noteVersion, contentSha256: authority.transfer.contentSha256, transferredAt: authority.transfer.transferredAt, completedAt: nowIso() };
+      const saved = save({ ...visit, chartTransfer: completed });
+      return json(res, 200, { data: { visit: withTransferSource(saved), transfer: completed } });
     }
     return json(res, 404, { error: "route_not_found" });
   }

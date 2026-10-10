@@ -896,6 +896,18 @@
       "name": "clinical_knowledge_import_items",
       "implementation": "native_production_adapter",
       "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_telehealth_record_authority",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "transfer_telehealth_note",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-candidates/telehealth-chart-lifecycle.sql"
     }
   ]
 }

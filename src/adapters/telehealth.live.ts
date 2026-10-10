@@ -26,6 +26,8 @@ import { scheduleLive } from "./schedule.live";
 import { getClinicalAccessToken } from "./session.server";
 import type { LiveAppointment } from "./live-types";
 import { getContractFixtureTransport } from "@/server/runtime/contractFixture";
+import { clinicalRpc } from "./aws-clinical-data.server";
+import { resolveOrgId } from "./config";
 import type {
   TelehealthConsentArtifact,
   TelehealthConsentInput,
@@ -34,6 +36,9 @@ import type {
   TelehealthEndInput,
   TelehealthImportResult,
   TelehealthSignInput,
+  TelehealthTransferInput,
+  TelehealthTransferResult,
+  TelehealthChartRecord,
   TelehealthStartInput,
   TelehealthStartResult,
   TelehealthVisit,
@@ -243,6 +248,38 @@ function calendarRow(appointment: LiveAppointment, visit: TelehealthVisit | null
   };
 }
 
+type TelehealthTransferSource = {
+  transferId: string; organizationId: string; patientRecordId: string; appointmentId: string; sourceRevision: number; sourceDigest: string;
+  content: Record<string, string>; sourcePayload: Record<string, unknown>; provenance: Array<{ sectionKey: string; refType: string; refId: string | null; label: string }>;
+};
+
+/**
+ * The chart's view of a COMPLETED visit's retained record, read through the
+ * reviewed clinical-record authority (`get_telehealth_record_authority`) with
+ * the caller's own token. A refusal is surfaced as the refusal it is; it is
+ * never softened into "no chart record".
+ */
+async function chartRecord(visit: TelehealthVisit, token: string, orgId: string | null): Promise<TelehealthChartRecord | null> {
+  if (!(visit.status === "ended" || visit.status === "cancelled") || !visit.patientRecordId) return null;
+  const authority = await clinicalRpc<{ authorized?: boolean; legal_hold?: boolean; appointment?: Record<string, unknown> | null; transfer?: Record<string, unknown> | null } | null>(
+    "get_telehealth_record_authority",
+    { _organization_id: resolveOrgId(orgId), _patient_id: visit.patientRecordId, _appointment_id: visit.appointmentId },
+    token,
+  );
+  if (!authority || authority.authorized !== true) throw new AdapterError("forbidden", "You don't have access to this patient's retained telehealth record.");
+  const appointment = authority.appointment ?? null;
+  const transfer = authority.transfer ?? null;
+  return {
+    legalHold: authority.legal_hold === true,
+    appointment: appointment ? { id: String(appointment.id), status: String(appointment.status), deleted: appointment.deleted === true, patientMatches: appointment.patient_matches === true } : null,
+    transfer: transfer ? {
+      transferId: String(transfer.transfer_id), encounterId: String(transfer.encounter_id), noteId: String(transfer.note_id), noteVersion: Number(transfer.note_version),
+      noteStatus: typeof transfer.note_status === "string" ? transfer.note_status : null, noteCurrentVersion: typeof transfer.note_current_version === "number" ? transfer.note_current_version : null,
+      noteDeleted: transfer.note_deleted === true, transferredAt: String(transfer.transferred_at),
+    } : null,
+  };
+}
+
 type Boundary =
   | { available: true; complete: boolean; visits: Map<string, TelehealthVisit>; requests: WorkforceRequestRow[] }
   | { available: false; message: string };
@@ -430,13 +467,53 @@ export const telehealthLive = {
     });
   },
 
-  async note(appointmentId: string, sessionToken: string | null): Promise<TelehealthVisit> {
+  async note(appointmentId: string, sessionToken: string | null, orgId: string | null = null): Promise<TelehealthVisit> {
     if (!UUID.test(appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
     const token = await getClinicalAccessToken(sessionToken);
-    return request<TelehealthVisit>(
+    const visit = await request<TelehealthVisit>(
       `/clinical-core/workforce/appointments/visits/notes?appointmentId=${encodeURIComponent(appointmentId)}`,
       token,
     );
+    return { ...visit, chartRecord: await chartRecord(visit, token, orgId) };
+  },
+
+  /**
+   * Place a SIGNED telehealth visit record into the chart as an UNSIGNED draft.
+   * Three bound steps, each safe to repeat: the boundary admits the exact
+   * source the practitioner reviewed (revision + digest) and returns the
+   * canonical content; the chart's own `transfer_telehealth_note` creates the
+   * draft idempotently under the clinical-record authority; the boundary reads
+   * the chart's receipt back. A lost response anywhere is settled by calling
+   * this again — the chart never gets a second note for the same source.
+   */
+  async transferToChart(input: TelehealthTransferInput, sessionToken: string | null, orgId: string | null): Promise<TelehealthTransferResult> {
+    if (!UUID.test(input.appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
+    const token = await getClinicalAccessToken(sessionToken);
+    const admitted = await request<TelehealthTransferResult & { source: TelehealthTransferSource | null }>(
+      "/clinical-core/workforce/appointments/visits/notes/transfer", token,
+      { body: { appointmentId: input.appointmentId, sourceRevision: input.sourceRevision, sourceDigest: input.sourceDigest } },
+    );
+    if (admitted.transfer?.state === "completed" || !admitted.source) return { visit: admitted.visit, transfer: admitted.transfer };
+    const source = admitted.source;
+    await clinicalRpc<Record<string, unknown>>("transfer_telehealth_note", {
+      _organization_id: resolveOrgId(orgId),
+      _transfer_id: source.transferId,
+      _appointment_id: source.appointmentId,
+      _patient_id: source.patientRecordId,
+      _source_revision: source.sourceRevision,
+      _source_digest: source.sourceDigest,
+      _content: source.content,
+      _source_payload: source.sourcePayload,
+      _provenance: source.provenance,
+    }, token);
+    return request<TelehealthTransferResult>("/clinical-core/workforce/appointments/visits/notes/transfer/complete", token, { body: { appointmentId: input.appointmentId } });
+  },
+
+  /** Inspect/reconcile a transfer: reads the chart's receipt back without writing the chart. */
+  async inspectTransfer(appointmentId: string, sessionToken: string | null): Promise<TelehealthTransferResult> {
+    if (!UUID.test(appointmentId)) throw new AdapterError("invalid", "A valid appointment id is required.");
+    const token = await getClinicalAccessToken(sessionToken);
+    return request<TelehealthTransferResult>("/clinical-core/workforce/appointments/visits/notes/transfer/complete", token, { body: { appointmentId } });
   },
 
   async importNote(appointmentId: string, date: string, timeZone: string, sessionToken: string | null, orgId: string | null): Promise<TelehealthImportResult> {

@@ -162,6 +162,8 @@ const CORE_RPCS = new Set([
   "list_desktop_patient_encounters",
   "get_desktop_note",
   "get_desktop_patient_timeline",
+  "get_telehealth_record_authority",
+  "transfer_telehealth_note",
   "get_patient_overview",
   "get_patient_relationships",
   "get_patient_app_intake",
@@ -651,6 +653,34 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.get_desktop_note($1) as data",
       [clinicalUuid(requiredUuid(args._note_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_telehealth_record_authority") {
+    exactKeys(args, ["_organization_id", "_patient_id", "_appointment_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_telehealth_record_authority($1,$2,$3) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id)), clinicalUuid(requiredUuid(args._appointment_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "transfer_telehealth_note") {
+    exactKeys(args, [
+      "_organization_id", "_transfer_id", "_appointment_id", "_patient_id", "_source_revision", "_source_digest",
+      "_content", "_source_payload", "_provenance",
+    ]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const digest = requiredString(args._source_digest, 64);
+    if (!/^[0-9a-f]{64}$/.test(digest)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._transfer_id)), clinicalUuid(requiredUuid(args._appointment_id)),
+        clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._source_revision, 1, 1_000_000), digest,
+        JSON.stringify(boundedNoteContent(args._content)), JSON.stringify(boundedTransferPayload(args._source_payload)),
+        JSON.stringify(boundedProvenance(args._provenance)),
+      ],
     ));
     return decodeJson(row.data);
   }
@@ -1788,11 +1818,18 @@ function boundedNoteContent(value: unknown): Record<string, string> {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+/** The complete telehealth source kept beside a chart draft: a JSON object under the ledger's 512 KiB bound, never a string or array. */
+function boundedTransferPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  if (Object.keys(value as Record<string, unknown>).length > 64 || JSON.stringify(value).length > 524_288) throw invalid();
+  return value as Record<string, unknown>;
+}
+
 function boundedProvenance(value: unknown): Array<Record<string, string | null>> {
   if (!Array.isArray(value) || value.length > 50) throw invalid();
   const allowed = new Set([
     "appointment", "encounter", "lab_observation", "lab_document", "patient_form", "chart_item",
-    "practitioner_entered", "transcript", "differential_question", "lens_evaluation",
+    "practitioner_entered", "transcript", "differential_question", "lens_evaluation", "telehealth_visit",
   ]);
   return value.map((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();

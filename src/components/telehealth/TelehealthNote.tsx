@@ -11,18 +11,24 @@
  * patient-facing.
  *
  * This record is signed on the telehealth boundary. It is NOT the chart's
- * signed clinical note and does not appear in the chart timeline; posting it
- * through the chart's note path is a separate, unbuilt step (docs/telehealth.md).
+ * signed clinical note. Placing it in the chart is a separate, explicit
+ * practitioner action ("Place in chart"): the signed record becomes an
+ * UNSIGNED chart draft on the patient's telehealth encounter, under the chart's
+ * own review and signature workflow, bound server-side to the exact signed
+ * revision. Repeating the action never creates a second chart note
+ * (docs/telehealth.md).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, PenLine } from "lucide-react";
+import { Download, FileInput, PenLine } from "lucide-react";
 import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
 import { telehealthAccessLost } from "@/lib/telehealth-access-loss";
 import type {
   TelehealthActionItem,
+  TelehealthChartRecord,
+  TelehealthChartTransfer,
   TelehealthDayVisit,
   TelehealthNoteSectionKey,
   TelehealthVisitNote,
@@ -74,6 +80,9 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
   const [signing, setSigning] = useState(false);
   const [confirmSign, setConfirmSign] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmTransfer, setConfirmTransfer] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
   const accessEpoch = useRef(0);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
@@ -185,6 +194,71 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     }
   };
 
+  /**
+   * Place the SIGNED record in the chart as an UNSIGNED draft. The request
+   * names the exact signed revision and digest this screen is showing, so a
+   * stale screen is refused rather than transferred. Safe to repeat: a lost
+   * response is settled by the chart's own receipt on the next attempt.
+   */
+  const transferToChart = async () => {
+    const source = row?.visit?.chartTransferSource;
+    if (!row || !source) return;
+    const epoch = accessEpoch.current;
+    setTransferring(true);
+    setTransferError(null);
+    try {
+      const result = await api.telehealth.transferToChart({ appointmentId: row.appointmentId, sourceRevision: source.sourceRevision, sourceDigest: source.sourceDigest });
+      if (epoch !== accessEpoch.current) return;
+      const visit = await api.telehealth.note(row.appointmentId);
+      if (epoch !== accessEpoch.current) return;
+      setRow({ ...row, visit });
+      setConfirmTransfer(false);
+      announce(result.transfer?.state === "completed"
+        ? "Telehealth visit note placed in the chart as an unsigned draft."
+        : "The chart has not confirmed the transfer yet. Use Inspect to read the chart's receipt.");
+      router.refresh();
+    } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedNote(e);
+      setTransferError(isAdapterError(e) ? e.message : "The note could not be placed in the chart.");
+      setConfirmTransfer(false);
+      // A failed round may have admitted the transfer, or the chart may hold the
+      // receipt already: show the record's actual state so Inspect/Retry are offered.
+      if (!telehealthAccessLost(e)) {
+        try {
+          const visit = await api.telehealth.note(row.appointmentId);
+          if (epoch === accessEpoch.current) setRow({ ...row, visit });
+        } catch { /* the error above stands */ }
+      }
+    } finally {
+      if (epoch === accessEpoch.current) setTransferring(false);
+    }
+  };
+
+  /** Read the chart's receipt back for a transfer that was admitted but not confirmed; never writes the chart. */
+  const inspectTransfer = async () => {
+    if (!row) return;
+    const epoch = accessEpoch.current;
+    setTransferring(true);
+    setTransferError(null);
+    try {
+      const result = await api.telehealth.inspectTransfer(row.appointmentId);
+      if (epoch !== accessEpoch.current) return;
+      const visit = await api.telehealth.note(row.appointmentId);
+      if (epoch !== accessEpoch.current) return;
+      setRow({ ...row, visit });
+      announce(result.transfer?.state === "completed"
+        ? "The chart confirmed the transfer; the draft is linked below."
+        : "The chart has no receipt for this transfer yet. Retry placing the note in the chart.");
+    } catch (e) {
+      if (epoch !== accessEpoch.current) return;
+      dropOpenedNote(e);
+      setTransferError(isAdapterError(e) ? e.message : "The chart's receipt could not be read.");
+    } finally {
+      if (epoch === accessEpoch.current) setTransferring(false);
+    }
+  };
+
   const pasteQuickNotes = () => {
     const quick = row?.visit?.quickNotes?.trim();
     if (!quick) return;
@@ -238,15 +312,28 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
                 <PenLine size={13} strokeWidth={2} aria-hidden /> Sign note
               </Btn>
             )}
+            {signed && visit?.chartTransferSource && row.patientId && visit.chartTransfer?.state !== "completed" && !visit.chartRecord?.transfer && (
+              <Btn variant="primary" onClick={() => setConfirmTransfer(true)} disabled={transferring} data-testid="note-transfer">
+                <FileInput size={13} strokeWidth={2} aria-hidden /> {visit.chartTransfer?.state === "admitted" ? "Retry placing in chart" : "Place in chart"}
+              </Btn>
+            )}
           </div>
         }
       />
 
       <ClinicalNote className="mb-3">
         <strong>Telehealth visit record.</strong> What is signed here is stored on the telehealth visit, with its
-        prior revisions. It is not the chart&apos;s signed clinical note and does not appear in the chart timeline;
-        carry anything chart-worthy into an encounter note.
+        prior revisions. It is not the chart&apos;s signed clinical note: once signed, <em>Place in chart</em> puts
+        it on the patient&apos;s telehealth encounter as an unsigned draft for the chart&apos;s own review and signature.
       </ClinicalNote>
+
+      {transferError && (
+        <div data-testid="note-transfer-error" className="mb-3">
+          <ClinicalError message={transferError} onRetry={visit?.chartTransfer?.state === "admitted" ? () => void inspectTransfer() : undefined} />
+        </div>
+      )}
+
+      {visit && (signed || visit.chartTransfer) && <ChartTransferCard transfer={visit.chartTransfer ?? null} record={visit.chartRecord ?? null} patientId={row.patientId} busy={transferring} onInspect={() => void inspectTransfer()} onRetry={() => setConfirmTransfer(true)} />}
 
       {shutdownPending && (
         <div role="alert" data-testid="note-shutdown-pending" className="mb-3 rounded-[10px] border border-[rgba(214,84,74,0.4)] bg-critical-tint px-[13px] py-[10px] text-[12px] leading-[1.55] text-critical">
@@ -435,13 +522,23 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
           {signed && note && (
             <div data-testid="note-signed">
               <ClinicalNote>
-                Signed {fmtDateTime(note.signedAt)}. This telehealth visit note is frozen; corrections are recorded as a
-                new revision on this visit.
+                Signed {fmtDateTime(note.signedAt)}. This telehealth visit note is frozen. Corrections are made in the
+                chart: place the note in the chart, then amend the chart note with a reason — the original stays as
+                signed here.
               </ClinicalNote>
             </div>
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmTransfer}
+        title="Place this signed note in the chart?"
+        body="The signed telehealth visit record (reviewed AI sections, your notes and your action-item decisions) is placed on this patient's telehealth encounter as an UNSIGNED chart draft, with its provenance. It is reviewed and signed through the chart like any other note; your visit signature does not sign the chart. Approved action items are copied as text — no order, task or protocol change is created. Repeating this never creates a second chart note."
+        confirmLabel={transferring ? "Placing…" : "Place in chart"}
+        onConfirm={() => void transferToChart()}
+        onCancel={() => setConfirmTransfer(false)}
+      />
 
       <ConfirmDialog
         open={confirmSign}
@@ -452,5 +549,85 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
         onCancel={() => setConfirmSign(false)}
       />
     </section>
+  );
+}
+
+/**
+ * The chart side of a signed telehealth record: nothing yet, an admitted
+ * transfer the chart has not confirmed (inspect or retry — never a silent
+ * second write), or the chart's receipt with a link to the encounter draft.
+ */
+function ChartTransferCard({ transfer, record, patientId, busy, onInspect, onRetry }: {
+  transfer: TelehealthChartTransfer | null;
+  record: TelehealthChartRecord | null;
+  patientId: string | null;
+  busy: boolean;
+  onInspect: () => void;
+  onRetry: () => void;
+}) {
+  const chart = record?.transfer ?? null;
+  // The chart is the authority: its receipt means the draft exists even when
+  // the visit record has not yet recorded it (a lost completion). That state is
+  // shown as what it is — reconciled by Inspect, never by a second write.
+  const reconciled = transfer?.state === "completed";
+  const unreconciled = !reconciled && chart !== null;
+  const completed = reconciled || unreconciled;
+  const encounterId = transfer?.encounterId ?? chart?.encounterId ?? null;
+  return (
+    <div data-testid="note-chart-transfer" data-transfer-state={reconciled ? "completed" : unreconciled ? "unreconciled" : transfer?.state ?? "none"} className="mb-3">
+    <Card>
+      <CardTitle>Chart</CardTitle>
+      {record?.legalHold && (
+        <p className="mt-2 mb-0 text-[12px] leading-[1.5] text-critical"><strong>Legal hold.</strong> This patient&apos;s records are under a hold; nothing about this visit may be deleted while it stands.</p>
+      )}
+      {completed && encounterId && patientId ? (
+        <div className="mt-2">
+          <p className="m-0 text-[12.5px] leading-[1.55] text-ink">
+            Placed in the chart {fmtDateTime(transfer?.transferredAt ?? chart?.transferredAt ?? null)} as an unsigned draft
+            {chart?.noteStatus ? <> · chart note <strong>{chart.noteStatus.replace("_", " ")}</strong>{chart.noteCurrentVersion ? ` v${chart.noteCurrentVersion}` : ""}</> : null}.
+          </p>
+          <a
+            href={`/patients/${patientId}/encounter/${encounterId}`}
+            data-testid="note-chart-link"
+            className="mt-1 inline-block rounded-lg px-2 py-[6px] text-[12.5px] font-semibold text-action hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:outline-action"
+          >
+            Open the chart draft ↗
+          </a>
+          <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-subtle">
+            Review, edit and sign it there. Corrections after signing are chart addenda with a reason; the original
+            text and this visit record are kept.
+          </p>
+          {unreconciled && (
+            <div className="mt-2" role="status">
+              <p className="m-0 text-[12px] leading-[1.5] text-ink">
+                <strong>Receipt not yet recorded on the visit.</strong> The chart confirms this draft, but the visit
+                record did not receive the confirmation. Inspect records the chart&apos;s receipt; nothing is written to
+                the chart again.
+              </p>
+              <Btn className="mt-2" onClick={onInspect} disabled={busy} data-testid="note-transfer-inspect">Inspect</Btn>
+            </div>
+          )}
+        </div>
+      ) : transfer?.state === "admitted" ? (
+        <div className="mt-2" role="status">
+          <p className="m-0 text-[12.5px] leading-[1.55] text-ink">
+            <strong>Transfer not confirmed.</strong> A transfer of revision {transfer.sourceRevision} was admitted
+            {" "}{fmtDateTime(transfer.admittedAt)} but the chart has not confirmed it. Inspect reads the chart&apos;s receipt;
+            Retry repeats the same transfer — neither creates a second chart note.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Btn onClick={onInspect} disabled={busy} data-testid="note-transfer-inspect">Inspect</Btn>
+            <Btn variant="primary" onClick={onRetry} disabled={busy}>Retry</Btn>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 mb-0 text-[12px] leading-[1.5] text-subtle">
+          {patientId
+            ? "Not in the chart yet. Use Place in chart to add it to the patient's telehealth encounter as an unsigned draft."
+            : "This visit has no linked patient record, so it cannot be placed in a chart."}
+        </p>
+      )}
+    </Card>
+    </div>
   );
 }

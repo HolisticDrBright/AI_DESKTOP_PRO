@@ -9,6 +9,6 @@ export async function GET(req: NextRequest) {
   if (blocked) return blocked;
   return runLive(async () => {
     const session = await getRequestSession();
-    return telehealthLive.note(req.nextUrl.searchParams.get("appointmentId") ?? "", session.token);
+    return telehealthLive.note(req.nextUrl.searchParams.get("appointmentId") ?? "", session.token, session.orgId);
   });
 }

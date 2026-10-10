@@ -14,13 +14,13 @@ try {
 
 const errors = [];
 if (JSON.stringify(committed) !== JSON.stringify(expected)) errors.push("inventory is stale; run the build script with --write");
-if (committed.counts?.rpc !== 221 || committed.counts?.select !== 5 || committed.counts?.total !== 226) errors.push("operation counts changed without review");
+if (committed.counts?.rpc !== 223 || committed.counts?.select !== 5 || committed.counts?.total !== 228) errors.push("operation counts changed without review");
 if (committed.operations?.some((operation) => operation.kind === "rpc"
   && operation.legacyDefinitions.length === 0
   && !operation.productionEvidence)) errors.push("an RPC has no extracted legacy or native-production definition");
 if (committed.operations?.some((operation) => operation.callSites.length === 0)) errors.push("an operation has no live adapter call site");
-if (committed.counts?.productionImplemented !== 226 || committed.counts?.productionEnabled !== 0) {
-  errors.push("production operation evidence must show all two hundred twenty-six implemented core operations and zero enabled operations");
+if (committed.counts?.productionImplemented !== 228 || committed.counts?.productionEnabled !== 0) {
+  errors.push("production operation evidence must show all two hundred twenty-eight implemented core operations and zero enabled operations");
 }
 const implemented = committed.operations?.filter((operation) => operation.productionStatus === "implemented_activation_blocked") ?? [];
 if (implemented.some((operation) => operation.productionEvidence?.activationState !== "phi_disabled"

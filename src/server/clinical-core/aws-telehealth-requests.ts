@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
 if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is server-only");
 
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
+import { TELEHEALTH_RECORD_INVENTORY_CONTRACT, telehealthRecordLocation, type TelehealthRecordInventory } from "../../contracts/telehealthRecordInventory";
 import { boundedProviderJson } from "./bounded-provider-json";
 import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from "../../contracts/telehealthConsent";
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
@@ -50,6 +50,16 @@ const WORKFORCE_VISIT_END = "POST /clinical-core/workforce/appointments/visits/e
 const WORKFORCE_VISIT_NOTE = "GET /clinical-core/workforce/appointments/visits/notes";
 const WORKFORCE_VISIT_NOTE_IMPORT = "POST /clinical-core/workforce/appointments/visits/notes/import";
 const WORKFORCE_VISIT_NOTE_SIGN = "POST /clinical-core/workforce/appointments/visits/notes/sign";
+// Chart integration: an explicit practitioner action places a SIGNED telehealth
+// visit record into the patient's chart as an UNSIGNED draft. Two phases around
+// the chart write the desktop performs with the caller's own JWT: `transfer`
+// admits the exact source (revision + digest) on the visit record and returns
+// the canonical content; `transfer/complete` reads the chart's authoritative
+// receipt back and records it. Repeating either is safe.
+const WORKFORCE_VISIT_NOTE_TRANSFER = "POST /clinical-core/workforce/appointments/visits/notes/transfer";
+const WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE = "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete";
+/** Record lifecycle: every telehealth text location for one visit, with digests — inventory, never deletion authority. */
+const WORKFORCE_VISIT_NOTE_INVENTORY = "GET /clinical-core/workforce/appointments/visits/notes/inventory";
 /** The one combined consent a telehealth visit requires. Wording is versioned; the version is recorded, never the text. */
 export const TELEHEALTH_CONSENT_TYPE = "telehealth_recording_combined";
 /** Meeting SDK signatures are short-lived: long enough for a visit, never a standing credential. */
@@ -115,6 +125,18 @@ export type VisitNote = {
   actionItems: VisitActionItem[]; revision: number; importedAt: string; signedAt: string | null; signedBy: string | null;
 };
 type VisitFlag = { atSeconds: number; label: string };
+/**
+ * The visit-side record of a chart transfer. `admitted` = the exact source was
+ * fixed and the chart write may be (or may have been) sent; `completed` = the
+ * chart's authoritative receipt was read back. The two stores are never written
+ * atomically: this record is reconciled FROM the chart, never the other way.
+ */
+export type ChartTransfer = {
+  transferId: string; state: "admitted" | "completed"; sourceRevision: number; sourceDigest: string;
+  admittedAt: string; admittedBy: string;
+  encounterId: string | null; noteId: string | null; noteVersion: number | null; contentSha256: string | null;
+  transferredAt: string | null; completedAt: string | null;
+};
 type VisitItem = {
   pk: string; sk: string; appointmentId: string; organizationId: string; requestId: string | null; consumerPersonId: string | null;
   scheduledStart: string | null; scheduledEnd: string | null; timeZone: string | null;
@@ -127,6 +149,7 @@ type VisitItem = {
   startedAt: string | null; endedAt: string | null; providerShutdown: ProviderShutdown; flags: VisitFlag[]; quickNotes: string;
   note: VisitNote | null; noteHistory: VisitNote[]; version: number; createdAt: string; updatedAt: string;
   mutationOperationId?: string;
+  chartTransfer?: ChartTransfer | null;
 };
 
 type PaymentProfile = { pk: string; sk: string; organizationId: string; consumerPersonId: string; stripeCustomerId: string; stripePaymentMethodId: string | null; status: "setup_pending" | "active" | "disabled"; updatedAt: string };
@@ -186,6 +209,9 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
       if (route === WORKFORCE_VISIT_NOTE_IMPORT) return response(200, { data: await importVisitNote(config, actor, body(event)) });
       if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
+      if (route === WORKFORCE_VISIT_NOTE_TRANSFER) return response(200, { data: await transferVisitNote(config, actor, body(event)) });
+      if (route === WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE) return response(200, { data: await completeVisitNoteTransfer(config, actor, body(event)) });
+      if (route === WORKFORCE_VISIT_NOTE_INVENTORY) return response(200, { data: await readVisitInventory(config, actor, event) });
       return response(404, { error: "route_not_found" });
     } catch (error) {
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
@@ -193,7 +219,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       // contact details or submitted clinical text. Log fixed labels only.
       console.warn(JSON.stringify({ event: "telehealth_request_refused", category }));
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
-        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable"].includes(category) ? 409
+        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch"].includes(category) ? 409
         : ["provider_unavailable", "service_unavailable", "appointment_change_pending"].includes(category) ? 503 : 400;
       return response(status, { error: category });
     }
@@ -1067,7 +1093,10 @@ function publicVisit(visit: VisitItem) {
   const result: Partial<VisitItem> = { ...visit };
   delete result.pk; delete result.sk; delete result.passcode; delete result.meetingLease;
   delete result.mutationOperationId;
-  return { ...result, consentSigned: activeConsents(visit).length > 0 };
+  // A list projection carries only note state; the transfer source exists only for a full signed note.
+  const source = visit.note?.status === "signed" && Array.isArray(visit.note.actionItems) && visit.note.aiSections ? transferSource(visit) : null;
+  return { ...result, consentSigned: activeConsents(visit).length > 0, chartTransfer: visit.chartTransfer ?? null,
+    chartTransferSource: source ? { sourceRevision: source.revision, sourceDigest: source.digest } : null };
 }
 /** Day-list projection: state only, no note bodies or AI text (bounded page size, nothing to leak in a list). */
 function publicVisitSummary(visit: VisitItem) {
@@ -1199,10 +1228,48 @@ function assertVisitSubject(visit: VisitItem, binding: VisitBinding) {
   if (!visit.requestId && (visit.patientRecordId !== binding.patientRecordId
     || visit.practitionerUserId !== null && visit.practitionerUserId !== binding.practitionerUserId)) throw new TelehealthError("request_invalid");
 }
-async function requireVisitReadAuthority(config: TelehealthConfiguration, actor: Actor, visit: VisitItem) {
-  // Use the original stored date for historical visits. Current clinical-core
-  // authorization is required even for patient-app requests: organization
-  // partition membership in DynamoDB is not patient-record authority.
+type RecordAuthority = {
+  authorized: boolean; actor_person_id: string; patient_record_id: string; legal_hold: boolean;
+  appointment: { id: string; status: string; deleted: boolean; appointment_type: string; patient_matches: boolean; practitioner_person_id: string | null } | null;
+  transfer: { transfer_id: string; encounter_id: string; note_id: string; note_version: number; source_note_revision: number; source_digest: string;
+    content_sha256: string; transferred_at: string; transferred_by_person_id: string; note_status: string | null; note_current_version: number | null; note_deleted: boolean | null } | null;
+};
+const COMPLETED_VISIT_STATUSES = new Set(["ended", "cancelled"]);
+/**
+ * The reviewed clinical-record read path for a RETAINED visit: the clinical
+ * core's own patient-record authority (`get_telehealth_record_authority`:
+ * active membership, a clinical role, an active patient record in this
+ * organization), evaluated with the caller's JWT. It does not depend on the
+ * calendar still returning the appointment, so a deleted or moved appointment
+ * never erases access to a retained record; it is also stricter than the
+ * calendar (a staff-only role is refused). A visit that never had a patient
+ * record, or any answer short of `authorized` for THIS patient, is a refusal:
+ * there is no fallback to organization membership.
+ */
+async function requireRetainedRecordAuthority(config: TelehealthConfiguration, actor: Actor, visit: VisitItem): Promise<RecordAuthority> {
+  if (!visit.patientRecordId) throw new TelehealthError("identity_refused");
+  let authority: RecordAuthority | null;
+  try {
+    authority = await identityApi<RecordAuthority | null>(config, actor, "/clinical-core/workforce/data-compatibility", { method: "POST",
+      body: { kind: "rpc", functionName: "get_telehealth_record_authority", args: { _organization_id: actor.organizationId, _patient_id: visit.patientRecordId, _appointment_id: visit.appointmentId } } }, "identity_refused");
+  } catch (error) {
+    if (error instanceof TelehealthError && error.category === "identity_refused") throw error;
+    throw error; // service_unavailable: no authority answer is no access, reported as what it is
+  }
+  if (!authority || authority.authorized !== true || authority.patient_record_id !== visit.patientRecordId) throw new TelehealthError("identity_refused");
+  return authority;
+}
+/**
+ * Reading a visit: a visit that is still scheduled or running is read under the
+ * same current appointment binding its mutations use; a COMPLETED visit is a
+ * retained clinical record and is read under the retained-record authority
+ * above. Neither path is a fallback for the other.
+ */
+async function requireVisitReadAuthority(config: TelehealthConfiguration, actor: Actor, visit: VisitItem): Promise<void> {
+  if (COMPLETED_VISIT_STATUSES.has(visit.status)) { await requireRetainedRecordAuthority(config, actor, visit); return; }
+  // Current clinical-core authorization is required even for patient-app
+  // requests: organization partition membership in DynamoDB is not
+  // patient-record authority.
   const appointment = await calendarAppointment(config, actor, visit.appointmentId, visit.scheduledStart);
   if (visit.patientRecordId !== null && visit.patientRecordId !== appointment.patientRecordId
     || visit.practitionerUserId !== null && visit.practitionerUserId !== appointment.practitionerUserId) throw new TelehealthError("request_invalid");
@@ -1603,18 +1670,29 @@ async function listVisits(config: TelehealthConfiguration, actor: Actor) {
     exclusiveStartKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
     if (!exclusiveStartKey) { complete = true; break; }
   }
-  // A removed appointment has no reviewed historical-record authorization
-  // fallback yet. Omit it and mark the result incomplete, never expose it by
-  // organization membership alone. Authorization/service errors still refuse.
+  // Each visit is listed only under its own read authority: a running visit
+  // through the current appointment binding, a completed one through the
+  // retained-record authority. A visit this caller may not read (not on their
+  // calendar, or the clinical core refuses the retained record) is OMITTED and
+  // counted as withheld, never exposed by organization membership alone;
+  // service errors still refuse the whole list.
   const authorized: VisitItem[] = [];
+  let withheld = 0, membershipVerified = false;
   for (const visit of visits) {
-    try { await requireVisitReadAuthority(config, actor, visit); authorized.push(visit); }
+    try { await requireVisitReadAuthority(config, actor, visit); authorized.push(visit); membershipVerified = true; }
     catch (error) {
-      if (!(error instanceof TelehealthError) || error.category !== "not_found") throw error;
-      complete = false;
+      if (!(error instanceof TelehealthError) || !["not_found", "identity_refused", "request_invalid"].includes(error.category)) throw error;
+      if (error.category === "identity_refused" && !membershipVerified) {
+        // A refusal of ONE record is withheld; a refusal of the caller (revoked
+        // membership) refuses the list. The calendar answers which it is.
+        try { await calendarAppointment(config, actor, visit.appointmentId, visit.scheduledStart); }
+        catch (probe) { if (probe instanceof TelehealthError && probe.category === "identity_refused") throw probe; }
+        membershipVerified = true;
+      }
+      withheld += 1;
     }
   }
-  return { visits: authorized.map(publicVisitSummary), complete };
+  return { visits: authorized.map(publicVisitSummary), complete: complete && withheld === 0, withheld };
 }
 
 async function readVisitNote(config: TelehealthConfiguration, actor: Actor, event: ApiGatewayV2Event) {
@@ -1667,13 +1745,213 @@ async function signVisitNote(config: TelehealthConfiguration, actor: Actor, valu
   if (!Number.isInteger(value.expectedVersion) || typeof value.practitionerNotes !== "string" || value.practitionerNotes.length > 50_000) throw new TelehealthError("request_invalid");
   if (!visit.note) throw new TelehealthError("conflict");
   if (visit.note.status === "signed") throw new TelehealthError("conflict");
-  await requireBindingAuthority(config, actor, visit, "close");
+  // Signing finishes the retained record: the same reviewed authority its reads use.
+  await requireVisitReadAuthority(config, actor, visit);
   const aiSections = parseSections(value.aiSections); const actionItems = parseActionItems(value.actionItems, visit.note.actionItems);
   const signedAt = new Date().toISOString();
   const note: VisitNote = { ...visit.note, status: "signed", aiSections, practitionerNotes: value.practitionerNotes, actionItems, revision: visit.note.revision + 1, signedAt, signedBy: actor.personId };
   const saved = await saveVisit(config, { ...visit, note, noteHistory: [...visit.noteHistory, visit.note].slice(-MAX_NOTE_HISTORY) }, Number(value.expectedVersion));
   return publicVisit(saved);
 }
+/* ---- chart integration: an explicit, bound, retry-safe transfer ---- */
+
+const TRANSFER_SECTION_HEADINGS: Record<VisitNoteSectionKey, string> = { summary: "Telehealth visit — AI Companion summary (reviewed)", patient_reported: "What the patient reported", results_reviewed: "Results reviewed", plan_discussed: "Plan discussed" };
+/** The chart's narrative note type is one `text` section: the reviewed sections are assembled under headings there; they stay distinct in the source payload. */
+const CHART_SECTION_KEY = "text";
+/** Deterministic JSON (sorted keys) so a digest means the same bytes everywhere. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  return JSON.stringify(value === undefined ? null : value);
+}
+function sha256Hex(text: string) { return createHash("sha256").update(text, "utf8").digest("hex"); }
+type TransferSource = { revision: number; digest: string; content: Record<string, string>; payload: Record<string, unknown>; provenance: Array<{ sectionKey: string; refType: string; refId: string | null; label: string }> };
+/**
+ * The exact source a transfer carries: the SIGNED note revision and a digest
+ * over everything the chart draft is derived from. Content = the chart draft's
+ * sections (reviewed AI text, practitioner text, action-item decisions as text,
+ * a source line) — strings only, under the chart's own bounds. Payload = the
+ * complete provider summary and reviewed data kept as distinct data beside the
+ * draft. Provenance names the visit for every AI-derived section.
+ */
+function transferSource(visit: VisitItem): TransferSource {
+  const note = visit.note;
+  if (!note || note.status !== "signed") throw new TelehealthError("conflict");
+  const parts: string[] = [];
+  for (const key of VISIT_NOTE_SECTION_KEYS) { const text = (note.aiSections[key] ?? "").trim(); if (text) parts.push(`## ${TRANSFER_SECTION_HEADINGS[key]}\n${text}`); }
+  if (note.practitionerNotes.trim()) parts.push(`## Practitioner notes\n${note.practitionerNotes.trim()}`);
+  if (note.actionItems.length) parts.push(`## Action items (decisions only — no order, task or protocol change was created)\n${note.actionItems.map((item) => `- ${item.text} (${item.status})`).join("\n")}`);
+  parts.push(`Source: Telehealth visit record revision ${note.revision}, signed ${note.signedAt ?? "unknown"} by ${note.signedBy ?? "unknown"}. `
+    + `Zoom AI Companion summary ${note.zoomSummaryId ?? "(no provider id)"} reviewed by the practitioner. Transferred UNSIGNED for chart review.`);
+  const content: Record<string, string> = { [CHART_SECTION_KEY]: parts.join("\n\n") };
+  const payload: Record<string, unknown> = {
+    appointmentId: visit.appointmentId, patientRecordId: visit.patientRecordId, practitionerUserId: visit.practitionerUserId,
+    revision: note.revision, importedAt: note.importedAt, signedAt: note.signedAt, signedBy: note.signedBy, zoomSummaryId: note.zoomSummaryId,
+    aiOriginal: note.aiOriginal, aiSections: note.aiSections, practitionerNotes: note.practitionerNotes, actionItems: note.actionItems,
+    quickNotes: visit.quickNotes, flags: visit.flags,
+    consents: visit.consents.map((consent) => ({ consentId: consent.consentId, artifactId: consent.artifactId, artifactVersion: consent.artifactVersion, method: consent.method, status: consent.status, signedAt: consent.signedAt, withdrawnAt: consent.withdrawnAt })),
+    providerMeetingId: visit.providerMeetingId, providerMeetingUuid: visit.providerMeetingUuid,
+  };
+  const provenance = [
+    ...VISIT_NOTE_SECTION_KEYS.filter((key) => (note.aiSections[key] ?? "").trim()).map((key) => ({ sectionKey: CHART_SECTION_KEY, refType: "telehealth_visit", refId: visit.appointmentId, label: `${TRANSFER_SECTION_HEADINGS[key]}: Zoom AI Companion summary, reviewed in telehealth visit record revision ${note.revision}` })),
+    { sectionKey: CHART_SECTION_KEY, refType: "practitioner_entered", refId: null, label: "Practitioner notes entered during the telehealth visit" },
+    { sectionKey: CHART_SECTION_KEY, refType: "telehealth_visit", refId: visit.appointmentId, label: "Action-item decisions from the telehealth visit record (suggestions, not orders)" },
+    { sectionKey: CHART_SECTION_KEY, refType: "telehealth_visit", refId: visit.appointmentId, label: `Telehealth visit record revision ${note.revision}: source provenance` },
+  ];
+  const digest = sha256Hex(canonicalJson({ revision: note.revision, content, payload }));
+  return { revision: note.revision, digest, content, payload, provenance };
+}
+function publicTransfer(visit: VisitItem) { return { visit: publicVisit(visit), transfer: visit.chartTransfer ?? null }; }
+/**
+ * Phase 1 — admit. Requires a completed visit with a SIGNED note, the
+ * retained-record authority, and that the caller names the exact source it
+ * reviewed (revision + digest): a stale screen is refused, never transferred.
+ * Idempotent: a completed receipt is returned as is; a receipt the chart
+ * already holds (lost response) is recorded and returned; an admitted attempt
+ * is returned again with the SAME transfer id so the chart write is a repeat,
+ * not a second note. Only then is a new admission written under the version.
+ */
+async function transferVisitNote(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["appointmentId", "sourceRevision", "sourceDigest"], ["appointmentId", "sourceRevision", "sourceDigest"]);
+  const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
+  if (!COMPLETED_VISIT_STATUSES.has(visit.status) || visit.status === "cancelled") throw new TelehealthError("conflict");
+  if (!visit.note || visit.note.status !== "signed") throw new TelehealthError("conflict");
+  const authority = await requireRetainedRecordAuthority(config, actor, visit);
+  const source = transferSource(visit);
+  if (value.sourceRevision !== source.revision || value.sourceDigest !== source.digest) throw new TelehealthError("transfer_source_stale");
+  const existing = visit.chartTransfer ?? null;
+  if (existing?.state === "completed") return { ...publicTransfer(visit), source: null };
+  if (authority.transfer) {
+    // The chart already holds this visit's transfer (a lost response): record it, never write the chart again.
+    const settled = await recordCompletedTransfer(config, visit, existing, authority, source);
+    return { ...publicTransfer(settled), source: null };
+  }
+  if (existing?.state === "admitted") {
+    if (existing.sourceRevision !== source.revision || existing.sourceDigest !== source.digest) throw new TelehealthError("transfer_mismatch");
+    return { ...publicTransfer(visit), source: transferPayload(visit, existing, source) };
+  }
+  const admission: ChartTransfer = { transferId: randomUUID(), state: "admitted", sourceRevision: source.revision, sourceDigest: source.digest,
+    admittedAt: new Date().toISOString(), admittedBy: actor.personId, encounterId: null, noteId: null, noteVersion: null, contentSha256: null, transferredAt: null, completedAt: null };
+  const saved = await saveVisit(config, { ...visit, chartTransfer: admission }, visit.version, true);
+  return { ...publicTransfer(saved), source: transferPayload(saved, admission, source) };
+}
+function transferPayload(visit: VisitItem, admission: ChartTransfer, source: TransferSource) {
+  return { transferId: admission.transferId, organizationId: visit.organizationId, patientRecordId: visit.patientRecordId, appointmentId: visit.appointmentId,
+    sourceRevision: source.revision, sourceDigest: source.digest, content: source.content, sourcePayload: source.payload, provenance: source.provenance };
+}
+async function recordCompletedTransfer(config: TelehealthConfiguration, visit: VisitItem, existing: ChartTransfer | null, authority: RecordAuthority, source: TransferSource): Promise<VisitItem> {
+  const chart = authority.transfer;
+  if (!chart) throw new TelehealthError("conflict");
+  // The chart's receipt must be THIS source and, when an attempt was admitted, THIS attempt.
+  if (chart.source_note_revision !== source.revision || chart.source_digest !== source.digest) throw new TelehealthError("transfer_mismatch");
+  if (existing && existing.transferId !== chart.transfer_id) throw new TelehealthError("transfer_mismatch");
+  const completed: ChartTransfer = {
+    transferId: chart.transfer_id, state: "completed", sourceRevision: source.revision, sourceDigest: source.digest,
+    admittedAt: existing?.admittedAt ?? chart.transferred_at, admittedBy: existing?.admittedBy ?? chart.transferred_by_person_id,
+    encounterId: chart.encounter_id, noteId: chart.note_id, noteVersion: chart.note_version, contentSha256: chart.content_sha256,
+    transferredAt: chart.transferred_at, completedAt: new Date().toISOString(),
+  };
+  try {
+    return await saveVisit(config, { ...visit, chartTransfer: completed }, visit.version, true);
+  } catch (error) {
+    // A concurrent completion is the same fact; anything else is handed back.
+    const current = await findVisit(config, visit.organizationId, visit.appointmentId);
+    if (current?.chartTransfer?.state === "completed" && current.chartTransfer.transferId === chart.transfer_id) return current;
+    throw error;
+  }
+}
+/**
+ * Phase 2 — complete, and the inspection path. Reads the chart's authoritative
+ * receipt for this visit with the caller's JWT and records it. Nothing the
+ * caller supplies beyond the appointment id is trusted. No receipt at the
+ * chart yet → the admission stands and the chart write should be repeated
+ * (state `admitted`); a receipt for another source or attempt → `transfer_mismatch`,
+ * which needs review, never a second write.
+ */
+async function completeVisitNoteTransfer(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["appointmentId"], ["appointmentId"]);
+  const visit = await requireVisit(config, actor.organizationId, String(value.appointmentId ?? ""));
+  const authority = await requireRetainedRecordAuthority(config, actor, visit);
+  const existing = visit.chartTransfer ?? null;
+  if (existing?.state === "completed") return publicTransfer(visit);
+  if (!existing) {
+    if (!authority.transfer) throw new TelehealthError("conflict");
+    // A receipt with no admission on this record (an older or lost admission): adopt it when it is this visit's signed source.
+    return publicTransfer(await recordCompletedTransfer(config, visit, null, authority, transferSource(visit)));
+  }
+  if (!authority.transfer) return publicTransfer(visit);
+  return publicTransfer(await recordCompletedTransfer(config, visit, existing, authority, transferSource(visit)));
+}
+
+/* ---- record lifecycle: inventory, never deletion authority ---- */
+
+/**
+ * Every telehealth text location for ONE visit, with presence, digest, size
+ * and count — never the text. Read under the same authority as the record
+ * itself (a retained visit through the retained-record authority, which also
+ * answers whether the patient's chart records are held). Consent withdrawal is
+ * reported as what it is: new AI processing stopped, nothing deleted. What no
+ * receipt from this system may claim is listed explicitly.
+ */
+async function readVisitInventory(config: TelehealthConfiguration, actor: Actor, event: ApiGatewayV2Event): Promise<TelehealthRecordInventory> {
+  const appointmentId = String(event.queryStringParameters?.appointmentId ?? "");
+  const visit = await requireVisit(config, actor.organizationId, appointmentId);
+  let legalHold: boolean | null = null;
+  if (COMPLETED_VISIT_STATUSES.has(visit.status)) legalHold = (await requireRetainedRecordAuthority(config, actor, visit)).legal_hold === true;
+  else await requireVisitReadAuthority(config, actor, visit);
+  const digestOf = (value: unknown) => { const text = canonicalJson(value); return { sha256: sha256Hex(text), bytes: Buffer.byteLength(text, "utf8") }; };
+  const present = (id: string, value: unknown, count: number | null = null, identifiers?: Record<string, string | null>) => {
+    const location = telehealthRecordLocation(id);
+    const has = value !== null && value !== undefined && !(typeof value === "string" && value.length === 0) && !(Array.isArray(value) && value.length === 0);
+    const digest = has ? digestOf(value) : null;
+    return { id, store: location.store, present: has, sha256: digest?.sha256 ?? null, bytes: digest?.bytes ?? null, count, ...(identifiers ? { identifiers } : {}), controls: location.controls };
+  };
+  const absent = (id: string, identifiers?: Record<string, string | null>) => ({ ...present(id, null), ...(identifiers ? { identifiers } : {}) });
+  const note = visit.note;
+  const granted = activeConsents(visit).length > 0;
+  const withdrawn = visit.consents.filter((consent) => consent.status === "withdrawn");
+  const transfer = visit.chartTransfer ?? null;
+  return {
+    contract: TELEHEALTH_RECORD_INVENTORY_CONTRACT, appointmentId: visit.appointmentId, organizationId: visit.organizationId, patientRecordId: visit.patientRecordId,
+    visitStatus: visit.status, legalHold,
+    consent: { granted, withdrawn: withdrawn.length > 0, withdrawnAt: withdrawn.at(-1)?.withdrawnAt ?? null },
+    processing: granted
+      ? { aiImportAllowed: true, reason: "a granted, current consent receipt is on the record; import still re-verifies the governed authority" }
+      : { aiImportAllowed: false, reason: withdrawn.length > 0 ? "consent withdrawn: no new AI import or visit start; retained text is not deleted by withdrawal" : "no granted consent on the record" },
+    locations: [
+      present("visit.quickNotes", visit.quickNotes),
+      present("visit.flags", visit.flags, visit.flags.length),
+      note ? present("visit.note.aiOriginal", note.aiOriginal) : absent("visit.note.aiOriginal"),
+      note ? present("visit.note.aiSections", note.aiSections) : absent("visit.note.aiSections"),
+      note ? present("visit.note.practitionerNotes", note.practitionerNotes) : absent("visit.note.practitionerNotes"),
+      note ? present("visit.note.actionItems", note.actionItems, note.actionItems.length) : absent("visit.note.actionItems"),
+      note?.status === "signed" ? present("visit.note.signature", { signedAt: note.signedAt, signedBy: note.signedBy, revision: note.revision }) : absent("visit.note.signature"),
+      present("visit.noteHistory", visit.noteHistory, visit.noteHistory.length),
+      present("visit.consents", visit.consents, visit.consents.length),
+      transfer ? present("visit.chartTransfer", transfer, null, { transferId: transfer.transferId, encounterId: transfer.encounterId, noteId: transfer.noteId, state: transfer.state }) : absent("visit.chartTransfer"),
+      present("visit.providerIdentifiers", { providerMeetingId: visit.providerMeetingId, providerMeetingUuid: visit.providerMeetingUuid, joinUrl: visit.joinUrl, zoomSummaryId: note?.zoomSummaryId ?? null }, null,
+        { providerMeetingId: visit.providerMeetingId, providerMeetingUuid: visit.providerMeetingUuid, zoomSummaryId: note?.zoomSummaryId ?? null }),
+      // The chart side is not readable from this boundary beyond the transfer receipt: listed with its identifiers, digests belong to the chart.
+      absent("chart.transferLedger", transfer?.state === "completed" ? { transferId: transfer.transferId, contentSha256: transfer.contentSha256 } : undefined),
+      absent("chart.noteDraft", transfer?.noteId ? { noteId: transfer.noteId, noteVersion: transfer.noteVersion === null ? null : String(transfer.noteVersion) } : undefined),
+      absent("chart.noteProvenance", transfer?.noteId ? { noteId: transfer.noteId } : undefined),
+      absent("chart.addenda", transfer?.noteId ? { noteId: transfer.noteId } : undefined),
+      absent("chart.audit"),
+      absent("zoom.meeting", { providerMeetingId: visit.providerMeetingId, providerMeetingUuid: visit.providerMeetingUuid }),
+      absent("zoom.aiCompanionSummary", { zoomSummaryId: note?.zoomSummaryId ?? null }),
+      absent("backups.visitTable"),
+      absent("backups.database"),
+    ],
+    notCertifiable: [
+      "deletion of the visit record (no deletion route exists; clinic records receive a recorded disposition, never a purged claim)",
+      "deletion of chart notes, versions, signatures, addenda or the transfer ledger (append-only; blocked until a reviewed clinic disposition procedure exists)",
+      "deletion of Zoom's meeting, recording or AI Companion summary copies (no delete permission; provider retention applies)",
+      "deletion from point-in-time recovery or database backups",
+      "any retention duration (no approved retention policy exists)",
+    ],
+  };
+}
+
 function parseSections(value: unknown): VisitNote["aiSections"] {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TelehealthError("request_invalid");
   const record = value as Record<string, unknown>;
@@ -2062,7 +2340,7 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
 }
 function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
 type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
-  | "appointment_change_pending"
+  | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch"
   | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"
   | "provider_unavailable" | "service_unavailable";
 class TelehealthError extends Error { constructor(readonly category: TelehealthRefusal) { super(category); } }

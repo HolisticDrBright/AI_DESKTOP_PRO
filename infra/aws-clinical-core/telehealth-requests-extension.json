@@ -3,7 +3,7 @@
   "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, disabled-by-default Zoom boundary, and consent-gated embedded telehealth visits bound to the governed consent authority with AI Companion note import.",
   "Metadata": {
     "ClinicalCore": {
-      "ContractVersion": "telehealth-requests/6",
+      "ContractVersion": "telehealth-requests/7",
       "DataClassification": "synthetic_only",
       "PhiAllowed": false,
       "ZoomEnabled": false,
@@ -1124,6 +1124,54 @@
         }
       }
     },
+    "WorkforceVisitNoteTransferRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/appointments/visits/notes/transfer",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
+    "WorkforceVisitNoteTransferCompleteRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
+    "WorkforceVisitNoteInventoryRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "GET /clinical-core/workforce/appointments/visits/notes/inventory",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${Integration}"
+        }
+      }
+    },
     "WorkforceVisitConsentArtifactRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
@@ -1159,7 +1207,7 @@
   },
   "Outputs": {
     "ContractVersion": {
-      "Value": "telehealth-requests/6"
+      "Value": "telehealth-requests/7"
     },
     "PhiAllowed": {
       "Value": "false"

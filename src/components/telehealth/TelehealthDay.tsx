@@ -146,8 +146,9 @@ export function TelehealthDayView({ initialDate }: { initialDate?: string }) {
 
       <ClinicalNote className="mb-4">
         <strong>Virtual visits run inside Desktop Pro.</strong> Video is Zoom, embedded here; notes come from
-        Zoom&apos;s AI Companion and become chart notes only when you sign them. A visit cannot start without the
-        patient&apos;s combined telehealth and recording consent — the server checks the record, not this screen.
+        Zoom&apos;s AI Companion, are signed on the visit record, and reach the chart only when you place them there
+        as an unsigned draft. A visit cannot start without the patient&apos;s combined telehealth and recording consent
+        — the server checks the record, not this screen.
       </ClinicalNote>
 
       {state === "loading" && <ClinicalLoading label="Loading today's telehealth visits…" />}
