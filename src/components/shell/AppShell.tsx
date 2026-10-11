@@ -16,16 +16,21 @@ const ATMOSPHERE_BG =
  * shell. The public consult page is opened by strangers, usually on a phone: the clinic's
  * navigation is not theirs to see, and this shell is deliberately desktop-only.
  */
-const PUBLIC_PATHS = ["/consult"];
+const PUBLIC_PATHS: ReadonlyArray<{ prefix: string; width: string }> = [
+  // A consult form reads best narrow; a program page is a page, not a form.
+  { prefix: "/consult", width: "max-w-[560px]" },
+  { prefix: "/learn", width: "max-w-[960px]" },
+];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { material, atmosphere, scale } = useMaterial();
   const pathname = usePathname();
 
-  if (PUBLIC_PATHS.some((path) => pathname === path || pathname?.startsWith(`${path}/`))) {
+  const publicPath = PUBLIC_PATHS.find(({ prefix }) => pathname === prefix || pathname?.startsWith(`${prefix}/`));
+  if (publicPath) {
     return (
       <div data-material={material} data-scale={scale} className="min-h-screen bg-canvas">
-        <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[560px] px-4 py-8 focus:outline-none">
+        <main id="main-content" tabIndex={-1} className={`mx-auto w-full ${publicPath.width} px-4 py-8 focus:outline-none`}>
           {children}
         </main>
       </div>

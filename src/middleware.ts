@@ -35,6 +35,9 @@ const HAS_ENV_FALLBACK = Boolean(
     process.env.CLINICAL_DEMO_PASSWORD,
 );
 
+/** Exactly `/consult/<slug>` or `/learn/<slug>` (optional trailing slash). Everything else redirects. */
+export const PUBLIC_VISITOR_PAGE = /^\/(?:consult|learn)\/[A-Za-z0-9][A-Za-z0-9_-]{0,119}\/?$/;
+
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
 const inflight = new Map<string, Promise<Tokens>>();
 
@@ -72,7 +75,10 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api/");
   // Public auth pages: reachable signed-out (reset links arrive by email).
-  const isLogin = pathname === "/login" || pathname === "/reset";
+  // Public visitor pages: a consult link (/consult/<slug>) and a program funnel page
+  // (/learn/<slug>). The allow-list is exact: one slug segment, nothing else under either
+  // prefix, and the prefixes themselves still require a session.
+  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname);
   // The auth endpoints manage cookies themselves — never intercept them.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 

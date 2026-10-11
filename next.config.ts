@@ -92,6 +92,27 @@ const TELEHEALTH_VISIT_CSP = [
   "base-uri 'self'",
 ].join("; ");
 
+/**
+ * Program funnel pages (`/learn/<slug>`): public, static, plain text with one link out. Nothing on
+ * them may call anywhere but this origin: no script, pixel, embed, font or analytics source, and
+ * no frame. Same shape as the recording policy without the media and worker allowances, because a
+ * funnel page carries neither.
+ */
+const FUNNEL_CSP = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${DEVELOPMENT_SCRIPT_EVAL}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "media-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "base-uri 'self'",
+].join("; ");
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Keep standalone tracing anchored to this repository. Developer machines
@@ -160,6 +181,16 @@ const nextConfig: NextConfig = {
           { key: "Permissions-Policy", value: "microphone=(self), camera=(self), display-capture=(self), geolocation=()" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
           { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+        ],
+      },
+      {
+        // Program funnel pages: public, same-origin only.
+        source: "/learn/:slug",
+        headers: [
+          { key: "Content-Security-Policy", value: FUNNEL_CSP },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(), camera=(), geolocation=()" },
         ],
       },
       {

@@ -39,6 +39,23 @@ describe("clinical-only authentication lifecycle", () => {
     expect(refreshSession).not.toHaveBeenCalled();
   });
 
+  test("a stranger following a consult link or a funnel page reaches the page, not the sign-in redirect", async () => {
+    for (const path of ["/consult/fictional-clinic-link", "/learn/longevity-program", "/learn/longevity-program/"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+    }
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  test("the public allow-list is exact: neighbouring paths still require sign-in", async () => {
+    for (const path of ["/consult", "/consultations/x", "/consult-admin/x", "/learn", "/learning/x", "/learn-more/x", "/telehealth-requests", "/programs/x"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname, path).toBe("/login");
+    }
+  });
+
   test("an expired page session refreshes even when the retired mode flag is absent", async () => {
     vi.stubEnv("NEXT_PUBLIC_USE_LIVE_API", undefined);
     const tokens = { accessToken: "fictional-successor", refreshToken: "fictional-refresh-successor", expiresAt: Date.now() + 3600000, email: "fictional@example.invalid" };
