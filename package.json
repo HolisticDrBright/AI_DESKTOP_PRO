@@ -40,6 +40,7 @@
     "test:clinic-preserving-transition": "node --test scripts/clinic-preserving-transition.test.mjs",
     "test:clinic-row-preservation": "vitest run src/server/clinical-core/clinic-row-preservation.database.test.ts --no-file-parallelism",
     "test:clinic-preserving-rollback": "vitest run src/server/clinical-core/clinic-preserving-rollback.database.test.ts --no-file-parallelism",
+    "test:clinic-preserving-workflow": "vitest run src/server/clinical-core/clinic-preserving-workflow.test.ts src/server/clinical-core/clinic-preserving-workflow-fence.test.ts src/server/clinical-core/clinic-preserving-workflow.database.test.ts --no-file-parallelism",
     "qualify:telehealth-native-source": "node scripts/qualify-telehealth-native-source.mjs",
     "build:telehealth-key-fence-candidate": "node scripts/build-telehealth-transfer-key-fence-candidate.mjs",
     "test:telehealth-key-fence-candidate": "node --test scripts/telehealth-transfer-key-fence-candidate.test.mjs scripts/telehealth-native-races.test.mjs",
