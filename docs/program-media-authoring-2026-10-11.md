@@ -207,3 +207,66 @@ Retention of educational media, who may retire, whether a published reference ma
 withdrawn from an already-assigned program, the delivery origin's caching, multipart
 admission, accessibility obligations beyond showing supplied provenance, and any
 production-clinical family. Each is named for review, not answered.
+
+## Recheck repairs — October 11, 2026 (branch `claude/program-media-repair-20261011`, from `e3f39a6`)
+
+Codex's independent recheck of `e3f39a6` reproduced four defects in the still-disabled source.
+Each is reproduced here first, in `src/server/programs/program-media-authoring.audit.test.ts`,
+written from the handoff's descriptions; on `e3f39a6` cases 1, 2, 3a and 4 fail and only the
+cleanup-first order (3b) passes. The repairs below make all of them pass without weakening any
+reproduction, and the runtime stays disabled, educational-only, with no patient input and no
+reuse of clinical recording storage.
+
+| Defect | What was wrong | Repair |
+| --- | --- | --- |
+| 1. Reference substitution | `describeReference` compared state, version, digest and object presence, so a caller's copy with a changed address, origin program or text provenance read as current. | A reference carries a `publicationId`. `describeReference` looks the publication up by that identity (`ledger.publication`) and compares the whole recorded body with the supplied one; any difference is `not_found`. The status returns the recorded publication, never the caller's copy, with `historical` (retired), `superseded` (a later version exists) and `current` (ready at exactly this version and bytes). |
+| 2. Deletion without proof | A `remove` that returned produced `abandoned_object_removed` while the version remained. | Cleanup certifies a removal only after reading the exact version back absent and the key's latest read as nothing (no object, no delete marker). A still-present version, a delete marker, a denied delete or a store error settle the reservation as `error` with `unresolvedStorage: true` and the receipt says `removal_unproven` with the reason; the two abandoned outcomes carry `proof: { removedVersion, absenceProvenAt }`. |
+| 3. Cleanup/reconciliation race | Cleanup read the artifact, then the object; reconciliation could commit in between; cleanup then deleted a ready object. | A durable lease in the ledger: a writer (`admit`, `reconcile`) holds `writing`, cleanup holds `cleaning`; `beginWrite`/`claimCleanup` are granted only when no unexpired lease of the other kind exists and the artifact is not committed, held or proven absent; `commit` must present the writer's token and is refused otherwise; a writer whose lease was lost after its bytes landed marks the storage unresolved. No SQL lock spans a store call. Both orders are proven: cleanup first (reconciliation refused with `conflict`, cleanup certifies only what it reads back) and reconciliation first (cleanup `claim_refused`, the commit stands, nothing removed), plus a lease lost mid-flight. |
+| 4. Expired retries hide orphans | An expired `admit` retry abandoned the reservation without inspecting the object, and the listing excluded abandoned rows. | Expiry stops new writes only. An expired retry takes the writer lease, inspects the key, recovers matching bytes into a ready artifact, and lets the reservation rest only with absence proof. `abandoned` requires `absenceProvenAt` or `unresolvedStorage`, and the cleanup listing (`unresolvedReservations`) includes every expired reservation not committed, not held and not proven absent, abandoned rows with unresolved storage included. |
+
+Contract changes (`src/contracts/programMedia.ts`, Desktop-only): reservation states `reserved |
+writing | error | cleaning | abandoned` with `lease { holder, token, until } | null`,
+`absenceProvenAt`, `unresolvedStorage`; `publicationId` on the reference; `superseded` on the
+reference status; cleanup outcomes `removal_unproven` and `claim_refused` with `proof` and
+`detail`. The mirrored program media slot is unchanged.
+
+### Native ledger and store contracts the successor must implement
+
+`ProgramMediaLedger` (the SQL function family Codex writes after review): `beginWrite` and
+`claimCleanup` as single atomic statements that grant a lease only under the conditions above
+and return the row or nothing; `commit`, `endWrite` and `settleCleanup` that refuse a token which
+no longer holds the lease; `markUnresolved` that never clears; `hold`; `publication` by identity;
+`unresolvedReservations` with the inclusion rule above. `ProgramMediaObjectStore`: `head` must
+return null for absence, an object with `deleteMarker: true` for a marker, and reject on error
+(never null on error); `remove` by exact version; `put` conditional. A store whose `head`
+cannot distinguish a marker from absence cannot certify a removal and must be refused at review.
+
+### Blocked successor candidate
+
+`infra/aws-clinical-core/source-candidates/program-media-ledger-fence.sql`
+sha256 `ad1d5c58d291142df8491679cc67264dcce7c398c6be773c14bb81a46d696fce`, applied after the
+blocked ledger candidate (`6dae2f23…`, identity preserved, not amended), parents pinned. It adds
+the lease columns and states, the constraints (one whole lease matching the state; committed rows
+unleased; abandoned only with proof or unresolved storage; proof only under a lease), the
+transition trigger (lease takeover only after expiry; commit only from `writing`; unresolved
+storage cleared only by a commit or a proof), and whole-publication recording (`reference` jsonb
+bound to the row's identity and checked against the artifact's bytes, kind, type and supplied
+text provenance on insert). The PGlite test
+`src/server/programs/program-media-ledger-fence-candidate.database.test.ts` runs it on the full
+synthetic manifest plus the prior candidate. The API role is still granted nothing; the
+activation row is still disabled.
+
+### Additions to the ordered real-store qualification
+
+14. Lease exclusivity on the real ledger: two writers, writer then cleanup, cleanup then writer,
+    and takeover only after expiry; each refused party's return value recorded.
+15. Removal proof on the real bucket: delete the exact version, then `HeadObject` the version
+    and the key; a delete marker (from a delete without a version id, made deliberately out of
+    band) must yield `removal_unproven` and then `held_object_mismatch`, never a certified removal.
+16. Late write: hold a `PutObject` past the writer lease (clock or injected delay), then commit;
+    the ledger must refuse the commit and the row must read `unresolvedStorage: true` and appear
+    in the next cleanup listing; a reconciliation under a fresh lease must recover it.
+17. Expired recovery: write before expiry, lose the reply, retry after expiry; expect recovery to
+    ready with one object version, not abandonment.
+18. Reference substitution on the real ledger: alter the address, origin or text provenance of a
+    recorded reference and expect `not_found`; the unaltered reference must read `current`.

@@ -45,7 +45,7 @@ describe('program-media/1', () => {
     }
   });
   it('a reference is exact and strict, and the mirrored program media slot is not changed by this contract', () => {
-    const reference = { contractVersion: 'program-media-reference/1', artifactId: artifact.artifactId, version: 1, sha256: artifact.sha256, kind: 'video', contentType: 'video/mp4', bytes: 10,
+    const reference = { contractVersion: 'program-media-reference/1', publicationId: '40000000-0000-4000-8000-000000000009', artifactId: artifact.artifactId, version: 1, sha256: artifact.sha256, kind: 'video', contentType: 'video/mp4', bytes: 10,
       origin: { clinic: artifact.clinic, programId: artifact.programId }, url: 'https://media.fictional.example/program-media/x/y/z/a.mp4', publishedAt: artifact.committedAt, caption: null, transcript: null };
     expect(programMediaReference.safeParse(reference).success).toBe(true);
     expect(programMediaReference.safeParse({ ...reference, previewToken: 'x' }).success).toBe(false);

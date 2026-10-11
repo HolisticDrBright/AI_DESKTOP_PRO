@@ -60,6 +60,14 @@ export const programMediaStorageSchema = z.object({
 export type ProgramMediaStorage = z.infer<typeof programMediaStorageSchema>;
 
 export const PROGRAM_MEDIA_STATES = ['reserved', 'ready', 'held', 'error', 'abandoned', 'retired'] as const;
+/** Reservation states. `writing` and `cleaning` are durable leases: exactly one party may act on the object at a time. */
+export const PROGRAM_MEDIA_RESERVATION_STATES = ['reserved', 'writing', 'error', 'cleaning', 'abandoned'] as const;
+export const programMediaLease = z.object({
+  holder: z.enum(['writer', 'cleanup']),
+  token: z.string().min(16).max(128),
+  until: date,
+}).strict();
+export type ProgramMediaLease = z.infer<typeof programMediaLease>;
 export const programMediaState = z.enum(PROGRAM_MEDIA_STATES);
 export type ProgramMediaState = z.infer<typeof programMediaState>;
 
@@ -92,13 +100,21 @@ const identity = {
 export const programMediaReservation = z.object({
   ...identity,
   commandId: uuid,
-  state: z.enum(['reserved', 'error', 'abandoned']),
+  state: z.enum(PROGRAM_MEDIA_RESERVATION_STATES),
   acceptBefore: date,
   createdAt: date,
   /** True when this reservation was returned for a repeated command: the earlier one, not a second artifact. */
   replayed: z.boolean(),
   failure: z.string().max(80).nullable(),
-}).strict();
+  /** The durable lease a writer or cleanup holds on this reservation's object, or null. */
+  lease: programMediaLease.nullable(),
+  /** When the exact object was proven absent from the store. Only then may a reservation rest as abandoned. */
+  absenceProvenAt: date.nullable(),
+  /** True while bytes may exist in the store that no committed artifact and no absence proof accounts for. */
+  unresolvedStorage: z.boolean(),
+}).strict()
+  .refine(r => (r.state === 'writing') === (r.lease?.holder === 'writer') && (r.state === 'cleaning') === (r.lease?.holder === 'cleanup'), { message: 'program_media_lease_state' })
+  .refine(r => r.state !== 'abandoned' || r.absenceProvenAt !== null || r.unresolvedStorage, { message: 'program_media_abandoned_without_proof' });
 export type ProgramMediaReservation = z.infer<typeof programMediaReservation>;
 
 export const programMediaArtifact = z.object({
@@ -129,6 +145,8 @@ export const programMediaReadRequest = z.object({ artifactId: uuid }).strict();
 /** What a published program step would carry: exact artifact, exact version, exact bytes, and where it came from. */
 export const programMediaReference = z.object({
   contractVersion: z.literal(PROGRAM_MEDIA_REFERENCE_CONTRACT),
+  /** The ledger's identity for this publication. A reference without a recorded publication of this id is not a publication. */
+  publicationId: uuid,
   artifactId: uuid, version: counter.min(1), sha256: hash, kind: programMediaKind, contentType: programMediaContentType, bytes: counter.min(1),
   origin: z.object({ clinic: uuid, programId: uuid }).strict(),
   /** The https address a patient app would load, under the dedicated public origin. */
@@ -141,10 +159,13 @@ export type ProgramMediaReference = z.infer<typeof programMediaReference>;
 
 /** A reference read later: still exact, and honest about whether the artifact has since been retired. */
 export const programMediaReferenceStatus = z.object({
+  /** The publication exactly as the ledger recorded it: never the caller's copy. */
   reference: programMediaReference,
   /** True when the artifact is retired: the reference stays truthful about what was published, and nothing new may cite it. */
   historical: z.boolean(),
-  /** False when the artifact's current bytes or version no longer match the reference. */
+  /** True when the artifact's metadata moved on after this publication (a later version exists). */
+  superseded: z.boolean(),
+  /** True only when the artifact is ready at exactly this version with exactly these bytes. */
   current: z.boolean(),
 }).strict();
 
@@ -155,11 +176,29 @@ export const programMediaPreview = z.object({
 }).strict();
 export type ProgramMediaPreview = z.infer<typeof programMediaPreview>;
 
+export const PROGRAM_MEDIA_CLEANUP_OUTCOMES = [
+  /** No object at the key; absence proven; reservation abandoned. */
+  'abandoned_no_object',
+  /** The reservation's own uncommitted object was removed by exact version and its absence proven afterwards. */
+  'abandoned_object_removed',
+  /** An object is present that is not the reservation's; held for review, nothing deleted. */
+  'held_object_mismatch',
+  /** A delete was issued but the exact version (or a delete marker, or a store error) still stands; nothing is certified. */
+  'removal_unproven',
+  /** A writer holds the reservation, or the lease could not be taken; nothing touched. */
+  'claim_refused',
+  /** A committed, retired or held artifact: never cleanup's to touch. */
+  'kept_pending',
+] as const;
 export const programMediaCleanupReceipt = z.object({
   programId: uuid, checkedAt: date,
   actions: z.array(z.object({
     artifactId: uuid,
-    outcome: z.enum(['abandoned_no_object', 'abandoned_object_removed', 'held_object_mismatch', 'recovered_ready', 'kept_pending']),
+    outcome: z.enum(PROGRAM_MEDIA_CLEANUP_OUTCOMES),
+    /** What was actually proven: the removed version and the time the exact key was read back absent. Present only on the two abandoned outcomes. */
+    proof: z.object({ removedVersion: z.string().min(1).max(1024).nullable(), absenceProvenAt: date }).strict().nullable(),
+    /** Why nothing was certified, for the other outcomes. */
+    detail: z.string().max(120).nullable(),
   }).strict()).max(1000),
 }).strict();
 export type ProgramMediaCleanupReceipt = z.infer<typeof programMediaCleanupReceipt>;
