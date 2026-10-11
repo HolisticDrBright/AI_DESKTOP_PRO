@@ -7,7 +7,7 @@ import {readFileSync} from 'node:fs';
 import type {ClinicalCoreDatabase} from './database';
 import {ClinicalCoreDatabaseRejection} from './database';
 import {classifyDatabaseRejection} from './rds-data-database';
-import type {ProductionClinicalRequestContext,SyntheticRequestContext} from './aws-identity-consent';
+import type {ClinicalRequestContext,ProductionClinicalRequestContext,SyntheticRequestContext} from './aws-identity-consent';
 import {createProductionProgramAssignments,activationState,PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,ProductionProgramAssignmentError} from './production-program-assignments';
 import type {ProgramAssignmentRequest} from '../../contracts/programAssignments';
 import {DISABLED_PRODUCTION_PROGRAM_ACTIVATION} from '../../contracts/productionProgramActivation';
@@ -46,8 +46,8 @@ const enabledEvidence=()=>({contract:'production-program-activation/1',enabled:t
  schemaCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-11T00:00:00Z'});
 const core=vi.fn<(authorization:string)=>Promise<void>>();
 const service=(activation:unknown=enabledEvidence())=>createProductionProgramAssignments({database,activation,verifyConsumerCore:core});
-const call=(input:ProgramAssignmentRequest,context=production(consumer,'consumer'),activation?:unknown)=>service(activation)(context,input,'Bearer fictional-token');
-async function refusal(input:ProgramAssignmentRequest,context=production(consumer,'consumer'),activation?:unknown){
+const call=(input:ProgramAssignmentRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown)=>service(activation)(context,input,'Bearer fictional-token');
+async function refusal(input:ProgramAssignmentRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown){
  try{await call(input,context,activation);}catch(error){if(error instanceof ProductionProgramAssignmentError)return error;throw error;}
  throw new Error('expected a refusal');
 }
