@@ -59,7 +59,12 @@ share the fence, and replay receipt reads recheck current authority as well.
 PostgreSQL applies UPDATE policies to locking reads as documented in its
 [policy reference](https://www.postgresql.org/docs/17/sql-createpolicy.html).
 
-## Selected candidate and local evidence
+## Predecessor candidate and local evidence
+
+Candidate/3 below is the preserved predecessor. The selected candidate/4 and
+its independently reproduced stale-snapshot failure are documented in
+`telehealth-transaction-isolation-2026-10-11.md`. Its changed SQL identity must
+not be qualified using the earlier twenty-case result.
 
 - Contract: `telehealth-transfer-authority-candidate/3`.
 - Migration: `20261011030000_production_telehealth_transfer_authority.sql`.

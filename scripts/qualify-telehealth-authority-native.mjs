@@ -9,6 +9,7 @@ import { createServer } from 'node:net';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { TELEHEALTH_AUTHORITY_SQL_SHA256 } from './telehealth-transfer-authority-candidate.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = process.argv.slice(2);
@@ -295,8 +296,8 @@ try {
     await compiler.query('begin'); try { const value = await work(db); await compiler.query('commit'); return value; } catch (e) { await compiler.query('rollback'); throw e; } } };
   artifact = (JSON.parse(execFileSync(process.execPath, ['scripts/build-telehealth-transfer-authority-candidate.mjs', '--json'],
     { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true })));
-  if (artifact.candidate.contract !== 'telehealth-transfer-authority-candidate/3' || artifact.candidate.migrationCount !== 117
-    || artifact.candidate.extensionSha256 !== 'a1e74c6fda49391a1ee07104297d1df2292a185a29f2fbb7b2cfb5b0b2bccac6'
+  if (artifact.candidate.contract !== 'telehealth-transfer-authority-candidate/4' || artifact.candidate.migrationCount !== 117
+    || artifact.candidate.extensionSha256 !== TELEHEALTH_AUTHORITY_SQL_SHA256
     || artifact.candidate.activation !== 'blocked' || artifact.candidate.phiAllowed !== false) refuse('successor_artifact_refused');
   stage = 'source_compilation';
   const compiled = await compileTelehealthAuthorityRestrictedOwnerSource(db);

@@ -60,3 +60,12 @@ test('fresh identity person and clinic authority is fenced without substituting 
   assert.match(sql, /A replay reveals a destination receipt/);
   assert.equal((sql.match(/_actor := clinical_private\.require_current_telehealth_authority\(_organization_id,_patient_id\)/g) ?? []).length, 4);
 });
+
+test('snapshot isolation is refused before authority lookup or source admission', () => {
+  const helper = sql.slice(sql.indexOf('create function clinical_private.require_current_telehealth_authority'),
+    sql.indexOf('revoke all on function clinical_private.require_current_telehealth_authority'));
+  assert.match(helper, /pg_catalog\.current_setting\('transaction_isolation'\) <> 'read committed'/);
+  assert.match(helper, /errcode='25001',message='telehealth_transaction_isolation_refused'/);
+  assert.ok(helper.indexOf('telehealth_transaction_isolation_refused') < helper.indexOf('_actor := clinical_private.require_clinical_patient'));
+  assert.equal(telehealthTransferAuthorityCandidate(parent, sql).candidate.contract, 'telehealth-transfer-authority-candidate/4');
+});

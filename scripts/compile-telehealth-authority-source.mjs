@@ -18,7 +18,7 @@ export async function compileTelehealthAuthorityRestrictedOwnerSource(db) {
     { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true }));
   const ledger = count => sha(a.manifest.migrations.slice(0, count).map(r => r.version + ':' + sha(a.files[r.file])).join('\n'));
   const assembly = count => sha(a.manifest.migrations.slice(0, count).map(r => r.version + ':' + r.file + ':' + sha(a.files[r.file])).join('\n'));
-  if (a.candidate.contract !== 'telehealth-transfer-authority-candidate/3' || a.candidate.activation !== 'blocked'
+  if (a.candidate.contract !== 'telehealth-transfer-authority-candidate/4' || a.candidate.activation !== 'blocked'
     || a.candidate.phiAllowed !== false || a.candidate.runtimeAdmission !== false || a.manifest.migrations.length !== 117
     || ledger(116) !== CLINIC_SOURCE_IDENTITY.ledger || assembly(116) !== CLINIC_SOURCE_IDENTITY.assembly
     || a.manifest.migrations[116].file !== TELEHEALTH_AUTHORITY_FILE || sha(a.files[TELEHEALTH_AUTHORITY_FILE]) !== TELEHEALTH_AUTHORITY_SQL_SHA256

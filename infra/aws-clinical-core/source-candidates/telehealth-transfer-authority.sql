@@ -86,6 +86,12 @@ create function clinical_private.require_current_telehealth_authority(_organizat
 returns uuid language plpgsql security definer set search_path='' as $$
 declare _actor uuid;
 begin
+  -- A repeatable/serializable snapshot can retain authority that was revoked
+  -- while this call waited, even after acquiring the shared fence. Require the
+  -- supported statement-fresh mode before any lookup, key read or write.
+  if pg_catalog.current_setting('transaction_isolation') <> 'read committed' then
+    raise exception using errcode='25001',message='telehealth_transaction_isolation_refused';
+  end if;
   _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
   if not exists(select 1 from clinical_core.identities i
       join clinical_core.persons p on p.id=i.person_id
