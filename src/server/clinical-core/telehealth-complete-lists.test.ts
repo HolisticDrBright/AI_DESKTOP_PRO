@@ -138,13 +138,14 @@ describe('telehealth complete bounded lists', () => {
   });
   it('slot publication checks later-page overlaps before any write', async () => {
     const existing = slot(1);
-    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor(slot(0), false) }).mockResolvedValueOnce({ Items: [existing] });
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor(slot(0), false) }).mockResolvedValueOnce({ Items: [existing] });
     const response = await createTelehealthHandler(config)(event('POST /clinical-core/workforce/appointments/slots', {
       start: existing.start, end: existing.end, timeZone: existing.timeZone, visitTypes: existing.visitTypes,
       priceMinor: 0, currency: 'USD', cancellationPolicy: existing.cancellationPolicy, cancellationWindowHours: 24,
     }));
-    expect(response.statusCode).toBe(409); expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls.every(([command]) => command.constructor.name === 'QueryCommand')).toBe(true);
+    expect(response.statusCode).toBe(409); expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[0][0].input).toMatchObject({ Key: { pk: `ORG#${org}`, sk: 'SLOT_PUBLICATION#1' }, ConsistentRead: true });
+    expect(send.mock.calls.slice(1).every(([command]) => command.constructor.name === 'QueryCommand')).toBe(true);
   });
   it('can hold an eligible later-page slot without inventing a new slot', async () => {
     const target = slot(2), key = cursor(slot(1), false);
@@ -156,22 +157,25 @@ describe('telehealth complete bounded lists', () => {
       ExpressionAttributeValues: { ':person': person } });
   });
   it('cannot publish a slot while its bounded conflict lookup is unfinished', async () => {
-    let n = 0; send.mockImplementation(async () => ({ Items: [], LastEvaluatedKey: cursor(slot(++n), false) }));
+    let n = 0; send.mockResolvedValueOnce({}).mockImplementation(async () => ({ Items: [], LastEvaluatedKey: cursor(slot(++n), false) }));
     const target = slot(1);
     const response = await createTelehealthHandler(config)(event('POST /clinical-core/workforce/appointments/slots', {
       start: target.start, end: target.end, timeZone: target.timeZone, visitTypes: target.visitTypes,
       priceMinor: 0, currency: 'USD', cancellationPolicy: target.cancellationPolicy, cancellationWindowHours: 24,
     }));
-    expect(response.statusCode).toBe(503); expect(send).toHaveBeenCalledTimes(20);
-    expect(send.mock.calls.every(([command]) => command.constructor.name === 'QueryCommand')).toBe(true);
+    expect(response.statusCode).toBe(503); expect(send).toHaveBeenCalledTimes(21);
+    expect(send.mock.calls[0][0].input).toMatchObject({ Key: { pk: `ORG#${org}`, sk: 'SLOT_PUBLICATION#1' }, ConsistentRead: true });
+    expect(send.mock.calls.slice(1).every(([command]) => command.constructor.name === 'QueryCommand')).toBe(true);
   });
   it('cannot republish an overlapping opening over a booked slot', async () => {
     const existing = { ...slot(1), status: 'booked' };
-    send.mockResolvedValueOnce({ Items: [existing] }).mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [existing] });
     const response = await createTelehealthHandler(config)(event('POST /clinical-core/workforce/appointments/slots', {
       start: existing.start, end: existing.end, timeZone: existing.timeZone, visitTypes: existing.visitTypes,
       priceMinor: 0, currency: 'USD', cancellationPolicy: existing.cancellationPolicy, cancellationWindowHours: 24,
     }));
-    expect(response.statusCode).toBe(409); expect(send).toHaveBeenCalledTimes(1);
+    expect(response.statusCode).toBe(409); expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][0].input).toMatchObject({ Key: { pk: `ORG#${org}`, sk: 'SLOT_PUBLICATION#1' }, ConsistentRead: true });
+    expect(send.mock.calls[1][0].constructor.name).toBe('QueryCommand');
   });
 });

@@ -3,7 +3,8 @@
   "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, disabled-by-default Zoom boundary, and consent-gated embedded telehealth visits bound to the governed consent authority with AI Companion note import.",
   "Metadata": {
     "ClinicalCore": {
-      "ContractVersion": "telehealth-requests/9",
+      "ContractVersion": "telehealth-requests/10",
+      "SlotPublicationContract": "slot-publication/1",
       "DataClassification": "synthetic_only",
       "PhiAllowed": false,
       "ZoomEnabled": false,
@@ -1278,7 +1279,7 @@
   },
   "Outputs": {
     "ContractVersion": {
-      "Value": "telehealth-requests/9"
+      "Value": "telehealth-requests/10"
     },
     "PhiAllowed": {
       "Value": "false"

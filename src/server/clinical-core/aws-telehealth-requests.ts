@@ -309,14 +309,53 @@ async function publishSlot(config: TelehealthConfiguration, actor: Actor, value:
     || !Number.isInteger(value.priceMinor) || Number(value.priceMinor) < 0 || Number(value.priceMinor) > 1_000_000
     || value.currency !== "USD" || typeof value.cancellationPolicy !== "string" || value.cancellationPolicy.length < 10 || value.cancellationPolicy.length > 1000
     || !Number.isInteger(value.cancellationWindowHours) || Number(value.cancellationWindowHours) < 0 || Number(value.cancellationWindowHours) > 720) throw new TelehealthError("request_invalid");
+  // Read the clinic publication revision BEFORE the bounded conflict walk.
+  // Every publisher advances it in the same transaction as the new slot.
+  // A competing publication, even between query pages, invalidates this read.
+  // This is an optimistic fence, not a time-based lock requiring cleanup.
+  const publicationKey = { pk: `ORG#${actor.organizationId}`, sk: "SLOT_PUBLICATION#1" };
+  const readSignal = AbortSignal.timeout(10_000);
+  const observed = await document.send(new GetCommand({ TableName: config.tableName, Key: publicationKey, ConsistentRead: true }), { abortSignal: readSignal });
+  if (readSignal.aborted) throw new TelehealthError("service_unavailable");
+  let revision = 0;
+  if (observed.Item !== undefined) {
+    const guard = observed.Item;
+    if (!guard || Array.isArray(guard) || guard.pk !== publicationKey.pk || guard.sk !== publicationKey.sk
+      || guard.organizationId !== actor.organizationId || guard.protocol !== "slot-publication/1"
+      || !Number.isSafeInteger(guard.revision) || guard.revision < 1 || guard.revision >= Number.MAX_SAFE_INTEGER)
+      throw new TelehealthError("service_unavailable");
+    revision = guard.revision;
+  }
   const existing = await rawSlots(config, actor.organizationId);
+  if (existing.some(slot => typeof slot.start !== "string" || typeof slot.end !== "string" || !date(slot.start) || !date(slot.end)
+    || Date.parse(slot.end) <= Date.parse(slot.start))) throw new TelehealthError("service_unavailable");
   if (existing.some((slot) => new Date(slot.start) < new Date(end) && new Date(slot.end) > new Date(start))) throw new TelehealthError("conflict");
+  if (new Date(start).getTime() <= Date.now()) throw new TelehealthError("request_invalid");
   const slotId = randomUUID(); const now = new Date().toISOString();
   const slot: BookingSlot = { pk: `ORG#${actor.organizationId}`, sk: `SLOT#${start}#${slotId}`, slotId, organizationId: actor.organizationId, start, end, timeZone,
     visitTypes: visitTypes as BookingSlot["visitTypes"], priceMinor: Number(value.priceMinor), currency: "USD", cancellationPolicy: value.cancellationPolicy,
     cancellationWindowHours: Number(value.cancellationWindowHours),
     status: "available", heldBy: null, holdId: null, holdExpiresAt: null, createdAt: now, createdBy: actor.subject };
-  await document.send(new PutCommand({ TableName: config.tableName, Item: slot, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" }));
+  const writeSignal = AbortSignal.timeout(10_000);
+  try {
+    await document.send(new TransactWriteCommand({ ClientRequestToken: slotId, TransactItems: [
+      { Put: { TableName: config.tableName, Item: { ...publicationKey, organizationId: actor.organizationId, protocol: "slot-publication/1", revision: revision + 1 },
+        ConditionExpression: revision === 0 ? "attribute_not_exists(pk) AND attribute_not_exists(sk)" : "#revision=:expected AND #protocol=:protocol AND organizationId=:org",
+        ...(revision === 0 ? {} : { ExpressionAttributeNames: { "#revision": "revision", "#protocol": "protocol" },
+          ExpressionAttributeValues: { ":expected": revision, ":protocol": "slot-publication/1", ":org": actor.organizationId } }) } },
+      { Put: { TableName: config.tableName, Item: slot, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
+    ] }), { abortSignal: writeSignal });
+    if (writeSignal.aborted) throw new TelehealthError("service_unavailable");
+  } catch (error) {
+    const failure = error as { name?: string; CancellationReasons?: { Code?: string }[] };
+    if (failure.name === "TransactionCanceledException" && Array.isArray(failure.CancellationReasons)
+      && failure.CancellationReasons.length === 2 && failure.CancellationReasons.some(reason => reason?.Code === "ConditionalCheckFailed")
+      && failure.CancellationReasons.every(reason => ["None", "ConditionalCheckFailed"].includes(reason?.Code ?? "")))
+      throw new TelehealthError("conflict");
+    // A lost transaction response is not evidence of non-commitment. Do not
+    // retry with a new slot ID or attempt to undo either row independently.
+    throw new TelehealthError("service_unavailable");
+  }
   return publicSlot(slot, true);
 }
 
