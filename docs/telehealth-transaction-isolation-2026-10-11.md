@@ -67,10 +67,24 @@ and PHI false. No approval, consent, key or record is seeded.
 ## Evidence and remaining qualification
 
 The candidate, runner and preserved-parent suites passed 92 tests. The candidate
-build passed and its ledger/assembly were recomputed from emitted files. Native
-after results, focused database suites, full lint/typecheck and exact successor
-CI must be recorded separately once terminal; the predecessor's green CI is
-not evidence for this successor.
+build passed and its ledger/assembly were recomputed from emitted files. The
+mapper and embedded chart/clinic suites passed 231 tests, with complete
+typecheck and lint passing. These embedded suites exercise the historical
+chart/clinic candidates, not native or hosted 117.
+
+The repaired native run at `1b6842c02b7cf5f9676768b59787bfd1e8dcdc54`
+passed 24 of 24 cases. Report:
+`dist/native-authority-runs/authority-pg17-vr8oMR/race-qualification.json`.
+The original twenty read-committed positive, negative and ordering/replay
+cases still pass. Both unsupported modes now refuse before entering the lock
+wait or reading the admission key; their withdrawal cases commit no encounter,
+note or receipt. Actual API role, restricted owner, PostgreSQL 17.7 and local
+cluster shutdown are recorded. Managed/hosted/provider/PHI fields remain false.
+This does not claim that the repaired unsupported-mode request still waited:
+the controlled early refusal is the safeguard being verified.
+
+Full-suite and exact final-source CI results must be recorded separately once
+terminal. The predecessor's green CI is not evidence for this successor.
 
 Before any reviewed preserving upgrade or activation, verify managed role and
 definition projections, the actual API transaction isolation, the fresh target
