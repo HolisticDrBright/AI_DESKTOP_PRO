@@ -60,6 +60,9 @@ jobs:
           npm run test:telehealth-schema-source
           npm run test:telehealth-native-source
           npm run test:clinic-native-source
+          npm run test:clinic-preserving-transition
+          npm run build:clinic-preserving-transition
+          npm run test:clinic-row-preservation
           npm run build:telehealth-key-fence-candidate
           npm run test:telehealth-key-fence-candidate
           npm run build:telehealth-schema-source
