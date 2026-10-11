@@ -163,7 +163,7 @@ async function admittedBeforeRevocation(action) {
   const revokerPid = (await revoker.query('select pg_backend_pid() pid')).rows[0].pid;
   const changeSql = action === 'membership' ? "update clinical_core.organization_memberships set status='suspended' where person_id=$1"
     : action === 'patient' ? 'update clinical_core.patient_records set deleted_at=clock_timestamp() where id=$1'
-    : action === 'identity' ? 'update clinical_core.identities set production_bound=false where person_id=$1'
+    : action === 'identity' ? "update clinical_core.identities set status='disabled' where person_id=$1"
     : null;
   if (!changeSql) refuse('authority_change_refused');
   const pending = revoker.query(changeSql, [action === 'patient' ? f.patient : f.practitioner])
