@@ -26,6 +26,35 @@ const CONSUMER_WINDOW_MS = 15 * 60_000, COPY_WINDOW_MS = 5 * 60_000;
 const SECTIONS = ['signed_notes', 'lab_observations'];
 const hostedPorts = new WeakSet();
 const rebuiltDeployments = new WeakSet();
+export const CLINIC_HOSTED_RESPONSE_MAX_BYTES = 1024 * 1024;
+
+/** Bound the decoded body before allocating/parsing it. The SQL copy reader
+ * pages at 256 KiB of payload text; this cap also accommodates JSON escaping
+ * and envelope metadata. A bad transport never contributes a passing case. */
+export async function readClinicHostedJson(response) {
+  const length = response.headers.get('content-length');
+  const encoding = response.headers.get('content-encoding');
+  const identity = !encoding || encoding.toLowerCase() === 'identity';
+  if (!response.body || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')
+    || length !== null && (!/^(?:0|[1-9][0-9]*)$/.test(length) || !Number.isSafeInteger(Number(length))
+      || Number(length) > CLINIC_HOSTED_RESPONSE_MAX_BYTES)) {
+    await response.body?.cancel().catch(() => {});
+    throw new ClinicRecordsRunnerError('http_response_headers_refused');
+  }
+  const reader = response.body.getReader(), chunks = []; let received = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      received += chunk.value.byteLength;
+      if (received > CLINIC_HOSTED_RESPONSE_MAX_BYTES || identity && length !== null && received > Number(length))
+        throw new ClinicRecordsRunnerError('http_response_overrun');
+      chunks.push(Buffer.from(chunk.value));
+    }
+    if (identity && length !== null && received !== Number(length)) throw new ClinicRecordsRunnerError('http_response_short');
+    try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, received))); }
+    catch { throw new ClinicRecordsRunnerError('http_response_json_refused'); }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
 
 /** Unverified claim read (the gateway verifies signatures); used only to pick a token whose sign-in age fits the case. */
 export function tokenClaims(token) {
@@ -250,7 +279,8 @@ export async function createHostedPorts({ apiId, clusterArn, secretArn, database
     || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/.test(secretArn ?? '') || region !== 'us-east-2') throw new ClinicRecordsRunnerError('hosted_target_refused');
   const { RDSDataClient, ExecuteStatementCommand, BeginTransactionCommand, RollbackTransactionCommand } = await import('@aws-sdk/client-rds-data');
   const { fromIni } = await import('@aws-sdk/credential-provider-ini');
-  const client = new RDSDataClient({ region, endpoint: 'https://rds-data.us-east-2.amazonaws.com', credentials: fromIni({ profile: 'ai-synthetic-member' }), maxAttempts: 1 });
+  const client = new RDSDataClient({ region, endpoint: 'https://rds-data.us-east-2.amazonaws.com',
+    credentials: fromIni({ profile: 'ai-synthetic-member', clientConfig: { region, endpoint: 'https://sts.us-east-2.amazonaws.com' } }), maxAttempts: 1 });
   const origin = `https://${apiId}.execute-api.${region}.amazonaws.com`;
   const ports = {
     readAws: async (service, operation, args = {}) => {
@@ -277,10 +307,11 @@ export async function createHostedPorts({ apiId, clusterArn, secretArn, database
       return result;
     },
     http: async (route, token, body) => {
+      if (!ROUTES.includes(route) || typeof token !== 'string' || !token || token.length > 16384 || /[\r\n]/.test(token)
+        || typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > 81920) throw new ClinicRecordsRunnerError('http_request_refused');
       const response = await fetch(origin + route.slice('POST '.length), { method: 'POST', redirect: 'error', cache: 'no-store',
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json' }, body, signal: AbortSignal.timeout(30_000) });
-      const text = await response.text();
-      let json = null; try { json = JSON.parse(text); } catch { json = null; }
+      const json = await readClinicHostedJson(response);
       return { status: response.status, json, execution: response.headers.get('x-clinical-execution') };
     },
     sql: async (text, params) => {
@@ -290,12 +321,17 @@ export async function createHostedPorts({ apiId, clusterArn, secretArn, database
       if (!/^select\s/i.test(text)) throw new ClinicRecordsRunnerError('sql_read_refused');
       const base = { resourceArn: clusterArn, secretArn, database }, send = command => client.send(command, { abortSignal: AbortSignal.timeout(30_000) });
       const begun = await send(new BeginTransactionCommand(base));
-      if (!begun.transactionId) throw new ClinicRecordsRunnerError('sql_transaction_required');
+      if (typeof begun.transactionId !== 'string' || !begun.transactionId || begun.transactionId.length > 192)
+        throw new ClinicRecordsRunnerError('sql_transaction_required');
       try {
         await send(new ExecuteStatementCommand({ ...base, transactionId: begun.transactionId, sql: 'SET TRANSACTION READ ONLY' }));
         const out = await send(new ExecuteStatementCommand({ ...base, transactionId: begun.transactionId, sql: statement, parameters, formatRecordsAs: 'JSON' }));
         return { rows: out.formattedRecords ? JSON.parse(out.formattedRecords) : [] };
-      } finally { await send(new RollbackTransactionCommand({ ...base, transactionId: begun.transactionId })); }
+      } finally {
+        const rolledBack = await send(new RollbackTransactionCommand({ ...base, transactionId: begun.transactionId }));
+        if (rolledBack.$metadata?.httpStatusCode !== 200 || rolledBack.transactionStatus !== 'Rollback complete')
+          throw new ClinicRecordsRunnerError('sql_rollback_unconfirmed');
+      }
     },
   };
   hostedPorts.add(ports);

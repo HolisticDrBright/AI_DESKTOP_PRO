@@ -26,6 +26,7 @@
     "build:aws-clinic-records": "node scripts/build-aws-clinic-records.mjs",
     "test:clinic-records-deployment": "vitest run src/server/clinical-core/clinic-records-deployment.test.ts",
     "test:clinic-records-qualification-runner": "vitest run src/server/clinical-core/clinic-records-qualification-runner.test.ts",
+    "test:clinic-records-hosted-ports": "vitest run src/server/clinical-core/clinic-records-hosted-ports.test.ts",
     "build:zoom-host-authority-candidate": "node scripts/build-zoom-host-authority-candidate.mjs",
     "test:zoom-host-authority-candidate": "node --test scripts/zoom-host-authority-candidate.test.mjs",
     "test:zoom-host-authority": "vitest run src/server/clinical-core/zoom-host-authority.database.test.ts src/server/clinical-core/zoom-host-authority-rehearsal.database.test.ts --no-file-parallelism",
