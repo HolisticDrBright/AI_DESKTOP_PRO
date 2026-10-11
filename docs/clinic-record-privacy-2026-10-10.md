@@ -74,7 +74,7 @@ retention duration, deletion guarantee or disclosure approval is invented.
 | `clinic-records-source-candidate/1` (bundled handler + SQL + manifest) | `scripts/build-clinic-records-source-candidate.mjs` |
 | `clinic-record-privacy-candidate/3` (114-migration artifact; `/1` and `/2` superseded, never applied) | `scripts/clinic-record-privacy-candidate.mjs` |
 | `clinic-records-deployment/1` (compiled handler, deterministic zip, CloudFormation template, manifest) | `scripts/build-aws-clinic-records.mjs`, `src/server/clinical-core/clinic-records-deployment.ts`, `clinic-records-lambda.ts` |
-| `clinic-records-qualification-binding/1`, `clinic-records-qualification-report/1`, `clinic-records-qualification-cases/1` (Codex's synthetic hosted qualification: target binding, mandatory cases, report check) | `scripts/clinic-records-qualification-report.mjs` |
+| `clinic-records-qualification-binding/1`, `clinic-records-qualification-report/2`, `clinic-records-qualification-cases/1` (Codex's synthetic qualification: observed target, mandatory cases, report check) | `scripts/clinic-records-qualification-report.mjs` |
 
 Consumer actions: `overview`, `submit_copy`, `submit_correction`, `get`,
 `withdraw`, `read_copy`. Workforce actions: `queue`, `review`, `begin_review`,
@@ -281,12 +281,13 @@ template that registers them, are not in this branch (see the handoff).
 | `npm run test:clinic-record-privacy-candidate` | 19 pass (byte-exact parent, refusal matrix) |
 | `npm run test:clinic-records-contract-integrity` | 2 pass (contract and fixture hashes pinned in both repositories; text-only wire form) |
 | `npm run test:clinic-records-deployment` | 5 pass (blocked by default, binding refusals, reviews, bound dispatcher check against the real artifact) |
-| `npm run test:clinic-records-qualification-runner` | 3 pass (window and subject refusals, all 30 cases through the real handler and schema, release-present refusal) |
+| `npm run test:clinic-records-qualification-runner` | 4 pass (actual wrong database with matching ledger refused before dispatch; window and subject refusals; all 30 cases through the real handler and schema; release-present refusal) |
 | `npm run build:aws-clinic-records` | template, zip and manifest; `deploymentPerformed: false` |
 | `clinic-record-privacy.database.test.ts` (PGlite, real 114 artifact, `clinical_core_api` role, through the production adapters) | 7 pass (the seventh regenerates and compares the decimal fixture): fail-closed without a release then fulfilment under a fictional partial release with an honest manifest; telehealth records without admission material, keyset paging with byte budget, digest cross-check against the device's canonical form; retained copy after pause/revoke/replacement and never to a new owner; two clinics, two same-clinic patients, roles and pools; decisions in both orders, replay, stale revision, withdrawal, supersession, append-only ledgers; corrections only against a disclosed revision, addendum appended, original unchanged, decline recorded |
 | `production-clinic-records-api.test.ts` | 8 pass (off by default, fixture admission per pool, review gates, claim substitution, fresh sign-in windows, body bounds, decided code mapping) |
 | `rds-data-database.test.ts` | the eight new refusal words classified |
-| `npm run test:clinic-records-qualification-report` | 35 pass (case list shape, complete fictional report never accepted, 32 refusals, `--cases` output) |
+| `npm run test:clinic-records-qualification-report` | 42 pass (including missing/inconsistent observation and old count-only contract refusals) |
+| `npm run test:clinic-records-qualification-target` | 33 pass (raw fictional AWS observations, target refusal matrix, pagination, full ledger, deployed zip, execution marker and direct hosted bypass refusal; no AWS calls) |
 | `ClinicRecordRequestsView.render.test.ts` | 4 pass |
 | `e2e/live-clinic-records-ui.spec.ts` | see the handoff for the run result |
 | CI (`.github/workflows/ci.yml`, job "Care messaging database API…") | runs the candidate, qualification-report, contract-integrity, deployment and runner suites, both source builds and the embedded-database journeys |
@@ -327,7 +328,44 @@ Focused database, runner and single-attempt suites pass38 tests, and the three
 contract-integrity checks pass. The predecessor source with the local test
 repair passed6,310 tests and11 existing skips; that result is not claimed as a
 full-suite run of this reconciled candidate. Exact d236b76 predecessor CI is
-green. Hosted target verification remains unfinished: the runner's migration
-count is not proof of database, ledger, AWS principal, API, stack or deployed
-source identity. Do not execute it as hosted acceptance until those independent
-observations are checked before requests and fixture/release writes.
+green. Both CI runs at the reconciled portability head e29055d are now green
+(38098642531 and38098673817). The next source increment replaces the count-only
+preflight as described below; its own CI and hosted evidence are separate.
+
+## Independent qualification target guard
+
+The runner now requires `clinic-records-hosted-target/1`, the exact local
+deployment bytes, and the full ordered migration artifact. The guard checks
+STS account and non-root member role, foundation and candidate stack completion,
+all candidate parameters and the exact template, physical Lambda and routes,
+actual Lambda zip checksum and environment, JWT authorizers and integrations,
+the default stage and its successful automatic deployment, and cluster/secret
+metadata. One read-only database statement returns `current_database()` and the
+complete ordered ledger. A same-count but different ledger cannot pass.
+
+These checks run before the first request, before and after the separate
+release callback, and after the case list. Every HTTP observation requires the
+qualification response marker. Missing metadata, incomplete pagination, an
+unmarked denial or drift refuses the run; nothing is silently skipped.
+
+`clinic-records-qualification-report/2` separates the requested binding from
+the observed target. Injected source-test ports are always `embedded`; a caller
+cannot promote them with a boolean. A real hosted invocation requires the CLI's
+fresh build from a clean, exact checkout. Review hash syntax is not approval,
+and even a complete report retains `acceptance:false` and `phiAllowed:false`.
+
+The AWS observer uses the explicit `ai-synthetic-member` profile, fixed Ohio
+endpoints, single attempts and read-only metadata commands. It never reads secret
+contents. Database inspection begins a read-only transaction and rolls it back.
+There is no fixture writer or release insertion in this runner; the existing
+release prompt must be fulfilled by a separately reviewed, target-bound operator.
+
+AWS observations are sequential, not an atomic snapshot. This guard does not
+certify IAM permissions, concurrency, retention, provider agreements or production
+activation. The managed database still requires the selected, authorized preserving
+schema upgrade. The clinic candidate remains on its exact lifecycle /3 parent;
+it must not be re-pointed to another 114-by-count. Actual hosted qualification,
+release integration and device journeys remain outstanding.
+
+See `docs/clinic-records-qualification-target.md` for the required target fields
+and execution procedure. The fictional test fixture is not a runnable manifest.

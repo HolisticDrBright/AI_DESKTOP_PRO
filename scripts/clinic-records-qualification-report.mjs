@@ -118,13 +118,23 @@ function sameSummary(expected, actual) {
  */
 export function evaluateClinicRecordsQualificationReport(report, binding, candidate) {
   const b = assertClinicRecordsQualificationBinding(binding, candidate), t = CLINIC_RECORDS_QUALIFICATION_TARGET;
-  if (!record(report) || report.contract !== 'clinic-records-qualification-report/1' || JSON.stringify(report.binding) !== JSON.stringify(b)
+  if (!record(report) || report.contract !== 'clinic-records-qualification-report/2' || JSON.stringify(report.binding) !== JSON.stringify(b)
     || !when.test(report.startedAt ?? '') || !when.test(report.finishedAt ?? '') || report.finishedAt < report.startedAt
     || report.mutationsOutsideQualificationDatabase !== false || report.phiAllowed !== false) refuse('report_refused');
   const g = report.target;
   if (!record(g) || g.account !== t.account || g.region !== t.region || g.database !== t.database || g.apiId !== b.apiId
     || g.migrationRows !== t.migrationCount || g.migrationReleaseSha256 !== b.migrationReleaseSha256
     || JSON.stringify(g.routes) !== JSON.stringify(CLINIC_RECORDS_QUALIFICATION_ROUTES)) refuse('target_refused');
+  const o = report.targetObservation;
+  if (!['embedded', 'hosted'].includes(report.evidenceKind) || !record(o) || o.contract !== 'clinic-records-target-observation/1'
+    || Object.entries(g).some(([key, value]) => JSON.stringify(o[key]) !== JSON.stringify(value))
+    || o.sourceCommit !== b.sourceCommit || o.extensionSha256 !== b.extensionSha256 || !hash.test(o.zipSha256 ?? '')
+    || !String(o.principalArn ?? '').startsWith('arn:aws:sts::588966314750:assumed-role/OrganizationAccountAccessRole/')
+    || !/^arn:aws:lambda:us-east-2:588966314750:function:[A-Za-z0-9-_]+$/.test(o.functionArn ?? '')
+    || !/^arn:aws:cloudformation:us-east-2:588966314750:stack\//.test(o.foundationStackArn ?? '')
+    || !/^arn:aws:cloudformation:us-east-2:588966314750:stack\//.test(o.candidateStackArn ?? '')
+    || o.foundationStackArn === o.candidateStackArn || o.phiAllowed !== false || o.activation !== 'blocked'
+    || o.qualification !== 'enabled' || o.humanReviewsVerified !== false || o.atomicAwsSnapshot !== false) refuse('target_observation_refused');
   const rel = report.releaseRegistered;
   if (rel !== null && (!record(rel) || JSON.stringify(rel) !== JSON.stringify(b.disclosureRelease))) refuse('release_refused');
   if (!Array.isArray(report.cases)) refuse('report_refused');
@@ -149,6 +159,7 @@ export function evaluateClinicRecordsQualificationReport(report, binding, candid
     if (!record(a) || spec.attest.some(k => a[k] !== true) || Object.keys(a).some(k => !spec.attest.includes(k))) refuse('attestation_missing');
   }
   return Object.freeze({ verdict: 'mandatory_cases_matched', acceptance: false, phiAllowed: false, humanReviewsVerified: false,
+    evidenceKind: report.evidenceKind,
     mutations: 'qualification_database_only', cases: CLINIC_RECORDS_QUALIFICATION_CASES.length, sourceCommit: b.sourceCommit,
     migrationReleaseSha256: b.migrationReleaseSha256, releaseVersion: rel?.releaseVersion ?? null,
     remaining: ['owner review of the disclosure release and retention posture', 'hosted concurrency with real interleaving',

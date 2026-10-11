@@ -10,6 +10,7 @@ import { classifyDatabaseRejection } from './rds-data-database';
 import type { ClinicalCoreDatabase } from './database';
 import { runClinicRecordsQualification, tokenClaims } from '../../../scripts/clinic-records-qualification-runner.mjs';
 import { CLINIC_RECORDS_QUALIFICATION_CASES, CLINIC_RECORDS_QUALIFICATION_SUBJECTS } from '../../../scripts/clinic-records-qualification-report.mjs';
+import { clinicTargetFixture } from '../../../scripts/clinic-records-qualification-target.fixture.mjs';
 
 /**
  * The hosted runner, executed end to end against the REAL artifact-bound
@@ -21,7 +22,7 @@ import { CLINIC_RECORDS_QUALIFICATION_CASES, CLINIC_RECORDS_QUALIFICATION_SUBJEC
  * subjects, fictional tokens; no AWS call, registration or activation.
  */
 type Artifact = { manifest: { migrations: { version: string; file: string }[] }; files: Record<string, string>; candidate: Record<string, unknown> };
-type Ports = { http: (route: string, token: string, body: string) => Promise<{ status: number; json: unknown }>; sql: (text: string, params: unknown[]) => Promise<{ rows: unknown[] }> };
+type Ports = { readAws: ReturnType<typeof clinicTargetFixture>['readAws']; http: (route: string, token: string, body: string) => Promise<{ status: number; json: unknown; execution: string | null }>; sql: (text: string, params: unknown[]) => Promise<{ rows: unknown[] }> };
 const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const NOW = 1800000000000, review = '2'.repeat(64), sourceCommit = '1'.repeat(40);
 const uuid = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
@@ -35,6 +36,7 @@ const binding = () => ({ contract: 'clinic-records-qualification-binding/1', sou
   disclosureRelease: { releaseVersion: 'fictional-qualification-1', sections: ['signed_notes', 'lab_observations'], reviewSha256: review } });
 const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
 let pg: PGlite, artifact: Artifact, build: ClinicRecordsBuild, persons: Record<string, string>, tokens: Record<string, Record<string, string>>;
+let targetFixture: ReturnType<typeof clinicTargetFixture>;
 const admin = () => ({ transaction: work => pg.transaction(tx => work({ query: (q, parameters = []) => tx.query(q, [...parameters]) })) }) as ClinicalCoreDatabase;
 /** The restricted API connection as the hosted RDS Data client presents it: raised refusal words become classified rejections. */
 const apiDb = (): ClinicalCoreDatabase => ({ transaction: work => pg.transaction(async tx => { await tx.exec('set local role clinical_core_api'); return work({ query: async (q, parameters = []) => {
@@ -58,13 +60,14 @@ function token(subject: string, pool: 'consumer' | 'workforce', organization: st
     iat: NOW / 1000 - 5, exp: NOW / 1000 + 3600, auth_time: NOW / 1000 - authAgeSeconds };
   return `${b64({ alg: 'none', typ: 'JWT' })}.${b64(claims)}.fictional`;
 }
-function ports(handler: (event: ApiGatewayV2Event) => Promise<{ statusCode: number; body?: string }>): Ports {
+function ports(handler: (event: ApiGatewayV2Event) => Promise<{ statusCode: number; body?: string; headers?: Record<string, string> }>): Ports {
   return {
+    readAws: targetFixture.readAws,
     http: async (route, bearer, body) => {
       const claims = tokenClaims(bearer) as Record<string, unknown>;
       const response = await handler({ routeKey: route, headers: { 'content-type': 'application/json' }, body, requestContext: { authorizer: { jwt: { claims } } } } as ApiGatewayV2Event);
       let json: unknown = null; try { json = JSON.parse(response.body ?? ''); } catch { json = null; }
-      return { status: response.statusCode, json };
+      return { status: response.statusCode, json, execution: response.headers?.['x-clinical-execution'] ?? null };
     },
     sql: async (text, params) => ({ rows: (await pg.query(text, params)).rows }),
   };
@@ -84,7 +87,10 @@ beforeAll(async () => {
   const body = /create function clinical_core\.clinic_record_request\(_request jsonb\) returns jsonb\nlanguage plpgsql security definer set search_path='' as \$\$([^]*?)\$\$;/.exec(sql)![1];
   build = { sourceCommit, sourceClean: true, migrationCount: 114, migrationReleaseSha256: artifact.candidate.migrationReleaseSha256 as string,
     extensionSha256: artifact.candidate.extensionSha256 as string, dispatcher: { schema: 'clinical_core', name: 'clinic_record_request', sha256: sha(body) } };
-  pg = new PGlite({ extensions: { pgcrypto } });
+  const seed = new PGlite();
+  await seed.exec('create database clinical_core_qualification');
+  const directory = await seed.dumpDataDir(); await seed.close();
+  pg = new PGlite({ loadDataDir: directory, database: 'clinical_core_qualification', extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version, name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
   await applyProductionClinicalCoreMigrations(admin(), migrations.slice(0, 106));
   for (const entry of migrations.slice(106)) {
@@ -124,6 +130,7 @@ beforeAll(async () => {
   }
   const organizationOf = (name: string) => roles[name][1], poolOf = (name: string) => roles[name][0];
   tokens = Object.fromEntries(Object.keys(roles).map(name => [name, { fresh: token(name, poolOf(name), organizationOf(name), 10), aged: token(name, poolOf(name), organizationOf(name), 6 * 60), stale: token(name, poolOf(name), organizationOf(name), 16 * 60) }]));
+  targetFixture = clinicTargetFixture(bound(), artifact.candidate, migrations.map(row => ({ version: row.version, sha256: row.sha256 })));
 }, 180000);
 afterAll(async () => { await pg?.close(); });
 const candidate = () => artifact.candidate;
@@ -131,12 +138,25 @@ const bound = () => ({ ...binding(), migrationReleaseSha256: build.migrationRele
 const registerRelease = async () => { const d = binding().disclosureRelease; await pg.query("insert into clinical_private.clinic_disclosure_releases(organization_id,release_version,sections,reviewed_by,review_sha256) values($1,$2,$3,'FICTIONAL REVIEWER (qualification fixture, not an approval)',$4)", [orgX, d.releaseVersion, d.sections, d.reviewSha256]); };
 
 describe('clinic-records qualification runner against the real deployment handler and schema', () => {
+  it('refuses a different actual database before any HTTP or release step, despite all 114 matching migration rows', async () => {
+    const wrong = new PGlite();
+    try {
+      await wrong.exec('create schema clinical_core; create table clinical_core.schema_migrations(version text, sha256 text)');
+      for (const row of targetFixture.migrations) await wrong.query('insert into clinical_core.schema_migrations values($1,$2)', [row.version, row.sha256]);
+      let dispatched = 0, released = 0;
+      const result = await runClinicRecordsQualification({ ...targetFixture, binding: bound(), candidate: candidate(), tokens, fixtures,
+        ports: { readAws: targetFixture.readAws, sql: async (text: string, values: unknown[]) => ({ rows: (await wrong.query(text, values)).rows }),
+          http: async () => { dispatched++; throw Error('must not dispatch'); } }, now: () => NOW, awaitRelease: async () => { released++; } });
+      expect(result).toMatchObject({ complete: false, refusal: 'target_actual_ledger', verdict: null });
+      expect(dispatched).toBe(0); expect(released).toBe(0); expect(result.report.cases).toEqual([]); expect(result.report.target).toBeNull();
+    } finally { await wrong.close(); }
+  });
   it('refuses a token outside its required sign-in window or under another subject before touching anything', async () => {
     const handler = createClinicRecordsHandler(env(), build, apiDb, () => NOW);
-    const wrongWindow = await runClinicRecordsQualification({ binding: bound(), candidate: candidate(), tokens: { ...tokens, patientA: { ...tokens.patientA, stale: tokens.patientA.fresh } }, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
+    const wrongWindow = await runClinicRecordsQualification({ ...targetFixture, binding: bound(), candidate: candidate(), tokens: { ...tokens, patientA: { ...tokens.patientA, stale: tokens.patientA.fresh } }, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
     expect(wrongWindow).toMatchObject({ complete: false, verdict: null, refusal: 'token_window:patientA.stale' });
     expect(wrongWindow.report.cases[0]).toMatchObject({ id: 'consumer_stale_signin_refused', observed: false, failure: 'token_window:patientA.stale' });
-    const wrongSubject = await runClinicRecordsQualification({ binding: bound(), candidate: candidate(), tokens: { ...tokens, patientA: { ...tokens.patientA, stale: tokens.patientB.stale } }, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
+    const wrongSubject = await runClinicRecordsQualification({ ...targetFixture, binding: bound(), candidate: candidate(), tokens: { ...tokens, patientA: { ...tokens.patientA, stale: tokens.patientB.stale } }, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
     expect(wrongSubject).toMatchObject({ complete: false, refusal: 'token_subject:patientA' });
     expect(Number((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.clinic_record_requests')).rows[0].n)).toBe(0);
     expect(Number((await pg.query<{ n: number }>('select count(*)::int n from clinical_private.clinic_disclosure_releases')).rows[0].n)).toBe(0);
@@ -144,7 +164,10 @@ describe('clinic-records qualification runner against the real deployment handle
   it('observes all thirty mandatory cases from real responses and readback, registers the fictional release between phases, and matches without acceptance', async () => {
     const handler = createClinicRecordsHandler(env(), build, apiDb, () => NOW);
     let released = 0;
-    const result = await runClinicRecordsQualification({ binding: bound(), candidate: candidate(), tokens, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: async () => { released++; await registerRelease(); } });
+    let observations = 0;
+    const guarded = ports(handler), read = guarded.readAws;
+    guarded.readAws = async (...args) => { if (args[0] === 'sts') observations++; return read(...args); };
+    const result = await runClinicRecordsQualification({ ...targetFixture, binding: bound(), candidate: candidate(), tokens, fixtures, ports: guarded, now: () => NOW, awaitRelease: async () => { released++; await registerRelease(); } });
     const failed = result.report.cases.filter((c: { observed: boolean }) => !c.observed);
     expect(failed, JSON.stringify({ refusal: result.refusal, failed, last: result.report.cases.at(-1) })).toEqual([]);
     const mismatches = (CLINIC_RECORDS_QUALIFICATION_CASES as unknown as { id: string; expect: { status: number | null; error?: string; summary?: Record<string, unknown> }; attest: string[] }[]).flatMap(spec => {
@@ -156,6 +179,9 @@ describe('clinic-records qualification runner against the real deployment handle
     expect(mismatches).toEqual([]);
     expect(result).toMatchObject({ complete: true, refusal: null, verdict: { verdict: 'mandatory_cases_matched', acceptance: false, phiAllowed: false, humanReviewsVerified: false, cases: CLINIC_RECORDS_QUALIFICATION_CASES.length } });
     expect(released).toBe(1); expect(result.report.releaseRegistered).toEqual(binding().disclosureRelease);
+    expect(observations).toBe(4); // start, before and after the release callback, final readback
+    expect(result.report.evidenceKind).toBe('embedded');
+    expect(result.report.targetObservation?.atomicAwsSnapshot).toBe(false);
     expect(result.report.cases.map((c: { id: string }) => c.id)).toEqual(CLINIC_RECORDS_QUALIFICATION_CASES.map((c: { id: string }) => c.id));
     for (const row of result.report.cases) expect(Object.values(row.attestations).every(v => v === true), row.id).toBe(true);
     expect(JSON.stringify(result.report)).not.toContain('.fictional'); // no token in the report
@@ -163,7 +189,7 @@ describe('clinic-records qualification runner against the real deployment handle
   });
   it('refuses to start a run on a target where a release is already registered before the first phase', async () => {
     const handler = createClinicRecordsHandler(env(), build, apiDb, () => NOW);
-    const result = await runClinicRecordsQualification({ binding: bound(), candidate: candidate(), tokens, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
+    const result = await runClinicRecordsQualification({ ...targetFixture, binding: bound(), candidate: candidate(), tokens, fixtures, ports: ports(handler), now: () => NOW, awaitRelease: registerRelease });
     expect(result).toMatchObject({ complete: false, refusal: 'release_present_before_phase' });
     expect(result.report.cases).toEqual([]);
   });

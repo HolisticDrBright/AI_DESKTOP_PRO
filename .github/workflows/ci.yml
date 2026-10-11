@@ -31,6 +31,7 @@ jobs:
         run: |
           npm run test:clinic-record-privacy-candidate
           npm run test:clinic-records-qualification-report
+          npm run test:clinic-records-qualification-target
           npm run test:clinic-records-contract-integrity
           npm run test:clinic-records-deployment
           npm run test:clinic-records-qualification-runner

@@ -23,12 +23,31 @@ const row = (spec, i) => ({ id: spec.id, observed: true, at: at(i + 1), pool: sp
   status: spec.expect.status, error: spec.expect.error ?? null,
   summary: spec.expect.status === 200 ? { ...(spec.expect.summary ?? {}), requestId: uuid(99) } : null,
   attestations: Object.fromEntries(spec.attest.map(k => [k, true])) });
-const report = (b = binding()) => ({ contract: 'clinic-records-qualification-report/1', binding: b, startedAt: at(0), finishedAt: at(CASES.length + 1),
+const report = (b = binding()) => ({ contract: 'clinic-records-qualification-report/2', binding: b, startedAt: at(0), finishedAt: at(CASES.length + 1),
   mutationsOutsideQualificationDatabase: false, phiAllowed: false,
+  evidenceKind: 'embedded', targetObservation: { contract: 'clinic-records-target-observation/1', account: T.account, region: T.region, database: T.database,
+    apiId: b.apiId, migrationRows: 114, migrationReleaseSha256: b.migrationReleaseSha256, routes: [...CLINIC_RECORDS_QUALIFICATION_ROUTES],
+    sourceCommit: b.sourceCommit, extensionSha256: b.extensionSha256, zipSha256: hash,
+    principalArn: 'arn:aws:sts::588966314750:assumed-role/OrganizationAccountAccessRole/fictional', functionArn: 'arn:aws:lambda:us-east-2:588966314750:function:fictional',
+    foundationStackArn: 'arn:aws:cloudformation:us-east-2:588966314750:stack/fictional-foundation/1', candidateStackArn: 'arn:aws:cloudformation:us-east-2:588966314750:stack/fictional-candidate/2',
+    phiAllowed: false, activation: 'blocked', qualification: 'enabled', humanReviewsVerified: false, atomicAwsSnapshot: false },
   target: { account: T.account, region: T.region, database: T.database, apiId: b.apiId, migrationRows: 114,
     migrationReleaseSha256: b.migrationReleaseSha256, routes: [...CLINIC_RECORDS_QUALIFICATION_ROUTES] },
   releaseRegistered: { ...b.disclosureRelease }, cases: CASES.map(row) });
 const category = fn => { try { fn(); } catch (e) { if (e instanceof ClinicRecordsQualificationError) return e.category; throw e; } return 'accepted'; };
+
+for (const [name, mutate] of [
+  ['missing target observation', r => { delete r.targetObservation; }],
+  ['missing evidence kind', r => { delete r.evidenceKind; }],
+  ['unsupported evidence kind', r => { r.evidenceKind = 'production'; }],
+  ['observation source mismatch', r => { r.targetObservation.sourceCommit = 'e'.repeat(40); }],
+  ['claimed atomic AWS snapshot', r => { r.targetObservation.atomicAwsSnapshot = true; }],
+  ['claimed human approval', r => { r.targetObservation.humanReviewsVerified = true; }],
+]) test(`refuses ${name}`, () => { const r = report(); mutate(r); assert.equal(category(() => evaluateClinicRecordsQualificationReport(r, r.binding, candidate)), 'target_observation_refused'); });
+test('the old count-only report contract cannot satisfy the new observation contract', () => {
+  const r = report(); r.contract = 'clinic-records-qualification-report/1';
+  assert.equal(category(() => evaluateClinicRecordsQualificationReport(r, r.binding, candidate)), 'report_refused');
+});
 
 test('the mandatory case list is explicit, ordered by phase, and covers both pools, both outcomes and the database readback', () => {
   assert.equal(CASES.length, 30);
