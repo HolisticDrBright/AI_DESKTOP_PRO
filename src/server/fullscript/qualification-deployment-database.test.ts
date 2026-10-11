@@ -12,7 +12,7 @@ const response=(v:unknown)=>({records:[[{stringValue:JSON.stringify(v)}]]});
 function fixture(){let workerSelected=false;
  const send=vi.fn(async(command:unknown):Promise<Obj>=>{
   if(command instanceof BeginTransactionCommand)return {transactionId:'fictional-transaction'};
-  if(command instanceof RollbackTransactionCommand)return {transactionStatus:'Transaction Rolled Back'};
+  if(command instanceof RollbackTransactionCommand)return {transactionStatus:'Rollback complete',$metadata:{httpStatusCode:200}};
   if(command instanceof ExecuteStatementCommand){
    if(command.input.sql==='set local role fullscript_draft_worker')workerSelected=true;
    if(command.input.sql===FULLSCRIPT_DEPLOYMENT_ROLES_SQL)return response(roles(workerSelected));
@@ -52,6 +52,25 @@ it.each(['lost','denied','malformed','wrong-status'])('never certifies a %s roll
  const {send,observe}=fixture(),original=send.getMockImplementation()!;
  send.mockImplementation(async c=>{if(c instanceof RollbackTransactionCommand){if(kind==='lost'||kind==='denied')throw Error('SECRET rollback denied');
   return kind==='malformed'?{}:{transactionStatus:'Transaction Committed'};}return original(c);});
+ await expect(observe(target)).rejects.toThrow(/^fullscript_deployment_database_refused$/);
+ expect(send.mock.calls.filter(([c])=>c instanceof RollbackTransactionCommand)).toHaveLength(1);
+});
+it('accepts the observed AWS Data API rollback receipt, not the fictional status',async()=>{
+ const {send,observe}=fixture(),original=send.getMockImplementation()!;
+ send.mockImplementation(async c=>c instanceof RollbackTransactionCommand
+  ?{transactionStatus:'Rollback complete',$metadata:{httpStatusCode:200}}:original(c));
+ await expect(observe(target)).resolves.toMatchObject({rollbackConfirmed:true,readOnly:true,workerRole:worker});
+ expect(send.mock.calls.filter(([c])=>c instanceof RollbackTransactionCommand)).toHaveLength(1);
+});
+it.each([
+ {transactionStatus:'Transaction Rolled Back',$metadata:{httpStatusCode:200}},
+ {transactionStatus:'Rollback complete'},
+ {transactionStatus:'Rollback complete',$metadata:{httpStatusCode:500}},
+ {transactionStatus:'Rollback complete',$metadata:{httpStatusCode:'200'}},
+ {transactionStatus:'Rollback complete',$metadata:null},
+])('refuses an unconfirmed service rollback receipt %j',async receipt=>{
+ const {send,observe}=fixture(),original=send.getMockImplementation()!;
+ send.mockImplementation(async c=>c instanceof RollbackTransactionCommand?receipt:original(c));
  await expect(observe(target)).rejects.toThrow(/^fullscript_deployment_database_refused$/);
  expect(send.mock.calls.filter(([c])=>c instanceof RollbackTransactionCommand)).toHaveLength(1);
 });

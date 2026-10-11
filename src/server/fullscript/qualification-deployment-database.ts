@@ -65,7 +65,7 @@ export function createFullscriptDeploymentDatabaseObserver(client:{send(command:
   // Even an error must attempt ONE rollback. It must not swallow a denied or
   // lost rollback response and then emit a successful prerequisite receipt.
   if(transactionId){try{const rolled=await client.send(new RollbackTransactionCommand({resourceArn:common.resourceArn,secretArn:common.secretArn,transactionId}));
-   check(rolled.transactionStatus==='Transaction Rolled Back');
+   check(rolled.transactionStatus==='Rollback complete'&&object(rolled.$metadata).httpStatusCode===200);
   }catch{failed=true;}}else failed=true;
   if(failed||!result)return fail();return {...result,rollbackConfirmed:true};
  };

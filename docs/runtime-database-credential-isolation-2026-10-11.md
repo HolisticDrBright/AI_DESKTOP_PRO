@@ -94,3 +94,46 @@ historical SQL, candidate117 identity, clinical hold, provider approval, consent
 release, PHI flag or paid-build authorization changes here. Source integration,
 hosted/device/provider/store qualification and owner reviews remain open within
 the original six readiness scopes.
+
+## Managed administrative credential refusal
+
+The exact `14b454fbaec20f6ecd521b5a1eba4985dded6295` adapter was exercised
+against the qualification database on October 11 at 10:27:15 UTC. The driver
+injected a read-only transaction, pinned the AWS account, source and bundle,
+and allowed only the fixed credential metadata query and rollback. The
+metadata result was false, the adapter returned `configuration_invalid`,
+request work was not called, no role was assumed and rollback returned
+`Rollback complete`. This is actual managed negative evidence, not a deployed
+Lambda journey or positive acceptance of a replacement credential. No record,
+secret value, schema or grant was read or changed.
+
+The normal frozen-source whole suite completed with 454 files, 7,180 tests
+passed and 11 skipped in 727.60 seconds. Exact
+[CI38131468725](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38131468725)
+completed successfully across 11 jobs at that head. The deployed-backend
+setup/build/live tests were skipped for missing secrets, not hosted passes.
+Seven native PostgreSQL 17.7 source scenarios passed with confirmed shutdown.
+Those local/native results do not supply managed positive or provider evidence.
+
+## Fullscript observer rollback response
+
+The deployment observer expected `Transaction Rolled Back`, a value supplied
+by its fictional transport. The actual managed Data API response above is
+`Rollback complete`. Consequently the observer would refuse a valid rollback;
+the tests also allowed the fictional status to certify settlement. Two new
+regression cases failed against the old source: actual-response acceptance
+and fictional-status refusal.
+
+The observer now requires `Rollback complete` and SDK metadata reporting HTTP
+200. It refuses missing or malformed metadata, a non-success response, an
+unknown status, denied or lost rollback. It still attempts exactly one
+rollback and cannot issue a successful report before that response. No retry,
+commit, role permission or schema behavior changes. The seven deployment
+suites pass 262 tests, including the 28-case database suite. These transport
+tests are not a complete live Fullscript observer run against a reviewed worker
+credential and schema.
+
+AWS documents successful rollback responses as HTTP 200 with a
+`transactionStatus` field; it does not enumerate the status strings. The exact
+accepted value comes from the observed managed response, not a guessed
+documentation example. [AWS RollbackTransaction API](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/API_RollbackTransaction.html).
