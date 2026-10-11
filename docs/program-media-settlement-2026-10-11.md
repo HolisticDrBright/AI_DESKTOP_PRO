@@ -92,9 +92,11 @@ Aurora lock wait, S3 listing, KMS permission, API route, public delivery or devi
 1. Bind a complete restricted workforce ledger family to independent identity and current
    program rights; compose every mutation with the settlement component. Do not expose the
    private functions or treat an HTTP boolean as admission.
-2. Implement the native dedicated-media store and a bounded exact-key version inventory,
-   including all pages, delete markers, denied calls and mismatched checksums. Qualify real
-   late/lost calls and storage settlement rather than assuming an AWS timeout is final.
+2. The successor documented in `program-media-native-store-2026-10-11.md` adds the
+   actual AWS SDK storage source and bounded exact-key version inventory, locally
+   tested over fictional network replies. Integrate it only through the complete
+   independently admitted native factory. Qualify real late/lost calls and storage
+   settlement rather than assuming an AWS timeout is final.
 3. Review the separate preserving schema identity, educational-media resources and read-only
    delivery origin. Do not reuse clinical recording storage or register this candidate under
    prior schema authority.

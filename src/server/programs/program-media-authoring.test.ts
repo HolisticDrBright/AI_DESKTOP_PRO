@@ -337,6 +337,74 @@ describe('orphan cleanup', () => {
 });
 
 describe('durable settlement contract against fictional transports', () => {
+  // Independent coverage inspired by Claude's seven audit cases at 23d65e9.
+  // These are adaptations, not unchanged ports: this contract has durable
+  // writers and no time-expiring lease or unresolvedStorage boolean.
+  it('reconciliation winning during cleanup reads preserves the committed version', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    await store.put(r, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    const head = store.head;
+    let interleaved = false;
+    store.head = async (...args) => {
+      if (!interleaved) {
+        interleaved = true;
+        expect(await authoring.reconcile(context(), { artifactId: r.artifactId }))
+          .toMatchObject({ state: 'ready', objectVersion: 'fv1' });
+      }
+      return head(...args);
+    };
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(interleaved).toBe(true);
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'recovered_ready' }]);
+    expect(result.proofs).toEqual([]);
+    expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+  });
+  it('an uncertain writer does not expire into deletion permission, even after recovery', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    store.inject('lose_put_response'); store.inject('fail_head');
+    expect(await code(authoring.admit(context(), { artifactId: r.artifactId, sha256: r.sha256, bytes: r.bytes }, image)))
+      .toBe('service_unavailable');
+    clock = new Date('2027-01-01T00:00:00Z');
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).actions)
+      .toEqual([{ artifactId: r.artifactId, outcome: 'kept_pending' }]);
+    expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+    expect(await authoring.reconcile(context(), { artifactId: r.artifactId }))
+      .toMatchObject({ state: 'ready', objectVersion: 'fv1' });
+    expect(store.log.filter(l => l.op === 'put')).toHaveLength(1);
+    expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).proofs).toEqual([]);
+  });
+  it('removes an exact-key versioned delete marker only after inventory, and certifies only the second empty inventory', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    clock = new Date('2026-10-11T12:16:00Z');
+    let markerPresent = true, reads = 0;
+    const removed: string[] = [];
+    store.inventory = async () => {
+      reads++;
+      return { complete: true, versions: markerPresent ? [{ version: 'fictional-marker', deleteMarker: true, listedKey: r.objectKey }] : [] };
+    };
+    store.remove = async (reservation, version) => {
+      expect(reservation.objectKey).toBe(r.objectKey);
+      removed.push(version); markerPresent = false;
+    };
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(reads).toBe(2); expect(removed).toEqual(['fictional-marker']);
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'abandoned_object_removed' }]);
+    expect(result.proofs).toEqual([expect.objectContaining({ complete: true, remainingVersions: 0, objectKey: r.objectKey, removedVersions: ['fictional-marker'] })]);
+  });
+  it.each(['foreign-key', 'missing-key', 'null-version'] as const)('holds a %s delete marker without deleting or certifying', async problem => {
+    const r = await authoring.prepare(context(), prepare());
+    clock = new Date('2026-10-11T12:16:00Z');
+    store.inventory = async () => ({ complete: true, versions: [{ deleteMarker: true,
+      version: problem === 'null-version' ? 'null' : 'fictional-marker',
+      listedKey: problem === 'missing-key' ? undefined : problem === 'foreign-key' ? r.objectKey + '.other' : r.objectKey }] });
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'held_object_mismatch' }]);
+    expect(result.proofs).toEqual([]); expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect((await ledger.artifact(context(), r.artifactId))?.state).toBe('held');
+  });
   it('keeps an admitted delayed writer pending until its storage call and commit settle', async () => {
     const r = await authoring.prepare(context(), prepare());
     const original = store.put;

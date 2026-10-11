@@ -13,8 +13,9 @@ import {
  * Authoring of governed lesson media: prepare, admit within bounds, commit with integrity recorded,
  * attach supplied captions or transcripts, preview by a separate read, publish by exact artifact
  * and version, retire, reconcile and clean up. The ledger and the object store are interfaces; the
- * only implementations in this repository are fictional (program-media-fictional.ts). Activation is
- * off: `PROGRAM_MEDIA_ACTIVATION.enabled` is false and the runtime refuses every operation until a
+ * complete ledger implementation remains fictional (program-media-fictional.ts). The AWS SDK
+ * storage source is separately tested over fictional network replies, not installed or hosted
+ * qualified. Activation is off: `PROGRAM_MEDIA_ACTIVATION.enabled` is false and every operation refuses until a
  * reviewed store and ledger exist. A fictional store proving these journeys certifies nothing hosted.
  *
  * Rules the code keeps:
@@ -48,6 +49,8 @@ export class ProgramMediaWriteError extends Error {
 export type ProgramMediaStoredObject = {
   version?: string; bytes?: number; contentType?: string; checksum?: string; checksumType?: string;
   encryption?: string; kmsKeyArn?: string; metadata?: Record<string, string>; deleteMarker?: boolean;
+  /** Exact key observed by a complete version listing; mandatory for markers. */
+  listedKey?: string;
 };
 export interface ProgramMediaObjectStore {
   /** Conditional create (If-None-Match: *). Resolves with the stored version; rejects when the key exists or the write fails. */
@@ -332,7 +335,9 @@ export function createProgramMediaAuthoring(input: {
           if (!before.complete || new Set(before.versions.map(v => v.version)).size !== before.versions.length) {
             actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); continue;
           }
-          if (before.versions.some(v => !objectMatches(v, reservation))) {
+          if (before.versions.some(v => v.deleteMarker === true
+            ? typeof v.version !== 'string' || !v.version || v.version === 'null' || v.listedKey !== reservation.objectKey
+            : !objectMatches(v, reservation))) {
             await ledger.settle(context, reservation.artifactId, 'held', 'storage_unverified', claimId);
             actions.push({ artifactId: reservation.artifactId, outcome: 'held_object_mismatch' }); continue;
           }
