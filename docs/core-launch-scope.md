@@ -21,7 +21,15 @@ against and one server answer to conform to.
 
 The file is copied verbatim into V2 at `expo/contracts/core-launch-scope.json`. Its SHA-256
 is pinned in `scripts/check-aws-core-launch-scope.mjs` here and in V2
-`expo/__tests__/core-launch-scope.test.ts`; any change must land in both repositories.
+`expo/contracts/coreLaunchScope.ts` (`CORE_LAUNCH_SCOPE_SHA256`); any change must land in both repositories.
+
+**Ownership, stated (October 11, 2026).** This file is the one source of the declaration. V2's copy is a
+mirror, produced by `expo/scripts/sync-core-launch-scope.mjs <this file>` (LF-normalised, never edited by hand)
+and gated in V2 CI by `expo/scripts/check-core-launch-scope.mjs`, which fails on any byte drift from the pinned
+digest and tolerates only CRLF checkouts. The procedure for a change is: edit here, run this repository's
+`check:aws-core-launch-scope`, sync the mirror, update the pin in both repositories in the same change set, and
+have the reviewed evidence receipts stay as they are (a receipt is never rewritten to match new bytes). The
+current pinned digest is unchanged by the mirror gate, which is the proof that the gate itself unlocked nothing.
 
 The declaration activates nothing. PHI, activation state and the actual `AllowedScopes`
 of a deployment remain reviewed CloudFormation parameters. A narrower first deployment

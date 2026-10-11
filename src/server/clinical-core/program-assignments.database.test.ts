@@ -3,8 +3,9 @@ import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
 import {programAssignmentResponse,type ProgramAssignmentRequest} from '../../contracts/programAssignments';
-import {createProgramAssignments} from './program-assignments';
+import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
+import {classifyDatabaseRejection} from './rds-data-database';
 import type {SyntheticRequestContext} from './aws-identity-consent';
 
 const id=(n:number)=>'20000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -28,9 +29,18 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
  await tx.exec('set local role clinical_core_api');
  return work({query:async<Row extends Record<string,unknown>>(sql:string,parameters:readonly unknown[]=[])=>{
   try{return await tx.query<Row>(sql,parameters.map(p=>p&&typeof p==='object'&&'kind' in p&&p.kind==='uuid'&&'value' in p?p.value:p));}
-  catch(cause){throw new ClinicalCoreDatabaseRejection(classify(cause));}
+  catch(cause){
+   // The deployed driver's own classification stands in front of the real PostgreSQL error, so the reason the
+   // adapter carries to the consumer app is the mapping that ships, not a harness regex.
+   const message=cause instanceof Error?cause.message:String(cause);
+   throw classifyDatabaseRejection({name:'DatabaseErrorException',message})??new ClinicalCoreDatabaseRejection(classify(cause));
+  }
  }});
 })};
+async function refusal(input:ProgramAssignmentRequest,actor=owner){
+ try{await call(input,actor);}catch(error){if(error instanceof ProgramAssignmentError)return error;throw error;}
+ throw new Error('expected a refusal');
+}
 const call=(input:ProgramAssignmentRequest,actor=owner,organization=org,pool:'consumer'|'workforce'='consumer')=>
  createProgramAssignments(database)(context(actor,organization,pool),input);
 
@@ -88,6 +98,59 @@ async function fresh(content:unknown=phases()){
  if(assigned.action!=='assign')throw Error();
  return assigned;
 }
+
+describe('program refusal reasons through the real adapter and PostgreSQL',()=>{
+ it('names the rule that refused a step from the closed allow-list, and only that',async()=>{
+  const assigned=await fresh(phases({transition:'check_in'}));
+  const owned={enrollmentId:assigned.enrollmentId,sourceDigest:assigned.sourceDigest};
+  const offered=await readOwn(assigned.enrollmentId);
+  // Stale revision: the owner's screen believed revision 1 after the service moved on.
+  await call({action:'accept',...owned,expectedRevision:'1',planRevision:offered.review.planRevision});
+  const stale=await refusal({action:'pause',...owned,expectedRevision:'1'});
+  expect(stale).toMatchObject({category:'conflict',reason:'program_revision_stale'});
+  // Tasks remaining, then the phase not due, then the check-in required: each named by the rule that refused it.
+  expect(await refusal({action:'advance',...owned,expectedRevision:'2'})).toMatchObject({category:'conflict',reason:'program_tasks_remaining'});
+  await call({action:'complete',...owned,expectedRevision:'2',itemId:'lesson-a'});
+  expect(await refusal({action:'advance',...owned,expectedRevision:'3'})).toMatchObject({category:'conflict',reason:'program_phase_not_due'});
+  await db.query("update clinical_core.program_assignments set phase_started_at=phase_started_at-interval '2 days',revision=revision+1 where id=$1",[assigned.enrollmentId]);
+  expect(await refusal({action:'advance',...owned,expectedRevision:'4'})).toMatchObject({category:'conflict',reason:'program_check_in_required'});
+  // A refusal carries nothing but the category and the allow-listed reason: no SQL, no identifiers, no raw text.
+  for(const error of [stale]){
+   expect(Object.keys(error).sort()).toEqual(['category','reason']);
+   expect(error.message).toBe('conflict');
+   expect(JSON.stringify(error)).not.toMatch(/select|enrollment|[0-9a-f]{8}-[0-9a-f]{4}/);
+  }
+ });
+ it('names a changed artifact, held clinical items and a stale plan review; a paused program refuses with not-active',async()=>{
+  const assigned=await fresh(phases({extra:[supplementItem()]}));
+  const owned={enrollmentId:assigned.enrollmentId,sourceDigest:assigned.sourceDigest};
+  const offered=await readOwn(assigned.enrollmentId);
+  await call({action:'accept',...owned,expectedRevision:'1',planRevision:offered.review.planRevision});
+  await call({action:'complete',...owned,expectedRevision:'2',itemId:'lesson-a'});
+  await db.query("update clinical_core.program_assignments set phase_started_at=phase_started_at-interval '2 days',revision=revision+1 where id=$1",[assigned.enrollmentId]);
+  expect(await refusal({action:'advance',...owned,expectedRevision:'4'})).toMatchObject({category:'conflict',reason:'program_clinical_items_held'});
+  // The screen names an artifact that is not the pinned one: a changed program, named.
+  expect(await refusal({action:'pause',enrollmentId:assigned.enrollmentId,sourceDigest:'f'.repeat(64),expectedRevision:'4'})).toMatchObject({category:'conflict',reason:'program_changed'});
+  const second=await fresh(phases());
+  const ownedTwo={enrollmentId:second.enrollmentId,sourceDigest:second.sourceDigest};
+  expect(await refusal({action:'accept',...ownedTwo,expectedRevision:'1',planRevision:'not-the-reviewed-plan'})).toMatchObject({category:'conflict',reason:'program_review_stale'});
+  const third=await fresh(phases());
+  const ownedThree={enrollmentId:third.enrollmentId,sourceDigest:third.sourceDigest};
+  const offeredThree=await readOwn(third.enrollmentId);
+  await call({action:'accept',...ownedThree,expectedRevision:'1',planRevision:offeredThree.review.planRevision});
+  await call({action:'pause',...ownedThree,expectedRevision:'2'});
+  expect(await refusal({action:'complete',...ownedThree,expectedRevision:'3',itemId:'lesson-a'})).toMatchObject({category:'conflict',reason:'program_not_active'});
+ });
+ it('an unknown conflict and an unavailable service carry no reason at all',async()=>{
+  const failing:ClinicalCoreDatabase={transaction:async()=>{throw new ClinicalCoreDatabaseRejection('conflict');}};
+  const unavailable:ClinicalCoreDatabase={transaction:async()=>{throw new Error('socket hang up');}};
+  const generic=await createProgramAssignments(failing)(context(),{action:'list'}).catch((e:unknown)=>e);
+  expect(generic).toMatchObject({category:'conflict'});expect((generic as ProgramAssignmentError).reason).toBeUndefined();
+  const down=await createProgramAssignments(unavailable)(context(),{action:'list'}).catch((e:unknown)=>e);
+  expect(down).toMatchObject({category:'service_unavailable'});expect((down as ProgramAssignmentError).reason).toBeUndefined();
+  expect(JSON.stringify(down)).not.toContain('socket');
+ });
+});
 
 describe('program assignment service: real adapter and PostgreSQL, not hosted AWS',()=>{
  it('carries a published version through assignment, review, tasks, check-in and clinic status',async()=>{

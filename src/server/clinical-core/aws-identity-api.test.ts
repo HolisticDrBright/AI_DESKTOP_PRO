@@ -16,6 +16,26 @@ const CONSUMER_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_C
 const WORKFORCE_AUD = "workforceclient000000000000";
 const CONSUMER_AUD = "consumerclient0000000000000";
 
+describe('program refusal reasons on the HTTP boundary',()=>{
+ function setup(rejection:ClinicalCoreDatabaseRejection){
+  const query=vi.fn(async(sql:string)=>{if(/program_assignment_request/.test(sql))throw rejection;return {rows:[]};});
+  const database:ClinicalCoreDatabase={transaction:work=>work({query:query as ClinicalCoreTransaction['query']})};
+  return createAwsIdentityApiHandler({database,adapter:adapter(),configuration:{workforceIssuer:WORKFORCE_ISSUER,
+   workforceAudience:WORKFORCE_AUD,consumerIssuer:CONSUMER_ISSUER,consumerAudience:CONSUMER_AUD}});
+ }
+ const pause={action:'pause',enrollmentId:ARTIFACT,sourceDigest:'a'.repeat(64),expectedRevision:'1'};
+ test('a 409 names the allow-listed rule and nothing else; a bare conflict and a refusal carry no reason',async()=>{
+  const named=await setup(new ClinicalCoreDatabaseRejection('conflict','program_check_in_required'))(event('POST /clinical-core/consumer/programs','consumer',pause,{exp:Date.now()/1000+60}));
+  expect(named.statusCode).toBe(409);expect(JSON.parse(named.body)).toEqual({error:'conflict',reason:'program_check_in_required'});
+  const bare=await setup(new ClinicalCoreDatabaseRejection('conflict'))(event('POST /clinical-core/consumer/programs','consumer',pause,{exp:Date.now()/1000+60}));
+  expect(bare.statusCode).toBe(409);expect(JSON.parse(bare.body)).toEqual({error:'conflict'});
+  const refused=await setup(new ClinicalCoreDatabaseRejection('operation_refused','program_check_in_required'))(event('POST /clinical-core/consumer/programs','consumer',pause,{exp:Date.now()/1000+60}));
+  expect(refused.statusCode).toBe(403);expect(JSON.parse(refused.body)).toEqual({error:'identity_refused'});
+  const unlisted=await setup(new ClinicalCoreDatabaseRejection('conflict','drop table programs'))(event('POST /clinical-core/consumer/programs','consumer',pause,{exp:Date.now()/1000+60}));
+  expect(JSON.parse(unlisted.body)).toEqual({error:'conflict'});
+ });
+});
+
 describe('synthetic erasure intent recovery API source routing',()=>{
  function setup(data:unknown){
   const query=vi.fn(async()=>({rows:[{data}]}));

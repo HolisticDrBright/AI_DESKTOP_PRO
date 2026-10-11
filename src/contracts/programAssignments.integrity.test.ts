@@ -82,3 +82,29 @@ describe('program response integrity with fictional content only',()=>{
   expect(()=>parseProgramAssignmentResponse({action:'programs'},{action:'programs',programs:[program]})).toThrow();
  });
 });
+
+describe('program item education fields (program-item-education/1) are additive', () => {
+  const enrollmentId = '11111111-1111-4111-8111-111111111111', when = '2026-10-08T12:00:00Z';
+  const base = () => ({ action: 'read', assignment: { enrollmentId, title: 'Fictional guide', state: 'active', revision: '2', sourceDigest: 'a'.repeat(64), programVersion: '1', phaseIndex: 0, finished: false, startedAt: when, phaseStartedAt: when,
+    phases: [{ id: 'phase-a', title: 'Fictional phase', days: 7, transition: 'scheduled', items: [{ id: 'lesson-a', title: 'Fictional lesson', kind: 'lesson', instructions: 'Fictional education', released: true }] }] },
+    completed: [] as string[], review: { planRevision: 'fictional-1', inventoryComplete: false, add: ['lesson-a'], duplicate: [] as string[], held: [] as string[], conflicts: [] as string[] }, authorizations: [] as { phaseId: string; kind: string }[] });
+  const readInput = { action: 'read' as const, enrollmentId };
+  it('an item without them parses as before, and one with them parses with them intact', () => {
+    expect(parseProgramAssignmentResponse(readInput, base()).action).toBe('read');
+    const educated = base(); Object.assign(educated.assignment.phases[0]!.items[0]!, { rationale: 'Fictional reason', sources: [{ title: 'Fictional source', url: 'https://education.example.com/a' }],
+      media: [{ kind: 'video', url: 'https://media.example.com/a.mp4', caption: 'Fictional' }, { kind: 'image', url: 'https://media.example.com/a.png' }], authorship: 'practitioner_authored' });
+    const parsed = parseProgramAssignmentResponse(readInput, educated);
+    expect(parsed.action === 'read' && parsed.assignment.phases[0]!.items[0]).toMatchObject({ rationale: 'Fictional reason', authorship: 'practitioner_authored' });
+  });
+  it.each([
+    ['an insecure source', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { sources: [{ title: 'x', url: 'http://education.example.com/a' }] }); }],
+    ['a credential-bearing media url', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { media: [{ kind: 'video', url: 'https://user:secret@media.example.com/a' }] }); }],
+    ['an unknown media kind', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { media: [{ kind: 'audio', url: 'https://media.example.com/a' }] }); }],
+    ['an invented authorship', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { authorship: 'clinically_approved' }); }],
+    ['an oversize rationale', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { rationale: 'x'.repeat(1001) }); }],
+    ['an unknown field beside them', (v: ReturnType<typeof base>) => { Object.assign(v.assignment.phases[0]!.items[0]!, { dosingAdvice: 'take two' }); }],
+  ])('refuses %s', (_name, mutate) => {
+    const value = base(); mutate(value);
+    expect(() => parseProgramAssignmentResponse(readInput, value)).toThrow();
+  });
+});

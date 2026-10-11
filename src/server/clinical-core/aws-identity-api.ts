@@ -822,7 +822,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       }
       if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
         ||error instanceof CareDataError) {
-        return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+        // A program conflict names which rule refused it when that rule is in the consumer app's closed vocabulary.
+        const reason=error instanceof ProgramAssignmentError&&error.category==="conflict"&&error.reason?{reason:error.reason}:{};
+        return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category,...reason});
       }
       if(error instanceof ConsultRetentionError) {
         const status=error.category==="identity_refused"||error.category==="operation_refused"?403

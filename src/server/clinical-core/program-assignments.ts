@@ -1,4 +1,4 @@
-import {programAssignmentRequest,parseProgramAssignmentResponse,type ProgramAssignmentRequest,type ProgramAssignmentResponse} from '../../contracts/programAssignments';
+import {programAssignmentRequest,parseProgramAssignmentResponse,PROGRAM_REFUSAL_REASONS,type ProgramAssignmentRequest,type ProgramAssignmentResponse,type ProgramRefusalReason} from '../../contracts/programAssignments';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
 import type {ClinicalRequestContext} from './aws-identity-consent';
 /**
@@ -7,7 +7,9 @@ import type {ClinicalRequestContext} from './aws-identity-consent';
  * that is not bound to what was asked.
  */
 export class ProgramAssignmentError extends Error {
- constructor(readonly category:'request_invalid'|'identity_refused'|'conflict'|'service_unavailable') {super(category);}
+ /** `reason` names which program rule refused a conflict, from the closed allow-list the consumer app understands;
+  * a conflict the list does not cover stays a bare conflict. Never SQL text, identifiers or raw messages. */
+ constructor(readonly category:'request_invalid'|'identity_refused'|'conflict'|'service_unavailable',readonly reason?:ProgramRefusalReason) {super(category);}
 }
 const CONSUMER_ONLY=new Set(['list','read','accept','complete','check_in','advance','pause','resume','withdraw']);
 const WORKFORCE_ONLY=new Set(['assign','status','release','connections','programs','preview']);
@@ -28,7 +30,10 @@ export function createProgramAssignments(database:ClinicalCoreDatabase) {
    const raw=result.rows[0]?.data;
    return parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw);
   });}catch(error){
-   if(error instanceof ClinicalCoreDatabaseRejection)throw new ProgramAssignmentError(error.category==='conflict'?'conflict':error.category==='request_invalid'?'request_invalid':'identity_refused');
+   if(error instanceof ClinicalCoreDatabaseRejection){
+    const reason=error.category==='conflict'&&(PROGRAM_REFUSAL_REASONS as readonly string[]).includes(error.reason??'')?error.reason as ProgramRefusalReason:undefined;
+    throw new ProgramAssignmentError(error.category==='conflict'?'conflict':error.category==='request_invalid'?'request_invalid':'identity_refused',reason);
+   }
    throw new ProgramAssignmentError('service_unavailable');
   }
  };
