@@ -55,6 +55,8 @@ jobs:
           npm run build:telehealth-consent-copy-candidate
       - name: Exact chart and clinic host successor assemblies (fictional database only)
         run: |
+          npm run test:telehealth-transfer-authority-candidate
+          npm run build:telehealth-transfer-authority-candidate
           npm run test:telehealth-chart-lifecycle-candidate
           npm run test:zoom-host-authority-candidate
           npm run build:zoom-host-authority-candidate
