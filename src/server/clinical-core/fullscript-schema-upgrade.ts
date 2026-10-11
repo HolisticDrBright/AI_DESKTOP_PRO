@@ -114,9 +114,9 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[]) {
       'triggers',(select jsonb_agg(jsonb_build_object('enabled',t.tgenabled,'internal',t.tgisinternal,'def',pg_get_triggerdef(t.oid)) order by t.tgname)
         from pg_trigger t where t.tgrelid=c.oid and not(t.tgisinternal and exists(select 1 from pg_constraint k
           where k.oid=t.tgconstraint and k.conrelid in (select cl.oid from pg_class cl join pg_namespace ns on ns.oid=cl.relnamespace
-            where ns.nspname||'.'||cl.relname=any($2::text[])))))
+            where ns.nspname||'.'||cl.relname in (select jsonb_array_elements_text($2::jsonb))))))
     )::text,'UTF8')),'hex') digest from jsonb_array_elements_text($1::jsonb) selected(name)
-    join pg_class c on c.oid=selected.name::regclass order by selected.name`, [JSON.stringify(names), addedTables])).rows;
+    join pg_class c on c.oid=selected.name::regclass order by selected.name`, [JSON.stringify(names), JSON.stringify(addedTables)])).rows;
   const r = (await tx.query<{ digest: string }>(`select encode(sha256(convert_to(jsonb_build_object(
     'functions',(select jsonb_agg(jsonb_build_object('name',p.oid::regprocedure::text,'def',pg_get_functiondef(p.oid),
       'owner',p.proowner::regrole::text,'acl',coalesce(p.proacl,acldefault('f',p.proowner))::text) order by n.nspname,p.proname,p.oid::regprocedure::text)
@@ -140,7 +140,8 @@ async function schema(tx: ClinicalCoreTransaction, tables: Table[]) {
       ('clinical_core','clinical_private','clinical_audit','clinical_reference','commercial_reference') and c.relkind not in ('r','i','t')),
     'default_acl',(select jsonb_agg(to_jsonb(d)-'oid' order by d.defaclrole,d.defaclnamespace,d.defaclobjtype) from pg_default_acl d),
     'roles',(select jsonb_agg(to_jsonb(r) order by r.oid) from pg_roles r where rolname<>'fullscript_draft_worker'),
-    'memberships',(select jsonb_agg(to_jsonb(m) order by m.roleid,m.member,m.grantor) from pg_auth_members m)
+    'memberships',(select jsonb_agg(to_jsonb(m) order by m.roleid,m.member,m.grantor) from pg_auth_members m
+      where m.roleid<>coalesce((select oid from pg_roles where rolname='fullscript_draft_worker'),0::oid))
   )::text,'UTF8')),'hex') digest`)).rows[0];
   if (tableRows.length!==names.length || tableRows.some(r=>!/^[a-f0-9]{64}$/.test(r.digest)) || !r || !/^[a-f0-9]{64}$/.test(r.digest)) fail('verification_failed');
   return sha(JSON.stringify({ tables: tableRows, global: r.digest }));
@@ -149,12 +150,22 @@ const addedTables = ['clinical_audit.fullscript_consent_events','clinical_audit.
   'fullscript_delivery.authority_releases','fullscript_delivery.draft_events','fullscript_delivery.draft_intents',
   'fullscript_delivery.external_consents','fullscript_delivery.protocol_manifests','fullscript_delivery.recipient_holds'];
 async function extensions(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
+  // The original 107/108 -> 111 admission still requires unused extension
+  // tables. Later preserving upgrades may validate this same schema without
+  // treating legitimate recipient holds or provider rows as corruption.
+  const tables = (await tx.query<Table>(careErasurePreservation.tableQuery.replace("'commercial_reference'", "'commercial_reference','fullscript_delivery'"))).rows;
+  const empty = await careErasurePreservation.fingerprint(tx,tables.filter(t=>addedTables.includes(careErasurePreservation.tableName(t))));
+  if (empty.rows!==0) fail('verification_failed');
+  await verifyFullscriptExtensionSchema(tx,m);
+}
+/** Read-only canonical 111 extension validation. Does not admit a migration,
+ * certify empty tables, or approve any provider/consent/activation row. */
+export async function verifyFullscriptExtensionSchema(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
+  await verifyFullscriptWorkerMemberships(tx);
   const rows = (await tx.query<Table>(careErasurePreservation.tableQuery.replace("'commercial_reference'", "'commercial_reference','fullscript_delivery'"))).rows;
   const added = rows.filter(t=>addedTables.includes(careErasurePreservation.tableName(t)));
   if (rows.length!==217 || added.length!==8 || added.some(t=>t.kind!=='r'
     || t.rls!==!['draft_events','draft_intents'].includes(t.table_name) || t.forced!==t.rls)) fail('verification_failed');
-  const empty = await careErasurePreservation.fingerprint(tx,added);
-  if (empty.rows!==0) fail('verification_failed');
   const shape=(await tx.query<{digest:string}>(`select encode(sha256(convert_to(coalesce(jsonb_agg(jsonb_build_object(
     'name',selected.name,'kind',c.relkind,'rls',c.relrowsecurity,'forced',c.relforcerowsecurity,
     'columns',(select jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),
@@ -209,6 +220,26 @@ async function extensions(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[
     and not has_table_privilege('fullscript_draft_worker','fullscript_delivery.draft_intents','DELETE')
     and has_function_privilege('fullscript_draft_worker','fullscript_delivery.migration_ledger()','EXECUTE') as safe`)).rows[0];
   if (r?.safe!==true) fail('verification_failed');
+}
+/** PostgreSQL 17 grants a non-superuser CREATEROLE creator ADMIN, but neither
+ * INHERIT nor SET, on its new role, attributed to the bootstrap superuser.
+ * This is new-extension metadata, not a mutation of a historical role. Only
+ * that exact automatic edge is permitted; historical memberships remain in
+ * the preservation fingerprint. No grant is issued or repaired here. */
+export async function verifyFullscriptWorkerMemberships(tx: ClinicalCoreTransaction) {
+  const result=(await tx.query<{safe:boolean}>(`select
+    exists(select 1 from pg_roles where rolname='fullscript_draft_worker')
+    and (select count(*) from pg_auth_members m
+      where m.roleid=(select oid from pg_roles where rolname='fullscript_draft_worker')
+        or m.member=(select oid from pg_roles where rolname='fullscript_draft_worker'))<=1
+    and not exists(select 1 from pg_auth_members m
+      where (m.roleid=(select oid from pg_roles where rolname='fullscript_draft_worker')
+        or m.member=(select oid from pg_roles where rolname='fullscript_draft_worker'))
+      and not (m.roleid=(select oid from pg_roles where rolname='fullscript_draft_worker')
+        and m.member=(select oid from pg_roles where rolname=current_user)
+        and m.grantor=10::oid and exists(select 1 from pg_roles where oid=10 and rolsuper)
+        and m.admin_option and not m.inherit_option and not m.set_option)) as safe`)).rows[0];
+  if(result?.safe!==true)throw new FullscriptUpgradeError('verification_failed','extension_worker_memberships');
 }
 class Rehearsal extends Error { constructor(readonly before: FullscriptUpgradeObservation) { super('rollback_rehearsal'); } }
 /** Source-only engine. Native STS/stack/review binding must wrap this before an

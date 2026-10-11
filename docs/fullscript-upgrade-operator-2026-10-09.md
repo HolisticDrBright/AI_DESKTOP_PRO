@@ -125,3 +125,23 @@ target loader, published version, restricted IAM and provider sandbox workflows,
 including privacy/holds/retention and OAuth settlement. All six original launch
 phases, matched releases, physical-device checks and actual policy/provider reviews
 remain incomplete. No paid mobile build or real patient-data activation is implied.
+
+## October 10 transport refusal and repair
+
+The first read-only AWS inspection of the clean `48fb320` operator refused at
+`before_evidence`, before any upgrade or writer admission. A new regression
+using the real Data API parameter encoder reproduces it: PGlite accepted a
+JavaScript array parameter that the AWS encoder refuses. The telehealth
+successor had the same problem in its schema inventory and global fingerprint.
+
+Both operators now pass those fixed internal lists as JSON strings and expand
+them in SQL. The allowed names, comparison semantics and safety gates are
+unchanged; no general array support or fallback is added to the transport.
+The two transport-aware read tests failed before the repair. After it, the
+combined real-SQL upgrade and operator group passed 61 tests in four files,
+with typecheck and targeted lint passing. This is not a hosted success.
+
+The repair changes compiled operator bytes. Brandon Bright's earlier approval
+of the exact `48fb320` builds is retained as history and does not authorize
+replacement artifacts. New build digests need a fresh review before rehearsal
+or migration. No migration, approval row, consent copy or grant was written.

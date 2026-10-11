@@ -7,8 +7,9 @@ import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
 import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
-import { FULLSCRIPT_UPGRADE, runFullscriptSchemaUpgrade } from './fullscript-schema-upgrade';
+import { FULLSCRIPT_UPGRADE, runFullscriptSchemaUpgrade, verifyFullscriptWorkerMemberships } from './fullscript-schema-upgrade';
 import {verifyFullscriptUpgradeObservation} from './fullscript-upgrade-command';
+import { bindParameters } from './rds-data-database';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 let pg:PGlite,m:ClinicalCoreMigration[];
@@ -21,6 +22,9 @@ type Intercept=(sql:string,tx:{query:(sql:string,args?:unknown[])=>Promise<unkno
 // triggers, checks, fingerprints, transactions and rollback are real SQL.
 const database=(intercept?:Intercept,name='clinical_core_qualification'):ClinicalCoreDatabase=>({transaction:work=>pg.transaction(async tx=>work({
   query:async(sql,args=[])=>{
+    // Exercise the real Data API parameter encoder before embedded SQL.
+    // PGlite alone accepts arrays that the AWS transport refuses.
+    bindParameters(sql,args);
     if(intercept)await intercept(sql,tx);
     if(sql==='select current_database() as name')return {rows:[{name}]};
     return tx.query(sql,[...args]);
@@ -132,9 +136,42 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
   it('rejects an unintended role grant and preserves historical memberships',async()=>{
     await expect(runFullscriptSchemaUpgrade(database(async(sql,tx)=>{
       if(sql.includes('grant usage on schema fullscript_delivery'))await tx.query('grant fullscript_draft_worker to clinical_core_api');
-    }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'after_schema'});
+    }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'extension_worker_memberships'});
     await absent();
   },30000);
+  it.each([
+    'grant fullscript_draft_worker to postgres with admin false, inherit false, set false',
+    'grant fullscript_draft_worker to postgres with admin true, inherit true, set false',
+    'grant fullscript_draft_worker to postgres with admin true, inherit false, set true',
+    'grant fullscript_draft_worker to clinical_core_api with admin true, inherit false, set false',
+    'grant clinical_core_api to fullscript_draft_worker with inherit false, set false',
+  ])('validates new-role edges independently of historical metadata: %s',async grant=>{
+    // A fresh rollback-only role exercises actual pg_auth_members and query
+    // semantics. These widened edges are never treated as automatic grants.
+    await expect(pg.transaction(async tx=>{
+      await tx.exec('create role fullscript_draft_worker nologin');
+      await tx.exec(grant);
+      await verifyFullscriptWorkerMemberships(tx as ClinicalCoreTransaction);
+    })).rejects.toMatchObject({category:'verification_failed',stage:'extension_worker_memberships'});
+    await absent();
+  });
+  it('accepts no membership on a superuser-created extension role, without creating a grant',async()=>{
+    await expect(pg.transaction(async tx=>{
+      await tx.exec('create role fullscript_draft_worker nologin');
+      await verifyFullscriptWorkerMemberships(tx as ClinicalCoreTransaction);
+      throw Error('fictional_membership_rollback');
+    })).rejects.toThrow('fictional_membership_rollback');
+    await absent();
+  });
+  it('accepts only the exact bootstrap-granted ADMIN-only edge and rolls the fixture back',async()=>{
+    await expect(pg.transaction(async tx=>{
+      await tx.exec('create role fullscript_draft_worker nologin');
+      await tx.exec('grant fullscript_draft_worker to postgres with admin true, inherit false, set false');
+      await verifyFullscriptWorkerMemberships(tx as ClinicalCoreTransaction);
+      throw Error('fictional_membership_rollback');
+    })).rejects.toThrow('fictional_membership_rollback');
+    await absent();
+  });
   it('rejects new table shape drift rather than verifying only names and counts',async()=>{
     await expect(runFullscriptSchemaUpgrade(database(async(sql,tx)=>{
       if(sql.includes('grant select,insert,update on fullscript_delivery.draft_intents'))
