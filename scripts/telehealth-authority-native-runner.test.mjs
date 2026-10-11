@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 const script = new URL('./qualify-telehealth-authority-native.mjs', import.meta.url);
 for (const [name, args] of [
   ['external database', ['--database-url', 'https://fictional.invalid']],
@@ -10,7 +11,7 @@ for (const [name, args] of [
   ['source substitution', ['--source-commit', 'a'.repeat(40)]],
   ['relative binaries', ['--binary-directory', 'bin', '--driver-directory', 'driver']],
 ]) test('native runner refuses ' + name + ' before spawning a service', () => {
-  const r = spawnSync(process.execPath, [script.pathname.replace(/^\/([A-Z]:)/, '$1'), ...args],
+  const r = spawnSync(process.execPath, [fileURLToPath(script), ...args],
     { encoding: 'utf8', timeout: 5000, windowsHide: true });
   assert.equal(r.status, 1); assert.match(r.stderr, /telehealth_authority_native_arguments_refused/);
 });

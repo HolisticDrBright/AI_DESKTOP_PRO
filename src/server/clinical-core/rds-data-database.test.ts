@@ -340,6 +340,7 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["consult_retention_immutable", "operation_refused"],
     ["telehealth_admission_refused", "identity_refused"],
     ["telehealth_admission_mismatch", "identity_refused"],
+    ["telehealth_current_authority_refused", "identity_refused"],
     ["telehealth_transfer_refused", "identity_refused"],
     ["appointment_patient_identity_immutable", "identity_refused"],
     ["telehealth_transfer_invalid", "request_invalid"],

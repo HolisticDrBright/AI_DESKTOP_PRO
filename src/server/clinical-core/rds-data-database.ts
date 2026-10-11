@@ -235,7 +235,7 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   // Chart transfer of a telehealth note: an unadmitted, forged, substituted or
   // foreign source is a refusal; a changed source is a decided conflict; a chart
   // with no registered admission key refuses the operation rather than failing.
-  if (/\b(telehealth_admission_refused|telehealth_admission_mismatch|telehealth_transfer_refused|appointment_patient_identity_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(telehealth_admission_refused|telehealth_admission_mismatch|telehealth_current_authority_refused|telehealth_transfer_refused|appointment_patient_identity_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(telehealth_transfer_invalid|telehealth_transfer_id_reused|appointment_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\btelehealth_transfer_source_changed\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   // Clinic-record privacy requests: refusals, conflicts and the disclosure

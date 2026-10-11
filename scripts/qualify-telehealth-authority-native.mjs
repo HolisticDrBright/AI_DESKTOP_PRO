@@ -44,7 +44,7 @@ const data = join(directory, 'cluster'), passwordFile = join(directory, 'bootstr
 const password = randomBytes(32).toString('hex'), ownerPassword = randomBytes(32).toString('hex');
 const database = 'alp_owner_source_' + randomUUID().replaceAll('-', '');
 writeFileSync(passwordFile, password + '\n', { flag: 'wx', mode: 0o600 });
-let started = false, admin, compiler, blocker, actor, revoker, configuration, report, artifact, stage = 'bootstrap';
+let started = false, admin, compiler, blocker, actor, peer, revoker, configuration, report, artifact, stage = 'bootstrap';
 const results = [];
 const transferSql = 'select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as result';
 async function fixture() {
@@ -59,9 +59,9 @@ async function fixture() {
   await admin.query('insert into clinical_private.telehealth_admission_keys(key_id,secret) values($1,$2)', [key.id, key.bytes]);
   return { org, practitioner, patient, appointment, key };
 }
-async function context(f) {
-  await actor.query('begin'); await actor.query('set local role clinical_core_api');
-  await actor.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','production-clinical','clinical_phi')", [f.practitioner, f.org, 'subject-' + f.practitioner]);
+async function context(f, connection = actor) {
+  await connection.query('begin'); await connection.query('set local role clinical_core_api');
+  await connection.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','production-clinical','clinical_phi')", [f.practitioner, f.org, 'subject-' + f.practitioner]);
 }
 async function admitted(f, expires = 60000) {
   const now = (await admin.query('select clock_timestamp() as at')).rows[0].at.getTime();
@@ -209,6 +209,35 @@ async function admittedBeforeRevocation(action) {
       && !retry.accepted && allowed.test(retry.marker ?? '') && canonical(afterCommit) === canonical(afterRetry) });
 }
 
+async function concurrentReplay() {
+  const f = await fixture(), first = await admitted(f), second = await admitted(f);
+  await context(f);
+  const writerPid = (await actor.query('select pg_backend_pid() pid')).rows[0].pid;
+  const written = (await actor.query(transferSql, first.args)).rows[0].result;
+  await context(f, peer);
+  const peerPid = (await peer.query('select pg_backend_pid() pid')).rows[0].pid;
+  const pending = peer.query(transferSql, second.args).then(value => ({ accepted: true, value: value.rows[0].result }),
+    error => ({ accepted: false, code: error.code }));
+  const observedLock = await waitForBlocked(peerPid);
+  const blockedByWriter = (await admin.query('select pg_blocking_pids($1) pids', [peerPid])).rows[0].pids.includes(writerPid);
+  await actor.query('commit');
+  const repeated = await pending;
+  await peer.query(repeated.accepted ? 'commit' : 'rollback');
+  const after = await counts(f);
+  results.push({ id: 'concurrent_replay_one_destination', observedLock, blockedByWriter, accepted: repeated.accepted,
+    created: repeated.value?.created ?? null, after,
+    passed: observedLock === 'advisory' && blockedByWriter && written.created === true && repeated.accepted
+      && repeated.value.created === false && written.transfer_id === repeated.value.transfer_id
+      && written.note_id === repeated.value.note_id && after.transfers === 1 && after.notes === 1 && after.encounters === 1 });
+  await context(f);
+  const replayed = (await actor.query(transferSql, first.args)).rows[0].result;
+  await actor.query('commit');
+  const afterReplay = await counts(f);
+  results.push({ id: 'exact_replay_same_destination', created: replayed.created, after: afterReplay,
+    passed: replayed.created === false && replayed.transfer_id === written.transfer_id && replayed.note_id === written.note_id
+      && canonical(afterReplay) === canonical(after) });
+}
+
 try {
   run('initdb', ['-D', data, '-U', 'postgres', '--encoding=UTF8', '--locale=C', '--auth=scram-sha-256', '--pwfile=' + passwordFile, '--data-checksums']);
   unlinkSync(passwordFile);
@@ -243,7 +272,8 @@ try {
   // and SET LOCAL clinical_core_api; managed Aurora semantics remain unproven.
   admin = new Client(configuration); blocker = new Client(configuration); revoker = new Client(configuration);
   actor = new Client(ownerConfiguration);
-  await admin.connect(); await blocker.connect(); await revoker.connect(); await actor.connect();
+  peer = new Client(ownerConfiguration);
+  await admin.connect(); await blocker.connect(); await revoker.connect(); await actor.connect(); await peer.connect();
   stage = 'private_api_denials';
   for (const table of ['clinical_private.telehealth_admission_keys', 'clinical_core.telehealth_note_transfers']) {
     await actor.query('begin'); await actor.query('set local role clinical_core_api');
@@ -272,6 +302,7 @@ try {
   await admittedBeforeRevocation('identity');
   await admittedBeforeRevocation('person');
   await admittedBeforeRevocation('organization');
+  await concurrentReplay();
   report = { contract: 'telehealth-authority-native-source/1', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
@@ -289,7 +320,7 @@ try {
     failure: /^[a-z_]+$/.test(error?.message ?? '') ? error.message : 'native_source_run_failed', results,
     phiAllowed: false, activation: 'blocked', upgradeAuthorized: false, providerAuthorized: false };
 } finally {
-  for (const connection of [actor, blocker, revoker, compiler, admin]) if (connection) await connection.end().catch(() => {});
+  for (const connection of [actor, peer, blocker, revoker, compiler, admin]) if (connection) await connection.end().catch(() => {});
   if (started) {
     const status = spawnSync(join(bin, 'pg_ctl.exe'), ['-D', data, 'status'], { env: childEnv, encoding: 'utf8', timeout: 10000, windowsHide: true });
     if (!status.error && status.status === 0) run('pg_ctl', ['-D', data, '-w', '-t', '30', '-m', 'fast', 'stop']);
