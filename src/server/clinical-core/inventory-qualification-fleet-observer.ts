@@ -32,11 +32,25 @@ export async function observeInventoryQualificationFleet(args: string[]) {
     // database credential. Conflicting keys are refused, never first-wins.
     const keys = [...new Set(target.candidates.map(c => c.parameters.SecretKmsKeyArn).filter(k => k !== undefined))];
     if (keys.length !== 1) return inventoryRefuse('fleet_database_key_binding_refused');
+    const separated = target.contract === 'inventory-qualification-target/2', credentials = target.databaseCredentials;
+    if (!['inventory-qualification-target/1', 'inventory-qualification-target/2'].includes(target.contract)
+      || !separated && base.schemaVersion !== 'aws-clinical-core-qualification-target/3'
+      || separated && (!credentials || base.schemaVersion !== 'aws-clinical-core-qualification-target/4'
+      || !base.operatorDatabaseSecretArn || !base.runtimeCredentialReviewSha256
+      || base.operatorDatabaseSecretArn === base.databaseSecretArn || credentials.apiSecretKmsKeyArn !== keys[0]))
+      return inventoryRefuse('fleet_runtime_credential_binding_refused');
+    // Historical /1 retains its meaning. /2 never falls back when operator
+    // authority is absent; request candidates remain bound to the API secret.
+    const operatorSecret = separated ? base.operatorDatabaseSecretArn! : base.databaseSecretArn;
     const foundationBinding = { foundationStackName: base.foundationStackName, databaseClusterArn: base.databaseClusterArn,
-      databaseSecretArn: base.databaseSecretArn, apiId: base.apiId, apiOrigin: base.apiOrigin,
-      artifactBucket: target.artifactBucket, exportBucket: base.exportBucket };
-    const databaseBinding = { databaseClusterArn: base.databaseClusterArn, databaseSecretArn: base.databaseSecretArn, secretKmsKeyArn: keys[0] };
-    const ledgerBinding = { DatabaseName: base.databaseName, DatabaseClusterArn: base.databaseClusterArn, DatabaseSecretArn: base.databaseSecretArn };
+      databaseSecretArn: operatorSecret, apiId: base.apiId, apiOrigin: base.apiOrigin,
+      artifactBucket: target.artifactBucket, exportBucket: base.exportBucket,
+      ...(separated ? { runtimeCredentials: { apiSecretArn: base.databaseSecretArn,
+        fullscriptWorkerSecretArn: credentials!.fullscriptWorkerDatabaseSecretArn, reviewSha256: base.runtimeCredentialReviewSha256! } } : {}) };
+    const databaseBinding = { databaseClusterArn: base.databaseClusterArn, databaseSecretArn: operatorSecret,
+      secretKmsKeyArn: separated ? credentials!.operatorSecretKmsKeyArn : keys[0],
+      ...(separated ? { clusterKmsKeyArn: credentials!.clusterKmsKeyArn } : {}) };
+    const ledgerBinding = { DatabaseName: base.databaseName, DatabaseClusterArn: base.databaseClusterArn, DatabaseSecretArn: operatorSecret };
     const identityBinding = { identity: target.identity, organizationId: target.organizationId,
       subjects: { consumer: base.identitySubjects.consumer, foreignConsumer: base.identitySubjects.foreignConsumer,
         workforce: base.identitySubjects.workforce } };
@@ -70,7 +84,7 @@ export async function observeInventoryQualificationFleet(args: string[]) {
     const first = await pass(), final = await pass();
     if (inventoryCanonical(first) !== inventoryCanonical(final)) return inventoryRefuse('fleet_observation_changed');
     prepared.assertUnchanged();
-    return { contract: 'inventory-qualification-fleet-observation/1', status: 'not_completed',
+    return { contract: separated ? 'inventory-qualification-fleet-observation/2' : 'inventory-qualification-fleet-observation/1', status: 'not_completed',
       observationScope: 'source_foundation_database_metadata_cognito_configuration_designated_synthetic_subjects_database_identity_authority_candidate_services_code_api_ledger',
       sourceCommit: source.sourceCommit, sourceInputSha256: source.sourceInputSha256, buildManifestSha256: artifacts.manifestSha256,
       targetSha256, observationSha256: inventorySha(inventoryCanonical(first)), passes: 2,
@@ -78,11 +92,13 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       observedResourcePlane: true, successorLedgerObserved: true,
       identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: true,
       databaseIdentityAuthorityVerified: true,
+      runtimeCredentialsQualified: false,
       // Deliberately NOT a qualification/acceptance verdict. Remove a remaining
       // gate only after engineering an independent observation for that scope.
       identityDependenciesVerified: false, networkVerified: false, providerDependenciesVerified: false,
       liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false,
-      remaining: ['retention-service authority, real sign-in and network/external provider dependency observations',
+      remaining: ['runtime secret contents, effective login/grants, API/worker secret encryption and rotation qualification',
+        'retention-service authority, real sign-in and network/external provider dependency observations',
         'real interrupted custody and preservation qualification', 'runtime hosted acceptance',
         'matched releases and physical devices', 'human reviews and provider/policy approvals'] };
   } finally { prepared.dispose(); }

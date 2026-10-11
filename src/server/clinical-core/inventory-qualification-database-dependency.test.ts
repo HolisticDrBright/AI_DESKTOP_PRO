@@ -38,6 +38,37 @@ it('binds RDS-managed secret and customer encryption with repeated read-only met
   for (const flag of ['identityDependenciesVerified', 'networkVerified', 'keyPolicyReviewed', 'wholeLedgerVerified', 'preservationVerified',
     'liveFleetVerified', 'acceptance', 'humanReviewsVerified', 'phiAllowed', 'mutations'] as const) expect(report[flag]).toBe(false);
 });
+
+it('observes independent cluster and operator-secret keys without equating storage encryption with credential encryption', async () => {
+  const f = fixture();
+  const clusterKmsKeyArn = f.binding.secretKmsKeyArn.replace('11111111', '22222222');
+  obj((obj(f.responses['rds/describe-db-clusters']).DBClusters as Row[])[0]).KmsKeyId = clusterKmsKeyArn;
+  const read: InventoryServiceRead = async (s, o, p) => {
+    const value = await f.read(s, o, p);
+    if (s === 'kms' && p.KeyId === clusterKmsKeyArn) {
+      if (o === 'describe-key') Object.assign(obj(obj(value).KeyMetadata), { Arn: clusterKmsKeyArn, KeyId: clusterKmsKeyArn.split('/')[1] });
+      if (o === 'get-key-rotation-status') obj(value).KeyId = clusterKmsKeyArn;
+    }
+    return value;
+  };
+  const report = await observeInventoryDatabaseDependency({ ...f.binding, clusterKmsKeyArn }, read);
+  expect(report).toMatchObject({ contract: 'inventory-qualification-database-dependency/2', databaseCredentialBindingVerified: true,
+    customerEncryptionBindingVerified: true, runtimeCredentialsQualified: false, acceptance: false, phiAllowed: false });
+  expect(f.calls.filter(c => c[0] === 'kms' && c[1] === 'describe-key').map(c => c[2].KeyId)).toEqual([
+    f.binding.secretKmsKeyArn, clusterKmsKeyArn, f.binding.secretKmsKeyArn, clusterKmsKeyArn]);
+});
+
+it('refuses malformed separate key or array credentials before metadata reads', async () => {
+  const f = fixture();
+  for (const value of [undefined, null, '', 'alias/aws/rds', [f.binding.secretKmsKeyArn], f.binding.secretKmsKeyArn.replace('588966314750', '173535830222')])
+    await expect(observeInventoryDatabaseDependency({ ...f.binding, clusterKmsKeyArn: value } as unknown as InventoryDatabaseDependency, f.read))
+      .rejects.toThrow('database_dependency_binding_refused');
+  await expect(observeInventoryDatabaseDependency({ ...f.binding, databaseSecretArn: [f.binding.databaseSecretArn] } as unknown as InventoryDatabaseDependency, f.read))
+    .rejects.toThrow('database_dependency_binding_refused');
+  await expect(observeInventoryDatabaseDependency({ ...f.binding, secretKmsKeyArn: [f.binding.secretKmsKeyArn] } as unknown as InventoryDatabaseDependency, f.read))
+    .rejects.toThrow('database_dependency_binding_refused');
+  expect(f.calls).toHaveLength(0);
+});
 it('refuses wrong bindings before any AWS read', async () => {
   const f = fixture();
   for (const changed of [{ ...f.binding, databaseClusterArn: f.binding.databaseClusterArn.replace('588966314750', '173535830222') },

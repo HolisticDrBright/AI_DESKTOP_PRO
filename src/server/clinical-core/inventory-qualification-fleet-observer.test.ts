@@ -26,7 +26,8 @@ function fixture() {
     parameters: { SecretKmsKeyArn: 'fictional-customer-key' }, packages: Array.from({ length: n === 0 ? 2 : 1 }, (_, p) =>
       ({ file: `fictional-${n}-${p}.zip` })) }));
   return { source, artifacts: { source, manifestSha256: 'c'.repeat(64), candidates: candidates.map(c => ({ candidate: c.candidate })) },
-    target: { target: { foundationStackName: 'fictional-foundation', databaseClusterArn: 'fictional-cluster', databaseSecretArn: 'fictional-secret',
+    target: { contract: 'inventory-qualification-target/1' as const, target: { schemaVersion: 'aws-clinical-core-qualification-target/3' as const,
+      foundationStackName: 'fictional-foundation', databaseClusterArn: 'fictional-cluster', databaseSecretArn: 'fictional-secret',
       databaseName: 'clinical_core_qualification', apiId: 'fictional-api', apiOrigin: 'fictional-origin', exportBucket: 'fictional-exports',
       identitySubjects: { consumer: 'fictional-consumer', foreignConsumer: 'fictional-foreign', workforce: 'fictional-workforce' } },
     identity: { consumerIssuer: 'fictional-consumer-issuer', consumerAudience: 'fictional-consumer-client',
@@ -90,6 +91,47 @@ it('passes exact shared foundation/database bindings rather than environment ove
     databaseSecretArn: 'fictional-secret', apiId: 'fictional-api', apiOrigin: 'fictional-origin', artifactBucket: 'fictional-code', exportBucket: 'fictional-exports' });
   expect(result.phiAllowed).toBe(false); expect(result.liveFleetVerified).toBe(false); expect(result.acceptance).toBe(false);
 });
+
+it('routes separated fleet administrative reads to the operator and never substitutes the request credential', async () => {
+  const f = fixture();
+  const separated = { ...f, target: { ...f.target, contract: 'inventory-qualification-target/2',
+    target: { ...f.target.target, schemaVersion: 'aws-clinical-core-qualification-target/4',
+      databaseSecretArn: 'fictional-api-secret', operatorDatabaseSecretArn: 'fictional-operator-secret',
+      runtimeCredentialReviewSha256: 'f'.repeat(64) },
+    databaseCredentials: { clusterKmsKeyArn: 'fictional-cluster-key', operatorSecretKmsKeyArn: 'fictional-operator-key',
+      apiSecretKmsKeyArn: 'fictional-customer-key', fullscriptWorkerDatabaseSecretArn: 'fictional-worker-secret',
+      fullscriptWorkerSecretKmsKeyArn: 'fictional-worker-key' } } };
+  state.prepare.mockReturnValue(separated);
+  const result = await observeInventoryQualificationFleet(args);
+  expect(state.foundation).toHaveBeenCalledWith({ foundationStackName: 'fictional-foundation', databaseClusterArn: 'fictional-cluster',
+    databaseSecretArn: 'fictional-operator-secret', apiId: 'fictional-api', apiOrigin: 'fictional-origin',
+    artifactBucket: 'fictional-code', exportBucket: 'fictional-exports', runtimeCredentials: {
+      apiSecretArn: 'fictional-api-secret', fullscriptWorkerSecretArn: 'fictional-worker-secret', reviewSha256: 'f'.repeat(64) } });
+  expect(state.database).toHaveBeenCalledWith({ databaseClusterArn: 'fictional-cluster', databaseSecretArn: 'fictional-operator-secret',
+    secretKmsKeyArn: 'fictional-operator-key', clusterKmsKeyArn: 'fictional-cluster-key' });
+  for (const [binding] of state.ledger.mock.calls) expect(binding.DatabaseSecretArn).toBe('fictional-operator-secret');
+  for (const [binding] of state.databaseIdentity.mock.calls) expect(binding.database.DatabaseSecretArn).toBe('fictional-operator-secret');
+  expect(result).toMatchObject({ contract: 'inventory-qualification-fleet-observation/2', runtimeCredentialsQualified: false,
+    acceptance: false, phiAllowed: false, mutations: false });
+});
+
+for (const mode of ['unknown-contract', 'mixed-legacy', 'missing-operator', 'missing-review', 'missing-credentials', 'wrong-request-key'])
+  it(`refuses ${mode} instead of falling back to request authority`, async () => {
+    const f = fixture();
+    const target: Record<string, unknown> = { ...f.target, contract: 'inventory-qualification-target/2', target: {
+      ...f.target.target, schemaVersion: 'aws-clinical-core-qualification-target/4', databaseSecretArn: 'fictional-api-secret',
+      operatorDatabaseSecretArn: 'fictional-operator-secret', runtimeCredentialReviewSha256: 'f'.repeat(64) },
+      databaseCredentials: { apiSecretKmsKeyArn: 'fictional-customer-key' } };
+    if (mode === 'unknown-contract') target.contract = 'inventory-qualification-target/3';
+    if (mode === 'mixed-legacy') target.contract = 'inventory-qualification-target/1';
+    if (mode === 'missing-operator') delete (target.target as Record<string, unknown>).operatorDatabaseSecretArn;
+    if (mode === 'missing-review') delete (target.target as Record<string, unknown>).runtimeCredentialReviewSha256;
+    if (mode === 'missing-credentials') delete target.databaseCredentials;
+    if (mode === 'wrong-request-key') (target.databaseCredentials as Record<string, unknown>).apiSecretKmsKeyArn = 'foreign';
+    state.prepare.mockReturnValue({ ...f, target });
+    await expect(observeInventoryQualificationFleet(args)).rejects.toThrow('fleet_runtime_credential_binding_refused');
+    expect(state.foundation).not.toHaveBeenCalled(); expect(state.ledger).not.toHaveBeenCalled(); expect(state.dispose).toHaveBeenCalledTimes(1);
+  });
 for (const keyMode of ['missing', 'conflicting']) it(`refuses ${keyMode} database key bindings before AWS`, async () => {
   const f = fixture();
   for (const c of f.target.candidates) c.parameters = keyMode === 'missing' ? {} as typeof c.parameters : c.parameters;

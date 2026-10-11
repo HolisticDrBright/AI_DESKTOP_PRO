@@ -8,9 +8,12 @@ import { inventoryCanonical, inventoryRecord, inventoryRefuse, type InventoryArt
 export type InventoryCodeObject = { file: string; bucket: string; key: string; versionId: string; sha256: string; bytes: number };
 export type InventoryCandidateTarget = { candidate: string; stackName: string; manifestSha256: string; templateSha256: string;
   parameters: Record<string, string>; packages: InventoryCodeObject[] };
-export type InventoryQualificationTarget = { contract: 'inventory-qualification-target/1'; target: QualificationTargetManifest;
+export type InventoryDatabaseCredentials = { clusterKmsKeyArn: string; operatorSecretKmsKeyArn: string; apiSecretKmsKeyArn: string;
+  fullscriptWorkerDatabaseSecretArn: string; fullscriptWorkerSecretKmsKeyArn: string };
+export type InventoryQualificationTarget = { contract: 'inventory-qualification-target/1' | 'inventory-qualification-target/2'; target: QualificationTargetManifest;
   organizationId: string; identity: { consumerIssuer: string; consumerAudience: string; workforceIssuer: string; workforceAudience: string };
-  artifactBucket: string; buildManifestSha256: string; sourceInputSha256: string; reviewSha256: string; candidates: InventoryCandidateTarget[] };
+  artifactBucket: string; buildManifestSha256: string; sourceInputSha256: string; reviewSha256: string; candidates: InventoryCandidateTarget[];
+  databaseCredentials?: InventoryDatabaseCredentials };
 const keys = (v: unknown, names: string[]): Record<string, unknown> => {
   if (!inventoryRecord(v) || Object.keys(v).length !== names.length || names.some(k => !Object.hasOwn(v, k))) return inventoryRefuse('target_shape_refused');
   return v;
@@ -66,11 +69,27 @@ export function inventoryRules(template: InventoryTemplate, parameters: Record<s
 export function validateInventoryQualificationTarget(input: unknown, supplied: InventoryArtifactSet): InventoryQualificationTarget {
   const artifacts = structuredClone(supplied);
   if (!artifacts.source.sourceClean) return inventoryRefuse('target_dirty_source_refused');
-  const v = keys(input, ['contract', 'target', 'organizationId', 'identity', 'artifactBucket', 'buildManifestSha256', 'sourceInputSha256', 'reviewSha256', 'candidates']);
-  if (v.contract !== 'inventory-qualification-target/1') return inventoryRefuse('target_contract_refused');
+  const separated = inventoryRecord(input) && input.contract === 'inventory-qualification-target/2';
+  const v = keys(input, ['contract', 'target', 'organizationId', 'identity', 'artifactBucket', 'buildManifestSha256', 'sourceInputSha256', 'reviewSha256', 'candidates',
+    ...(separated ? ['databaseCredentials'] : [])]);
+  if (!['inventory-qualification-target/1', 'inventory-qualification-target/2'].includes(String(v.contract))) return inventoryRefuse('target_contract_refused');
   const base = validateQualificationTargetManifest(v.target);
-  if (base.schemaVersion !== 'aws-clinical-core-qualification-target/3' || base.awsAccountId !== '588966314750' || base.awsRegion !== 'us-east-2'
+  if (base.schemaVersion !== (separated ? 'aws-clinical-core-qualification-target/4' : 'aws-clinical-core-qualification-target/3')
+    || base.awsAccountId !== '588966314750' || base.awsRegion !== 'us-east-2'
     || base.databaseName !== 'clinical_core_qualification' || base.sourceCommit !== artifacts.source.sourceCommit || base.migrationReleaseHash !== INVENTORY_RELEASE) return inventoryRefuse('target_release_refused');
+  let databaseCredentials: InventoryDatabaseCredentials | undefined;
+  if (separated) {
+    const c = keys(v.databaseCredentials, ['clusterKmsKeyArn', 'operatorSecretKmsKeyArn', 'apiSecretKmsKeyArn',
+      'fullscriptWorkerDatabaseSecretArn', 'fullscriptWorkerSecretKmsKeyArn']);
+    const kms = /^arn:aws:kms:us-east-2:588966314750:key\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+    databaseCredentials = { clusterKmsKeyArn: text(c.clusterKmsKeyArn, kms), operatorSecretKmsKeyArn: text(c.operatorSecretKmsKeyArn, kms),
+      apiSecretKmsKeyArn: text(c.apiSecretKmsKeyArn, kms), fullscriptWorkerSecretKmsKeyArn: text(c.fullscriptWorkerSecretKmsKeyArn, kms),
+      fullscriptWorkerDatabaseSecretArn: text(c.fullscriptWorkerDatabaseSecretArn,
+        /^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp\/qualification\/fullscript-worker-[A-Za-z0-9-]+$/) };
+    if (!/^arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-[A-Za-z0-9-]+$/.test(base.operatorDatabaseSecretArn ?? '')
+      || new Set([base.databaseSecretArn, base.operatorDatabaseSecretArn, databaseCredentials.fullscriptWorkerDatabaseSecretArn]).size !== 3)
+      return inventoryRefuse('target_runtime_credentials_refused');
+  }
   const organizationId = text(v.organizationId, uuid);
   const i = keys(v.identity, ['consumerIssuer', 'consumerAudience', 'workforceIssuer', 'workforceAudience']);
   const issuer = /^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/;
@@ -129,6 +148,8 @@ export function validateInventoryQualificationTarget(input: unknown, supplied: I
       WorkforceIssuer: identity.workforceIssuer, WorkforceAudience: identity.workforceAudience,
       RetentionServiceSubject: base.identitySubjects.retentionService ?? '' };
     for (const [name, value] of Object.entries(expected)) if (Object.hasOwn(parameters, name)) same(parameters[name], value);
+    if (databaseCredentials) for (const name of ['SecretKmsKeyArn', 'DatabaseSecretKmsKeyArn'])
+      if (Object.hasOwn(parameters, name)) same(parameters[name], databaseCredentials.apiSecretKmsKeyArn);
     // Optional account-erasure permission must never target an unrelated pool.
     if (parameters.ConsumerUserPoolId) same(parameters.ConsumerUserPoolId, identity.consumerIssuer.split('/').at(-1));
     if (parameters.BillingApiOrigin) same(parameters.BillingApiOrigin, base.apiOrigin);
@@ -156,6 +177,7 @@ export function validateInventoryQualificationTarget(input: unknown, supplied: I
     return { candidate: a.candidate, stackName: String(c.stackName), manifestSha256: a.manifestSha256, templateSha256: a.templateSha256, parameters, packages };
   });
   if (objectNames.size !== 13) return inventoryRefuse('target_fleet_refused');
-  return structuredClone({ contract: 'inventory-qualification-target/1', target: base, organizationId, identity, artifactBucket,
-    buildManifestSha256: artifacts.manifestSha256, sourceInputSha256: artifacts.source.sourceInputSha256, reviewSha256, candidates });
+  return structuredClone({ contract: separated ? 'inventory-qualification-target/2' : 'inventory-qualification-target/1', target: base, organizationId, identity, artifactBucket,
+    buildManifestSha256: artifacts.manifestSha256, sourceInputSha256: artifacts.source.sourceInputSha256, reviewSha256, candidates,
+    ...(databaseCredentials ? { databaseCredentials } : {}) });
 }

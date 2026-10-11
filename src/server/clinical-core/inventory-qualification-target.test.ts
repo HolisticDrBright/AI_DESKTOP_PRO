@@ -88,6 +88,57 @@ function targetFixture(): InventoryQualificationTarget {
     buildManifestSha256: a.manifestSha256, sourceInputSha256: a.source.sourceInputSha256, reviewSha256: digest, candidates };
 }
 
+function separatedTargetFixture() {
+  const old = targetFixture();
+  const api = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-fictional-ABCDEF';
+  const operator = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-fictional-ABCDEF';
+  return { ...old, contract: 'inventory-qualification-target/2',
+    target: { ...old.target, schemaVersion: 'aws-clinical-core-qualification-target/4', databaseSecretArn: api,
+      operatorDatabaseSecretArn: operator, runtimeCredentialReviewSha256: digest },
+    databaseCredentials: { clusterKmsKeyArn: kms, operatorSecretKmsKeyArn: kms,
+      apiSecretKmsKeyArn: kms, fullscriptWorkerSecretKmsKeyArn: kms,
+      fullscriptWorkerDatabaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/fullscript-worker-fictional-ABCDEF' },
+    candidates: old.candidates.map(c => ({ ...c, parameters: { ...c.parameters, DatabaseSecretArn: api } as Record<string, string> })) };
+}
+
+it('admits explicit separated fleet credentials without reinterpreting the historical outer contract', () => {
+  const v = separatedTargetFixture();
+  const result = validateInventoryQualificationTarget(v, admissionFixture());
+  expect(result.contract).toBe('inventory-qualification-target/2');
+  expect(result.target.databaseSecretArn).toBe(v.target.databaseSecretArn);
+  expect(result.target.operatorDatabaseSecretArn).toBe(v.target.operatorDatabaseSecretArn);
+  expect(result).toHaveProperty('databaseCredentials', v.databaseCredentials);
+  expect(validateInventoryQualificationTarget(targetFixture(), admissionFixture()).contract).toBe('inventory-qualification-target/1');
+  expect(() => validateInventoryQualificationTarget({ ...v, contract: 'inventory-qualification-target/1' }, admissionFixture())).toThrow();
+  expect(() => validateInventoryQualificationTarget({ ...targetFixture(), contract: 'inventory-qualification-target/2' }, admissionFixture())).toThrow();
+});
+
+it('refuses incomplete shared foreign or mismatched separated credentials from an admitted baseline', () => {
+  validateInventoryQualificationTarget(separatedTargetFixture(), admissionFixture());
+  const changes: Array<(v: ReturnType<typeof separatedTargetFixture>) => void> = [
+    v => { v.target.operatorDatabaseSecretArn = v.target.databaseSecretArn; },
+    v => { v.target.databaseSecretArn = v.target.operatorDatabaseSecretArn; },
+    v => { v.target.runtimeCredentialReviewSha256 = '0'.repeat(64); },
+    v => { v.databaseCredentials.fullscriptWorkerDatabaseSecretArn = v.target.databaseSecretArn; },
+    v => { v.databaseCredentials.fullscriptWorkerDatabaseSecretArn = v.target.operatorDatabaseSecretArn; },
+    v => { v.databaseCredentials.fullscriptWorkerDatabaseSecretArn = v.databaseCredentials.fullscriptWorkerDatabaseSecretArn.replace('588966314750', '173535830222'); },
+    v => { v.candidates[0].parameters.DatabaseSecretArn = v.target.operatorDatabaseSecretArn; },
+    v => { v.candidates[0].parameters.SecretKmsKeyArn = kms.replace('66666666', '77777777'); },
+  ];
+  for (const field of Object.keys(separatedTargetFixture().databaseCredentials)) {
+    changes.push(v => { delete (v.databaseCredentials as Record<string, unknown>)[field]; });
+    changes.push(v => { (v.databaseCredentials as Record<string, unknown>)[field] = ''; });
+    changes.push(v => { (v.databaseCredentials as Record<string, unknown>)[field] = 'alias/aws/secretsmanager'; });
+    if (field.endsWith('KmsKeyArn')) changes.push(v => { (v.databaseCredentials as Record<string, unknown>)[field] = kms.replace('588966314750', '173535830222'); });
+  }
+  for (const change of changes) {
+    const v = separatedTargetFixture(); change(v);
+    expect(() => validateInventoryQualificationTarget(v, admissionFixture())).toThrow();
+  }
+  expect(() => validateInventoryQualificationTarget({ ...separatedTargetFixture(), databaseCredentials: null }, admissionFixture())).toThrow();
+  expect(() => validateInventoryQualificationTarget({ ...separatedTargetFixture(), databaseCredentials: { ...separatedTargetFixture().databaseCredentials, approval: true } }, admissionFixture())).toThrow();
+});
+
 // Fictional CloudFormation responses, not deployed resources or actual reviews.
 // Attribute values below are assembled independently of the production mapper.
 function stackFixture(candidate: InventoryQualificationTarget['candidates'][number], a: InventoryArtifactSet['candidates'][number]) {
@@ -404,6 +455,22 @@ it('actual bundled CLI reports only configuration, or refuses its independently 
     expect(result.status).toBe(1); expect(JSON.parse(result.stderr)).toMatchObject({ category: 'dirty_source_refused', configurationChecked: false, acceptance: false });
   }
 }, 250000);
+it('actual bundled CLI admits separated configuration only on clean source and never reports qualification', () => {
+  const file = join(directory, 'separated-target.json'); writeFileSync(file, JSON.stringify(separatedTargetFixture()));
+  const result = spawnSync(process.execPath, ['dist/aws-clinical-core/inventory-qualification-target/index.cjs', '--check-configuration', `--target=${file}`],
+    { encoding: 'utf8', timeout: 240000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+  expect(result.error).toBeUndefined();
+  if (artifacts.source.sourceClean) {
+    expect(result.status).toBe(0); const report = JSON.parse(result.stdout);
+    expect(report.sourceCommit).toBe(artifacts.source.sourceCommit); expect(report.sourceInputSha256).toBe(artifacts.source.sourceInputSha256);
+    expect(report.buildManifestSha256).toBe(artifacts.manifestSha256);
+    expect(report.configurationChecked).toBe(true); expect(report.candidates).toBe(12); expect(report.packages).toBe(13);
+    for (const key of ['liveTargetVerified', 'reviewVerified', 'acceptance', 'deploymentPerformed', 'phiAllowed']) expect(report[key]).toBe(false);
+  } else {
+    expect(result.status).toBe(1); expect(JSON.parse(result.stderr)).toMatchObject({ category: 'dirty_source_refused', configurationChecked: false, acceptance: false });
+  }
+}, 250000);
+
 it('actual bundled CLI refuses deployment commands with fixed non-sensitive output', () => {
   for (const args of [[], ['--activate'], ['--check-configuration', '--target=target.json', '--deploy'],
     ['--observe-fleet'], ['--observe-fleet', '--target='], ['--observe-fleet', '--target=target.json', '--acceptance=true'],

@@ -266,11 +266,61 @@ tests and its verifier build passes. Production-core, compatibility, operation
 inventory, stub-reset and Core gates pass. These source checks do not install
 the new foundation or establish the runtime login permissions.
 
-The generic inventory-fleet coordinator still derives foundation and bounded
-administrative-read bindings from the legacy generic database field. It does
-not yet carry the separately reviewed Fullscript worker binding. Complete its
-versioned credential mapping and operator-specific reads before using it for
-a separated-credential fleet. The direct foundation observer repair does not
-complete that integration or permit the administrative secret as a request
-credential. Hosted credential provisioning, the exact reviewed foundation
-successor, managed positive/negative acceptance and deployment remain open.
+## Separated credentials in fleet configuration and observation
+
+The fleet coordinator now distinguishes the historical
+`inventory-qualification-target/1` from the additive `/2` contract. Version one
+requires its original inner target `/3`; version two requires inner target `/4`
+and an exact `databaseCredentials` object. Cross-version mixtures, missing
+operator authority and a changed request key are refused instead of choosing
+a fallback. The historical target and its tests retain their meaning.
+
+Version two binds these additional public identifiers, never secret values:
+
+| Field | Use |
+| --- | --- |
+| `clusterKmsKeyArn` | The key observed for encrypted cluster storage. |
+| `operatorSecretKmsKeyArn` | The independently observed RDS-managed operator secret key. |
+| `apiSecretKmsKeyArn` | Exact request-candidate secret-key declaration. |
+| `fullscriptWorkerDatabaseSecretArn` | The independent worker slot in foundation declarations, not API request authority. |
+| `fullscriptWorkerSecretKmsKeyArn` | Explicit worker-key review input; runtime metadata/effectiveness qualification remains outstanding. |
+
+All keys use fixed account/region customer-key ARNs. API and worker namespaces,
+independent operator/API/worker secret identities, the nonzero review digest,
+the exact release and every existing template rule remain requirements. A
+declared key or review hash is not effective permission or approval evidence.
+
+Foundation observation receives the operator secret and the explicit
+API/worker/review slots. Both bounded read-only ledger and database-identity
+readers use the operator credential. Candidate parameter, service and code
+observation continues to bind request handlers to the API credential. Neither
+an absent operator nor an unsupported version can revert to request authority.
+
+Database dependency observation has a separate `/2` binding with an explicit
+storage key. It compares cluster storage against that key, and the master
+secret and Secrets Manager metadata against the operator-secret key. Both
+distinct keys are observed for enabled customer encryption and rotation, with
+repeat reads for drift. The older three-field binding retains its previous
+single-key constraint. AWS identifies storage and secret encryption separately
+in [DBCluster](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBCluster.html)
+and [MasterUserSecret](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_MasterUserSecret.html);
+storage encryption is not inferred secret-encryption evidence.
+
+Fail-before tests reproduced unsupported separated configuration, the actual
+fleet coordinator selecting the API secret for administrative reads, and the
+observer refusing independently encrypted storage and operator secrets. The
+negative matrix initially failed at its unsupported positive baseline and is
+not counted as guard proof until that baseline is admitted. Tests cover actual
+validator inputs and the packaged command, plus orchestration-only doubles
+whose reports are not hosted evidence. Malformed arrays and explicit missing
+keys refuse before cloud reads. Each observer remains read-only and the fleet
+report stays `not_completed`, with `runtimeCredentialsQualified`, acceptance,
+human review and PHI flags false.
+
+The live API/worker secret contents, encryption and rotation observations,
+effective login/grants, cross-database isolation, IAM/key policy, the reviewed
+foundation successor and managed positive/negative acceptance remain open.
+The selected worker role was absent in the last scoped managed system-role
+inspection; its unreleased candidate cannot be replaced by merely creating a
+secret. No credentials, grants, role, secret, historical SQL, release ledger,
+IAM resource, deployment or activation changes are made by this source work.

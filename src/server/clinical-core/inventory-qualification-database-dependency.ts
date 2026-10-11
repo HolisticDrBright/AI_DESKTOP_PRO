@@ -4,7 +4,7 @@ import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha } fr
 import { inventoryServiceReader, type InventoryServiceRead } from './inventory-qualification-service-observer';
 
 type Row = Record<string, unknown>;
-export type InventoryDatabaseDependency = { databaseClusterArn: string; databaseSecretArn: string; secretKmsKeyArn: string };
+export type InventoryDatabaseDependency = { databaseClusterArn: string; databaseSecretArn: string; secretKmsKeyArn: string; clusterKmsKeyArn?: string };
 const object = (v: unknown): Row => inventoryRecord(v) ? v : inventoryRefuse('database_dependency_shape_refused');
 const equal = (a: unknown, b: unknown) => {
   if (inventoryCanonical(a) !== inventoryCanonical(b)) inventoryRefuse('database_dependency_refused');
@@ -37,11 +37,15 @@ function stable(service: string, operation: string, input: unknown) {
 export async function observeInventoryDatabaseDependency(input: InventoryDatabaseDependency,
   transport: InventoryServiceRead = inventoryServiceReader()) {
   const b = structuredClone(input);
-  if (!inventoryRecord(b) || Object.keys(b).sort().join(',') !== 'databaseClusterArn,databaseSecretArn,secretKmsKeyArn'
+  const separatedKeys = inventoryRecord(b) && Object.hasOwn(b, 'clusterKmsKeyArn');
+  const kms = /^arn:aws:kms:us-east-2:588966314750:key\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+  if (!inventoryRecord(b) || Object.keys(b).sort().join(',') !== (separatedKeys ? 'clusterKmsKeyArn,databaseClusterArn,databaseSecretArn,secretKmsKeyArn' : 'databaseClusterArn,databaseSecretArn,secretKmsKeyArn')
     || !buildQualificationFoundation().Parameters.DatabaseClusterArn.AllowedValues.includes(b.databaseClusterArn)
-    || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-[A-Za-z0-9-]+$/.test(b.databaseSecretArn)
-    || !/^arn:aws:kms:us-east-2:588966314750:key\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(b.secretKmsKeyArn))
+    || typeof b.databaseSecretArn !== 'string' || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-[A-Za-z0-9-]+$/.test(b.databaseSecretArn)
+    || typeof b.secretKmsKeyArn !== 'string' || !kms.test(b.secretKmsKeyArn)
+    || separatedKeys && (typeof b.clusterKmsKeyArn !== 'string' || !kms.test(b.clusterKmsKeyArn)))
     return inventoryRefuse('database_dependency_binding_refused');
+  const clusterKey = separatedKeys ? b.clusterKmsKeyArn! : b.secretKmsKeyArn;
   const observations: Array<{ service: string; operation: string; parameters: Record<string, string | string[]>; sha256: string }> = [];
   const read: InventoryServiceRead = async (service, operation, parameters) => {
     const v = await transport(service, operation, parameters);
@@ -57,7 +61,7 @@ export async function observeInventoryDatabaseDependency(input: InventoryDatabas
     return inventoryRefuse('database_dependency_shape_refused');
   const cluster = object(clusters.DBClusters[0]);
   for (const [key, value] of Object.entries({ DBClusterArn: b.databaseClusterArn, Status: 'available', Engine: 'aurora-postgresql',
-    StorageEncrypted: true, HttpEndpointEnabled: true, DeletionProtection: true, KmsKeyId: b.secretKmsKeyArn })) equal(cluster[key], value);
+    StorageEncrypted: true, HttpEndpointEnabled: true, DeletionProtection: true, KmsKeyId: clusterKey })) equal(cluster[key], value);
   if (cluster.PubliclyAccessible === true || Object.keys(object(cluster.PendingModifiedValues ?? {})).length)
     return inventoryRefuse('database_dependency_refused');
   equal(cluster.MasterUserSecret, { SecretArn: b.databaseSecretArn, SecretStatus: 'active', KmsKeyId: b.secretKmsKeyArn });
@@ -76,17 +80,20 @@ export async function observeInventoryDatabaseDependency(input: InventoryDatabas
     !/^[A-Za-z0-9-]{32,64}$/.test(id) || !Array.isArray(stages) || !stages.length || stages.length > 20
     || new Set(stages).size !== stages.length || stages.some(s => typeof s !== 'string' || !['AWSCURRENT', 'AWSPREVIOUS', 'AWSPENDING'].includes(s))))
     return inventoryRefuse('database_dependency_versions_refused');
-  const key = object(object(await read('kms', 'describe-key', { KeyId: b.secretKmsKeyArn })).KeyMetadata);
-  for (const [name, expected] of Object.entries({ Arn: b.secretKmsKeyArn, KeyId: b.secretKmsKeyArn.split('/')[1], AWSAccountId: '588966314750',
-    Enabled: true, KeyState: 'Enabled', KeyManager: 'CUSTOMER', KeyUsage: 'ENCRYPT_DECRYPT', Origin: 'AWS_KMS', KeySpec: 'SYMMETRIC_DEFAULT', MultiRegion: false })) equal(key[name], expected);
-  equal(key.EncryptionAlgorithms, ['SYMMETRIC_DEFAULT']);
-  if (key.DeletionDate !== undefined || key.ValidTo !== undefined || key.CustomKeyStoreId !== undefined || key.XksKeyConfiguration !== undefined)
-    return inventoryRefuse('database_dependency_refused');
-  const rotation = object(await read('kms', 'get-key-rotation-status', { KeyId: b.secretKmsKeyArn }));
-  equal(rotation.KeyId, b.secretKmsKeyArn); equal(rotation.KeyRotationEnabled, true); equal(rotation.RotationPeriodInDays ?? 365, 365);
+  for (const keyArn of [...new Set([b.secretKmsKeyArn, clusterKey])]) {
+    const key = object(object(await read('kms', 'describe-key', { KeyId: keyArn })).KeyMetadata);
+    for (const [name, expected] of Object.entries({ Arn: keyArn, KeyId: keyArn.split('/')[1], AWSAccountId: '588966314750',
+      Enabled: true, KeyState: 'Enabled', KeyManager: 'CUSTOMER', KeyUsage: 'ENCRYPT_DECRYPT', Origin: 'AWS_KMS', KeySpec: 'SYMMETRIC_DEFAULT', MultiRegion: false })) equal(key[name], expected);
+    equal(key.EncryptionAlgorithms, ['SYMMETRIC_DEFAULT']);
+    if (key.DeletionDate !== undefined || key.ValidTo !== undefined || key.CustomKeyStoreId !== undefined || key.XksKeyConfiguration !== undefined)
+      return inventoryRefuse('database_dependency_refused');
+    const rotation = object(await read('kms', 'get-key-rotation-status', { KeyId: keyArn }));
+    equal(rotation.KeyId, keyArn); equal(rotation.KeyRotationEnabled, true); equal(rotation.RotationPeriodInDays ?? 365, 365);
+  }
   for (const o of observations) equal(inventorySha(inventoryCanonical(stable(o.service, o.operation,
     await transport(o.service, o.operation, o.parameters)))), o.sha256);
-  return { contract: 'inventory-qualification-database-dependency/1', databaseCredentialBindingVerified: true, customerEncryptionBindingVerified: true,
+  return { contract: separatedKeys ? 'inventory-qualification-database-dependency/2' : 'inventory-qualification-database-dependency/1',
+    databaseCredentialBindingVerified: true, customerEncryptionBindingVerified: true, runtimeCredentialsQualified: false,
     observations: observations.length, observationSha256: inventorySha(inventoryCanonical(observations)),
     identityDependenciesVerified: false, networkVerified: false, keyPolicyReviewed: false, wholeLedgerVerified: false, preservationVerified: false,
     liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false };
