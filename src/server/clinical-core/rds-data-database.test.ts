@@ -6,6 +6,7 @@ import {
   createRdsDataClinicalCoreDatabase,
   createRdsDataFullscriptDraftDatabase,
   RdsDataDatabaseError,
+  classifyDatabaseRejection,
 } from "./rds-data-database";
 
 const CONFIG = {
@@ -174,6 +175,26 @@ describe("Aurora RDS Data API transaction adapter", () => {
     await expect(database.transaction((tx) => tx.query("select $1", ["x"]))).rejects.toThrow(/^query_failed$/);
     expect(mock.calls.at(-1)?.name).toBe("RollbackTransactionCommand");
     expect(mock.calls.some((call) => call.name === "CommitTransactionCommand")).toBe(false);
+  });
+
+  test.each([
+    ["program_assignment_revision_stale", "program_revision_stale"],
+    ["program_assignment_version_changed", "program_changed"],
+    ["program_review_stale", "program_review_stale"],
+    ["program_assignment_state_invalid", "program_not_active"],
+    ["program_tasks_remaining", "program_tasks_remaining"],
+    ["program_phase_not_due", "program_phase_not_due"],
+    ["program_check_in_required", "program_check_in_required"],
+    ["program_practitioner_review_required", "program_practitioner_review_required"],
+    ["program_clinical_items_held", "program_clinical_items_held"],
+  ])("names the program rule %s to the consumer app as %s, and nothing else from the message", (sqlName, reason) => {
+    const rejection = classifyDatabaseRejection({ name: "DatabaseErrorException", message: `ERROR: ${sqlName}: enrollment 11111111-1111-4111-8111-111111111111 revision 7 select * from clinical_core.program_assignments` });
+    expect(rejection).toMatchObject({ category: "conflict", reason });
+    expect(JSON.stringify(rejection)).not.toMatch(/11111111|select|revision 7/);
+  });
+  test.each(["program_assignment_conflict", "program_assignment_refused", "program_item_held", "care_message_conflict"])("keeps %s a bare category with no reason", (sqlName) => {
+    const rejection = classifyDatabaseRejection({ name: "DatabaseErrorException", message: `ERROR: ${sqlName}` });
+    expect(rejection?.reason).toBeUndefined();
   });
 
   test.each([

@@ -11,6 +11,7 @@ import {
   type SqlParameter,
 } from "@aws-sdk/client-rds-data";
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
+import { PROGRAM_REFUSAL_REASONS, type ProgramRefusalReason } from "../../contracts/programAssignments";
 import {retryDatabaseResume} from './rds-resume-retry';
 import { createSingleAttemptRdsClient } from './rds-single-attempt-client';
 
@@ -214,6 +215,25 @@ function assertConfiguration(configuration: RdsDataConfiguration) {
   }
 }
 
+/** The program conflicts the consumer app can state in its own words. Everything else stays a bare conflict. A SQL
+ * name is mapped to the app's closed vocabulary; the message itself never leaves this function. */
+const PROGRAM_REFUSAL_REASON_BY_SQL_NAME: Readonly<Record<string, ProgramRefusalReason>> = {
+  program_assignment_revision_stale: "program_revision_stale",
+  program_assignment_version_changed: "program_changed",
+  program_review_stale: "program_review_stale",
+  program_assignment_state_invalid: "program_not_active",
+  program_tasks_remaining: "program_tasks_remaining",
+  program_phase_not_due: "program_phase_not_due",
+  program_check_in_required: "program_check_in_required",
+  program_practitioner_review_required: "program_practitioner_review_required",
+  program_clinical_items_held: "program_clinical_items_held",
+};
+export function programRefusalReason(message: string): ProgramRefusalReason | undefined {
+  const match = /\b(program_[a-z_]+)\b/.exec(message);
+  const reason = match ? PROGRAM_REFUSAL_REASON_BY_SQL_NAME[match[1]!] : undefined;
+  return reason && (PROGRAM_REFUSAL_REASONS as readonly string[]).includes(reason) ? reason : undefined;
+}
+
 /** Exported for embedded-database tests that stand the production dispatch in front of a real PGlite: the same classification, no other mapping. */
 export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
   if (!error || typeof error !== "object") return undefined;
@@ -252,7 +272,7 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bprogram_assignment_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(program_assignment_refused|program_assignment_unpublished|program_item_held|program_assignment_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
-  if (/\b(program_assignment_conflict|program_assignment_version_changed|program_assignment_revision_stale|program_review_stale|program_assignment_state_invalid|program_tasks_remaining|program_phase_not_due|program_check_in_required|program_practitioner_review_required|program_clinical_items_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(program_assignment_conflict|program_assignment_version_changed|program_assignment_revision_stale|program_review_stale|program_assignment_state_invalid|program_tasks_remaining|program_phase_not_due|program_check_in_required|program_practitioner_review_required|program_clinical_items_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict", programRefusalReason(message));
   if (/\b(care_data_invalid|care_erasure_intent_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\bcare_data_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bcare_data_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");

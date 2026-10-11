@@ -9,6 +9,14 @@ import { z } from 'zod';
  * `phaseId` is never transition authority: the server reads its own phase order.
  */
 export const PROGRAM_ASSIGNMENT_ACK = 'program-assignment/1' as const;
+/**
+ * The program rules a 409 may name in its body (`reason`). A closed list shared by both sides: the service maps its
+ * own SQL names onto it and sends nothing outside it; the app states a reason it recognises and stays honestly open
+ * for a bare conflict. Never SQL text, record identifiers, queries or provider messages.
+ */
+export const PROGRAM_REFUSAL_REASONS = ['program_revision_stale', 'program_phase_not_due', 'program_tasks_remaining', 'program_check_in_required',
+  'program_practitioner_review_required', 'program_clinical_items_held', 'program_not_active', 'program_changed', 'program_review_stale'] as const;
+export type ProgramRefusalReason = typeof PROGRAM_REFUSAL_REASONS[number];
 const key = z.string().regex(/^[A-Za-z0-9_.:-]{1,160}$/);
 const revision = z.string().regex(/^[1-9][0-9]{0,18}$/);
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -17,6 +25,23 @@ const purchaseUrl = z.string().max(2048).url().refine(value => {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; }
   catch { return false; }
 }, 'program_purchase_destination_invalid');
+const httpsUrl = z.string().max(2048).url().refine(value => {
+  try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; }
+  catch { return false; }
+}, 'program_reference_destination_invalid');
+/**
+ * Education fields (program-item-education/1): all optional, all additive. An item without them renders its
+ * instructions alone; a published artifact that predates them keeps its digest. `authorship` says who wrote the
+ * step so the app can label practitioner-authored, consumer AI and unreviewed content apart; absent means unstated,
+ * which the app shows as unreviewed rather than claiming a practitioner wrote it. Media are slots the app may show
+ * when present and must render cleanly without; they are never clinical claims, dosing or approval.
+ */
+export const programItemEducation = {
+  rationale: z.string().max(1000).optional(),
+  sources: z.array(z.object({ title: text(240), url: httpsUrl }).strict()).max(10).optional(),
+  media: z.array(z.object({ kind: z.enum(['video', 'image']), url: httpsUrl, caption: z.string().max(240).optional() }).strict()).max(5).optional(),
+  authorship: z.enum(['practitioner_authored', 'consumer_ai', 'unreviewed']).optional(),
+};
 export const programItem = z.object({
   id: key, title: text(240), kind: z.enum(['lesson', 'diet', 'habit', 'supplement']),
   instructions: z.string().max(4000), released: z.boolean(),
@@ -24,6 +49,7 @@ export const programItem = z.object({
     id: key, ingredientKeys: z.array(key).min(1).max(40), dose: text(240),
     purchaseUrl: purchaseUrl.nullable(),
   }).strict().optional(),
+  ...programItemEducation,
 }).strict().superRefine((value, ctx) => {
   // A supplement without a governed product is not reviewable, and a product on a
   // lesson is a claim nobody approved.

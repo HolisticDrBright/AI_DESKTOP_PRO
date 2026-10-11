@@ -13,7 +13,7 @@ const read = (relative) => readFileSync(path.join(root, relative), "utf8").repla
 const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
-// Pinned in V2 `expo/__tests__/core-launch-scope.test.ts`; both change together.
+// Pinned in V2 `expo/contracts/coreLaunchScope.ts` and gated there by `expo/scripts/check-core-launch-scope.mjs`; this file is the source, V2 holds a mirror; both change together.
 export const CORE_LAUNCH_SCOPE_SHA256 = "e2248e1be6329b99d44d6aaa16a428fa8331fa48b937aeab4fb90ea09294f6db";
 
 const manifestText = read("infra/aws-clinical-core/core-launch-scope.json");
