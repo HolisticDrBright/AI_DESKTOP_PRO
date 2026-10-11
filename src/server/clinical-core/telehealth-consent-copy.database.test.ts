@@ -51,11 +51,11 @@ const grant = (artifactId: string, expectedVersion = 0, text = copy): Telehealth
 });
 const withdraw = (expectedVersion: number): TelehealthConsentRequest => ({ action: 'withdraw', connectionId: connection,
   scope: 'telehealth_recording', expectedVersion });
-async function artifact(text = copy, withText = true, time = 'clock_timestamp()') {
-  const id = randomUUID();
+async function artifact(text = copy, withText = true, time = 'clock_timestamp()', fixed?: { id: string; timestamp: string }) {
+  const id = fixed?.id ?? randomUUID();
   await pg.query(`insert into clinical_core.consent_artifacts(id,organization_id,scope,artifact_version,content_sha256,
-    jurisdiction,status,approved_at,approved_by_person_id) values($1,$2,'telehealth_recording',$3,$4,'TEST','approved',${time},$5)`,
-  [id, org, 'FICTIONAL-' + id, sha(text), staff]);
+    jurisdiction,status,approved_at,approved_by_person_id,created_at) values($1,$2,'telehealth_recording',$3,$4,'TEST','approved',${fixed ? '$6::timestamptz' : time},$5,${fixed ? '$6::timestamptz' : 'clock_timestamp()'})`,
+  [id, org, 'FICTIONAL-' + id, sha(text), staff, ...(fixed ? [fixed.timestamp] : [])]);
   if (withText) await pg.query('insert into clinical_core.care_consent_texts(artifact_id,organization_id,content,content_sha256) values($1,$2,$3,$4)',
     [id, org, text, sha(text)]);
   return id;
@@ -224,9 +224,28 @@ describe('unreleased 112 telehealth exact-copy consent under actual SQL authorit
     await expect(call(review())).rejects.toThrow('identity_refused');
   });
   it('never falls back to old wording when the newest release has no copy', async () => {
-    const old = await artifact(); await artifact('NEW FICTIONAL COPY', false);
+    // Establish chronology explicitly. PGlite clocks may return the same
+    // millisecond for both inserts; a random UUID is not insertion order.
+    const old = await artifact(copy, true, "clock_timestamp()-interval '1 minute'");
+    const latest = await artifact('NEW FICTIONAL COPY', false);
+    const order = await pg.query<{ id: string }>('select id from clinical_core.consent_artifacts where organization_id=$1 order by approved_at desc,created_at desc,id desc', [org]);
+    expect(order.rows[0].id).toBe(latest);
     expect(await call(review())).toMatchObject({ artifact: null });
     await expect(call(grant(old))).rejects.toThrow('consent_required');
+  });
+  it.each(['copy-first', 'missing-copy-first'])('never falls back under equal approval and creation times (%s)', async order => {
+    const tail = randomUUID().slice(-12), old = `10000000-0000-4000-8000-${tail}`, latest = `f0000000-0000-4000-8000-${tail}`;
+    const timestamp = '2026-01-01T00:00:00.000Z';
+    const older = () => artifact(copy, true, undefined, { id: old, timestamp });
+    const newer = () => artifact('NEW FICTIONAL COPY', false, undefined, { id: latest, timestamp });
+    if (order === 'copy-first') { await older(); await newer(); } else { await newer(); await older(); }
+    const ranked = await pg.query<{ id: string }>('select id from clinical_core.consent_artifacts where organization_id=$1 order by approved_at desc,created_at desc,id desc', [org]);
+    expect(ranked.rows[0].id).toBe(latest);
+    // The latest row is established by the existing complete SQL ordering,
+    // not a sleep, random insertion order, or a reduced assertion.
+    expect(await call(review())).toMatchObject({ artifact: null });
+    await expect(call(grant(old))).rejects.toThrow('consent_required');
+    expect(Number((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants where organization_id=$1', [org])).rows[0].n)).toBe(0);
   });
   it('refuses future approval and a no-longer-active reviewer', async () => {
     const old = await artifact(); await artifact('FUTURE FICTIONAL', false, "clock_timestamp()+interval '1 day'");
