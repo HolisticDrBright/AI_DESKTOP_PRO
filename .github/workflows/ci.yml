@@ -36,6 +36,7 @@ jobs:
           npm run test:clinic-records-deployment
           npm run test:clinic-records-qualification-runner
           npm run test:clinic-records-hosted-ports
+          npm run test:clinic-source-definitions
           npm run build:clinic-records-source-candidate
           npm run build:aws-clinic-records
           npx vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts src/server/clinical-core/production-clinic-records-api.test.ts src/server/clinical-core/clinic-records-deployment.test.ts
