@@ -59,8 +59,9 @@ async function fixture() {
   await admin.query('insert into clinical_private.telehealth_admission_keys(key_id,secret) values($1,$2)', [key.id, key.bytes]);
   return { org, practitioner, patient, appointment, key };
 }
-async function context(f, connection = actor) {
-  await connection.query('begin'); await connection.query('set local role clinical_core_api');
+async function context(f, connection = actor, isolation = 'read committed') {
+  if (!['read committed', 'repeatable read', 'serializable'].includes(isolation)) refuse('native_isolation_refused');
+  await connection.query('begin isolation level ' + isolation); await connection.query('set local role clinical_core_api');
   await connection.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','production-clinical','clinical_phi')", [f.practitioner, f.org, 'subject-' + f.practitioner]);
 }
 async function admitted(f, expires = 60000) {
@@ -238,6 +239,43 @@ async function concurrentReplay() {
       && canonical(afterReplay) === canonical(after) });
 }
 
+async function snapshotIsolation(isolation, withdrawWhileBlocked) {
+  const f = await fixture(), signed = await admitted(f);
+  if (withdrawWhileBlocked) {
+    await blocker.query('begin');
+    await blocker.query("select pg_advisory_xact_lock(hashtextextended('telehealth-transfer:'||$1::text,0))", [f.appointment]);
+  }
+  await context(f, actor, isolation);
+  const actualIsolation = (await actor.query("select current_setting('transaction_isolation') isolation")).rows[0].isolation;
+  const pid = (await actor.query('select pg_backend_pid() pid')).rows[0].pid;
+  let observedLock = null, completed;
+  const pending = actor.query(transferSql, signed.args).then(value => (completed = { accepted: true, value }),
+    error => (completed = { accepted: false, code: error.code, marker: error.message }));
+  if (withdrawWhileBlocked) {
+    // Either observe the real serialization wait, or an immediate supported
+    // refusal. Do not turn a setup error or timeout into a successful negative.
+    for (let i = 0; i < 100 && !completed; i++) {
+      const row = (await admin.query('select wait_event_type,wait_event from pg_stat_activity where pid=$1', [pid])).rows[0];
+      if (row?.wait_event_type === 'Lock') { observedLock = row.wait_event; break; }
+      await delay(25);
+    }
+    if (!completed && !observedLock) refuse('native_isolation_wait_unknown');
+    await admin.query("update clinical_core.organization_memberships set status='suspended' where person_id=$1", [f.practitioner]);
+    await blocker.query('commit');
+  }
+  const outcome = await pending;
+  // Persist an erroneously accepted result: the diagnostic must not conceal it.
+  await actor.query(outcome.accepted ? 'commit' : 'rollback');
+  const after = await counts(f);
+  results.push({ id: isolation.replaceAll(' ', '_') + (withdrawWhileBlocked ? '_withdrawal_during_wait' : '_refused_before_transfer'),
+    actualIsolation, observedLock, membershipWithdrawn: withdrawWhileBlocked, accepted: outcome.accepted,
+    refusalCode: outcome.code ?? null,
+    refusalMarker: /^[a-z_]+$/.test(outcome.marker ?? '') ? outcome.marker : null, after,
+    passed: actualIsolation === isolation && !outcome.accepted
+      && outcome.marker === 'telehealth_transaction_isolation_refused'
+      && after.transfers === 0 && after.notes === 0 && after.encounters === 0 });
+}
+
 try {
   run('initdb', ['-D', data, '-U', 'postgres', '--encoding=UTF8', '--locale=C', '--auth=scram-sha-256', '--pwfile=' + passwordFile, '--data-checksums']);
   unlinkSync(passwordFile);
@@ -303,6 +341,11 @@ try {
   await admittedBeforeRevocation('person');
   await admittedBeforeRevocation('organization');
   await concurrentReplay();
+  stage = 'snapshot_isolation';
+  await snapshotIsolation('repeatable read', false);
+  await snapshotIsolation('serializable', false);
+  await snapshotIsolation('repeatable read', true);
+  await snapshotIsolation('serializable', true);
   report = { contract: 'telehealth-authority-native-source/1', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
