@@ -31,13 +31,19 @@ test("a signed-out visitor reaches the funnel route and the consult page without
   } finally { await context.close(); }
 });
 
-test("the public allow-list is exact in the running app: neighbouring paths still go to sign-in", async ({ browser, baseURL }) => {
+test("neighbouring paths are not funnel pages in the running app: the prefix alone and look-alike prefixes answer not-found", async ({ browser, baseURL }) => {
+  // Whether a signed-out neighbour redirects to sign-in depends on posture: with the documented local
+  // fallback session configured (as the contract-fixture suite runs), pages render instead. The exact
+  // allow-list is proven without that fallback in src/middleware.test.ts. What holds in both postures is
+  // that none of these paths is a funnel page.
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
-    for (const path of ["/learn", "/funnels", "/learning/x", "/consult"]) {
-      await page.goto(`${baseURL}${path}`, { waitUntil: "domcontentloaded" });
-      expect(new URL(page.url()).pathname, path).toBe("/login");
+    for (const path of ["/learn", "/learning/longevity-program", "/learn-more/longevity-program"]) {
+      const response = await page.goto(`${baseURL}${path}`, { waitUntil: "domcontentloaded" });
+      const landed = new URL(page.url()).pathname;
+      expect(landed === "/login" || response?.status() === 404, `${path} -> ${landed} ${response?.status()}`).toBe(true);
+      await expect(page.getByTestId("funnel-page")).toHaveCount(0);
     }
   } finally { await context.close(); }
 });
