@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import { splitPostgresStatements } from './migrations';
 import type { ClinicalCoreDatabase } from './database';
-import { readClinicHistoricalRowWitness, assertClinicHistoricalRowsPreserved } from '../../../scripts/clinic-row-preservation.mjs';
+import { readClinicHistoricalRowWitness, assertClinicHistoricalRowsPreserved, assertClinicHistoricalRowsAtPrefixPreserved } from '../../../scripts/clinic-row-preservation.mjs';
 import { projectTelehealthSchema } from '../../../scripts/telehealth-schema-projection.mjs';
 
 // Actual embedded SQL and complete row reads, NOT the restricted native owner,
@@ -103,6 +103,27 @@ describe('complete historical row witness for the exact 112 to 116 source', () =
       return readClinicHistoricalRowWitness(tx, artifact, source);
     })).rejects.toMatchObject({ code: '42501' });
     expect((await witness()).historicalRowCount).toBe(3);
+  });
+  it.each([113, 114, 115] as const)('preserves the actual prefix %s without relabeling it as a complete successor', async prefix => {
+    const before = await witness();
+    await rolled(async tx => {
+      for (const row of artifact.manifest.migrations.slice(112, prefix)) {
+        for (const statement of splitPostgresStatements(artifact.files[row.file])) await tx.query(statement);
+        await tx.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)', [row.version, row.file.slice(15, -4), sha(artifact.files[row.file])]);
+      }
+      const after = await readClinicHistoricalRowWitness(tx, artifact, source, prefix);
+      expect(after.observedMigrationCount).toBe(prefix);
+      expect(() => assertClinicHistoricalRowsAtPrefixPreserved(before, after, prefix)).not.toThrow();
+      expect(() => assertClinicHistoricalRowsPreserved(before, after)).toThrow('clinic_row_preservation_refused');
+      await expect(readClinicHistoricalRowWitness(tx, artifact, source)).rejects.toThrow('clinic_row_preservation_refused');
+    });
+    expect(await witness()).toEqual(before);
+  }, 30000);
+  it.each([111, 117, 113.5, '113'])('refuses invalid explicit prefix %s before any database query', async prefix => {
+    let queries = 0;
+    await expect(readClinicHistoricalRowWitness({ query: async () => { queries++; throw Error('unexpected'); } }, artifact, source, prefix as never))
+      .rejects.toThrow('clinic_row_preservation_refused');
+    expect(queries).toBe(0);
   });
   it.each(['rls_on', 'truncated_inventory', 'missing_table_digest', 'too_many_rows', 'unknown_digest_field', 'bad_receipt_digest', 'missing_receipt'])
     ('rejects incomplete or malformed database results: %s', async change => {

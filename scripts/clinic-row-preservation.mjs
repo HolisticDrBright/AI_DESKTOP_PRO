@@ -29,16 +29,18 @@ async function fingerprint(tx, tableNames) {
 
 /** Caller must use the same fenced transaction as the eventual upgrade. The
  * witness labels intentionally cannot be mistaken for operator acceptance. */
-export async function readClinicHistoricalRowWitness(tx, artifact, sourceReceipt) {
+export async function readClinicHistoricalRowWitness(tx, artifact, sourceReceipt, prefix) {
   const plan = buildClinicPreservingTransition(artifact, sourceReceipt), p = plan.preservation;
+  if (prefix !== undefined && (!Number.isInteger(prefix) || prefix < 112 || prefix > 116)) refuse();
   await tx.query('set local row_security=off');
   const rls = (await tx.query("select current_setting('row_security')::text value")).rows;
   if (rls.length !== 1 || keys(rls[0]) !== 'value' || rls[0].value !== 'off') refuse();
   const ledger = (await tx.query('select version,name,sha256 from clinical_core.schema_migrations order by version collate "C"')).rows;
-  if (![112, 116].includes(ledger.length) || ledger.some((r, i) => keys(r) !== 'name,sha256,version'
+  if (!(prefix === undefined ? [112, 116].includes(ledger.length) : ledger.length === prefix) || ledger.some((r, i) => keys(r) !== 'name,sha256,version'
     || r.version !== artifact.manifest.migrations[i].version || r.name !== artifact.manifest.migrations[i].file.slice(15, -4)
     || r.sha256 !== sha(artifact.files[artifact.manifest.migrations[i].file]))) refuse();
-  const expectedNames = [...p.historicalTableNames, ...(ledger.length === 116 ? p.newTableNames : []), p.ledgerTable].sort();
+  const newTableNames = plan.transitions.slice(0, ledger.length - 112).flatMap(r => r.newTableNames).sort();
+  const expectedNames = [...p.historicalTableNames, ...newTableNames, p.ledgerTable].sort();
   const inventory = (await tx.query(`select n.nspname||'.'||c.relname table_name,c.relkind::text kind
     from pg_class c join pg_namespace n on n.oid=c.relnamespace
     where n.nspname in(select jsonb_array_elements_text($1::jsonb)) and c.relkind in('r','p','f')
@@ -51,7 +53,7 @@ export async function readClinicHistoricalRowWitness(tx, artifact, sourceReceipt
     from clinical_core.schema_migrations r where version<=$1`, [artifact.manifest.migrations[111].version])).rows;
   if (receipts.length !== 1 || keys(receipts[0]) !== 'row_count,sha256' || receipts[0].row_count !== 112
     || !/^[a-f0-9]{64}$/.test(receipts[0].sha256)) refuse();
-  const newRows = ledger.length === 116 ? (await fingerprint(tx, p.newTableNames)).rows : 0;
+  const newRows = newTableNames.length ? (await fingerprint(tx, newTableNames)).rows : 0;
   if (newRows !== 0) refuse();
   return { contract: 'clinic-historical-row-witness/1', evidenceLayer: 'row_witness_primitive_only', sourceOnly: true,
     observedMigrationCount: ledger.length, historicalTableCount: 217, historicalRowCount: data.rows,
@@ -60,7 +62,8 @@ export async function readClinicHistoricalRowWitness(tx, artifact, sourceReceipt
     phiAllowed: false, activation: 'blocked' };
 }
 
-export function assertClinicHistoricalRowsPreserved(before, after) {
+export function assertClinicHistoricalRowsAtPrefixPreserved(before, after, prefix) {
+  if (!Number.isInteger(prefix) || prefix < 113 || prefix > 116) refuse();
   const expected = 'activation,contract,custodyProven,evidenceLayer,historicalDataSha256,historicalReceiptsSha256,historicalRowCount,historicalTableCount,managedRoleSemanticsVerified,newRows,observedMigrationCount,operatorAcceptance,phiAllowed,schemaAdmissionProven,sourceOnly';
   for (const value of [before, after]) if (keys(value) !== expected || value.contract !== 'clinic-historical-row-witness/1'
     || value.evidenceLayer !== 'row_witness_primitive_only' || value.sourceOnly !== true || value.activation !== 'blocked'
@@ -68,7 +71,11 @@ export function assertClinicHistoricalRowsPreserved(before, after) {
     || !Number.isSafeInteger(value.historicalRowCount) || value.historicalRowCount < 0
     || !/^[a-f0-9]{64}$/.test(value.historicalDataSha256) || !/^[a-f0-9]{64}$/.test(value.historicalReceiptsSha256)
     || ['schemaAdmissionProven', 'operatorAcceptance', 'custodyProven', 'managedRoleSemanticsVerified'].some(k => value[k] !== false)) refuse();
-  if (before.observedMigrationCount !== 112 || after.observedMigrationCount !== 116
+  if (before.observedMigrationCount !== 112 || after.observedMigrationCount !== prefix
     || before.historicalRowCount !== after.historicalRowCount || before.historicalDataSha256 !== after.historicalDataSha256
     || before.historicalReceiptsSha256 !== after.historicalReceiptsSha256) refuse();
+}
+
+export function assertClinicHistoricalRowsPreserved(before, after) {
+  assertClinicHistoricalRowsAtPrefixPreserved(before, after, 116);
 }
