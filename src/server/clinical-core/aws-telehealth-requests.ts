@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is server-only");
 
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
@@ -16,10 +17,44 @@ import { appointmentOperationIdentity, appointmentOperationScope, operationRecei
 import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
   type AppointmentRecoveryProviderDependencies } from "./appointment-provider-recovery";
 
-const document = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
-const secrets = new SecretsManagerClient({});
-const ses = new SESv2Client({});
-const scheduler = new SchedulerClient({});
+/** Trusted server ports, never accepted from a body or environment. Native
+ * qualification must provide ALL ports: an omitted provider is not fallback
+ * permission to use a shared default client. Historical handlers keep their
+ * original transports outside this separate execution scope. */
+export type TelehealthRequestPorts = {
+  document: Pick<DynamoDBDocumentClient, "send">;
+  secrets: Pick<SecretsManagerClient, "send">;
+  ses: Pick<SESv2Client, "send">;
+  scheduler: Pick<SchedulerClient, "send">;
+  fetch: typeof globalThis.fetch;
+};
+type RequestPortsScope = { ports: TelehealthRequestPorts; open: boolean; assertCurrent: () => void };
+const requestPortsScope = new AsyncLocalStorage<RequestPortsScope>();
+function scopedClient<T extends object>(fallback: T, key: Exclude<keyof TelehealthRequestPorts, "fetch">): T {
+  return new Proxy(fallback, { get(base, property, receiver) {
+    if (property !== "send") return Reflect.get(base, property, receiver);
+    return (...args: unknown[]) => {
+      const scope = requestPortsScope.getStore();
+      if (scope && !scope.open) throw new TelehealthError("service_unavailable");
+      scope?.assertCurrent();
+      const selected = scope ? scope.ports[key] : base;
+      const method: unknown = Reflect.get(selected, "send");
+      if (typeof method !== "function") throw new TelehealthError("service_unavailable");
+      const answer = Reflect.apply(method, selected, args);
+      return scope ? Promise.resolve(answer).then(value => { scope.assertCurrent(); return value; }) : answer;
+    };
+  } });
+}
+const document = scopedClient(DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } }), "document");
+const secrets = scopedClient(new SecretsManagerClient({}), "secrets");
+const ses = scopedClient(new SESv2Client({}), "ses");
+const scheduler = scopedClient(new SchedulerClient({}), "scheduler");
+const fetch: typeof globalThis.fetch = (...args) => {
+  const scope = requestPortsScope.getStore();
+  if (scope && !scope.open) throw new TelehealthError("service_unavailable");
+  scope?.assertCurrent();
+  return scope ? scope.ports.fetch(...args).then(value => { scope.assertCurrent(); return value; }) : globalThis.fetch(...args);
+};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const MAX_BODY = 16_384;
@@ -209,36 +244,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
-      if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
-      if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
-      if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
-      if (route === CONSUMER_AVAILABILITY) return response(200, { data: await listAvailability(config, actor, body(event)) });
-      if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
-      if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
-      if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
-      if (route === CONSUMER_JOIN) return response(200, { data: await prepareConsumerJoin(config, actor, body(event)) });
-      if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
-      if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
-      if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
-      if (route === CONSUMER_RECOVER_CHANGE) return response(200, { data: await recoverConsumerChange(config, actor, body(event)) });
-      if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
-      if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
-      if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
-      if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
-      if (route === WORKFORCE_PAYMENT) return response(200, { data: await requestOperation(config, actor, pool, "payment", body(event), value => workforcePayment(config, actor, value)) });
-      if (route === WORKFORCE_VISIT_LIST) return response(200, { data: await listVisits(config, actor) });
-      if (route === WORKFORCE_VISIT_CONSENT_ARTIFACT) return response(200, { data: await readConsentArtifact(config, actor) });
-      if (route === WORKFORCE_VISIT_CONSENT) return response(200, { data: await recordVisitConsent(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_CONSENT_WITHDRAW) return response(200, { data: await withdrawVisitConsent(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_START) return response(200, { data: await startVisit(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_END) return response(200, { data: await endVisit(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
-      if (route === WORKFORCE_VISIT_NOTE_IMPORT) return response(200, { data: await importVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_TRANSFER) return response(200, { data: await transferVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE) return response(200, { data: await completeVisitNoteTransfer(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_INVENTORY) return response(200, { data: await readVisitInventory(config, actor, event) });
-      return response(404, { error: "route_not_found" });
+      return await executePublicAppointment(config, event, actor);
     } catch (error) {
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
       // Provider/SDK exception names and messages can contain credentials,
@@ -252,6 +258,128 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
   };
   return (event: ApiGatewayV2Event) => runZoomCredentialRequest(() => handler(event));
 }
+
+/** Server-only admission port for a distinct fictional qualification factory.
+ * Its receipt is owned by that factory's instance, not a boolean supplied by
+ * HTTP. It must admit the exact request under current per-action authority and
+ * independently verified identity/deployment, with durable write/recovery
+ * semantics. Neither this engine nor a historical authorizer mints it. */
+export type TelehealthRequestAdmission = Readonly<{
+  contract: "telehealth-native-request-admission/1";
+  requestSha256: string; actor: Readonly<TelehealthActor>; ports: TelehealthRequestPorts;
+  issuedAt: number; validUntil: number;
+}>;
+export type TelehealthRequestAdmissionPort = {
+  admit(request: Readonly<{ event: ApiGatewayV2Event; routeKey: string; pool: "consumer" | "workforce"; requestSha256: string }>): Promise<TelehealthRequestAdmission>;
+  isAdmitted(receipt: unknown): boolean;
+};
+export class TelehealthRequestAdmissionError extends Error {
+  constructor(readonly category: "reauth_required" | "identity_refused" | "consent_required" | "release_required" | "service_unavailable") {
+    super(category); this.name = "TelehealthRequestAdmissionError";
+  }
+}
+export const telehealthRequestDigest = (event: ApiGatewayV2Event) => createHash("sha256").update(JSON.stringify({
+  routeKey: event.routeKey, body: event.body ?? null, isBase64Encoded: event.isBase64Encoded ?? false,
+  query: Object.entries(event.queryStringParameters ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+  headers: Object.entries(event.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+})).digest("hex");
+
+/** Complete domain execution seam, NOT a deployed/activated native factory.
+ * Production stays behind its unchanged PHI guard. Only this separate,
+ * provider-disabled qualification engine accepts a trusted admission port.
+ * Missing independent authority is a refusal, never synthetic claim rewriting.
+ * The native target loader and SQL write admission must still be integrated. */
+export function createTelehealthQualificationRequestExecutor(rawConfig: TelehealthConfiguration, admission: TelehealthRequestAdmissionPort,
+  now: () => number = Date.now) {
+  const config = Object.freeze(structuredClone(rawConfig));
+  validateConfiguration(config);
+  if (config.runtimeMode !== "synthetic" || config.phiAllowed !== false || config.zoomEnabled || config.zoomBaaVerified
+    || config.zoomSecretArn || config.remindersEnabled || config.stripeTestEnabled || config.stripeSecretArn || config.chartAdmissionSecretArn
+    || typeof admission?.admit !== "function" || typeof admission?.isAdmitted !== "function")
+    throw new Error("telehealth_qualification_executor_invalid");
+  return async (rawEvent: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+    let scope: RequestPortsScope | undefined;
+    try {
+      const event = structuredClone(rawEvent), routeKey = event.routeKey;
+      if (!routeKey || !Object.hasOwn(TELEHEALTH_PUBLIC_ROUTE_POOLS, routeKey)) return response(404, { error: "route_not_found" });
+      if (event.isBase64Encoded === true) throw new TelehealthError("request_invalid");
+      // No authorizer claims enter the domain dispatcher or its admission hash.
+      delete event.requestContext;
+      const pool = TELEHEALTH_PUBLIC_ROUTE_POOLS[routeKey], requestSha256 = telehealthRequestDigest(event);
+      const receipt = await admission.admit(Object.freeze({ event, routeKey, pool, requestSha256 }));
+      const clock = now(), actor = Object.freeze({ ...receipt?.actor });
+      const auth = Object.entries(event.headers ?? {}).filter(([key]) => key.toLowerCase() === "authorization");
+      if (!admission.isAdmitted(receipt) || receipt.contract !== "telehealth-native-request-admission/1"
+        || receipt.requestSha256 !== requestSha256 || actor.pool !== pool || !UUID.test(actor.personId) || !UUID.test(actor.organizationId)
+        || !SUBJECT.test(actor.subject) || !/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(actor.email)
+        || auth.length !== 1 || auth[0][1] !== `Bearer ${actor.bearer}` || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(actor.bearer)
+        || !Number.isFinite(clock) || !Number.isFinite(receipt.issuedAt) || !Number.isFinite(receipt.validUntil)
+        || receipt.issuedAt > clock || receipt.validUntil <= clock || receipt.validUntil - receipt.issuedAt > 30_000)
+        throw new TelehealthError("identity_refused");
+      if (telehealthRequestDigest(event) !== requestSha256) throw new TelehealthError("identity_refused");
+      const domainEvent = structuredClone(event);
+      const ports = Object.freeze({ ...receipt.ports });
+      if (["document", "secrets", "ses", "scheduler"].some(key => typeof Reflect.get(ports, key)?.send !== "function")
+        || typeof ports.fetch !== "function") throw new TelehealthError("service_unavailable");
+      let latestTime = clock;
+      scope = { ports, open: true, assertCurrent: () => {
+        const time = now();
+        if (!scope?.open || !Number.isFinite(time) || time < latestTime || time >= receipt.validUntil)
+          throw new TelehealthError("service_unavailable");
+        latestTime = time;
+      } };
+      return await requestPortsScope.run(scope, () => runZoomCredentialRequest(async () => {
+        scope!.assertCurrent();
+        const answer = await executePublicAppointment(config, domainEvent, actor);
+        scope!.assertCurrent();
+        return answer;
+      }));
+    } catch (error) {
+      const category = error instanceof TelehealthError || error instanceof TelehealthRequestAdmissionError ? error.category : "service_unavailable";
+      const status = category === "reauth_required" ? 401 : category === "identity_refused" ? 403 : category === "not_found" ? 404
+        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch"].includes(category) ? 409
+        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable", "release_required"].includes(category) ? 503 : 400;
+      return response(status, { error: category, execution: "qualification", phiAllowed: false });
+    } finally { if (scope) scope.open = false; }
+  };
+}
+
+/** Shared appointment domain logic. Authentication and current action authority
+ * are resolved BEFORE entering this function, never reconstructed in an event. */
+async function executePublicAppointment(config: TelehealthConfiguration, event: ApiGatewayV2Event, actor: Actor) {
+  const route = event.routeKey, pool = actor.pool;
+  if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
+  if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
+  if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
+  if (route === CONSUMER_AVAILABILITY) return response(200, { data: await listAvailability(config, actor, body(event)) });
+  if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
+  if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
+  if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
+  if (route === CONSUMER_JOIN) return response(200, { data: await prepareConsumerJoin(config, actor, body(event)) });
+  if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
+  if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
+  if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
+  if (route === CONSUMER_RECOVER_CHANGE) return response(200, { data: await recoverConsumerChange(config, actor, body(event)) });
+  if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
+  if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
+  if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
+  if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
+  if (route === WORKFORCE_PAYMENT) return response(200, { data: await requestOperation(config, actor, pool, "payment", body(event), value => workforcePayment(config, actor, value)) });
+  if (route === WORKFORCE_VISIT_LIST) return response(200, { data: await listVisits(config, actor) });
+  if (route === WORKFORCE_VISIT_CONSENT_ARTIFACT) return response(200, { data: await readConsentArtifact(config, actor) });
+  if (route === WORKFORCE_VISIT_CONSENT) return response(200, { data: await recordVisitConsent(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_CONSENT_WITHDRAW) return response(200, { data: await withdrawVisitConsent(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_START) return response(200, { data: await startVisit(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_END) return response(200, { data: await endVisit(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
+  if (route === WORKFORCE_VISIT_NOTE_IMPORT) return response(200, { data: await importVisitNote(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_NOTE_TRANSFER) return response(200, { data: await transferVisitNote(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE) return response(200, { data: await completeVisitNoteTransfer(config, actor, body(event)) });
+  if (route === WORKFORCE_VISIT_NOTE_INVENTORY) return response(200, { data: await readVisitInventory(config, actor, event) });
+  return response(404, { error: "route_not_found" });
+}
+
 
 async function createRequest(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
   exact(value, ["visitType", "slotId", "holdId", "note", "consent", "replayProtocol"], ["visitType", "slotId", "holdId"]);
@@ -2617,7 +2745,8 @@ async function handleStripeWebhook(config: TelehealthConfiguration, event: ApiGa
   return { received: true };
 }
 
-type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
+export type TelehealthActor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
+type Actor = TelehealthActor;
 function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, pool: "consumer" | "workforce"): Actor {
   const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
   const issuer = pool === "consumer" ? config.consumerIssuer : config.workforceIssuer; const audience = pool === "consumer" ? config.consumerAudience : config.workforceAudience;

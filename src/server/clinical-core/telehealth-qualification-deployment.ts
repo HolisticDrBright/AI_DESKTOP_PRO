@@ -187,7 +187,7 @@ export function createNativeTelehealthDeploymentObservation(target: unknown, aut
   const config = { region: pinned.region, maxAttempts: 1, ignoreConfiguredEndpointUrls: true };
   const clients = { sts: new STSClient(config), lambda: new LambdaClient(config), gateway: new ApiGatewayV2Client(config),
     dynamo: new DynamoDBClient(config), secrets: new SecretsManagerClient(config) };
-  const rds = new RDSDataClient(config);
+  const rds = new RDSDataClient({ region: pinned.region, maxAttempts: 1, ignoreConfiguredEndpointUrls: true });
   return createTelehealthDeploymentObservationSource({ target: pinned, authenticationTarget, clients,
     database: signal => createRdsDataClinicalCoreDatabase(pinned, { send: async command =>
       await rds.send(command as never, { abortSignal: command instanceof RollbackTransactionCommand ? AbortSignal.timeout(3_000) : signal }) as unknown as Record<string, unknown> }) });

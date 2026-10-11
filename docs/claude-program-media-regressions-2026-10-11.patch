@@ -1,0 +1,58 @@
+diff --git a/src/server/programs/program-media-authoring.test.ts b/src/server/programs/program-media-authoring.test.ts
+index e87f345..8f7b648 100644
+--- a/src/server/programs/program-media-authoring.test.ts
++++ b/src/server/programs/program-media-authoring.test.ts
+@@ -46,6 +46,53 @@ async function ready() {
+   return authoring.admit(context(), { artifactId: reservation.artifactId, sha256: sha(image), bytes: image.byteLength }, image);
+ }
+ 
++describe('Codex independent negative audit of the returned source', () => {
++  it('keeps a written object discoverable after an expired admission retry', async () => {
++    const reservation = await authoring.prepare(context(), prepare());
++    await store.put(reservation, image, AbortSignal.timeout(1_000));
++    clock = new Date('2026-10-11T12:16:00Z');
++    expect(await code(authoring.admit(context(), { artifactId: reservation.artifactId, sha256: sha(image), bytes: image.byteLength }, image)))
++      .toBe('reservation_expired');
++    // A failed/expired retry cannot hide already-written bytes from recovery.
++    const found = await ledger.expiredReservations(context(), program, clock.toISOString());
++    expect(found.map(r => r.artifactId)).toContain(reservation.artifactId);
++  });
++  it('does not call a substituted publication URL and program current', async () => {
++    const artifact = await ready();
++    const reference = await authoring.publish(context(), { artifactId: artifact.artifactId, expectedVersion: artifact.version });
++    const substituted = { ...reference, url: 'https://other-fictional.example/not-the-artifact',
++      origin: { ...reference.origin, programId: foreignProgram } };
++    expect((await authoring.describeReference(context(), substituted)).current).toBe(false);
++  });
++  it('does not certify removal when the store acknowledges a no-op delete', async () => {
++    const reservation = await authoring.prepare(context(), prepare());
++    await store.put(reservation, image, AbortSignal.timeout(1_000));
++    clock = new Date('2026-10-11T12:16:00Z');
++    store.remove = async () => {}; // Fictional transport acknowledged; bytes still exist.
++    const receipt = await authoring.cleanupOrphans(context(), { programId: program });
++    expect(receipt.actions.some(a => a.outcome === 'abandoned_object_removed')).toBe(false);
++    expect(store.versionsOf(reservation.objectKey)).toEqual(['fv1']);
++  });
++  it('preserves a ready object when reconciliation commits after cleanup reads the artifact', async () => {
++    const reservation = await authoring.prepare(context(), prepare());
++    await store.put(reservation, image, AbortSignal.timeout(1_000));
++    clock = new Date('2026-10-11T12:16:00Z');
++    const originalHead = store.head;
++    let interleaved = false;
++    store.head = async (...args) => {
++      const snapshot = await originalHead(...args);
++      if (!interleaved) {
++        interleaved = true;
++        await authoring.reconcile(context(), { artifactId: reservation.artifactId });
++      }
++      return snapshot;
++    };
++    await authoring.cleanupOrphans(context(), { programId: program }).catch(() => {});
++    expect((await ledger.artifact(context(), reservation.artifactId))?.state).toBe('ready');
++    expect(store.versionsOf(reservation.objectKey)).toEqual(['fv1']);
++  });
++});
++
+ describe('activation', () => {
+   it('is disabled in source, and the default runtime refuses every operation before touching the ledger or the store', async () => {
+     expect(PROGRAM_MEDIA_ACTIVATION.enabled).toBe(false);
