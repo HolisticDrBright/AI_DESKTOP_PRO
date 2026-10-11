@@ -8,14 +8,14 @@ import { resolveQualificationExecution } from './qualification-execution';
 
 /**
  * UNRELEASED runtime binding for the clinic-record routes. The compiled build
- * carries the exact source commit, the 114 ledger, the candidate SQL hash and
+ * carries the exact source commit, the 116 ledger, the candidate SQL hash and
  * the dispatcher body hash; the deployment environment must name the same
  * values or the function answers 503 to everything without constructing a
  * database client. Nothing here registers a route, applies SQL, seeds a
  * disclosure release or turns a review hash into an executed review.
  */
 export type ClinicRecordsBuild = {
-  sourceCommit: string; sourceClean: boolean; migrationCount: 114; migrationReleaseSha256: string; extensionSha256: string;
+  sourceCommit: string; sourceClean: boolean; migrationCount: 116; migrationReleaseSha256: string; extensionSha256: string;
   dispatcher: { schema: 'clinical_core'; name: 'clinic_record_request'; sha256: string };
 };
 type Environment = Record<string, string | undefined>;
@@ -32,7 +32,7 @@ const TRIGGERS: [string, string, string][] = [
 
 function validateBuild(supplied: ClinicRecordsBuild): ClinicRecordsBuild {
   const build = structuredClone(supplied);
-  if (!commit.test(build.sourceCommit) || typeof build.sourceClean !== 'boolean' || build.migrationCount !== 114
+  if (!commit.test(build.sourceCommit) || typeof build.sourceClean !== 'boolean' || build.migrationCount !== 116
     || !hash.test(build.migrationReleaseSha256) || !hash.test(build.extensionSha256) || build.dispatcher?.schema !== 'clinical_core'
     || build.dispatcher.name !== 'clinic_record_request' || !hash.test(build.dispatcher.sha256)) throw new Error('binding_refused');
   return build;

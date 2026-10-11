@@ -15,16 +15,16 @@ const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clini
   encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,
 }));
 const c = artifact.candidate;
-if (c.contract !== 'clinic-record-privacy-candidate/3' || c.migrationCount !== 114 || artifact.manifest.migrations.length !== 114
+if (c.contract !== 'clinic-record-privacy-candidate/4' || c.migrationCount !== 116 || artifact.manifest.migrations.length !== 116
   || c.activation !== 'blocked' || c.phiAllowed !== false || c.deployment !== 'not_deployed' || c.seededDisclosureReleases !== false) throw new Error('clinic_records_build_release_invalid');
-const sql = artifact.files[artifact.manifest.migrations[113].file];
+const sql = artifact.files[artifact.manifest.migrations[115].file];
 const match = /create function clinical_core\.clinic_record_request\(_request jsonb\) returns jsonb\nlanguage plpgsql security definer set search_path='' as \$\$([^]*?)\$\$;/.exec(sql);
 if (!match || sha(sql) !== c.extensionSha256) throw new Error('clinic_records_build_contract_invalid');
 export const dispatcher = { schema: 'clinical_core', name: 'clinic_record_request', sha256: sha(match[1]) };
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
   'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim();
-const buildInfo = { sourceCommit, sourceClean, migrationCount: 114, migrationReleaseSha256: c.migrationReleaseSha256, extensionSha256: c.extensionSha256, dispatcher };
+const buildInfo = { sourceCommit, sourceClean, migrationCount: 116, migrationReleaseSha256: c.migrationReleaseSha256, extensionSha256: c.extensionSha256, dispatcher };
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: ['src/server/clinical-core/clinic-records-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
   platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none',
@@ -137,10 +137,10 @@ writeFileSync(`${out}/template.json`, JSON.stringify(template, null, 2) + '\n');
 const code = readFileSync(`${out}/index.js`), zip = careMessagingZip(code);
 writeFileSync(`${out}/deployment.zip`, zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'clinic-records-deployment/1', sourceCommit, sourceClean,
-  migrationCount: 114, migrationReleaseSha256: c.migrationReleaseSha256, extensionSha256: c.extensionSha256, migrationFile: artifact.manifest.migrations[113].file,
+  migrationCount: 116, migrationReleaseSha256: c.migrationReleaseSha256, extensionSha256: c.extensionSha256, migrationFile: artifact.manifest.migrations[115].file,
   parentMigrationReleaseSha256: c.parentMigrationReleaseSha256, dispatcher, routes: routes.map(([, , path]) => `POST /clinical-core/${path}`),
   codeSha256: sha(code), templateSha256: sha(readFileSync(`${out}/template.json`)), deploymentZipSha256: sha(zip), deploymentZipBytes: zip.length,
   defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled', disclosureReleases: 'none' }, deploymentPerformed: false, registered: false,
-  remaining: ['release numbering coordinated by Codex (114 is a position, not a reservation)', 'owner disclosure release and retention review',
+  remaining: ['release numbering coordinated by Codex (116 is a position, not a reservation)', 'owner disclosure release and retention review',
     'hosted qualification of the 30 mandatory cases', 'matched Desktop/V2 release', 'device acceptance'] }, null, 2) + '\n');
 console.log('Built clinic-records deployment candidate: artifact-pinned, blocked by default, no disclosure release. No AWS access, registration or activation.');

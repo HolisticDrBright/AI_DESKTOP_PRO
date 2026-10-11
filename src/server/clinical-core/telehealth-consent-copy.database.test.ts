@@ -230,6 +230,9 @@ describe('unreleased 112 telehealth exact-copy consent under actual SQL authorit
     const latest = await artifact('NEW FICTIONAL COPY', false);
     const order = await pg.query<{ id: string }>('select id from clinical_core.consent_artifacts where organization_id=$1 order by approved_at desc,created_at desc,id desc', [org]);
     expect(order.rows[0].id).toBe(latest);
+    expect((await pg.query<{ ordered: boolean }>(`select newer.approved_at > older.approved_at as ordered
+      from clinical_core.consent_artifacts newer cross join clinical_core.consent_artifacts older
+      where newer.id=$1 and older.id=$2`, [latest, old])).rows[0].ordered).toBe(true);
     expect(await call(review())).toMatchObject({ artifact: null });
     await expect(call(grant(old))).rejects.toThrow('consent_required');
   });
@@ -248,7 +251,8 @@ describe('unreleased 112 telehealth exact-copy consent under actual SQL authorit
     expect(Number((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.consent_grants where organization_id=$1', [org])).rows[0].n)).toBe(0);
   });
   it('refuses future approval and a no-longer-active reviewer', async () => {
-    const old = await artifact(); await artifact('FUTURE FICTIONAL', false, "clock_timestamp()+interval '1 day'");
+    const old = await artifact(copy, true, "clock_timestamp()-interval '1 minute'");
+    await artifact('FUTURE FICTIONAL', false, "clock_timestamp()+interval '1 day'");
     expect(await call(review())).toMatchObject({ artifact: null });
     await expect(call(grant(old))).rejects.toThrow('consent_required');
     await pg.query("update clinical_core.consent_artifacts set status='retired' where organization_id=$1 and content_sha256=$2", [org, sha('FUTURE FICTIONAL')]);
@@ -265,7 +269,7 @@ describe('unreleased 112 telehealth exact-copy consent under actual SQL authorit
     await expect(call(grant(id, 2))).rejects.toThrow('identity_refused');
   });
   it('refuses a replaced artifact, wrong hash, paused link or archived chart', async () => {
-    const id = await artifact();
+    const id = await artifact(copy, true, "clock_timestamp()-interval '1 minute'");
     await expect(call(grant(id, 0, 'WRONG'))).rejects.toThrow('conflict');
     await artifact('NEW FICTIONAL');
     await expect(call(grant(id))).rejects.toThrow('conflict');

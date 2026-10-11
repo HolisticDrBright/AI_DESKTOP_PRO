@@ -14,7 +14,7 @@ import { clinicTargetFixture } from '../../../scripts/clinic-records-qualificati
 
 /**
  * The hosted runner, executed end to end against the REAL artifact-bound
- * deployment handler over the real 114 schema in embedded PostgreSQL: the http
+ * deployment handler over the real 116 schema in embedded PostgreSQL: the http
  * port invokes the compiled handler with gateway-shaped events, the sql port is
  * a privileged readback, and the fictional release is registered between the
  * two phases exactly as the owner-reviewed operator would. Every one of the
@@ -83,9 +83,9 @@ async function call<T>(sql: string, args: unknown[], who: string, organization: 
 const fixtures = { signedNoteText: 'Fictional signed narrative for the qualification runner.', draftNoteText: 'Fictional DRAFT that must never be disclosed.' };
 beforeAll(async () => {
   artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 }));
-  const sql = artifact.files[artifact.manifest.migrations[113].file];
+  const sql = artifact.files[artifact.manifest.migrations[115].file];
   const body = /create function clinical_core\.clinic_record_request\(_request jsonb\) returns jsonb\nlanguage plpgsql security definer set search_path='' as \$\$([^]*?)\$\$;/.exec(sql)![1];
-  build = { sourceCommit, sourceClean: true, migrationCount: 114, migrationReleaseSha256: artifact.candidate.migrationReleaseSha256 as string,
+  build = { sourceCommit, sourceClean: true, migrationCount: 116, migrationReleaseSha256: artifact.candidate.migrationReleaseSha256 as string,
     extensionSha256: artifact.candidate.extensionSha256 as string, dispatcher: { schema: 'clinical_core', name: 'clinic_record_request', sha256: sha(body) } };
   const seed = new PGlite();
   await seed.exec('create database clinical_core_qualification');
@@ -138,7 +138,7 @@ const bound = () => ({ ...binding(), migrationReleaseSha256: build.migrationRele
 const registerRelease = async () => { const d = binding().disclosureRelease; await pg.query("insert into clinical_private.clinic_disclosure_releases(organization_id,release_version,sections,reviewed_by,review_sha256) values($1,$2,$3,'FICTIONAL REVIEWER (qualification fixture, not an approval)',$4)", [orgX, d.releaseVersion, d.sections, d.reviewSha256]); };
 
 describe('clinic-records qualification runner against the real deployment handler and schema', () => {
-  it('refuses a different actual database before any HTTP or release step, despite all 114 matching migration rows', async () => {
+  it('refuses a different actual database before any HTTP or release step, despite all 116 matching migration rows', async () => {
     const wrong = new PGlite();
     try {
       await wrong.exec('create schema clinical_core; create table clinical_core.schema_migrations(version text, sha256 text)');

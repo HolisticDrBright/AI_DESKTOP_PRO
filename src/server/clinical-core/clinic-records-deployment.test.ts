@@ -12,7 +12,7 @@ import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
  * The artifact-bound clinic-records runtime: blocked by default, refuses a
  * mismatched source, ledger, candidate hash, account, region or database before
  * constructing a client, requires every independent review, and checks the
- * deployed dispatcher and ledgers in the REAL 114 artifact under the API role.
+ * deployed dispatcher and ledgers in the REAL 116 artifact under the API role.
  * Fictional build and review values only; no AWS call, registration or activation.
  */
 type Artifact = { manifest: { migrations: { version: string; file: string }[] }; files: Record<string, string>; candidate: Record<string, unknown> };
@@ -22,9 +22,9 @@ const org = '11111111-1111-4111-8111-111111111111', person = '22222222-2222-4222
 let artifact: Artifact, build: ClinicRecordsBuild, pg: PGlite;
 beforeAll(async () => {
   artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 }));
-  const sql = artifact.files[artifact.manifest.migrations[113].file];
+  const sql = artifact.files[artifact.manifest.migrations[115].file];
   const body = /create function clinical_core\.clinic_record_request\(_request jsonb\) returns jsonb\nlanguage plpgsql security definer set search_path='' as \$\$([^]*?)\$\$;/.exec(sql)![1];
-  build = { sourceCommit, sourceClean: true, migrationCount: 114, migrationReleaseSha256: artifact.candidate.migrationReleaseSha256 as string,
+  build = { sourceCommit, sourceClean: true, migrationCount: 116, migrationReleaseSha256: artifact.candidate.migrationReleaseSha256 as string,
     extensionSha256: artifact.candidate.extensionSha256 as string, dispatcher: { schema: 'clinical_core', name: 'clinic_record_request', sha256: sha(body) } };
   pg = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version, name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
@@ -70,7 +70,7 @@ describe('artifact-bound clinic-records runtime', () => {
       { CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:173535830222:secret:wrong' }, { CLINIC_RECORDS_ACTIVATION: 'approved', PHI_ALLOWED: 'true' }]) {
       const t = transport(); expect(await createClinicRecordsHandler({ ...env(), ...changed }, build, t.factory)(event())).toMatchObject({ statusCode: 503 }); expect(t.factory).not.toHaveBeenCalled();
     }
-    for (const bad of [{ ...build, sourceClean: false }, { ...build, migrationCount: 113 as unknown as 114 }, { ...build, dispatcher: { ...build.dispatcher, sha256: 'zz' } }]) {
+    for (const bad of [{ ...build, sourceClean: false }, { ...build, migrationCount: 115 as unknown as 116 }, { ...build, dispatcher: { ...build.dispatcher, sha256: 'zz' } }]) {
       const t = transport(); expect(await createClinicRecordsHandler(env(), bad, t.factory)(event())).toMatchObject({ statusCode: 503 }); expect(t.factory).not.toHaveBeenCalled();
     }
   });
@@ -92,7 +92,7 @@ describe('artifact-bound clinic-records runtime', () => {
     expect(await createClinicRecordsHandler(env(), build, bad.factory, () => now)(event())).toMatchObject({ statusCode: 503, body: '{"error":"service_unavailable"}' });
     expect(bad.query.mock.calls.some(c => String(c[0]).includes('clinic_record_request('))).toBe(false);
   });
-  it('the dispatcher and ledger check holds against the real 114 artifact under clinical_core_api, and refuses a different dispatcher hash', async () => {
+  it('the dispatcher and ledger check holds against the real 116 artifact under clinical_core_api, and refuses a different dispatcher hash', async () => {
     const api: ClinicalCoreDatabase = { transaction: work => pg.transaction(async tx => { await tx.exec('set local role clinical_core_api'); return work({ query: (q, parameters = []) => tx.query(q, [...parameters]) }); }) };
     await expect(bindClinicRecordsDatabase(api, build).transaction(async () => 'reached')).resolves.toBe('reached');
     await expect(bindClinicRecordsDatabase(api, { dispatcher: { ...build.dispatcher, sha256: '9'.repeat(64) } }).transaction(async () => 'reached')).rejects.toThrow('service_unavailable');

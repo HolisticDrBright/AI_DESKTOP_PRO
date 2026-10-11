@@ -33,7 +33,7 @@ function object(value: unknown): JsonObject {
 }
 function signalFor(deps: AppointmentRecoveryProviderDependencies) { return AbortSignal.any([deps.signal, AbortSignal.timeout(5000)]); }
 async function providerJson(response: Response, signal: AbortSignal): Promise<JsonObject> {
-  return object(await recoveryAwait(signal, () => boundedProviderJson(response, 65536)));
+  return object(await recoveryAwait(signal, () => boundedProviderJson(response, 65536, signal)));
 }
 function missingSchedule(error: unknown) {
   return !!error && typeof error === "object" && (error as { name?: unknown }).name === "ResourceNotFoundException";

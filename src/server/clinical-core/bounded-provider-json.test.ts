@@ -52,4 +52,19 @@ describe('bounded provider JSON', () => {
     const response = new Response(new ReadableStream({ start(c) { c.error(Error('private provider payload')); } }));
     await expect(boundedProviderJson(response, 20)).rejects.toThrow(/^provider_body_refused$/);
   });
+  it('cancels a stalled body on caller abort without waiting for another chunk', async () => {
+    const controller = new AbortController(); let cancelled = false;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(stream) { stream.enqueue(bytes('{')); }, cancel() { cancelled = true; },
+    }));
+    const reading = boundedProviderJson(response, 20, controller.signal);
+    const refused = expect(reading).rejects.toThrow(/^provider_body_refused$/);
+    controller.abort(); await refused;
+    expect(cancelled).toBe(true);
+  });
+  it('refuses and cancels a pre-aborted response before reading', async () => {
+    const fixture = streamed([bytes('{}')]); const controller = new AbortController(); controller.abort();
+    await expect(boundedProviderJson(fixture.response, 20, controller.signal)).rejects.toThrow(/^provider_body_refused$/);
+    expect(fixture.observations()).toEqual({ reads: 0, cancelled: true });
+  });
 });
