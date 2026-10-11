@@ -69,6 +69,29 @@ Windows status are unchanged from the telehealth native-source notes. These
 fingerprints describe the local owner profile, not Aurora managed memberships.
 A local report is never hosted acceptance or permission to apply migrations.
 
+## Independent definition check
+
+The native runner now requires `assertClinicCompiledLocalSource` before it can
+publish a report. That check validates the pinned receipt and exact executable
+assembly, then compares every compiled object digest at all five prefixes to
+the independent source receipt. It also checks the compiler, projection and
+restricted-owner identities. Merely changing the permitted object names is not
+enough; a changed function, relation, role, membership or type digest refuses.
+
+Only the generated disposable database nonce may differ between runs. Engine,
+owner, session owner, grantor, membership, permission and definition differences
+are not normalized away. An existing qualification or production database is
+refused. Expectations cannot be substituted with a target-shaped receipt.
+
+`npm run test:clinic-source-definitions` has 80 positive and refusal cases. It
+and the existing 66 native-source tests pass, with typecheck and targeted lint.
+The new verification is an input to the separately compiled managed profile,
+not that profile. The source rollback kernel remains observation-only for
+permitted changed definitions; its managed admission and forward custody work
+are still required. No runtime schema pin, historical operator or selected SQL
+byte was changed by this check. New positive native runs belong to the exact
+clean source reported by the runner, not the historical 52d1742 results above.
+
 The existing runtime inspector and historical operators are unchanged. A
 preserving 112-to-116 upgrade still needs its own protected-row, custody and
 rollback implementation and review, followed by real PostgreSQL/Aurora lock,

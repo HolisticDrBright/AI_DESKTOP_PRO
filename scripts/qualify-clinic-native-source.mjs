@@ -10,6 +10,8 @@ import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileClinicSchemaRestrictedOwnerSource } from './compile-clinic-schema-source.mjs';
 import { TELEHEALTH_SCHEMA_NAMES } from './telehealth-schema-projection.mjs';
+import { assertClinicSourceArtifact } from './compile-clinic-schema-source.mjs';
+import { assertClinicCompiledLocalSource } from './clinic-source-definition-admission.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const refuse=()=>{throw Error('clinic_native_source_arguments_refused');};
@@ -83,6 +85,11 @@ try {
     transaction:async work=>{await connection.query('begin');try{const value=await work(db);await connection.query('commit');return value;}
       catch(error){await connection.query('rollback');throw error;}}};
   const compiled=await compileClinicSchemaRestrictedOwnerSource(db);
+  stage='independent-source-definitions';
+  const sourceArtifact=assertClinicSourceArtifact(JSON.parse(execFileSync(process.execPath,
+    ['scripts/build-clinic-record-privacy-candidate.mjs','--json'],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,timeout:60_000,windowsHide:true})));
+  const pinnedReceipt=JSON.parse(readFileSync(join(root,'infra/aws-clinical-core/source-receipts/clinic-native-source-52d1742.json'),'utf8'));
+  const definitionAdmission=assertClinicCompiledLocalSource(sourceArtifact,pinnedReceipt,compiled);
   stage='api-read-denials';
   const deniedTables=['clinical_core.clinic_record_requests','clinical_core.clinic_record_request_events',
     'clinical_core.clinic_record_copies','clinical_core.clinic_record_copy_items','clinical_private.clinic_disclosure_releases'];
@@ -123,7 +130,7 @@ try {
     sourceOnly:true,sourceCommit,sourceClean:true,phiAllowed:false,activation:'blocked',providerAuthorized:false,upgradeAuthorized:false,
     databaseOwner:restrictedOwner?'clinical_admin':'postgres',postgresVersion:'17.7',driverVersion:'8.16.3',
     ...(restrictedOwner?{managedRoleSemanticsVerified:false,runtimeAdmission:false,emptyInventoryOwner:'postgres',emptyInventoryReadOnly:true}:{}),
-    binarySha256:hash(readFileSync(binary('postgres'))),emptyApplicationTables:true,applicationTableCount:tables.length,apiReadDenials,compiled};
+    binarySha256:hash(readFileSync(binary('postgres'))),emptyApplicationTables:true,applicationTableCount:tables.length,apiReadDenials,compiled,definitionAdmission};
 } catch(error) {
   // Do not print the data-URL installer stack, query text, environment or keys.
   const failure=new Error('clinic_native_source_run_failed');
@@ -157,5 +164,6 @@ writeFileSync(join(runDirectory,'source-qualification.json'),JSON.stringify(repo
 console.log(JSON.stringify({contract:report.contract,execution:report.execution,postgresVersion:report.postgresVersion,
   databaseOwner:report.databaseOwner,reportDirectory:basename(runDirectory),shutdownConfirmed:true,
   emptyApplicationTables:report.emptyApplicationTables,applicationTableCount:report.applicationTableCount,
+  independentSourceDefinitionsMatched:report.definitionAdmission.exactDefinitionsMatched,
   snapshots:report.compiled.snapshots.map(({migrationCount,schemaSha256,projection})=>({migrationCount,schemaSha256,items:projection.length})),
   phiAllowed:false,activation:'blocked',providerAuthorized:false,upgradeAuthorized:false}));

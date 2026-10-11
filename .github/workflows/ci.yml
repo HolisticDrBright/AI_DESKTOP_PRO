@@ -35,6 +35,8 @@ jobs:
           npm run test:clinic-records-contract-integrity
           npm run test:clinic-records-deployment
           npm run test:clinic-records-qualification-runner
+          npm run test:clinic-records-hosted-ports
+          npm run test:clinic-source-definitions
           npm run build:clinic-records-source-candidate
           npm run build:aws-clinic-records
           npx vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts src/server/clinical-core/production-clinic-records-api.test.ts src/server/clinical-core/clinic-records-deployment.test.ts
@@ -60,6 +62,11 @@ jobs:
           npm run test:telehealth-schema-source
           npm run test:telehealth-native-source
           npm run test:clinic-native-source
+          npm run test:clinic-preserving-transition
+          npm run build:clinic-preserving-transition
+          npm run test:clinic-row-preservation
+          npm run test:clinic-preserving-rollback
+          npm run test:clinic-preserving-workflow
           npm run build:telehealth-key-fence-candidate
           npm run test:telehealth-key-fence-candidate
           npm run build:telehealth-schema-source
