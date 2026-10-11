@@ -82,9 +82,9 @@ async function fixture() {
       return observe();
     },
     createCustody: async () => ({ verify, record: async stage => { events.push(stage); if (stage === 'write_admitted') admitted = true; },
-      finding: async () => {}, settle: async () => { settlements++; return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64) }; } }),
+      finding: async () => {}, settle: async () => ({ runId: '5'.repeat(32), journalSha256: '6'.repeat(64), retire: async () => { settlements++; } }) }),
     openRecovery: async () => ({ baseline: structuredClone(initial), writeAdmitted: admitted, verify,
-      settle: async () => { settlements++; return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64) }; } }),
+      settle: async () => ({ runId: '5'.repeat(32), journalSha256: '6'.repeat(64), retire: async () => { settlements++; } }) }),
   };
   return { pg, binding, ports, initial, observe, events, forwards: () => forwards, settlements: () => settlements,
     loseReply: () => { lostReply = true; } };

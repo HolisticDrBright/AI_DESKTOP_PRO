@@ -38,11 +38,11 @@ function harness() {
     createCustody: async () => { calls.push('custody'); return {
       verify, record: async stage => { calls.push(stage); events.push(stage); if (stage === 'write_admitted') admitted = true; },
       finding: async () => { calls.push('finding'); }, settle: async () => {
-        calls.push('settle'); settlements++; return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64) };
+        calls.push('settle'); return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64), retire: async () => { calls.push('retire'); settlements++; } };
       },
     }; },
     openRecovery: async () => { calls.push('recovery'); return { baseline: structuredClone(before), writeAdmitted: admitted,
-      verify, settle: async () => { calls.push('settle'); settlements++; return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64) }; } }; },
+      verify, settle: async () => { calls.push('settle'); return { runId: '5'.repeat(32), journalSha256: '6'.repeat(64), retire: async () => { calls.push('retire'); settlements++; } }; } }; },
   };
   return { b, before, after, calls, events, ports, setCurrent: (v: ClinicWorkflowObservation) => { current = structuredClone(v); },
     setAdmitted: (v: boolean) => { admitted = v; }, forwardCalls: () => forwardCalls, settlements: () => settlements };
@@ -168,13 +168,14 @@ describe('clinic preserving command protocol qualification, not native custody o
   });
   it('refuses malformed settlement evidence rather than reporting protocol completion', async () => {
     const h = harness(), old = h.ports.createCustody;
-    h.ports.createCustody = async (...args) => ({ ...await old(...args), settle: async () => ({ runId: 'invalid', journalSha256: 'f'.repeat(64) }) });
+    h.ports.createCustody = async (...args) => ({ ...await old(...args), settle: async () => ({ runId: 'invalid', journalSha256: 'f'.repeat(64), retire: async () => { throw Error('unexpected retirement'); } }) });
     await expect(executeClinicPreservingWorkflow('upgrade', h.b, artifact, source, h.ports)).rejects.toMatchObject({ category: 'custody_refused', writeOutcome: 'unknown' });
   });
   it('refuses substitution of a completed result by the outer fence', async () => {
     const h = harness(); h.ports.withFence = async work => { const v = await work({ verify: async () => {} }); return { ...v, operatorAcceptance: true }; };
     await expect(executeClinicPreservingWorkflow('upgrade', h.b, artifact, source, h.ports)).rejects.toMatchObject({ category: 'custody_refused', writeOutcome: 'unknown' });
     expect(h.forwardCalls()).toBe(1);
+    expect(h.calls).not.toContain('retire');
   });
   it('a fence cannot run the workflow twice', async () => {
     const h = harness(); h.ports.withFence = async work => { await work({ verify: async () => {} }); return work({ verify: async () => {} }); };
@@ -191,5 +192,22 @@ describe('clinic preserving command protocol qualification, not native custody o
     const h = harness(); h.ports.withFence = async work => { await work({ verify: async () => {} }); throw Error('FICTIONAL fence release uncertain'); };
     await expect(executeClinicPreservingWorkflow('upgrade', h.b, artifact, source, h.ports)).rejects.toMatchObject({ writeOutcome: 'unknown' });
     expect(h.forwardCalls()).toBe(1);
+    expect(h.calls).not.toContain('retire'); expect(h.settlements()).toBe(0);
+  });
+  it('retires only after the exact completed result leaves the fence wrapper', async () => {
+    const h = harness();
+    h.ports.withFence = async work => { const result = await work({ verify: async () => {} });
+      expect(h.calls).not.toContain('retire'); h.calls.push('fence_exited'); return result; };
+    await executeClinicPreservingWorkflow('upgrade', h.b, artifact, source, h.ports);
+    expect(h.calls.indexOf('retire')).toBeGreaterThan(h.calls.indexOf('fence_exited'));
+    expect(h.settlements()).toBe(1);
+  });
+  it('a local retirement failure reports uncertainty without a second forward call', async () => {
+    const h = harness(), old = h.ports.createCustody;
+    h.ports.createCustody = async (...args) => { const custody = await old(...args), settle = custody.settle;
+      return { ...custody, settle: async value => ({ ...await settle(value), retire: async () => { throw Error('FICTIONAL local retirement failed'); } }) }; };
+    await expect(executeClinicPreservingWorkflow('upgrade', h.b, artifact, source, h.ports))
+      .rejects.toMatchObject({ category: 'custody_refused', writeOutcome: 'unknown' });
+    expect(h.forwardCalls()).toBe(1); expect(h.settlements()).toBe(0);
   });
 });

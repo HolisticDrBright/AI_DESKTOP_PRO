@@ -110,6 +110,7 @@ describe('Clinic native local process custody; fictional observations and DB fen
   it('archives full settlement before lock retirement without promoting authority', async () => {
     const writer = await createNativeClinicCustody(options(), binding(), observation(), fence), after = await complete(writer);
     const result = await writer.settle(after); expect(result.journalSha256).toBe(hash(readFileSync(journal())));
+    expect(existsSync(lock())).toBe(true); await result.retire();
     expect(existsSync(lock())).toBe(false); expect(JSON.parse(readFileSync(file('.clinic.settled.json'), 'utf8'))).toMatchObject({
       evidenceLayer: 'local_process_custody_only', operatorAcceptance: false, phiAllowed: false, activation: 'blocked' });
   });
@@ -117,6 +118,16 @@ describe('Clinic native local process custody; fictional observations and DB fen
     const writer = await createNativeClinicCustody(options(), binding(), observation(), fence), after = await complete(writer);
     const h = JSON.parse(readFileSync(lock(), 'utf8')); writeFileSync(join(root, h.runId + '.clinic.settled.json'), 'foreign');
     await expect(writer.settle(after)).rejects.toThrow(); expect(existsSync(lock())).toBe(true);
+  });
+  it('settlement preparation seals the journal and can be retired once after the fence is no longer usable', async () => {
+    let exited = false; const dbFence = { verify: async () => { if (exited) throw Error('FICTIONAL fence released'); } };
+    const writer = await createNativeClinicCustody(options(), binding(), observation(), dbFence), after = await complete(writer);
+    const prepared = await writer.settle(after);
+    await expect(writer.finding()).rejects.toMatchObject({ stage: 'settlement_prepared' });
+    await expect(writer.settle(after)).rejects.toMatchObject({ stage: 'settlement_prepared' });
+    expect(existsSync(lock())).toBe(true); exited = true; await prepared.retire(); expect(existsSync(lock())).toBe(false);
+    await expect(prepared.retire()).rejects.toThrow();
+    expect(JSON.parse(readFileSync(file('.clinic.settled.json'), 'utf8'))).toMatchObject({ retirement: 'prepared_only' });
   });
   it('cannot reconcile an actually live writer even after the interval', async () => {
     const pid = await writerProcess(); await createNativeClinicCustody(options(pid), binding(), observation(), fence); now += 61000;
@@ -146,7 +157,8 @@ describe('Clinic native local process custody; fictional observations and DB fen
     appendFileSync(journal(), '{"stage":"write_admitted"'); const original = readFileSync(journal()); await stopWriter();
     const recovery = await openNativeClinicRecovery(options(), binding(), fence); expect(recovery.writeAdmitted).toBe(false);
     await expect(recovery.settle(observation(binding(), 116))).rejects.toMatchObject({ stage: 'unadmitted_successor' });
-    await recovery.settle(observation()); expect(readFileSync(file('.clinic.original-journal.jsonl')).equals(original)).toBe(true);
+    const prepared = await recovery.settle(observation()); expect(existsSync(lock())).toBe(true); await prepared.retire();
+    expect(readFileSync(file('.clinic.original-journal.jsonl')).equals(original)).toBe(true);
   });
   it('refuses corrupt complete journal bytes', async () => {
     const pid = await writerProcess(); await createNativeClinicCustody(options(pid), binding(), observation(), fence); await stopWriter();
@@ -169,13 +181,13 @@ describe('Clinic native local process custody; fictional observations and DB fen
     const recovery = await openNativeClinicRecovery(options(), binding(), fence), original = readFileSync(lock()); unlinkSync(lock()); writeFileSync(lock(), original);
     await expect(recovery.verify()).rejects.toMatchObject({ stage: 'file_identity_changed' });
   });
-  it('retains the original lock if fence fails after recovery guard retirement', async () => {
+  it('retains both guards if the fence refuses settlement preparation', async () => {
     const pid = await writerProcess(); const writer = await createNativeClinicCustody(options(pid), binding(), observation(), fence); await admitted(writer); await stopWriter();
-    let failAfterGuard = false;
-    const closingFence = { verify: async () => { if (failAfterGuard && !existsSync(join(root, 'clinic-upgrade-reconciliation.lock'))) throw Error('FICTIONAL fence lost'); } };
-    const recovery = await openNativeClinicRecovery(options(), binding(), closingFence); failAfterGuard = true;
+    let failPreparation = false;
+    const closingFence = { verify: async () => { if (failPreparation) throw Error('FICTIONAL fence lost'); } };
+    const recovery = await openNativeClinicRecovery(options(), binding(), closingFence); failPreparation = true;
     await expect(recovery.settle(observation(binding(), 116))).rejects.toThrow('FICTIONAL fence lost'); expect(existsSync(lock())).toBe(true);
-    expect(existsSync(join(root, 'clinic-upgrade-reconciliation.lock'))).toBe(false);
+    expect(existsSync(join(root, 'clinic-upgrade-reconciliation.lock'))).toBe(true);
   });
   it('refuses replacement by a same-byte hard-linked operator', async () => {
     const writer = await createNativeClinicCustody(options(), binding(), observation(), fence);
@@ -195,7 +207,7 @@ describe('Clinic native local process custody; fictional observations and DB fen
     await openNativeClinicRecovery(options(recoveryPid), binding(), fence); await stopWriter();
     const recovered = await openNativeClinicRecovery(options(), binding(), fence);
     expect(readdirSync(root).filter(v => v.endsWith('.clinic.abandoned-guard.json'))).toHaveLength(1);
-    await recovered.settle(observation(binding(), 116)); expect(existsSync(lock())).toBe(false);
+    const prepared = await recovered.settle(observation(binding(), 116)); await prepared.retire(); expect(existsSync(lock())).toBe(false);
   });
   it('refuses a stopped recovery guard when its archive is missing', async () => {
     const pid = await writerProcess(); await createNativeClinicCustody(options(pid), binding(), observation(), fence);

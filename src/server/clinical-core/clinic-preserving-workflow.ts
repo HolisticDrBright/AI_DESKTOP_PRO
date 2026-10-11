@@ -21,16 +21,21 @@ export type ClinicWorkflowObservation = {
 };
 export type ClinicWorkflowStage = 'rehearsal' | 'write_admitted' | 'write_reply' | 'readback_one' | 'readback_two';
 export type ClinicWorkflowFence = { verify(): Promise<void> };
+/** Preparation runs under the DB fence; local retirement runs only after its
+ * wrapper returns the exact sealed result. An uncertain exit retains custody. */
+export type ClinicWorkflowSettlement = {
+  runId: string; journalSha256: string; retire(): Promise<void>;
+};
 export type ClinicWorkflowWriter = {
   verify(): Promise<void>;
   record(stage: ClinicWorkflowStage, value: ClinicWorkflowObservation): Promise<void>;
   finding(): Promise<void>;
-  settle(value: ClinicWorkflowObservation): Promise<{ runId: string; journalSha256: string }>;
+  settle(value: ClinicWorkflowObservation): Promise<ClinicWorkflowSettlement>;
 };
 export type ClinicWorkflowRecovery = {
   baseline: ClinicWorkflowObservation; writeAdmitted: boolean;
   verify(): Promise<void>;
-  settle(value: ClinicWorkflowObservation): Promise<{ runId: string; journalSha256: string }>;
+  settle(value: ClinicWorkflowObservation): Promise<ClinicWorkflowSettlement>;
 };
 export type ClinicWorkflowPorts = {
   guard(binding: ClinicWorkflowBinding): Promise<void>;
@@ -90,10 +95,10 @@ function preserved(before: ClinicWorkflowObservation, after: ClinicWorkflowObser
   }
 }
 function settlement(value: unknown) {
-  if (!exact(value, ['runId', 'journalSha256'])) refuse('custody_refused');
-  const r = value as { runId: string; journalSha256: string };
-  if (!/^[a-f0-9]{32}$/.test(r.runId) || !hash.test(r.journalSha256)) refuse('custody_refused');
-  return { ...r };
+  if (!exact(value, ['runId', 'journalSha256', 'retire'])) refuse('custody_refused');
+  const r = value as ClinicWorkflowSettlement;
+  if (!/^[a-f0-9]{32}$/.test(r.runId) || !hash.test(r.journalSha256) || typeof r.retire !== 'function') refuse('custody_refused');
+  return { receipt: { runId: r.runId, journalSha256: r.journalSha256 }, retire: r.retire.bind(r) };
 }
 export async function executeClinicPreservingWorkflow(command: 'upgrade' | 'reconcile', suppliedBinding: unknown,
   suppliedArtifact: unknown, suppliedReceipt: unknown, ports: ClinicWorkflowPorts) {
@@ -119,6 +124,11 @@ export async function executeClinicPreservingWorkflow(command: 'upgrade' | 'reco
   // Every port receives its own clone; callbacks cannot mutate later guards.
   const clonedBinding = () => structuredClone(binding);
   let fenceInvocations = 0, sealedResult: string | undefined, invokedWriter = false;
+  let retireAfterFenceExit: (() => Promise<void>) | undefined;
+  const prepare = (value: unknown) => {
+    if (retireAfterFenceExit) refuse('custody_refused');
+    const prepared = settlement(value); retireAfterFenceExit = prepared.retire; return prepared.receipt;
+  };
   const complete = <T>(value: T): T => { sealedResult = canonicalClinicWorkflow(value); return value; };
   const output = await ports.withFence(async fence => {
     if (++fenceInvocations !== 1) refuse('custody_refused');
@@ -151,7 +161,7 @@ export async function executeClinicPreservingWorkflow(command: 'upgrade' | 'reco
         await custody.verify(); await check(); observed = next;
       }
       await custody.verify(); await check();
-      return complete({ ...result('reconcile', observed!, settlement(await custody.settle(structuredClone(observed!)))),
+      return complete({ ...result('reconcile', observed!, prepare(await custody.settle(structuredClone(observed!)))),
         databaseMutationPerformed: false });
     }
     const baseline = await read();
@@ -180,7 +190,7 @@ export async function executeClinicPreservingWorkflow(command: 'upgrade' | 'reco
         await custody.verify(); await custody.record(stage, structuredClone(next));
       }
       await custody.verify(); await check();
-      return complete(result('upgrade', written, settlement(await custody.settle(structuredClone(written)))));
+      return complete(result('upgrade', written, prepare(await custody.settle(structuredClone(written)))));
     } catch (error) {
       // This intentionally neither retries forward nor retires original custody.
       // A timeout or lost commit reply remains unknown even if a later probe
@@ -201,7 +211,12 @@ export async function executeClinicPreservingWorkflow(command: 'upgrade' | 'reco
   // A fence adapter must execute the callback exactly once and return its exact
   // completed result. Skipping it, swallowing failure or substituting success
   // cannot certify the command protocol. No authority is learned from the port.
-  if (fenceInvocations !== 1 || sealedResult === undefined || canonicalClinicWorkflow(output) !== sealedResult)
+  if (fenceInvocations !== 1 || sealedResult === undefined || canonicalClinicWorkflow(output) !== sealedResult || !retireAfterFenceExit)
     throw new ClinicPreservingWorkflowError('custody_refused', invokedWriter ? 'unknown' : 'not_invoked');
+  // No database work occurs after fence exit. The native closure rechecks every
+  // original archive and prepared receipt before retiring local custody. Failure
+  // never retries the write and never yields a completed command result.
+  try { await retireAfterFenceExit(); }
+  catch { throw new ClinicPreservingWorkflowError('custody_refused', invokedWriter ? 'unknown' : 'not_invoked'); }
   return structuredClone(output);
 }

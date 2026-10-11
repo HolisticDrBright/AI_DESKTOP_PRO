@@ -163,13 +163,15 @@ export async function createNativeClinicCustody(options: Options, supplied: Clin
     && !existsSync(resolve(c.root, 'fullscript-upgrade-reconciliation.lock')), 'recovery_active');
   linkSync(headerFile, lock);
   const verifyIdentities = [lock, headerFile, journal, sourceFile].map(identity);
-  const verify = async () => {
-    await fence.verify(); c.verifySource(); verifyIdentities.forEach(v => v());
+  const verifyLocal = () => {
+    c.verifySource(); verifyIdentities.forEach(v => v());
     check(live && bounded(lock, 16384).equals(lockBytes) && bounded(headerFile, 16384).equals(lockBytes)
       && bounded(journal).equals(journalBytes) && bounded(sourceFile, 16 * 1024 * 1024).equals(c.operatorBytes), 'custody_changed');
   };
+  const verify = async () => { await fence.verify(); verifyLocal(); };
+  let prepared = false;
   const record = async (stage: Event['stage'], value: ClinicWorkflowObservation | null) => {
-    await verify(); const parsed = parseJournal(journalBytes, h, lockBytes, c.runtime.now());
+    await verify(); check(!prepared, 'settlement_prepared'); const parsed = parseJournal(journalBytes, h, lockBytes, c.runtime.now());
     check(parsed.tail.length === 0 && parsed.events.at(-1)?.stage !== 'finding', 'journal_terminal');
     const next: Event = { stage, runId, at: new Date(c.runtime.now()).toISOString(), previousSha256: sha(bytes(parsed.events.at(-1))),
       observation: value === null ? null : structuredClone(value) };
@@ -184,16 +186,22 @@ export async function createNativeClinicCustody(options: Options, supplied: Clin
     journalBytes = candidate; await verify();
   };
   return { verify, record: (stage, value) => record(stage, value), finding: () => record('finding', null), settle: async value => {
-    const after = structuredClone(value); await verify(); assertClinicWorkflowObservation(after, binding); preserved(baseline, after);
+    const after = structuredClone(value); await verify(); check(!prepared, 'settlement_prepared'); assertClinicWorkflowObservation(after, binding); preserved(baseline, after);
     const parsed = parseJournal(journalBytes, h, lockBytes, c.runtime.now());
     check(parsed.tail.length === 0 && same(parsed.events.map(e => e.stage), stages) && same(parsed.events[3].observation, after), 'settlement');
-    const receipt = { contract: 'clinic-native-settlement/1', runId, bindingSha256: clinicWorkflowSha256(binding),
+    const receipt = { contract: 'clinic-native-settlement/2', retirement: 'prepared_only', runId, bindingSha256: clinicWorkflowSha256(binding),
       journalSha256: sha(journalBytes), before: baseline, after, evidenceLayer: 'local_process_custody_only',
       managedRoleSemanticsVerified: false, operatorAcceptance: false, phiAllowed: false, activation: 'blocked' };
-    save(resolve(c.root, runId + '.clinic.settled.json'), bytes(receipt));
-    archive(resolve(c.root, runId + '.clinic.settled-lock.json'), lockBytes);
-    await verify(); unlinkSync(lock); live = false;
-    return { runId, journalSha256: sha(journalBytes) };
+    const receiptFile = resolve(c.root, runId + '.clinic.settled.json'), lockArchive = resolve(c.root, runId + '.clinic.settled-lock.json');
+    const receiptBytes = bytes(receipt);
+    save(receiptFile, receiptBytes); archive(lockArchive, lockBytes);
+    const receiptPins = [receiptFile, lockArchive].map(identity);
+    await verify(); prepared = true;
+    return { runId, journalSha256: sha(journalBytes), retire: async () => {
+      verifyLocal(); receiptPins.forEach(pin => pin());
+      check(prepared && bounded(receiptFile).equals(receiptBytes) && bounded(lockArchive, 16384).equals(lockBytes), 'prepared_receipt_changed');
+      unlinkSync(lock); live = false;
+    } };
   } };
 }
 
@@ -239,23 +247,33 @@ export async function openNativeClinicRecovery(options: Options, supplied: Clini
   await fence.verify(); original(); guardArchivePin();
   check(bounded(guardHeader, 16384).equals(guardBytes), 'guard_archive_changed'); linkSync(guardHeader, guard);
   const guardPins = [guard, guardHeader].map(identity); let live = true;
-  const verify = async () => { await fence.verify(); original(); guardPins.forEach(v => v());
+  const verifyLocal = () => { original(); guardPins.forEach(v => v());
     check(live && bounded(guard, 16384).equals(guardBytes) && bounded(guardHeader, 16384).equals(guardBytes), 'guard_changed'); };
+  const verify = async () => { await fence.verify(); verifyLocal(); };
+  let prepared = false;
   return { baseline: structuredClone(parsed.baseline), writeAdmitted: parsed.writeAdmitted, verify, settle: async value => {
-    const after = structuredClone(value); await verify(); assertClinicWorkflowObservation(after, binding); preserved(parsed.baseline, after);
+    const after = structuredClone(value); await verify(); check(!prepared, 'settlement_prepared'); assertClinicWorkflowObservation(after, binding); preserved(parsed.baseline, after);
     check(parsed.writeAdmitted || after.witness.observedMigrationCount === 112, 'unadmitted_successor');
     const returnedSuccessor = parsed.events.find(e => e.stage === 'write_reply')?.observation;
     check(!returnedSuccessor || same(returnedSuccessor, after), 'recorded_successor_changed');
-    const receipt = { contract: 'clinic-native-reconciliation/1', runId: h.runId, bindingSha256: clinicWorkflowSha256(binding),
+    const receipt = { contract: 'clinic-native-reconciliation/2', retirement: 'prepared_only', runId: h.runId, bindingSha256: clinicWorkflowSha256(binding),
       originalWriteOutcome: 'unknown', journalSha256: sha(journalBytes), tornJournalTail: parsed.tail.length > 0,
       before: parsed.baseline, after, retryPerformed: false, databaseMutationPerformed: false,
       evidenceLayer: 'local_process_custody_only', operatorAcceptance: false, managedRoleSemanticsVerified: false,
       phiAllowed: false, activation: 'blocked' };
-    archive(resolve(c.root, guardId + '.clinic.reconciled.json'), bytes(receipt));
-    archive(resolve(c.root, h.runId + '.clinic.reconciled-lock.json'), lockBytes);
-    archive(resolve(c.root, guardId + '.clinic.original-journal.jsonl'), journalBytes);
-    await verify(); unlinkSync(guard);
-    await fence.verify(); original(); unlinkSync(lock); live = false;
-    return { runId: h.runId, journalSha256: sha(journalBytes) };
+    const receiptFile = resolve(c.root, guardId + '.clinic.reconciled.json'), lockArchive = resolve(c.root, h.runId + '.clinic.reconciled-lock.json');
+    const journalArchive = resolve(c.root, guardId + '.clinic.original-journal.jsonl'), receiptBytes = bytes(receipt);
+    archive(receiptFile, receiptBytes); archive(lockArchive, lockBytes); archive(journalArchive, journalBytes);
+    const receiptPins = [receiptFile, lockArchive, journalArchive].map(identity);
+    await verify(); prepared = true;
+    return { runId: h.runId, journalSha256: sha(journalBytes), retire: async () => {
+      verifyLocal(); receiptPins.forEach(pin => pin());
+      check(prepared && bounded(receiptFile).equals(receiptBytes) && bounded(lockArchive, 16384).equals(lockBytes)
+        && bounded(journalArchive).equals(journalBytes), 'prepared_receipt_changed');
+      // No await or database work between local guard and original retirement.
+      // If unlinking the original fails, its exact archive and lock remain for
+      // explicit read-only recovery; never delete the original first.
+      unlinkSync(guard); original(); unlinkSync(lock); live = false;
+    } };
   } };
 }

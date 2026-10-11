@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, sep } from 'node:path';
 import { CLINIC_NATIVE_SOURCE_RECEIPT_SHA256 } from '../../../scripts/clinic-preserving-transition.mjs';
@@ -80,5 +80,64 @@ describe('Command protocol with real local files/process liveness and explicitly
     await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports)).rejects.toMatchObject({ writeOutcome: 'unknown', category: 'preservation_refused' });
     expect(h.writes()).toBe(1); expect(existsSync(join(root, 'operator.lock'))).toBe(true);
     expect(readdirSync(root).filter(v => v.endsWith('.clinic.settled.json'))).toHaveLength(0);
+  });
+  it('an outer fence exit failure retains original custody even after both readbacks and settlement preparation', async () => {
+    const h = fixture();
+    h.ports.withFence = async work => { await work({ verify: async () => {} }); throw Error('FICTIONAL fence exit failed'); };
+    await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports))
+      .rejects.toMatchObject({ writeOutcome: 'unknown' });
+    expect(h.writes()).toBe(1); expect(existsSync(join(root, 'operator.lock'))).toBe(true);
+    expect(readdirSync(root).filter(v => v.endsWith('.clinic.settled.json'))).toHaveLength(1);
+    await stop(); h.ports.withFence = async work => work({ verify: async () => {} });
+    const result = await executeClinicPreservingWorkflow('reconcile', h.binding, artifact, source, h.ports);
+    expect(result).toMatchObject({ observedMigrationCount: 116, databaseMutationPerformed: false, retryPerformed: false });
+    expect(h.writes()).toBe(1); expect(existsSync(join(root, 'operator.lock'))).toBe(false);
+  });
+  it('a recovery fence exit failure retains both guards instead of losing the uncertain original attempt', async () => {
+    const h = fixture(), forward = h.ports.forward;
+    h.ports.forward = async (...args) => { await forward(...args); throw Error('FICTIONAL commit reply lost'); };
+    await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports)).rejects.toThrow();
+    await stop();
+    h.ports.withFence = async work => { await work({ verify: async () => {} }); throw Error('FICTIONAL recovery fence exit failed'); };
+    await expect(executeClinicPreservingWorkflow('reconcile', h.binding, artifact, source, h.ports)).rejects.toThrow();
+    expect(existsSync(join(root, 'operator.lock'))).toBe(true);
+    expect(existsSync(join(root, 'clinic-upgrade-reconciliation.lock'))).toBe(true);
+    expect(h.writes()).toBe(1);
+  });
+  it.each(['source', 'receipt', 'receipt_identity', 'journal', 'lock_identity'])
+    ('post-exit %s substitution refuses local retirement and retains original custody', async changed => {
+      const h = fixture();
+      h.ports.withFence = async work => {
+        const result = await work({ verify: async () => {} });
+        const file = changed === 'source' ? operatorFile : changed === 'journal'
+          ? join(root, readdirSync(root).find(n => n.endsWith('.clinic.events.jsonl'))!)
+          : changed === 'lock_identity' ? join(root, 'operator.lock')
+            : join(root, readdirSync(root).find(n => n.endsWith('.clinic.settled.json'))!);
+        if (changed.endsWith('_identity')) { const original = readFileSync(file); renameSync(file, file + '.old'); writeFileSync(file, original); }
+        else writeFileSync(file, 'FICTIONAL changed after fence exit');
+        return result;
+      };
+      await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports))
+        .rejects.toMatchObject({ category: 'custody_refused', writeOutcome: 'unknown' });
+      expect(h.writes()).toBe(1); expect(existsSync(join(root, 'operator.lock'))).toBe(true);
+    });
+  it('a substituted outer result retains the prepared native lock instead of retiring it', async () => {
+    const h = fixture();
+    h.ports.withFence = async work => ({ ...await work({ verify: async () => {} }), operatorAcceptance: true });
+    await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports))
+      .rejects.toMatchObject({ category: 'custody_refused', writeOutcome: 'unknown' });
+    expect(h.writes()).toBe(1); expect(existsSync(join(root, 'operator.lock'))).toBe(true);
+  });
+  it('a post-exit recovery receipt change retains both local guards', async () => {
+    const h = fixture(), forward = h.ports.forward;
+    h.ports.forward = async (...args) => { await forward(...args); throw Error('FICTIONAL response lost'); };
+    await expect(executeClinicPreservingWorkflow('upgrade', h.binding, artifact, source, h.ports)).rejects.toThrow();
+    await stop();
+    h.ports.withFence = async work => { const result = await work({ verify: async () => {} });
+      writeFileSync(join(root, readdirSync(root).find(n => n.endsWith('.clinic.reconciled.json'))!), 'FICTIONAL changed'); return result; };
+    await expect(executeClinicPreservingWorkflow('reconcile', h.binding, artifact, source, h.ports))
+      .rejects.toMatchObject({ category: 'custody_refused' });
+    expect(existsSync(join(root, 'operator.lock'))).toBe(true);
+    expect(existsSync(join(root, 'clinic-upgrade-reconciliation.lock'))).toBe(true); expect(h.writes()).toBe(1);
   });
 });
