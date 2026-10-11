@@ -39,18 +39,21 @@ create function clinical_private.fence_telehealth_authority_change() returns tri
 language plpgsql security definer set search_path='' as $$
 begin
   if tg_op='UPDATE' then
-    if tg_table_name='organization_memberships' and
-      (new.organization_id,new.person_id,new.role,new.status) is not distinct from
-      (old.organization_id,old.person_id,old.role,old.status) then return new; end if;
-    if tg_table_name='identities' and
-      (new.person_id,new.identity_pool,new.identity_subject,new.production_bound) is not distinct from
-      (old.person_id,old.identity_pool,old.identity_subject,old.production_bound) then return new; end if;
-    if tg_table_name='patient_records' and
-      (new.id,new.organization_id,new.status,new.deleted_at) is not distinct from
-      (old.id,old.organization_id,old.status,old.deleted_at) then return new; end if;
-    if tg_table_name='appointments' and
-      (new.id,new.organization_id,new.patient_record_id,new.practitioner_person_id,new.appointment_type,new.status,new.deleted_at) is not distinct from
-      (old.id,old.organization_id,old.patient_record_id,old.practitioner_person_id,old.appointment_type,old.status,old.deleted_at) then return new; end if;
+    -- Branch before referencing each record's fields; a generic trigger record
+    -- must not prepare an expression containing another table's columns.
+    if tg_table_name='organization_memberships' then
+      if (new.organization_id,new.person_id,new.role,new.status) is not distinct from
+        (old.organization_id,old.person_id,old.role,old.status) then return new; end if;
+    elsif tg_table_name='identities' then
+      if (new.person_id,new.identity_pool,new.identity_subject,new.production_bound) is not distinct from
+        (old.person_id,old.identity_pool,old.identity_subject,old.production_bound) then return new; end if;
+    elsif tg_table_name='patient_records' then
+      if (new.id,new.organization_id,new.status,new.deleted_at) is not distinct from
+        (old.id,old.organization_id,old.status,old.deleted_at) then return new; end if;
+    elsif tg_table_name='appointments' then
+      if (new.id,new.organization_id,new.patient_record_id,new.practitioner_person_id,new.appointment_type,new.status,new.deleted_at) is not distinct from
+        (old.id,old.organization_id,old.patient_record_id,old.practitioner_person_id,old.appointment_type,old.status,old.deleted_at) then return new; end if;
+    end if;
   end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('telehealth-current-authority-v1',0));
   if tg_op='DELETE' then return old; end if;

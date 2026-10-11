@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { assertClinicSourceArtifact, CLINIC_SOURCE_IDENTITY } from './compile-clinic-schema-source.mjs';
 const sha = value => createHash('sha256').update(value).digest('hex');
 export const TELEHEALTH_AUTHORITY_FILE = '20261011020000_production_telehealth_transfer_authority.sql';
-export const TELEHEALTH_AUTHORITY_SQL_SHA256 = 'ff464b6e216939cc606ebcc96b3d817beddc03927e2c1494c50012152e57c9cc';
+export const TELEHEALTH_AUTHORITY_SQL_SHA256 = 'b5e0b07fb80527acdb2f2f631df7efb9caf4209f28dfb7bd4779c1b6eec981b4';
 export function telehealthTransferAuthorityCandidate(parent, source) {
   const refuse = () => { throw Error('telehealth_authority_artifact_refused'); };
   try { assertClinicSourceArtifact(parent); } catch { refuse(); }
