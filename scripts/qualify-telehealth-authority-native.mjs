@@ -109,6 +109,9 @@ async function scenario(id, action, destination = false) {
     while ((await admin.query('select clock_timestamp() as at')).rows[0].at.getTime() <= signed.expiresAt + 25) await delay(25);
   } else if (action === 'membership') await admin.query("update clinical_core.organization_memberships set status='suspended' where person_id=$1", [f.practitioner]);
   else if (action === 'patient') await admin.query('update clinical_core.patient_records set deleted_at=clock_timestamp() where id=$1', [f.patient]);
+  else if (action === 'identity') await admin.query("update clinical_core.identities set status='disabled' where person_id=$1", [f.practitioner]);
+  else if (action === 'person') await admin.query("update clinical_core.persons set status='disabled' where id=$1", [f.practitioner]);
+  else if (action === 'organization') await admin.query("update clinical_core.organizations set status='suspended' where id=$1", [f.org]);
   else if (action === 'key' && destination) {
     // The current key fence must serialize a retirement that arrives after the
     // transfer already holds its key. Do not wait for retirement while holding
@@ -136,7 +139,7 @@ async function scenario(id, action, destination = false) {
   }
   const after = await counts(f);
   const markers = action === 'expiry' ? /^telehealth_admission_mismatch$/ : action === 'key' ? /^telehealth_admission_(refused|unavailable)$/
-    : /^(request_context_refused|clinical_role_required|clinical_patient_required|membership_required|patient_record_not_found|patient_not_found)$/;
+    : /^(request_context_refused|clinical_role_required|clinical_patient_required|membership_required|patient_record_not_found|patient_not_found|telehealth_current_authority_refused)$/;
   if (retirement) {
     await context(f);
     const retry = await actor.query(transferSql, signed.args).then(() => ({ accepted: true }), error => ({ accepted: false, code: error.code, marker: error.message }));
@@ -164,28 +167,45 @@ async function admittedBeforeRevocation(action) {
   const changeSql = action === 'membership' ? "update clinical_core.organization_memberships set status='suspended' where person_id=$1"
     : action === 'patient' ? 'update clinical_core.patient_records set deleted_at=clock_timestamp() where id=$1'
     : action === 'identity' ? "update clinical_core.identities set status='disabled' where person_id=$1"
+    : action === 'person' ? "update clinical_core.persons set status='disabled' where id=$1"
+    : action === 'organization' ? "update clinical_core.organizations set status='suspended' where id=$1"
     : null;
   if (!changeSql) refuse('authority_change_refused');
-  const pending = revoker.query(changeSql, [action === 'patient' ? f.patient : f.practitioner])
-    .then(() => ({ changed: true }), error => ({ changed: false, code: error.code }));
-  const observedLock = await waitForBlocked(revokerPid);
-  const blockers = (await admin.query('select pg_blocking_pids($1) pids', [revokerPid])).rows[0].pids;
-  if (observedLock !== 'advisory' || !blockers.includes(pid)) refuse('authority_change_not_fenced');
+  let changeOutcome;
+  const pending = revoker.query(changeSql, [action === 'patient' ? f.patient : action === 'organization' ? f.org : f.practitioner])
+    .then(() => (changeOutcome = { changed: true }), error => (changeOutcome = { changed: false, code: error.code }));
+  let observedLock = null, serialized = false;
+  for (let i = 0; i < 100; i++) {
+    const row = (await admin.query('select wait_event_type,wait_event,pg_blocking_pids($1) pids from pg_stat_activity where pid=$1', [revokerPid])).rows[0];
+    if (row?.wait_event_type === 'Lock') {
+      observedLock = row.wait_event;
+      serialized = observedLock === 'advisory' && row.pids.includes(pid);
+      break;
+    }
+    if (changeOutcome) break;
+    await delay(25);
+  }
   const beforeCommit = await counts(f);
+  // If the change already returned, actually commit it before the writer.
+  // This records the incorrect ordering rather than masking it with rollback.
+  const revokedBeforeWriterCommit = !!changeOutcome?.changed;
+  if (revokedBeforeWriterCommit) await revoker.query('commit');
   await actor.query('commit');
   const change = await pending;
   if (!change.changed) refuse('authority_change_failed');
-  await revoker.query('commit');
+  if (!revokedBeforeWriterCommit) await revoker.query('commit');
   const afterCommit = await counts(f);
   let retry;
   try { await context(f); await actor.query(transferSql, signed.args); retry = { accepted: true }; }
   catch (error) { retry = { accepted: false, code: error.code, marker: error.message }; }
   await actor.query(retry.accepted ? 'commit' : 'rollback');
   const afterRetry = await counts(f);
-  const allowed = /^(clinical_role_required|patient_not_found|production_identity_required|production_identity_not_bound|request_context_refused|request_context_not_set|production_context_required)$/;
+  const allowed = /^(clinical_role_required|patient_not_found|request_context_refused|telehealth_current_authority_refused)$/;
   results.push({ id: action + '_revocation_waits_for_admitted_writer', observedLock, acceptedBeforeRevocation: true,
+    serialized, revokedBeforeWriterCommit,
     retryAccepted: retry.accepted, retryRefusal: /^[a-z_]+$/.test(retry.marker ?? '') ? retry.marker : null,
-    beforeCommit, afterCommit, passed: beforeCommit.transfers === 0 && beforeCommit.notes === 0 && beforeCommit.encounters === 0
+    beforeCommit, afterCommit, passed: serialized && !revokedBeforeWriterCommit
+      && beforeCommit.transfers === 0 && beforeCommit.notes === 0 && beforeCommit.encounters === 0
       && afterCommit.transfers === 1 && afterCommit.notes === 1 && afterCommit.encounters === 1
       && !retry.accepted && allowed.test(retry.marker ?? '') && canonical(afterCommit) === canonical(afterRetry) });
 }
@@ -265,9 +285,14 @@ try {
   await scenario('key_retired_during_destination_row_lock', 'key', true);
   await scenario('membership_revoked_during_destination_row_lock', 'membership', true);
   await scenario('patient_deactivated_during_destination_row_lock', 'patient', true);
+  await scenario('identity_disabled_during_destination_row_lock', 'identity', true);
+  await scenario('person_disabled_during_destination_row_lock', 'person', true);
+  await scenario('organization_suspended_during_destination_row_lock', 'organization', true);
   await admittedBeforeRevocation('membership');
   await admittedBeforeRevocation('patient');
   await admittedBeforeRevocation('identity');
+  await admittedBeforeRevocation('person');
+  await admittedBeforeRevocation('organization');
   report = { contract: 'telehealth-authority-native-source/1', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
