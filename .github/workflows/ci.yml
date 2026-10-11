@@ -59,6 +59,7 @@ jobs:
           npm run test:zoom-host-authority
           npm run test:telehealth-schema-source
           npm run test:telehealth-native-source
+          npm run test:clinic-native-source
           npm run build:telehealth-key-fence-candidate
           npm run test:telehealth-key-fence-candidate
           npm run build:telehealth-schema-source

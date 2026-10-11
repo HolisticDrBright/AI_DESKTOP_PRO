@@ -32,6 +32,8 @@
     "build:telehealth-schema-source": "node scripts/build-telehealth-schema-source.mjs",
     "test:telehealth-schema-source": "vitest run src/server/clinical-core/telehealth-schema-projection.database.test.ts --no-file-parallelism",
     "test:telehealth-native-source": "node --test scripts/telehealth-native-source.test.mjs scripts/telehealth-restricted-source-owner.test.mjs",
+    "test:clinic-native-source": "node --test scripts/clinic-native-source.test.mjs",
+    "qualify:clinic-native-source": "node scripts/qualify-clinic-native-source.mjs",
     "qualify:telehealth-native-source": "node scripts/qualify-telehealth-native-source.mjs",
     "build:telehealth-key-fence-candidate": "node scripts/build-telehealth-transfer-key-fence-candidate.mjs",
     "test:telehealth-key-fence-candidate": "node --test scripts/telehealth-transfer-key-fence-candidate.test.mjs scripts/telehealth-native-races.test.mjs",
