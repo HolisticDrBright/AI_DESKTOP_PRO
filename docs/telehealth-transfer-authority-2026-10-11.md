@@ -81,13 +81,24 @@ administration is separate. Managed and hosted verification remain false.
 The after run covers a valid transfer, private key and receipt read denials,
 expiry, key-retirement serialization and retry refusal, and both clinical
 authority orderings for membership, patient, identity, person and clinic.
-The subsequent runner adds concurrent and exact replay checks; those require
-their own native report and are not certified by the 18-case run.
+The subsequent run at `b5b7d1895ee6409e9c03fbf60a8f96a1a932c634`
+passed 20 cases, adding concurrent and exact replay checks. Its report is
+`dist/native-authority-runs/authority-pg17-QMiGuv/race-qualification.json`.
+The peer uses its own restricted-owner/API-role session; its request actually
+waits on the first writer and returns the same destination with `created:false`.
+Both retries leave one transfer, one note and one encounter, and shutdown is
+confirmed. This is not certified by the earlier 18-case report.
 Twelve candidate/hold tests and six credential-free runner tests pass; the
 combined candidate suite passed 91. Typecheck and targeted lint passed. The new
 refusal mapper test failed before its additive allowlist repair, then the
 mapper and embedded chart/clinic suites passed 230 tests. These embedded tests
 exercise historical chart/clinic candidates, not native or hosted 117.
+The complete typecheck and lint commands also pass. Compatibility, operation
+inventory, stub-reset, Core scope and the historical production-core gate pass.
+That last gate builds 106 base migrations, not the distinct 117 candidate; do
+not report it as managed or runtime admission for 117. The inventory still
+reports 228 blocked operations, zero enabled and 140 provider-specific rewrites.
+No full-suite or exact pushed-head CI result is claimed by these focused runs.
 
 Run the portable qualification only on Windows with reviewed local PostgreSQL
 17.7 binaries and a local `pg` 8.16.3 driver directory:
