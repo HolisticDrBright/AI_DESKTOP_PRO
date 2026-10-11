@@ -20,6 +20,7 @@
     "test:clinic-record-privacy": "vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts",
     "build:clinic-records-source-candidate": "node scripts/build-clinic-records-source-candidate.mjs",
     "test:clinic-records-qualification-report": "node --test scripts/clinic-records-qualification-report.test.mjs",
+    "test:clinic-records-qualification-target": "node --test scripts/clinic-records-qualification-target.test.mjs",
     "print:clinic-records-qualification-cases": "node scripts/clinic-records-qualification-report.mjs --cases",
     "test:clinic-records-contract-integrity": "node --test scripts/clinic-records-contract-integrity.test.mjs",
     "build:aws-clinic-records": "node scripts/build-aws-clinic-records.mjs",

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { ClinicTargetError, observeClinicTarget } from './clinic-records-qualification-target.mjs';
 import { CLINIC_RECORDS_QUALIFICATION_CASES as CASES, CLINIC_RECORDS_QUALIFICATION_ROUTES as ROUTES, CLINIC_RECORDS_QUALIFICATION_TARGET as TARGET,
   ClinicRecordsQualificationError, assertClinicRecordsQualificationBinding, evaluateClinicRecordsQualificationReport } from './clinic-records-qualification-report.mjs';
 
@@ -23,6 +24,8 @@ export class ClinicRecordsRunnerError extends Error { constructor(category, deta
 const sha = value => createHash('sha256').update(value, 'utf8').digest('hex');
 const CONSUMER_WINDOW_MS = 15 * 60_000, COPY_WINDOW_MS = 5 * 60_000;
 const SECTIONS = ['signed_notes', 'lab_observations'];
+const hostedPorts = new WeakSet();
+const rebuiltDeployments = new WeakSet();
 
 /** Unverified claim read (the gateway verifies signatures); used only to pick a token whose sign-in age fits the case. */
 export function tokenClaims(token) {
@@ -39,7 +42,7 @@ const windows = {
   stale: age => age > CONSUMER_WINDOW_MS + 30_000,
 };
 
-export async function runClinicRecordsQualification({ binding, candidate, tokens, fixtures, ports, now = () => Date.now(), awaitRelease }) {
+export async function runClinicRecordsQualification({ binding, candidate, target, deployment, migrations, tokens, fixtures, ports, now = () => Date.now(), awaitRelease }) {
   const b = assertClinicRecordsQualificationBinding(binding, candidate);
   if (typeof ports?.http !== 'function' || typeof ports?.sql !== 'function' || typeof awaitRelease !== 'function') throw new ClinicRecordsRunnerError('ports_required');
   if (!fixtures || typeof fixtures.signedNoteText !== 'string' || typeof fixtures.draftNoteText !== 'string' || !fixtures.signedNoteText || !fixtures.draftNoteText) throw new ClinicRecordsRunnerError('fixtures_required');
@@ -60,6 +63,7 @@ export async function runClinicRecordsQualification({ binding, candidate, tokens
     const route = ROUTES[pool === 'consumer' ? 0 : 1];
     const r = await ports.http(route, token(subject, kind), typeof body === 'string' ? body : JSON.stringify(body));
     if (!r || !Number.isInteger(r.status)) throw new ClinicRecordsRunnerError('http_shape');
+    if (r.execution !== 'qualification') throw new ClinicRecordsRunnerError('response_execution_unverified');
     const json = r.json ?? null;
     return { status: r.status, error: r.status === 200 ? null : (json && typeof json.error === 'string' ? json.error : 'undecided'), data: r.status === 200 && json ? json.data ?? null : null, text: JSON.stringify(json ?? {}) };
   };
@@ -206,24 +210,34 @@ export async function runClinicRecordsQualification({ binding, candidate, tokens
     },
   };
   let releaseRegistered = null;
-  const report = () => ({ contract: 'clinic-records-qualification-report/1', binding: b, startedAt, finishedAt: at(), mutationsOutsideQualificationDatabase: false, phiAllowed: false,
-    target: { account: TARGET.account, region: TARGET.region, database: TARGET.database, apiId: b.apiId, migrationRows: TARGET.migrationCount, migrationReleaseSha256: b.migrationReleaseSha256, routes: [...ROUTES] },
+  let targetObservation = null;
+  const observe = async () => {
+    targetObservation = await observeClinicTarget({ target, deployment, migrations, binding: b, candidate, ports });
+    return targetObservation;
+  };
+  const report = () => ({ contract: 'clinic-records-qualification-report/2', binding: b, startedAt, finishedAt: at(), mutationsOutsideQualificationDatabase: false, phiAllowed: false,
+    evidenceKind: hostedPorts.has(ports) ? 'hosted' : 'embedded', targetObservation,
+    target: targetObservation ? { account: targetObservation.account, region: targetObservation.region, database: targetObservation.database,
+      apiId: targetObservation.apiId, migrationRows: targetObservation.migrationRows, migrationReleaseSha256: targetObservation.migrationReleaseSha256, routes: targetObservation.routes } : null,
     releaseRegistered, cases: structuredClone(cases) });
   try {
-    const ledger = await sql('select count(*)::int as n from clinical_core.schema_migrations', []);
-    if (Number(ledger[0]?.n) !== TARGET.migrationCount) throw new ClinicRecordsRunnerError('target_ledger', String(ledger[0]?.n));
+    if (hostedPorts.has(ports) && !rebuiltDeployments.has(deployment)) throw new ClinicRecordsRunnerError('hosted_local_build_required');
+    await observe();
     if ((await releaseRows()).length) throw new ClinicRecordsRunnerError('release_present_before_phase');
     for (const spec of CASES.filter(c => c.phase === 'before_release')) await outcome(spec, run[spec.id]);
+    await observe();
     await awaitRelease();
+    await observe();
     const live = await releaseRows();
     const d = b.disclosureRelease;
     if (live.length !== 1 || live[0].release_version !== d.releaseVersion || live[0].review_sha256 !== d.reviewSha256
       || JSON.stringify([...(Array.isArray(live[0].sections) ? live[0].sections : JSON.parse(String(live[0].sections)))].sort()) !== JSON.stringify([...d.sections].sort())) throw new ClinicRecordsRunnerError('release_mismatch');
     releaseRegistered = { releaseVersion: d.releaseVersion, sections: [...d.sections], reviewSha256: d.reviewSha256 };
     for (const spec of CASES.filter(c => c.phase === 'under_release')) await outcome(spec, run[spec.id]);
+    await observe();
   } catch (error) {
     const incomplete = report();
-    return { report: incomplete, verdict: null, refusal: error instanceof ClinicRecordsRunnerError ? `${error.category}${error.detail ? ':' + error.detail : ''}` : 'port_failure', complete: false };
+    return { report: incomplete, verdict: null, refusal: error instanceof ClinicTargetError ? error.category : error instanceof ClinicRecordsRunnerError ? `${error.category}${error.detail ? ':' + error.detail : ''}` : 'port_failure', complete: false };
   }
   const complete = report();
   try { return { report: complete, verdict: evaluateClinicRecordsQualificationReport(complete, b, candidate), refusal: null, complete: true }; }
@@ -234,34 +248,74 @@ export async function runClinicRecordsQualification({ binding, candidate, tokens
 export async function createHostedPorts({ apiId, clusterArn, secretArn, database, region = 'us-east-2' }) {
   if (!/^[a-z0-9]{10}$/.test(apiId ?? '') || database !== TARGET.database || !/^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(clusterArn ?? '')
     || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/.test(secretArn ?? '') || region !== 'us-east-2') throw new ClinicRecordsRunnerError('hosted_target_refused');
-  const { RDSDataClient, ExecuteStatementCommand } = await import('@aws-sdk/client-rds-data');
-  const client = new RDSDataClient({ region, maxAttempts: 1 });
+  const { RDSDataClient, ExecuteStatementCommand, BeginTransactionCommand, RollbackTransactionCommand } = await import('@aws-sdk/client-rds-data');
+  const { fromIni } = await import('@aws-sdk/credential-provider-ini');
+  const client = new RDSDataClient({ region, endpoint: 'https://rds-data.us-east-2.amazonaws.com', credentials: fromIni({ profile: 'ai-synthetic-member' }), maxAttempts: 1 });
   const origin = `https://${apiId}.execute-api.${region}.amazonaws.com`;
-  return {
+  const ports = {
+    readAws: async (service, operation, args = {}) => {
+      const allowed = {
+        'sts/get-caller-identity': [], 'cloudformation/describe-stacks': ['stack-name'], 'cloudformation/get-template': ['stack-name', 'template-stage'],
+        'cloudformation/list-stack-resources': ['stack-name'], 'rds/describe-db-clusters': ['db-cluster-identifier'],
+        'secretsmanager/describe-secret': ['secret-id'], 'apigatewayv2/get-api': ['api-id'], 'lambda/get-function': ['function-name'],
+        'apigatewayv2/get-stage': ['api-id', 'stage-name'], 'apigatewayv2/get-deployment': ['api-id', 'deployment-id'],
+        'apigatewayv2/get-routes': ['api-id', 'next-token'], 'apigatewayv2/get-authorizer': ['api-id', 'authorizer-id'],
+        'apigatewayv2/get-integration': ['api-id', 'integration-id'],
+      }[`${service}/${operation}`];
+      if (!allowed || Object.entries(args).some(([k, v]) => !allowed.includes(k) || typeof v !== 'string' || !v || v.startsWith('-'))) throw new ClinicRecordsRunnerError('aws_read_refused');
+      // Explicit profile, region and endpoints: no inherited endpoint override,
+      // debug logging, shell interpolation or write-capable command surface.
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^AWS_ENDPOINT_URL|^AWS_PROFILE$|^AWS_DEFAULT_PROFILE$|^AWS_CA_BUNDLE$/.test(k)));
+      const endpointService = service === 'apigatewayv2' ? 'apigateway' : service;
+      const output = execFileSync('aws', [service, operation, ...Object.entries(args).flatMap(([k, v]) => [`--${k}`, v]),
+        '--profile', 'ai-synthetic-member', '--region', region, '--endpoint-url', `https://${endpointService}.${region}.amazonaws.com`,
+        '--output', 'json', '--no-cli-pager', '--no-paginate'], { env: { ...env, AWS_MAX_ATTEMPTS: '1', AWS_PAGER: '' }, encoding: 'utf8',
+        windowsHide: true, timeout: 30_000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+      // GetFunction includes a short-lived download URL. It is not evidence and
+      // must never reach a report or log.
+      const result = JSON.parse(output); if (service === 'lambda') delete result.Code;
+      return result;
+    },
     http: async (route, token, body) => {
       const response = await fetch(origin + route.slice('POST '.length), { method: 'POST', redirect: 'error', cache: 'no-store',
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json' }, body, signal: AbortSignal.timeout(30_000) });
       const text = await response.text();
       let json = null; try { json = JSON.parse(text); } catch { json = null; }
-      return { status: response.status, json };
+      return { status: response.status, json, execution: response.headers.get('x-clinical-execution') };
     },
     sql: async (text, params) => {
       const parameters = params.map((value, i) => ({ name: `p${i + 1}`, value: Array.isArray(value) ? { stringValue: '{' + value.map(v => '"' + String(v).replace(/"/g, '\\"') + '"').join(',') + '}' } : { stringValue: String(value) },
         ...(Array.isArray(value) ? {} : /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(String(value)) ? { typeHint: 'UUID' } : {}) }));
       const statement = text.replace(/\$(\d+)(::[a-z\[\]]+)?/g, (_m, n, cast) => `:p${n}${cast ?? ''}`);
-      const out = await client.send(new ExecuteStatementCommand({ resourceArn: clusterArn, secretArn, database, sql: statement, parameters, formatRecordsAs: 'JSON' }));
-      return { rows: out.formattedRecords ? JSON.parse(out.formattedRecords) : [] };
+      if (!/^select\s/i.test(text)) throw new ClinicRecordsRunnerError('sql_read_refused');
+      const base = { resourceArn: clusterArn, secretArn, database }, send = command => client.send(command, { abortSignal: AbortSignal.timeout(30_000) });
+      const begun = await send(new BeginTransactionCommand(base));
+      if (!begun.transactionId) throw new ClinicRecordsRunnerError('sql_transaction_required');
+      try {
+        await send(new ExecuteStatementCommand({ ...base, transactionId: begun.transactionId, sql: 'SET TRANSACTION READ ONLY' }));
+        const out = await send(new ExecuteStatementCommand({ ...base, transactionId: begun.transactionId, sql: statement, parameters, formatRecordsAs: 'JSON' }));
+        return { rows: out.formattedRecords ? JSON.parse(out.formattedRecords) : [] };
+      } finally { await send(new RollbackTransactionCommand({ ...base, transactionId: begun.transactionId })); }
     },
   };
+  hostedPorts.add(ports);
+  return ports;
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop())) {
   const args = Object.fromEntries(process.argv.slice(2).map(a => { const m = /^--([a-z-]+)=(.+)$/.exec(a); if (!m) { console.error('usage: --binding=<json> --tokens=<json> --fixtures=<json> --target=<json> --out=<report.json>'); process.exit(2); } return [m[1], m[2]]; }));
   for (const k of ['binding', 'tokens', 'fixtures', 'target', 'out']) if (!args[k]) { console.error(`missing --${k}`); process.exit(2); }
   const read = p => JSON.parse(readFileSync(p, 'utf8'));
-  const candidate = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 })).candidate;
-  const ports = await createHostedPorts(read(args.target));
-  const result = await runClinicRecordsQualification({ binding: read(args.binding), candidate, tokens: read(args.tokens), fixtures: read(args.fixtures), ports,
+  const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 }));
+  const binding = read(args.binding), target = read(args.target), prefix = 'dist/aws-clinical-core/clinic-records/';
+  if (execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== binding.sourceCommit
+    || execFileSync('git', ['status', '--porcelain', '--', 'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim()) throw new ClinicRecordsRunnerError('local_source_refused');
+  execFileSync(process.execPath, ['scripts/build-aws-clinic-records.mjs'], { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+  const deployment = { manifest: read(prefix + 'artifact-manifest.json'), templateText: readFileSync(prefix + 'template.json', 'utf8'), zip: readFileSync(prefix + 'deployment.zip'), code: readFileSync(prefix + 'index.js') };
+  rebuiltDeployments.add(deployment);
+  const migrations = artifact.manifest.migrations.map(row => ({ version: row.version, sha256: sha(artifact.files[row.file]) }));
+  const ports = await createHostedPorts(target);
+  const result = await runClinicRecordsQualification({ binding, candidate: artifact.candidate, target, deployment, migrations, tokens: read(args.tokens), fixtures: read(args.fixtures), ports,
     awaitRelease: async () => { process.stderr.write('Register the bound fictional disclosure release on the qualification database with the owner-reviewed operator, then press Enter.\n'); await new Promise(r => process.stdin.once('data', r)); } });
   writeFileSync(args.out, JSON.stringify({ ...result, report: { ...result.report, binding: { ...result.report.binding } } }, null, 2) + '\n');
   console.log(JSON.stringify({ complete: result.complete, verdict: result.verdict?.verdict ?? null, refusal: result.refusal, acceptance: false, phiAllowed: false }));
