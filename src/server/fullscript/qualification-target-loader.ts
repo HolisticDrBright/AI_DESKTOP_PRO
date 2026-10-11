@@ -3,9 +3,10 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {S3Client,GetObjectCommand} from '@aws-sdk/client-s3';
 import {fullscriptQualificationTargetSchema,fullscriptConsentQualificationTargetSchema,
- fullscriptSupportedQualificationTargetSchema,fullscriptTargetIdentityBinding,
- type FullscriptQualificationTarget,type FullscriptLambdaContext} from './qualification-api';
+ fullscriptSupportedQualificationTargetSchema,fullscriptSuccessorQualificationTargetSchema,fullscriptTargetIdentityBinding,
+ type FullscriptQualificationTarget,type FullscriptSuccessorQualificationTarget,type FullscriptLambdaContext} from './qualification-api';
 import {fullscriptCredentialTargetSchema} from './qualification-provider-environment';
+import {assertSuccessorQualificationBinding,type SuccessorQualificationBuild} from '../clinical-core/successor-qualification-profile';
 
 const bucket='alp-qualification-code-588966314750-us-east-2';
 const canonical=(v:unknown):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'
@@ -32,6 +33,21 @@ export const fullscriptConsentTargetReleaseSchema=historicalReleaseSchema.extend
 export const fullscriptTargetReleaseSchema=z.union([historicalReleaseSchema,fullscriptConsentTargetReleaseSchema])
  .refine(release=>fullscriptTargetIdentityBinding(release.target));
 export type FullscriptTargetBuild={sourceCommit:string;clean:boolean};
+const successorTargetPayload=z.object({...fullscriptSuccessorQualificationTargetSchema.shape,functionArn:baseArn})
+ .omit({reviewSha256:true,providerCredentials:true}).strict();
+export const fullscriptSuccessorTargetReleaseSchema=historicalReleaseSchema.extend({
+ contract:z.literal('fullscript-qualification-target-release/4'),target:successorTargetPayload,
+}).refine(release=>fullscriptTargetIdentityBinding(release.target)
+ &&release.target.secretArn!==release.credentials.providerSecretArn);
+type LoadedTarget=FullscriptQualificationTarget|FullscriptSuccessorQualificationTarget;
+
+/** Translate only the historical Fullscript Boolean spelling for validation.
+ * This neither mutates the environment nor permits production or an operator. */
+export function assertSuccessorFullscriptEnvironment(env:Record<string,string|undefined>,build:SuccessorQualificationBuild){
+ if(env.QUALIFICATION_EXECUTION!=='true'||env.FULLSCRIPT_SOURCE_COMMIT!==build.sourceCommit)
+  throw Error('fullscript_target_release_refused');
+ assertSuccessorQualificationBinding({...env,QUALIFICATION_EXECUTION:'enabled'},build,'PRODUCTION_ACTIVATION','fullscript-worker');
+}
 type Store={send(command:GetObjectCommand,options:{abortSignal:AbortSignal}):Promise<Record<string,unknown>>};
 type Stream=AsyncIterable<Uint8Array>&{destroy?:()=>void};
 const refuse=():never=>{throw Error('fullscript_target_release_refused');};
@@ -45,6 +61,17 @@ const destroyStream=(value:unknown)=>{try{
  * operator attestation, not a cryptographic signature or provider approval. */
 export async function loadFullscriptQualificationTarget(input:{env:Record<string,string|undefined>;build:FullscriptTargetBuild;
  context:FullscriptLambdaContext;store:Store;timeoutMs?:number}):Promise<FullscriptQualificationTarget>{
+ return loadQualificationTarget(input,false) as Promise<FullscriptQualificationTarget>;
+}
+export async function loadSuccessorFullscriptQualificationTarget(input:{env:Record<string,string|undefined>;build:SuccessorQualificationBuild;
+ context:FullscriptLambdaContext;store:Store;timeoutMs?:number}):Promise<FullscriptSuccessorQualificationTarget>{
+ // Every source/profile/credential check runs before the first target read.
+ const source=structuredClone(input.build),env={...input.env},context={...input.context};
+ assertSuccessorFullscriptEnvironment(env,source);
+ return loadQualificationTarget({...input,env,context,build:{sourceCommit:source.sourceCommit,clean:source.sourceClean}},true,source) as Promise<FullscriptSuccessorQualificationTarget>;
+}
+async function loadQualificationTarget(input:{env:Record<string,string|undefined>;build:FullscriptTargetBuild;
+ context:FullscriptLambdaContext;store:Store;timeoutMs?:number},successor:boolean,source?:SuccessorQualificationBuild):Promise<LoadedTarget>{
  const env={...input.env},build={...input.build},context={...input.context};
  requireTrue(build.clean===true&&/^[a-f0-9]{40}$/.test(build.sourceCommit)
   &&env.AWS_REGION==='us-east-2'&&env.PHI_ALLOWED==='false'&&env.PRODUCTION_ACTIVATION==='blocked'
@@ -84,7 +111,7 @@ export async function loadFullscriptQualificationTarget(input:{env:Record<string
   const bytes=Buffer.concat(chunks,size);requireTrue(sha(bytes)===env.QUALIFICATION_REVIEW_SHA256);
   let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return refuse();}
   requireTrue(Buffer.from(canonical(raw)+'\n').equals(bytes));
-  const release=fullscriptTargetReleaseSchema.parse(raw);
+  const release=successor?fullscriptSuccessorTargetReleaseSchema.parse(raw):fullscriptTargetReleaseSchema.parse(raw);
   requireTrue(Date.parse(release.review.reviewedAt)<=Date.now()&&release.target.sourceCommit===build.sourceCommit
    &&context.invokedFunctionArn===release.target.functionArn+':'+context.functionVersion
    &&env.CLINICAL_DATABASE_NAME===release.target.databaseName&&env.CLINICAL_DATABASE_CLUSTER_ARN===release.target.clusterArn
@@ -93,6 +120,13 @@ export async function loadFullscriptQualificationTarget(input:{env:Record<string
    &&env.FULLSCRIPT_PROVIDER_SECRET_VERSION===release.credentials.providerSecretVersion
    &&env.FULLSCRIPT_TOKEN_TABLE===release.credentials.tokenTable&&env.FULLSCRIPT_REDIRECT_URI===release.credentials.redirectUri);
   requireTrue(Date.now()<=endsAt&&!controller.signal.aborted);
+  if(successor){
+   const target=fullscriptSuccessorQualificationTargetSchema.parse({...release.target,functionArn:context.invokedFunctionArn,
+    reviewSha256:env.QUALIFICATION_REVIEW_SHA256,providerCredentials:release.credentials});
+   requireTrue(target.sourceInputSha256===source!.sourceInputSha256
+    &&env.QUALIFICATION_IDENTITY_SUBJECTS===[...target.consumerSubjects,...target.workforceSubjects].join(','));
+   return target;
+  }
   return fullscriptSupportedQualificationTargetSchema.parse({...release.target,functionArn:context.invokedFunctionArn,
    reviewSha256:env.QUALIFICATION_REVIEW_SHA256});
  }catch{controller.abort();stopBody();return refuse();}

@@ -7,7 +7,9 @@ import {CognitoJwtVerifier} from 'aws-jwt-verify';
 import type {ClinicalCoreDatabase} from '../clinical-core/database';
 import {createRdsDataFullscriptDraftDatabase} from '../clinical-core/rds-data-database';
 import {createCanonicalFullscriptDelivery} from './canonical-delivery-runtime';
-import {createQualificationFullscriptApi,fullscriptSupportedQualificationTargetSchema,FullscriptQualificationReauth,type FullscriptQualificationEvent,
+import {createQualificationFullscriptApi,createSuccessorQualificationFullscriptApi,fullscriptSupportedQualificationTargetSchema,
+ fullscriptSuccessorQualificationTargetSchema,type FullscriptQualificationTarget,type FullscriptSuccessorQualificationTarget,
+ FullscriptQualificationReauth,type FullscriptQualificationEvent,
  type FullscriptLambdaContext,type FullscriptRequestIdentity} from './qualification-api';
 
 interface Commands{send(command:unknown):Promise<Record<string,unknown>>}
@@ -25,9 +27,16 @@ const modified=(value:unknown):number=>{const n=value instanceof Date?value.getT
  * exist for fictional tests; native wiring below always creates AWS clients.
  * The supplied target is a separately reviewed SERVER artifact, not evidence
  * that it is deployed. All checks must actually succeed before it serves. */
-export function createFullscriptQualificationObserver(input:{target:unknown;database:ClinicalCoreDatabase;clients?:Clients;
- jwt?:{verify(token:string):Promise<unknown>}}){
+type ObserverInput={target:unknown;database:ClinicalCoreDatabase;clients?:Clients;jwt?:{verify(token:string):Promise<unknown>}};
+export function createFullscriptQualificationObserver(input:ObserverInput){
  const c=fullscriptSupportedQualificationTargetSchema.parse(structuredClone(input.target));
+ return qualificationObserver(input,c);
+}
+export function createSuccessorFullscriptQualificationObserver(input:ObserverInput){
+ const c=fullscriptSuccessorQualificationTargetSchema.parse(structuredClone(input.target));
+ return qualificationObserver(input,c);
+}
+function qualificationObserver(input:ObserverInput,c:FullscriptQualificationTarget|FullscriptSuccessorQualificationTarget){
  const verifier=input.jwt??CognitoJwtVerifier.create([
   {userPoolId:c.workforceIssuer.split('/').at(-1)!,tokenUse:'id',clientId:c.workforceAudience},
   {userPoolId:c.consumerIssuer.split('/').at(-1)!,tokenUse:'id',clientId:c.consumerAudience},
@@ -64,6 +73,17 @@ export function createFullscriptQualificationObserver(input:{target:unknown;data
    CLINICAL_DATABASE_NAME:c.databaseName,CLINICAL_DATABASE_CLUSTER_ARN:c.clusterArn,CLINICAL_DATABASE_SECRET_ARN:c.secretArn,
    FULLSCRIPT_SOURCE_COMMIT:c.sourceCommit};
   requireTrue(Object.entries(required).every(([key,value])=>env[key]===value));
+  if('qualificationProfile' in c){
+   const successor={DEPLOYMENT_ACCOUNT_ID:c.account,SOURCE_COMMIT:c.sourceCommit,SOURCE_INPUT_SHA256:c.sourceInputSha256,
+    SUCCESSOR_QUALIFICATION_PROFILE:c.qualificationProfile,MIGRATION_RELEASE_SHA256:c.migrationReleaseSha256,
+    MIGRATION_ASSEMBLY_SHA256:c.migrationAssemblySha256,
+    QUALIFICATION_IDENTITY_SUBJECTS:[...c.consumerSubjects,...c.workforceSubjects].join(','),
+    FULLSCRIPT_PROVIDER_SECRET_ARN:c.providerCredentials.providerSecretArn,
+    FULLSCRIPT_PROVIDER_SECRET_VERSION:c.providerCredentials.providerSecretVersion,
+    FULLSCRIPT_TOKEN_TABLE:c.providerCredentials.tokenTable,FULLSCRIPT_REDIRECT_URI:c.providerCredentials.redirectUri};
+   requireTrue(env.INVENTORY_QUALIFICATION_PROFILE===undefined
+    &&Object.entries(successor).every(([key,value])=>env[key]===value));
+  }
   const route=await clients.gateway.send(new GetRouteCommand({ApiId:c.apiId,RouteId:event.requestContext!.routeId!}));
   requireTrue(route.RouteKey===event.routeKey&&route.AuthorizationType==='JWT'&&typeof route.AuthorizerId==='string'
    &&typeof route.Target==='string'&&/^integrations\/[a-z0-9]+$/.test(route.Target));
@@ -130,5 +150,13 @@ export function createNativeFullscriptQualificationApi(rawTarget:unknown,provide
  const database=createRdsDataFullscriptDraftDatabase(target);
  const observe=createFullscriptQualificationObserver({target,database});
  return createQualificationFullscriptApi({target,observe,operations:who=>createCanonicalFullscriptDelivery({database,
+  configuration:{execution:'qualification',account:target.account,phiAllowed:false},actor:who.actor,session:who.session,providerEnvironment})});
+}
+/** Native successor has no historical target or administrative fallback. */
+export function createSuccessorNativeFullscriptQualificationApi(rawTarget:unknown,providerEnvironment:()=>Promise<NodeJS.ProcessEnv>){
+ const target=fullscriptSuccessorQualificationTargetSchema.parse(structuredClone(rawTarget));
+ const database=createRdsDataFullscriptDraftDatabase(target);
+ const observe=createSuccessorFullscriptQualificationObserver({target,database});
+ return createSuccessorQualificationFullscriptApi({target,observe,operations:who=>createCanonicalFullscriptDelivery({database,
   configuration:{execution:'qualification',account:target.account,phiAllowed:false},actor:who.actor,session:who.session,providerEnvironment})});
 }

@@ -3,12 +3,8 @@ import {SecretsManagerClient,GetSecretValueCommand} from '@aws-sdk/client-secret
 import {z} from 'zod';
 import {readFullscriptConfiguration} from './client';
 
-const arn=z.string().regex(/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/);
-const version=z.string().regex(/^[A-Za-z0-9-]{32,64}$/);
-const redirect=z.string().url().refine(value=>{try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password
- &&!u.search&&!u.hash&&u.pathname==='/api/live/fullscript/oauth/callback';}catch{return false;}});
-export const fullscriptCredentialTargetSchema=z.object({providerSecretArn:arn,providerSecretVersion:version,
- tokenTable:z.string().regex(/^[A-Za-z0-9_.-]{3,255}$/),redirectUri:redirect}).strict();
+import {fullscriptCredentialTargetSchema,fullscriptCredentialRedirectSchema as redirect} from './qualification-credential-target';
+export {fullscriptCredentialTargetSchema} from './qualification-credential-target';
 const opaque=z.string().regex(/^[A-Za-z0-9._~-]{16,512}$/);
 export const fullscriptSandboxCredentialSchema=z.object({contract:z.literal('fullscript-sandbox-credentials/1'),
  environment:z.literal('sandbox_us'),clientId:opaque,clientSecret:opaque,

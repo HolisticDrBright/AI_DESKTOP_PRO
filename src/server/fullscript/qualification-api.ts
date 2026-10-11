@@ -8,6 +8,8 @@ import {recordingWorkforceIdentity} from '../clinical-core/recording-authority-a
 import type {DraftDeliveryActor} from './draft-delivery';
 import type {RequestSession} from '../session';
 import type {createCanonicalFullscriptDelivery} from './canonical-delivery-runtime';
+import {SUCCESSOR_QUALIFICATION_RELEASE,assertSuccessorQualificationRows} from '../../../scripts/successor-qualification-release.mjs';
+import {fullscriptCredentialTargetSchema} from './qualification-credential-target';
 
 const hash=z.string().regex(/^[a-f0-9]{64}$/).refine(v=>v!=='0'.repeat(64));
 const uuid=z.string().uuid();
@@ -51,6 +53,20 @@ export const fullscriptSupportedQualificationTargetSchema=z.union([
  fullscriptQualificationTargetSchema,fullscriptConsentQualificationTargetSchema,
 ]);
 export type FullscriptQualificationTarget=z.infer<typeof fullscriptSupportedQualificationTargetSchema>;
+const successorLedger=z.array(ledger.element).length(SUCCESSOR_QUALIFICATION_RELEASE.migrationCount).refine(rows=>{
+ try{assertSuccessorQualificationRows(rows);return true;}catch{return false;}
+});
+/** Separate 117 contract. Neither historical factory nor its union is widened. */
+export const fullscriptSuccessorQualificationTargetSchema=fullscriptQualificationTargetSchema.safeExtend({
+ schemaRelease:z.literal('clinical-successor-qualification/117'),
+ qualificationProfile:z.literal(SUCCESSOR_QUALIFICATION_RELEASE.qualificationProfile),
+ sourceInputSha256:hash,migrationReleaseSha256:z.literal(SUCCESSOR_QUALIFICATION_RELEASE.migrationReleaseSha256),
+ migrationAssemblySha256:z.literal(SUCCESSOR_QUALIFICATION_RELEASE.migrationAssemblySha256),
+ secretArn:z.string().regex(/^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp\/qualification\/fullscript-worker-[A-Za-z0-9-]+$/),
+ providerCredentials:fullscriptCredentialTargetSchema,migrations:successorLedger,
+}).refine(c=>c.secretArn!==c.providerCredentials.providerSecretArn&&c.consumerSubjects.length+c.workforceSubjects.length<=16);
+export type FullscriptSuccessorQualificationTarget=z.infer<typeof fullscriptSuccessorQualificationTargetSchema>;
+type RequestTarget=FullscriptQualificationTarget|FullscriptSuccessorQualificationTarget;
 export type FullscriptQualificationEvent=ApiGatewayV2Event&{requestContext?:NonNullable<ApiGatewayV2Event['requestContext']>&{apiId?:string;routeId?:string}};
 export type FullscriptLambdaContext={invokedFunctionArn:string;functionVersion:string};
 export type FullscriptRequestIdentity={actor:DraftDeliveryActor;session?:RequestSession;claims:Record<string,string|number|boolean|undefined>};
@@ -74,7 +90,7 @@ function body(event:FullscriptQualificationEvent){
  try{return requestSchema.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));}
  catch{throw new RequestRefused('request_invalid');}
 }
-function identity(event:FullscriptQualificationEvent,c:FullscriptQualificationTarget,workforce:boolean,now:number):FullscriptRequestIdentity{
+function identity(event:FullscriptQualificationEvent,c:RequestTarget,workforce:boolean,now:number):FullscriptRequestIdentity{
  try{
   const context=workforce?recordingWorkforceIdentity(event,c,now):ownedConsumerIdentity(event,c,'clinical_data',now);
   const claims=event.requestContext?.authorizer?.jwt?.claims??{};
@@ -93,10 +109,18 @@ function identity(event:FullscriptQualificationEvent,c:FullscriptQualificationTa
 /** Internal composition seam. Production wiring MUST use the native observer;
  * no incoming request can provide an actor, review, target or provider. This
  * source candidate is not installed in the identity API or a deployed stack. */
-export function createQualificationFullscriptApi(input:{target:unknown;
+type QualificationApiInput={target:unknown;
  observe:(event:FullscriptQualificationEvent,context:FullscriptLambdaContext,identity:FullscriptRequestIdentity)=>Promise<void>;
- operations:(identity:FullscriptRequestIdentity)=>Operations;now?:()=>number}){
+ operations:(identity:FullscriptRequestIdentity)=>Operations;now?:()=>number};
+export function createQualificationFullscriptApi(input:QualificationApiInput){
  const c=fullscriptSupportedQualificationTargetSchema.parse(structuredClone(input.target));
+ return qualificationFullscriptApi(c,input);
+}
+export function createSuccessorQualificationFullscriptApi(input:QualificationApiInput){
+ const c=fullscriptSuccessorQualificationTargetSchema.parse(structuredClone(input.target));
+ return qualificationFullscriptApi(c,input);
+}
+function qualificationFullscriptApi(c:RequestTarget,input:QualificationApiInput){
  return async(event:FullscriptQualificationEvent,context:FullscriptLambdaContext):Promise<ApiGatewayV2Response>=>{
   const reply=(statusCode:number,value:unknown)=>({statusCode,headers:{'content-type':'application/json','cache-control':'no-store',
    'x-content-type-options':'nosniff','x-clinical-execution':'qualification'},body:JSON.stringify(value)});
