@@ -2,6 +2,8 @@
 
 import { Btn } from "@/components/ui/Btn";
 import { ClinicalNote } from "@/components/ui/ClinicalStates";
+import { CatalogPickerPanel } from "@/components/programs/CatalogPickerPanel";
+import type { CatalogReader } from "@/lib/programs/catalogPicker";
 import {
   governedMediaIssue, newItem, newPhase, readingLevelNote, validateConsumerProgram,
   type ConsumerProgram, type ConsumerProgramItem, type ConsumerProgramPhase,
@@ -21,13 +23,17 @@ const AREA = "min-h-[56px] w-full rounded-lg border border-line bg-card px-3 py-
 const LABEL = "mb-1 block text-[11px] font-bold tracking-[0.02em] text-subtle uppercase";
 const KINDS: ConsumerProgramItem["kind"][] = ["lesson", "diet", "habit", "supplement"];
 const AUTHORSHIP = [["", "Not stated (shown as unreviewed)"], ["practitioner_authored", "Practitioner-authored"], ["consumer_ai", "Consumer AI content"], ["unreviewed", "Unreviewed"]] as const;
-const TARGETS = ["synthetic-staging", "production-clinical"] as const;
+
+/** How the editor reaches the governed catalog: the Studio's reader, the draft version and the Studio session it is showing. */
+export type ConsumerProgramCatalog = { read: CatalogReader; versionId: string; session: string };
 
 export const CONSUMER_PROGRAM_HELD_TEXT =
   "The deployed service does not return the patient program for this version, so it cannot be edited here without overwriting what it holds. Authoring opens once the reviewed admission candidate (program-education-catalog-admission) is applied by Codex. Nothing typed here is saved.";
 
-export function ConsumerProgramEditor({ value, disabled, onChange }: {
+export function ConsumerProgramEditor({ value, disabled, onChange, catalog = null }: {
   value: ConsumerProgram | null | undefined; disabled: boolean; onChange: (next: ConsumerProgram | null) => void;
+  /** Null when no catalog reader is connected: bindings are then shown and kept, never changed. */
+  catalog?: ConsumerProgramCatalog | null;
 }) {
   if (value === undefined) {
     return <ClinicalNote data-testid="consumer-program-held">{CONSUMER_PROGRAM_HELD_TEXT}</ClinicalNote>;
@@ -64,7 +70,7 @@ export function ConsumerProgramEditor({ value, disabled, onChange }: {
               <option value="practitioner">Needs practitioner release</option>
             </select>
           </div>
-          {phase.items.map((item, ii) => <ItemFields key={ii} item={item} pi={pi} ii={ii} disabled={disabled}
+          {phase.items.map((item, ii) => <ItemFields key={ii} item={item} pi={pi} ii={ii} disabled={disabled} catalog={catalog}
             onItem={patch => setItem(pi, ii, patch)} onProduct={patch => setProduct(pi, ii, patch)}
             onRemove={() => update(d => { d.phases[pi]!.items.splice(ii, 1); return d; })} />)}
           <div className="flex flex-wrap gap-2">
@@ -84,8 +90,8 @@ export function ConsumerProgramEditor({ value, disabled, onChange }: {
   );
 }
 
-function ItemFields({ item, pi, ii, disabled, onItem, onProduct, onRemove }: {
-  item: ConsumerProgramItem; pi: number; ii: number; disabled: boolean;
+function ItemFields({ item, pi, ii, disabled, catalog, onItem, onProduct, onRemove }: {
+  item: ConsumerProgramItem; pi: number; ii: number; disabled: boolean; catalog: ConsumerProgramCatalog | null;
   onItem: (patch: Record<string, unknown>) => void; onProduct: (patch: Record<string, unknown>) => void; onRemove: () => void;
 }) {
   const label = `Step ${pi + 1}.${ii + 1}`;
@@ -112,14 +118,9 @@ function ItemFields({ item, pi, ii, disabled, onItem, onProduct, onRemove }: {
             onChange={e => onProduct({ ingredientKeys: e.target.value.split(",").map(k => k.trim()).filter(Boolean) })} />
           <input className={INPUT} aria-label={`${label} dose as labelled`} placeholder="Dose exactly as the governed label states it" value={item.product?.dose ?? ""} disabled={disabled} onChange={e => onProduct({ dose: e.target.value })} />
           <input className={INPUT} aria-label={`${label} purchase destination`} placeholder="https purchase destination, or blank" value={item.product?.purchaseUrl ?? ""} disabled={disabled} onChange={e => onProduct({ purchaseUrl: e.target.value || null })} />
-          <input className={INPUT} aria-label={`${label} catalog stable id`} placeholder="Governed catalog stable id (prd_…)" value={item.product?.catalog?.stableId ?? ""} disabled={disabled}
-            onChange={e => onProduct({ catalog: e.target.value ? { stableId: e.target.value, version: item.product?.catalog?.version ?? 1, target: item.product?.catalog?.target ?? "synthetic-staging" } : undefined })} />
-          <input className={INPUT} type="number" min={1} aria-label={`${label} catalog version`} value={item.product?.catalog?.version ?? ""} disabled={disabled || !item.product?.catalog}
-            onChange={e => onProduct({ catalog: { ...item.product!.catalog!, version: Number(e.target.value) } })} />
-          <select className={INPUT} aria-label={`${label} catalog target`} value={item.product?.catalog?.target ?? "synthetic-staging"} disabled={disabled || !item.product?.catalog}
-            onChange={e => onProduct({ catalog: { ...item.product!.catalog!, target: e.target.value } })}>
-            {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+          <CatalogPickerPanel label={label} binding={item.product?.catalog} disabled={disabled} read={catalog?.read ?? null}
+            scope={{ versionId: catalog?.versionId ?? "", session: catalog?.session ?? "", stepId: item.id, stepRevision: `${item.id}|${item.kind}|${item.product?.id ?? ""}` }}
+            onBind={binding => onProduct({ catalog: binding })} onUnbind={() => onProduct({ catalog: undefined })} />
           <p className="m-0 text-[11.5px] text-subtle md:col-span-4">The dose is copied from the governed label, never computed here. A patient buys only through the prepared Fullscript action for the bound catalog product; the printed destination is never opened by the app, and a step without a binding offers no purchase link.</p>
         </div>
       )}

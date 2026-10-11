@@ -32,3 +32,19 @@ describe('the Program Studio and the patient program', () => {
     expect(source).toContain('their plan is unchanged until they do');
   });
 });
+
+describe('the Program Studio and the governed catalog picker', () => {
+  it('connects the editor to the catalog reader through the adapter facade, bound to the draft version and the Studio load', () => {
+    expect(source).toContain('catalog={{ read: (input) => api.programs.catalogObservation(input), versionId: editable.id, session: String(studioSession) }}');
+    expect(source).toContain('setStudioSession((n) => n + 1);');
+  });
+  it('reaches the catalog only through the Desktop reader route, never a bundled list', () => {
+    const facade = readFileSync('src/adapters/index.ts', 'utf8');
+    const client = readFileSync('src/adapters/live-client.ts', 'utf8');
+    expect(facade).toContain('catalogObservation: async (input: { versionId: string; query: string }) =>');
+    expect(client).toContain('liveFetch<unknown>("programs/catalog", { method: "POST", body: input })');
+    const editor = readFileSync('src/components/programs/ConsumerProgramEditor.tsx', 'utf8');
+    expect(editor).not.toMatch(/catalog stable id|catalog version|catalog target/);
+    expect(editor).toContain('<CatalogPickerPanel');
+  });
+});

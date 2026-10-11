@@ -373,6 +373,13 @@ export const api = {
       payload: LiveProgramDraftPayload;
       expectedUpdatedAt: string | null;
     }) => liveClient.saveProgramDraft(input),
+    /**
+     * LIVE: a reference-only read of the governed catalog for the supplement picker. The reply is
+     * parsed by the picker against `program-catalog-observation/1`; it is an observation, not a
+     * list to bundle, and binds nothing by itself.
+     */
+    catalogObservation: async (input: { versionId: string; query: string }) =>
+      liveClient.programCatalogObservation(input),
     /** LIVE: draft -> in_review. */
     submit: async (versionId: string) =>
       liveClient.programVersionAction({ action: "submit", versionId }),

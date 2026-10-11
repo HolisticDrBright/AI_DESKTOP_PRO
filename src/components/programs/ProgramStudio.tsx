@@ -316,6 +316,9 @@ export function ProgramStudio({ programId }: { programId: string }) {
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [lastProgressId, setLastProgressId] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState("");
+  // Which Studio load the editor is showing. The catalog picker binds each read to it, so an
+  // observation made before a reload (or a re-sign-in) is never used after it.
+  const [studioSession, setStudioSession] = useState(0);
 
   const tokenRef = useRef<string | null>(null);
   const draftRef = useRef<DraftModel | null>(null);
@@ -333,6 +336,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
       setDraft(s.editable ? draftFromVersion(s.editable) : null);
       setSaveState("idle");
       setChecklist({ content: false, disclaimer: false, commercial: false });
+      setStudioSession((n) => n + 1);
     } catch (e) {
       setError(errText(e));
     }
@@ -1140,6 +1144,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
               value={draft.consumerProgram}
               disabled={editable.status !== "draft" || busy}
               onChange={(next) => touch((d) => ({ ...d, consumerProgram: next }))}
+              catalog={{ read: (input) => api.programs.catalogObservation(input), versionId: editable.id, session: String(studioSession) }}
             />
           </div>
         </Card>

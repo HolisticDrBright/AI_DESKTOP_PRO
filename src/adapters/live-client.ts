@@ -450,6 +450,10 @@ export const liveClient = {
     expectedUpdatedAt: string | null;
   }) => liveFetch<LiveProgramMutationResult>("programs/save", { method: "POST", body: input }),
 
+  /** The governed catalog as this clinic's workforce session observes it, narrowed by the practitioner's words. */
+  programCatalogObservation: (input: { versionId: string; query: string }) =>
+    liveFetch<unknown>("programs/catalog", { method: "POST", body: input }),
+
   programVersionAction: (input: {
     action: "submit" | "return" | "approve" | "publish" | "revise" | "archive" | "restore";
     versionId?: string;
