@@ -424,9 +424,14 @@ describe('AUDIT exact-byte wire contract', () => {
       values($1,$2,$3,$4,'Vitamin panel','VitaminD',1.20,'ng/mL',0.0000001,1000000.50,'2026-10-09T12:00:00Z','accepted',$5::jsonb,'2026-10-09T13:00:00Z',$6)`,
       // Hand-written JSON text: a JavaScript JSON.stringify would already have rounded these before PostgreSQL saw them.
       [observation, org, patient, eventId, '{"source": "fictional_lab", "importEventId": "' + eventId + '", "unicode": "µg/L — fictional ✓", "nested": [1.50, [2.0e-7, "x"], {"n": 12345678901234567890}]}', reviewer]);
+    await fictionalRelease(org, ['lab_observations']);
+    // Exercise the real candidate /3 copy builder under different database
+    // sessions, not merely a process TZ override or a prebuilt copy read.
+    for (const zone of ['UTC', 'Pacific/Honolulu']) {
+    await pg.query("select set_config('TimeZone',$1,false)", [zone]);
+    expect((await pg.query<{ zone: string }>("select current_setting('TimeZone') as zone")).rows[0].zone).toBe(zone);
     const requestId = randomUUID();
     await asConsumer({ action: 'submit_copy', requestId, sections: ['lab_observations'] });
-    await fictionalRelease(org, ['lab_observations']);
     await asWorkforce({ action: 'fulfill', ...decision(requestId, 1), sections: ['lab_observations'] });
     const page = await asConsumer({ action: 'read_copy', requestId, section: 'lab_observations', limit: 10 });
     if (page.action !== 'read_copy') throw new Error('page');
@@ -444,5 +449,8 @@ describe('AUDIT exact-byte wire contract', () => {
     if (process.env.WRITE_CLINIC_RECORD_FIXTURE === '1') writeFileSync(FIXTURE, JSON.stringify(pinned, null, 2) + '\n');
     // Byte-identical with the committed fixture that the V2 client test replays through the real transport (expo/contracts/fixtures).
     expect(JSON.parse(readFileSync(FIXTURE, 'utf8'))).toEqual(pinned);
+    // SET on the function is scoped: caller configuration is preserved.
+    expect((await pg.query<{ zone: string }>("select current_setting('TimeZone') as zone")).rows[0].zone).toBe(zone);
+    }
   });
 });

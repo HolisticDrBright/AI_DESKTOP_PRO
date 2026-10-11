@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Cross-repository pins. expo/contracts/clinicRecordRequests.ts and
@@ -14,6 +15,14 @@ import { readFileSync } from 'node:fs';
 const sha = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 const CONTRACT = '6aee143699f30a14ee29bbf3959c8437bba82e3c497b0abc5ebba5d651daeae8';
 const FIXTURE = '93282cac82419619c27b39bd18cfa1fa3192cd712518df87bf6296db5ea818f0';
+
+test('Git preserves LF on checkout for both byte-pinned source mirrors', () => {
+  for (const path of ['src/contracts/clinicRecordRequests.ts', 'src/contracts/fixtures/clinic-record-copy-lab-item.json']) {
+    const attributes = execFileSync('git', ['check-attr', 'text', 'eol', '--', path], { encoding: 'utf8' });
+    assert.ok(attributes.includes(`${path}: text: set`));
+    assert.ok(attributes.includes(`${path}: eol: lf`));
+  }
+});
 test('the contract module and the PostgreSQL copy-item fixture carry the pinned bytes', () => {
   assert.equal(sha('src/contracts/clinicRecordRequests.ts'), CONTRACT);
   assert.equal(sha('src/contracts/fixtures/clinic-record-copy-lab-item.json'), FIXTURE);
