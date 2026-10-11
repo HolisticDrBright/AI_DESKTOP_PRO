@@ -9,6 +9,7 @@ import { inventoryQualificationLedgerArtifact, type InventoryLedgerRow } from '.
 import { inventoryCanonical, inventorySha } from './inventory-qualification-artifacts';
 import { fixtureBindingHash } from './inventory-qualification-fixtures';
 import { mapFictionalInventoryIdentities, fictionalMappingIds, type FictionalIdentityMapping } from './inventory-qualification-identity-mapping';
+import { observeEmbeddedQuery } from '../../test-support/embeddedDatabaseDiagnostics';
 
 let pg: PGlite, ledger: InventoryLedgerRow[];
 const unwrap = (v: unknown) => v && typeof v === 'object' && 'kind' in v && v.kind === 'uuid' && 'value' in v ? v.value : v;
@@ -16,7 +17,9 @@ function database(options: { databaseName?: string; afterQuery?: (sql: string) =
   return { transaction: async work => {
     const result = await pg.transaction(tx => work({ query: async (sql: string, params: readonly unknown[] = []) => {
       if (sql === 'select current_database() as name') return { rows: [{ name: options.databaseName ?? 'clinical_core_qualification' }] } as never;
-      const result = await tx.query(sql, params.map(unwrap)); options.afterQuery?.(sql); return result;
+      const result = await observeEmbeddedQuery(sql, () => tx.query(sql, params.map(unwrap)),
+        diagnostic => console.error(JSON.stringify(diagnostic)));
+      options.afterQuery?.(sql); return result;
     } } as ClinicalCoreTransaction));
     if (options.loseCommit) throw Error('fictional lost controller receipt after commit');
     return result;
