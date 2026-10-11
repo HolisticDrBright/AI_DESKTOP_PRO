@@ -32,8 +32,11 @@ if (errors.length) {
   for (const error of errors) console.error(`Desktop operation inventory check failed: ${error}`);
   process.exitCode = 1;
 } else {
-  const providerBound = committed.operations.filter((operation) => operation.legacyDefinitions.some(
+  // These flags describe historical Supabase definitions, not the current AWS
+  // ports or the work remaining to qualify an external provider. Keep the
+  // source inventory separate from provider implementation/activation evidence.
+  const legacyProviderBound = committed.operations.filter((operation) => operation.legacyDefinitions.some(
     (definition) => Object.values(definition.providerDependencies).some(Boolean),
   )).length;
-  console.log(`Desktop operation inventory passed: ${committed.counts.total} live operations, all ${committed.counts.productionImplemented} implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
+  console.log(`Desktop operation inventory passed: ${committed.counts.total} live operations, all ${committed.counts.productionImplemented} implemented but activation-blocked, 0 enabled; ${legacyProviderBound} have legacy provider dependency flags; current provider completion is unverified by this source gate.`);
 }
