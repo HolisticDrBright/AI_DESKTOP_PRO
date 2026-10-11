@@ -17,11 +17,13 @@ for (const [name, args] of [
 test('runner binds complete successor, restricted owner and real lock observations', () => {
   const source = readFileSync(script, 'utf8');
   assert.match(source, /112,113,114,115,116,117/);
-  assert.match(source, /telehealth-transfer-authority-candidate\/2/);
+  assert.match(source, /telehealth-transfer-authority-candidate\/3/);
   assert.match(source, /pg_blocking_pids/);
   assert.match(source, /waitForBlocked/);
   assert.match(source, /nosuperuser.*nobypassrls/);
   assert.match(source, /managedRoleSemanticsVerified: false/);
   assert.match(source, /apiCallerRole: 'clinical_core_api'/);
   assert.match(source, /shutdownConfirmed = true/);
+  assert.doesNotMatch(source, /compileTelehealthSchemaNativeSource|local_bootstrap_owner_concurrency_control/);
+  assert.match(source, /revokedBeforeWriterCommit/);
 });

@@ -28,7 +28,6 @@ const source = () => {
   if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim() !== sourceCommit
     || execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim()) refuse('source_changed');
 };
-const restrictedOwner = true;
 source();
 const childEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => ['SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'PATH'].includes(k.toUpperCase())));
 const run = (name, args) => {
@@ -43,7 +42,7 @@ const runs = join(root, 'dist/native-authority-runs'); mkdirSync(runs, { recursi
 const directory = mkdtempSync(join(runs, 'authority-pg17-'));
 const data = join(directory, 'cluster'), passwordFile = join(directory, 'bootstrap-password');
 const password = randomBytes(32).toString('hex'), ownerPassword = randomBytes(32).toString('hex');
-const database = (restrictedOwner ? 'alp_owner_source_' : 'alp_source_') + randomUUID().replaceAll('-', '');
+const database = 'alp_owner_source_' + randomUUID().replaceAll('-', '');
 writeFileSync(passwordFile, password + '\n', { flag: 'wx', mode: 0o600 });
 let started = false, admin, compiler, blocker, actor, revoker, configuration, report, artifact, stage = 'bootstrap';
 const results = [];
@@ -220,44 +219,24 @@ try {
   configuration = { host: '127.0.0.1', port, user: 'postgres', password, database: 'postgres', ssl: false, connectionTimeoutMillis: 5000,
     query_timeout: 30000, application_name: 'alp-fictional-native-lock-tests', options: '-c statement_timeout=30000 -c search_path=pg_catalog,public' };
   admin = new Client(configuration); await admin.connect();
-  if (restrictedOwner) await admin.query(`create role clinical_admin login nosuperuser inherit createdb createrole noreplication nobypassrls password '${ownerPassword}'`);
-  await admin.query('create database "' + database + '"' + (restrictedOwner ? ' owner clinical_admin' : '')); await admin.end();
+  await admin.query(`create role clinical_admin login nosuperuser inherit createdb createrole noreplication nobypassrls password '${ownerPassword}'`);
+  await admin.query('create database "' + database + '" owner clinical_admin'); await admin.end();
   configuration.database = database;
-  const ownerConfiguration = restrictedOwner ? { ...configuration, user: 'clinical_admin', password: ownerPassword } : configuration;
+  const ownerConfiguration = { ...configuration, user: 'clinical_admin', password: ownerPassword };
   compiler = new Client(ownerConfiguration); await compiler.connect(); await compiler.query('create extension pgcrypto with schema public');
   const db = { query: (sql, args = []) => compiler.query(sql, [...args]), exec: sql => compiler.query(sql), transaction: async work => {
     await compiler.query('begin'); try { const value = await work(db); await compiler.query('commit'); return value; } catch (e) { await compiler.query('rollback'); throw e; } } };
   artifact = (JSON.parse(execFileSync(process.execPath, ['scripts/build-telehealth-transfer-authority-candidate.mjs', '--json'],
     { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true })));
-  if (artifact.candidate.contract !== 'telehealth-transfer-authority-candidate/2' || artifact.candidate.migrationCount !== 117
-    || artifact.candidate.extensionSha256 !== 'b5e0b07fb80527acdb2f2f631df7efb9caf4209f28dfb7bd4779c1b6eec981b4'
+  if (artifact.candidate.contract !== 'telehealth-transfer-authority-candidate/3' || artifact.candidate.migrationCount !== 117
+    || artifact.candidate.extensionSha256 !== 'a1e74c6fda49391a1ee07104297d1df2292a185a29f2fbb7b2cfb5b0b2bccac6'
     || artifact.candidate.activation !== 'blocked' || artifact.candidate.phiAllowed !== false) refuse('successor_artifact_refused');
   stage = 'source_compilation';
-  const compiled = restrictedOwner ? await compileTelehealthAuthorityRestrictedOwnerSource(db) : await compileTelehealthSchemaNativeSource(db);
-  if (compiled.postgresVersion !== '17.7' || compiled.snapshots.map(s => s.migrationCount).join(',') !== (restrictedOwner ? '112,113,114,115,116,117' : '112,113,114')) refuse('source_compile_refused');
-  if (restrictedOwner) {
-    const last = compiled.snapshots.at(-1);
-    if (last.migrationCount !== artifact.candidate.migrationCount || last.migrationReleaseSha256 !== artifact.candidate.migrationReleaseSha256
-      || last.assemblySha256 !== artifact.releaseHash) refuse('source_compile_refused');
-  } else {
-    // Exact current candidate, not the earlier 114-only compiler output. This
-    // bootstrap-owner control isolates SQL concurrency; it does not qualify
-    // the restricted owner or managed execution profile.
-    const assertLedger = async count => {
-      const actual = (await compiler.query('select version,name,sha256 from clinical_core.schema_migrations order by version collate "C"')).rows;
-      const expected = artifact.manifest.migrations.slice(0, count).map(r => ({ version: r.version, name: r.file.slice(15, -4), sha256: sha(artifact.files[r.file]) }));
-      if (canonical(actual) !== canonical(expected)) refuse('exact_candidate_ledger_refused');
-    };
-    await assertLedger(114);
-    for (const count of [115, 116]) await db.transaction(async tx => {
-      await assertLedger(count - 1);
-      const row = artifact.manifest.migrations[count - 1];
-      await tx.exec(artifact.files[row.file]);
-      await tx.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)', [row.version, row.file.slice(15, -4), sha(artifact.files[row.file])]);
-      await assertLedger(count);
-    });
-    await assertLedger(116);
-  }
+  const compiled = await compileTelehealthAuthorityRestrictedOwnerSource(db);
+  if (compiled.postgresVersion !== '17.7' || compiled.snapshots.map(s => s.migrationCount).join(',') !== '112,113,114,115,116,117') refuse('source_compile_refused');
+  const last = compiled.snapshots.at(-1);
+  if (last.migrationCount !== artifact.candidate.migrationCount || last.migrationReleaseSha256 !== artifact.candidate.migrationReleaseSha256
+    || last.assemblySha256 !== artifact.releaseHash) refuse('source_compile_refused');
   await compiler.end(); compiler = undefined;
   // Bootstrap privileges are used only for clearly separated fictional fixture
   // administration and blockers. Actual API calls use a non-superuser session
@@ -296,14 +275,14 @@ try {
   report = { contract: 'telehealth-authority-native-source/1', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
-    execution: restrictedOwner ? 'local_restricted_owner_source' : 'local_bootstrap_owner_concurrency_control', postgresVersion: '17.7',
-    sourceBootstrapOwner: 'postgres', sourceOwner: restrictedOwner ? 'clinical_admin' : 'postgres',
-    apiSessionOwner: restrictedOwner ? 'clinical_admin' : 'postgres', apiCallerRole: 'clinical_core_api',
+    execution: 'local_restricted_owner_source', postgresVersion: '17.7',
+    sourceBootstrapOwner: 'postgres', sourceOwner: 'clinical_admin',
+    apiSessionOwner: 'clinical_admin', apiCallerRole: 'clinical_core_api',
     managedRoleSemanticsVerified: false, hostedVerified: false, upgradeAuthorized: false, providerAuthorized: false, phiAllowed: false, activation: 'blocked',
     passed: results.every(r => r.passed), results };
 } catch (error) {
-  report = { contract: 'telehealth-native-source-races/2', sourceCommit,
-    execution: restrictedOwner ? 'local_restricted_owner_source' : 'local_bootstrap_owner_concurrency_control',
+  report = { contract: 'telehealth-authority-native-source/1', sourceCommit,
+    execution: 'local_restricted_owner_source', managedRoleSemanticsVerified: false, hostedVerified: false,
     ...(artifact ? { testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash } } : {}), passed: false, stage,
     databaseErrorCode: /^[A-Z0-9]{5}$/.test(error?.code ?? '') ? error.code : null,

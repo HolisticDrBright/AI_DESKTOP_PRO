@@ -45,8 +45,13 @@ begin
       if (new.organization_id,new.person_id,new.role,new.status) is not distinct from
         (old.organization_id,old.person_id,old.role,old.status) then return new; end if;
     elsif tg_table_name='identities' then
-      if (new.person_id,new.identity_pool,new.identity_subject,new.production_bound) is not distinct from
-        (old.person_id,old.identity_pool,old.identity_subject,old.production_bound) then return new; end if;
+      if (new.id,new.person_id,new.identity_pool,new.identity_subject,new.production_bound,new.status) is not distinct from
+        (old.id,old.person_id,old.identity_pool,old.identity_subject,old.production_bound,old.status) then return new; end if;
+    elsif tg_table_name='persons' then
+      if (new.id,new.status,new.contains_phi) is not distinct from
+        (old.id,old.status,old.contains_phi) then return new; end if;
+    elsif tg_table_name='organizations' then
+      if (new.id,new.status) is not distinct from (old.id,old.status) then return new; end if;
     elsif tg_table_name='patient_records' then
       if (new.id,new.organization_id,new.status,new.deleted_at) is not distinct from
         (old.id,old.organization_id,old.status,old.deleted_at) then return new; end if;
@@ -64,10 +69,36 @@ create trigger telehealth_membership_authority_fence before update or delete on 
   for each row execute function clinical_private.fence_telehealth_authority_change();
 create trigger telehealth_identity_authority_fence before update or delete on clinical_core.identities
   for each row execute function clinical_private.fence_telehealth_authority_change();
+create trigger telehealth_person_authority_fence before update or delete on clinical_core.persons
+  for each row execute function clinical_private.fence_telehealth_authority_change();
+create trigger telehealth_organization_authority_fence before update or delete on clinical_core.organizations
+  for each row execute function clinical_private.fence_telehealth_authority_change();
 create trigger telehealth_patient_authority_fence before update or delete on clinical_core.patient_records
   for each row execute function clinical_private.fence_telehealth_authority_change();
 create trigger telehealth_appointment_authority_fence before update or delete on clinical_core.appointments
   for each row execute function clinical_private.fence_telehealth_authority_change();
+
+-- Request-context establishment checked these rows earlier in the transaction.
+-- A retained claim is not current identity or clinic authority. Re-read their
+-- exact binding for this transfer; the final shared fence holds that authority
+-- through commit without adding clinical table grants to the API role.
+create function clinical_private.require_current_telehealth_authority(_organization_id uuid,_patient_id uuid)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare _actor uuid;
+begin
+  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
+  if not exists(select 1 from clinical_core.identities i
+      join clinical_core.persons p on p.id=i.person_id
+      join clinical_core.organizations o on o.id=_organization_id
+      where i.person_id=_actor and i.identity_pool='workforce'
+        and i.identity_subject=clinical_private.claim('identity_subject')
+        and i.production_bound=true and i.status='active'
+        and p.status='active' and p.contains_phi=true and o.status='active') then
+    raise exception using errcode='42501',message='telehealth_current_authority_refused';
+  end if;
+  return _actor;
+end $$;
+revoke all on function clinical_private.require_current_telehealth_authority(uuid,uuid) from public,clinical_core_api;
 
 -- Hold the registered admission key through transaction completion. A retirement
 -- that wins first refuses the transfer; a transfer that holds the key first
@@ -87,7 +118,7 @@ declare _actor uuid; _appointment clinical_core.appointments%rowtype;
 begin
   -- Current clinical authority at the moment of the write: membership, a clinical
   -- role and an active patient record in THIS organization.
-  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
+  _actor := clinical_private.require_current_telehealth_authority(_organization_id,_patient_id);
   if _transfer_id is null or _appointment_id is null or _source_revision is null or _source_revision<1
     or _source_digest is null or _source_digest !~ '^[0-9a-f]{64}$'
     or _content is null or pg_catalog.octet_length(_content)>262144
@@ -115,7 +146,7 @@ begin
   -- The first check authorizes entry, not waiting indefinitely. Resolve the
   -- actor again after serialization, then use wall-clock time after all work
   -- preceding the admission check. Transaction/statement start time is stale.
-  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
+  _actor := clinical_private.require_current_telehealth_authority(_organization_id,_patient_id);
   -- Source admission: the boundary's signature over the exact admission bytes,
   -- under a registered, unretired key. No key at all = the feature is not
   -- provisioned here; an unknown, retired or wrong key = refused.
@@ -153,6 +184,11 @@ begin
   select * into _existing from clinical_core.telehealth_note_transfers
     where organization_id=_organization_id and appointment_id=_appointment_id and patient_record_id=_patient_id;
   if found then
+    -- A replay reveals a destination receipt, so it needs fresh authority too.
+    perform pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('telehealth-current-authority-v1',0));
+    _actor := clinical_private.require_current_telehealth_authority(_organization_id,_patient_id);
+    if _a_expires<=clock_timestamp() then
+      raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
     -- A retry of the exact admitted source returns the original destination receipt.
     if _existing.source_note_revision=_source_revision and _existing.source_digest=_source_digest then
       return jsonb_build_object('transfer_id',_existing.id,'encounter_id',_existing.encounter_id,
@@ -184,7 +220,7 @@ begin
   -- which committed first rolls back all tentative writes; a later authority
   -- change cannot commit before this transaction releases the shared fence.
   perform pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('telehealth-current-authority-v1',0));
-  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
+  _actor := clinical_private.require_current_telehealth_authority(_organization_id,_patient_id);
   select * into _appointment from clinical_core.appointments where id=_appointment_id;
   if not found or _appointment.deleted_at is not null or _appointment.organization_id<>_organization_id
     or _appointment.patient_record_id is distinct from _patient_id or _appointment.appointment_type<>'telehealth' then

@@ -49,3 +49,14 @@ test('private owner policy is not an API grant or global RLS bypass', () => {
   assert.match(sql, /before update or delete on clinical_core\.patient_records/);
   assert.match(sql, /for update to clinical_core_migrator/);
 });
+
+test('fresh identity person and clinic authority is fenced without substituting retained claims', () => {
+  assert.match(sql, /new\.production_bound,new\.status/);
+  assert.match(sql, /before update or delete on clinical_core\.persons/);
+  assert.match(sql, /before update or delete on clinical_core\.organizations/);
+  assert.match(sql, /i\.identity_subject=clinical_private\.claim\('identity_subject'\)/);
+  assert.match(sql, /i\.production_bound=true and i\.status='active'/);
+  assert.match(sql, /p\.status='active'.*o\.status='active'/);
+  assert.match(sql, /A replay reveals a destination receipt/);
+  assert.equal((sql.match(/_actor := clinical_private\.require_current_telehealth_authority\(_organization_id,_patient_id\)/g) ?? []).length, 4);
+});
