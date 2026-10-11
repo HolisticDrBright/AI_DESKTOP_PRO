@@ -56,6 +56,7 @@ jobs:
       - name: Exact chart and clinic host successor assemblies (fictional database only)
         run: |
           npm run test:telehealth-transfer-authority-candidate
+          npm run test:telehealth-authority-native-runner
           npm run build:telehealth-transfer-authority-candidate
           npm run test:telehealth-chart-lifecycle-candidate
           npm run test:zoom-host-authority-candidate
