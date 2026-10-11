@@ -178,6 +178,8 @@ jobs:
         run: |
           npm run test:successor-fullscript-binding
           npm run test:successor-fullscript-template
+          npm run test:successor-fullscript-preflight
+          npm run test:successor-fullscript-preflight-build
           npm run test:successor-fullscript-build
           npm run build:successor-fullscript-api
           cfn-lint dist/aws-clinical-core/successor-fullscript-api/template.json
