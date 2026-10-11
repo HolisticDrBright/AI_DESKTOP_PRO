@@ -5,6 +5,7 @@ import { createProductionClinicRecordsApi } from './production-clinic-records-ap
 import { createProductionClinicRecordsConsumer, createProductionClinicRecordsWorkforce, ClinicRecordError } from './production-clinic-records';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
+import { assertSuccessorQualificationBinding, type SuccessorQualificationBuild } from './successor-qualification-profile';
 
 /**
  * UNRELEASED runtime binding for the clinic-record routes. The compiled build
@@ -18,6 +19,9 @@ export type ClinicRecordsBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 116; migrationReleaseSha256: string; extensionSha256: string;
   dispatcher: { schema: 'clinical_core'; name: 'clinic_record_request'; sha256: string };
 };
+/** Distinct successor metadata; historical 116 admission remains unchanged. */
+export type SuccessorClinicRecordsBuild = SuccessorQualificationBuild & Pick<ClinicRecordsBuild, 'extensionSha256' | 'dispatcher'>;
+export const SUCCESSOR_CLINIC_RECORDS_SQL = 'c326461d26c0b2c4e93083f84e4b75cced0c72d6457be16634e2df9a5852714f';
 type Environment = Record<string, string | undefined>;
 const hash = /^[a-f0-9]{64}$/, commit = /^[a-f0-9]{40}$/;
 const TABLES = ['clinical_core.clinic_record_requests', 'clinical_core.clinic_record_request_events', 'clinical_core.clinic_record_copies',
@@ -30,15 +34,17 @@ const TRIGGERS: [string, string, string][] = [
   ['clinical_private.clinic_disclosure_releases', 'clinic_disclosure_releases_guard', 'guard_clinic_disclosure_release'],
 ];
 
-function validateBuild(supplied: ClinicRecordsBuild): ClinicRecordsBuild {
+function validateBuild(supplied: ClinicRecordsBuild | SuccessorClinicRecordsBuild, successor: boolean) {
   const build = structuredClone(supplied);
-  if (!commit.test(build.sourceCommit) || typeof build.sourceClean !== 'boolean' || build.migrationCount !== 116
+  if (!commit.test(build.sourceCommit) || typeof build.sourceClean !== 'boolean' || !successor && build.migrationCount !== 116
+    || successor && build.extensionSha256 !== SUCCESSOR_CLINIC_RECORDS_SQL
     || !hash.test(build.migrationReleaseSha256) || !hash.test(build.extensionSha256) || build.dispatcher?.schema !== 'clinical_core'
     || build.dispatcher.name !== 'clinic_record_request' || !hash.test(build.dispatcher.sha256)) throw new Error('binding_refused');
   return build;
 }
 /** Checks deployment identity, not approval. */
-function binding(e: Environment, build: ClinicRecordsBuild) {
+function binding(e: Environment, build: ClinicRecordsBuild | SuccessorClinicRecordsBuild, successor: boolean) {
+  if (successor) assertSuccessorQualificationBinding(e, build as SuccessorClinicRecordsBuild, 'CLINIC_RECORDS_ACTIVATION');
   if (e.SOURCE_COMMIT !== build.sourceCommit || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
     || e.CLINIC_RECORDS_EXTENSION_SHA256 !== build.extensionSha256
     || e.CLINIC_RECORDS_ACTIVATION !== 'blocked' && e.CLINIC_RECORDS_ACTIVATION !== 'approved'
@@ -105,9 +111,20 @@ export function bindClinicRecordsDatabase(database: ClinicalCoreDatabase, build:
 export function createClinicRecordsHandler(environment: Environment, supplied: ClinicRecordsBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return clinicRecordsHandler(environment, supplied, databaseFactory, now, false);
+}
+/** Exact proposed 117 binding, qualification only. Every original review and
+ * per-transaction role/function/table/trigger check remains required. */
+export function createSuccessorClinicRecordsHandler(environment: Environment, supplied: SuccessorClinicRecordsBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return clinicRecordsHandler(environment, supplied, databaseFactory, now, true);
+}
+function clinicRecordsHandler(environment: Environment, supplied: ClinicRecordsBuild | SuccessorClinicRecordsBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined, successor: boolean) {
   try {
-    const e = { ...environment }, build = validateBuild(supplied);
-    const { activation, qualification } = binding(e, build);
+    const e = { ...environment }, build = validateBuild(supplied, successor);
+    const { activation, qualification } = binding(e, build, successor);
     let database: ClinicalCoreDatabase | undefined;
     const getDatabase = () => database ??= bindClinicRecordsDatabase(databaseFactory({
       clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN ?? '', secretArn: e.CLINICAL_DATABASE_SECRET_ARN ?? '',

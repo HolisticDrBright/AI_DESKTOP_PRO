@@ -8,6 +8,8 @@ import { createProductionTelehealthConsentApi } from './production-telehealth-co
 import { createProductionTelehealthConsent } from './production-telehealth-consent';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
+import { assertSuccessorQualificationBinding, type SuccessorQualificationBuild } from './successor-qualification-profile';
+import { SUCCESSOR_QUALIFICATION_RELEASE } from '../../../scripts/successor-qualification-release.mjs';
 
 export const TELEHEALTH_CONSENT_RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 export const TELEHEALTH_CONSENT_ASSEMBLY = '6cc191355442ae2c2349cab50466979eaab0e45961a4e1547f34785294dce4b9';
@@ -15,6 +17,8 @@ export const TELEHEALTH_CONSENT_SQL = '5d4b361c4849b900c4c6e4f95686cf77c28797584
 export type TelehealthConsentBuild = { sourceCommit: string; sourceClean: boolean; sourceInputSha256: string;
   migrationCount: 112; migrationReleaseSha256: string; assemblySha256: string; sqlSha256: string;
   functions: readonly CareConnectionFunctionBinding[]; telehealthFunctionSha256: string };
+export type SuccessorTelehealthConsentBuild = SuccessorQualificationBuild &
+  Pick<TelehealthConsentBuild, 'sqlSha256' | 'functions' | 'telehealthFunctionSha256'>;
 type Environment = Record<string, string | undefined>;
 const hash = /^[a-f0-9]{64}$/;
 /** Release configuration identity, NOT approval evidence. Only identifiers and
@@ -28,6 +32,13 @@ export const TELEHEALTH_CONSENT_CONFIGURATION_KEYS = ['AWS_REGION', 'DEPLOYMENT_
   'QUALIFICATION_EXECUTION', 'QUALIFICATION_REVIEW_SHA256', 'QUALIFICATION_ACCOUNT_ID', 'QUALIFICATION_IDENTITY_SUBJECTS'] as const;
 export function telehealthConsentConfigurationSha256(e: Environment): string {
   return createHash('sha256').update(JSON.stringify(TELEHEALTH_CONSENT_CONFIGURATION_KEYS.map(key => [key, e[key] ?? '']))).digest('hex');
+}
+// Additive identity, not a rewrite of historical configuration/1 bytes.
+export const SUCCESSOR_TELEHEALTH_CONSENT_CONFIGURATION_KEYS = [
+  ...TELEHEALTH_CONSENT_CONFIGURATION_KEYS, 'SUCCESSOR_QUALIFICATION_PROFILE', 'MIGRATION_ASSEMBLY_SHA256',
+] as const;
+export function successorTelehealthConsentConfigurationSha256(e: Environment): string {
+  return createHash('sha256').update(JSON.stringify(SUCCESSOR_TELEHEALTH_CONSENT_CONFIGURATION_KEYS.map(key => [key, e[key] ?? '']))).digest('hex');
 }
 /** Strict operator input for computing configuration identity. This validates
  * identifiers, not approvals or cloud observations. Never read a process-wide
@@ -70,19 +81,57 @@ export function telehealthConsentConfigurationIdentity(value: unknown): { config
   return { configurationSha256: telehealthConsentConfigurationSha256(e as Record<string, string>) };
 }
 
+/** Operator identity input for the separate fictional successor. This computes
+ * a digest only; it does not observe source cleanliness, AWS or human reviews. */
+export function successorTelehealthConsentConfigurationIdentity(value: unknown): { configurationSha256: string } {
+  const invalid = (): never => { throw Error('successor_telehealth_consent_configuration_input_refused'); };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).length !== 2 || input.contract !== 'telehealth-consent-configuration/2'
+    || !input.environment || typeof input.environment !== 'object' || Array.isArray(input.environment)) return invalid();
+  const e = input.environment as Record<string, unknown>, keys = Object.keys(e);
+  if (keys.length !== SUCCESSOR_TELEHEALTH_CONSENT_CONFIGURATION_KEYS.length
+    || keys.some(key => !SUCCESSOR_TELEHEALTH_CONSENT_CONFIGURATION_KEYS.some(allowed => allowed === key))) return invalid();
+  const original = Object.fromEntries(TELEHEALTH_CONSENT_CONFIGURATION_KEYS.map(key => [key, e[key]]));
+  try { telehealthConsentConfigurationIdentity({ contract: 'telehealth-consent-configuration/1', environment: original }); }
+  catch { return invalid(); }
+  if (e.SUCCESSOR_QUALIFICATION_PROFILE !== SUCCESSOR_QUALIFICATION_RELEASE.qualificationProfile
+    || e.MIGRATION_ASSEMBLY_SHA256 !== SUCCESSOR_QUALIFICATION_RELEASE.migrationAssemblySha256
+    || e.MIGRATION_RELEASE_SHA256 !== SUCCESSOR_QUALIFICATION_RELEASE.migrationReleaseSha256
+    || e.DEPLOYMENT_ACCOUNT_ID !== '588966314750' || e.CLINICAL_DATABASE_NAME !== 'clinical_core_qualification'
+    || e.PHI_ALLOWED !== 'false' || e.TELEHEALTH_CONSENT_ACTIVATION !== 'blocked'
+    || typeof e.CLINICAL_DATABASE_SECRET_ARN !== 'string'
+    || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp\/qualification\/runtime-api-[A-Za-z0-9-]+$/.test(e.CLINICAL_DATABASE_SECRET_ARN)
+    || typeof e.CLINICAL_DATABASE_CLUSTER_ARN !== 'string'
+    || !/^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(e.CLINICAL_DATABASE_CLUSTER_ARN)) return invalid();
+  return { configurationSha256: successorTelehealthConsentConfigurationSha256(e as Record<string, string>) };
+}
+
 /** Independently compiled 112 entry point. Historical 106/107 paths are unchanged.
  * Request code uses clinical_core_api only. Function/copy protections are
  * checked per transaction; full migration-ledger qualification is operator work. */
 export function createTelehealthConsentHandler(environment: Environment, supplied: TelehealthConsentBuild,
   factory: (c: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return telehealthConsentHandler(environment, supplied, factory, now, false);
+}
+/** New exact successor entry point. The old 112 factory still refuses 117. */
+export function createSuccessorTelehealthConsentHandler(environment: Environment, supplied: SuccessorTelehealthConsentBuild,
+  factory: (c: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return telehealthConsentHandler(environment, supplied, factory, now, true);
+}
+function telehealthConsentHandler(environment: Environment, supplied: TelehealthConsentBuild | SuccessorTelehealthConsentBuild,
+  factory: (c: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined, successor: boolean) {
   try {
     const e = { ...environment }, build = structuredClone(supplied), functions = validateCareConnectionFunctions(build.functions);
+    if (successor) assertSuccessorQualificationBinding(e, build as SuccessorTelehealthConsentBuild, 'TELEHEALTH_CONSENT_ACTIVATION');
+    else if (build.migrationCount !== 112 || build.migrationReleaseSha256 !== TELEHEALTH_CONSENT_RELEASE
+      || (build as TelehealthConsentBuild).assemblySha256 !== TELEHEALTH_CONSENT_ASSEMBLY) throw Error('binding_refused');
     if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || typeof build.sourceClean !== 'boolean' || !hash.test(build.sourceInputSha256)
-      || build.migrationCount !== 112 || build.migrationReleaseSha256 !== TELEHEALTH_CONSENT_RELEASE
-      || build.assemblySha256 !== TELEHEALTH_CONSENT_ASSEMBLY || build.sqlSha256 !== TELEHEALTH_CONSENT_SQL
+      || build.sqlSha256 !== TELEHEALTH_CONSENT_SQL
       || !hash.test(build.telehealthFunctionSha256) || e.SOURCE_COMMIT !== build.sourceCommit
-      || e.SOURCE_INPUT_SHA256 !== build.sourceInputSha256 || e.MIGRATION_RELEASE_SHA256 !== TELEHEALTH_CONSENT_RELEASE
+      || e.SOURCE_INPUT_SHA256 !== build.sourceInputSha256 || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
       || e.AWS_REGION !== 'us-east-2' || !['false', 'true'].includes(e.PHI_ALLOWED ?? '')
       || !['blocked', 'approved'].includes(e.TELEHEALTH_CONSENT_ACTIVATION ?? '')
       || !['false', 'true'].includes(e.TELEHEALTH_CONSENT_ENABLED ?? '')) throw Error('binding_refused');
@@ -97,7 +146,8 @@ export function createTelehealthConsentHandler(environment: Environment, supplie
         || !/^[a-z][a-z0-9_]{0,62}$/.test(e.CLINICAL_DATABASE_NAME ?? '')
         || !qualification && e.CLINICAL_DATABASE_NAME !== 'clinical_core'
         || !hash.test(e.RETENTION_REVIEW_SHA256 ?? '') || !hash.test(e.TELEHEALTH_CONSENT_CONFIGURATION_SHA256 ?? '')
-        || e.TELEHEALTH_CONSENT_CONFIGURATION_SHA256 !== telehealthConsentConfigurationSha256(e)) throw Error('binding_refused');
+        || e.TELEHEALTH_CONSENT_CONFIGURATION_SHA256 !== (successor
+          ? successorTelehealthConsentConfigurationSha256(e) : telehealthConsentConfigurationSha256(e))) throw Error('binding_refused');
     }
     let database: ClinicalCoreDatabase | undefined;
     const get = () => database ??= bindTelehealthConsentDatabase(factory({ clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN ?? '',

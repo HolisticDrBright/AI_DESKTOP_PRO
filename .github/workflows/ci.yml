@@ -167,6 +167,13 @@ jobs:
           npm run test:successor-qualification-binding
           npm run test:successor-qualification-runtime
           npm run build:successor-qualification-runtime
+      - name: Separate successor consent and clinic-record request bindings (fictional SQL only, no AWS or approval)
+        run: |
+          npm run test:successor-provider-binding
+          npm run test:successor-qualification-providers
+          npm run build:successor-qualification-providers
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/successor-qualification-providers/telehealth-consent/template.json dist/aws-clinical-core/successor-qualification-providers/clinic-records/template.json
       - name: Historical configuration and artifact byte checks (no AWS observation or activation)
         run: |
           npm run test:inventory-qualification-target
