@@ -67,6 +67,7 @@ jobs:
           npm run test:clinic-row-preservation
           npm run test:clinic-preserving-rollback
           npm run test:clinic-preserving-workflow
+          npm run test:clinic-native-custody
           npm run build:telehealth-key-fence-candidate
           npm run test:telehealth-key-fence-candidate
           npm run build:telehealth-schema-source
