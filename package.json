@@ -10,7 +10,7 @@
     "build:telehealth-transfer-authority-candidate": "node scripts/build-telehealth-transfer-authority-candidate.mjs",
     "test:telehealth-transfer-authority-candidate": "node --test scripts/telehealth-transfer-authority-candidate.test.mjs",
     "qualify:telehealth-authority-native": "node scripts/qualify-telehealth-authority-native.mjs",
-    "test:telehealth-authority-native-runner": "node --test scripts/telehealth-authority-native-runner.test.mjs",
+    "test:telehealth-authority-native-runner": "node --test scripts/telehealth-authority-native-runner.test.mjs scripts/telehealth-authority-native-coverage.test.mjs",
     "test:migration-sql-bytes": "node --test scripts/migration-sql-bytes.test.mjs",
     "build:telehealth-consent-candidate": "node scripts/build-telehealth-consent-candidate.mjs",
     "build:telehealth-consent-copy-candidate": "node scripts/build-telehealth-consent-copy-candidate.mjs",

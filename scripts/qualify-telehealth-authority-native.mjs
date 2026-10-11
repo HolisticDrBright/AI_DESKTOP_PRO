@@ -354,7 +354,8 @@ async function queuedOtherClinicWithdrawal() {
       && Object.values(after).every(n => n === 0) });
 }
 
-async function mixedLockOrderRecovery() {
+async function mixedLockOrderRecovery(expectedVictim) {
+  if (!['revoker', 'actor'].includes(expectedVictim)) refuse('deadlock_control_refused');
   const first = await fixture(), second = { ...first, patient: randomUUID(), appointment: randomUUID() };
   await admin.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','SIBLING CHART')",
     [second.patient, second.org, 'patient_' + second.patient.replaceAll('-', '')]);
@@ -365,7 +366,13 @@ async function mixedLockOrderRecovery() {
   await actor.query(transferSql, firstAdmission.args);
   // Deliberately inverted external writer order is a negative control, not a
   // claim that a normal application workflow uses this bootstrap-only path.
-  await revoker.query('begin'); await revoker.query('select id from clinical_core.patient_records where id=$1 for update', [second.patient]);
+  await revoker.query('begin');
+  // Only this bootstrap fixture connection can set this superuser GUC. The
+  // API session inherits the local server's five-second default unchanged.
+  // Choose which real PostgreSQL detector reaches the cycle first; no error
+  // injection, role grant, retry or production setting change is involved.
+  await revoker.query(expectedVictim === 'revoker' ? "set local deadlock_timeout='1s'" : "set local deadlock_timeout='10s'");
+  await revoker.query('select id from clinical_core.patient_records where id=$1 for update', [second.patient]);
   const revokerPid = (await revoker.query('select pg_backend_pid() pid')).rows[0].pid;
   const withdrawal = revoker.query('update clinical_core.patient_records set deleted_at=clock_timestamp() where id=$1', [second.patient])
     .then(() => ({ participant: 'revoker', accepted: true }), error => ({ participant: 'revoker', accepted: false, code: error.code }));
@@ -390,13 +397,25 @@ async function mixedLockOrderRecovery() {
     && Object.values(firstAfter).every(n => n === 1) && Object.values(secondAfter).every(n => n === 1);
   const withdrawalCommitted = !writerOutcome.accepted && writerOutcome.code === '40P01' && withdrawalOutcome.accepted && withdrawn
     && Object.values(firstAfter).every(n => n === 0) && Object.values(secondAfter).every(n => n === 0);
-  results.push({ id: 'mixed_lock_order_deadlock_rolls_back_atomically', execution: 'deliberately_inverted_external_lock_order',
+  await context(second);
+  const replay = await actor.query(transferSql, secondAdmission.args)
+    .then(value => ({ accepted: true, created: value.rows[0].result.created }), error => ({ accepted: false, code: error.code, marker: error.message }));
+  await actor.query(replay.accepted ? 'commit' : 'rollback');
+  const replayPreservedCounts = canonical(firstAfter) === canonical(await counts(first))
+    && canonical(secondAfter) === canonical(await counts(second));
+  const replayCorrect = writerCommitted ? replay.accepted && replay.created === false
+    : withdrawalCommitted && !replay.accepted && /^(patient_not_found|clinical_patient_required|telehealth_current_authority_refused)$/.test(replay.marker ?? '');
+  results.push({ id: 'mixed_lock_order_' + expectedVictim + '_deadlock_rolls_back_atomically', execution: 'deliberately_inverted_external_lock_order',
+    expectedVictim, observedVictim: firstOutcome.participant,
     withdrawalLock, transferLock, withdrawalBlockedByWriter, transferBlockedByWithdrawal,
     writerAccepted: writerOutcome.accepted, writerCode: writerOutcome.code ?? null,
     withdrawalAccepted: withdrawalOutcome.accepted, withdrawalCode: withdrawalOutcome.code ?? null,
-    withdrawn, firstAfter, secondAfter,
+    withdrawn, firstAfter, secondAfter, settledReplayAccepted: replay.accepted, settledReplayCreated: replay.created ?? null,
+    settledReplayCode: replay.code ?? null, settledReplayMarker: /^[a-z_]+$/.test(replay.marker ?? '') ? replay.marker : null,
+    replayPreservedCounts,
     passed: withdrawalLock === 'advisory' && transferBlockedByWithdrawal && withdrawalBlockedByWriter
-      && !firstOutcome.accepted && firstOutcome.code === '40P01' && (writerCommitted || withdrawalCommitted) });
+      && firstOutcome.participant === expectedVictim && !firstOutcome.accepted && firstOutcome.code === '40P01'
+      && (writerCommitted || withdrawalCommitted) && replayCorrect && replayPreservedCounts });
 }
 
 try {
@@ -405,7 +424,7 @@ try {
   const socket = createServer(); await new Promise((ok, no) => { socket.once('error', no); socket.listen(0, '127.0.0.1', ok); });
   const port = socket.address().port; await new Promise((ok, no) => socket.close(error => error ? no(error) : ok()));
   started = true;
-  run('pg_ctl', ['-D', data, '-l', join(directory, 'server.log'), '-o', `-h 127.0.0.1 -p ${port} -c max_connections=10 -c shared_buffers=32MB -c timezone=UTC`, '-w', '-t', '30', 'start']);
+  run('pg_ctl', ['-D', data, '-l', join(directory, 'server.log'), '-o', `-h 127.0.0.1 -p ${port} -c max_connections=10 -c shared_buffers=32MB -c timezone=UTC -c deadlock_timeout=5s`, '-w', '-t', '30', 'start']);
   configuration = { host: '127.0.0.1', port, user: 'postgres', password, database: 'postgres', ssl: false, connectionTimeoutMillis: 5000,
     query_timeout: 30000, application_name: 'alp-fictional-native-lock-tests', options: '-c statement_timeout=30000 -c search_path=pg_catalog,public' };
   admin = new Client(configuration); await admin.connect();
@@ -473,8 +492,9 @@ try {
   await unrelatedClinicTransfers();
   await ordinaryPatientUpdate();
   await queuedOtherClinicWithdrawal();
-  await mixedLockOrderRecovery();
-  report = { contract: 'telehealth-authority-native-source/2', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
+  await mixedLockOrderRecovery('revoker');
+  await mixedLockOrderRecovery('actor');
+  report = { contract: 'telehealth-authority-native-source/3', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
     execution: 'local_restricted_owner_source', postgresVersion: '17.7',
@@ -485,7 +505,7 @@ try {
     coverageComplete: completeNativeAuthorityCoverage(results),
     passed: completeNativeAuthorityCoverage(results), results };
 } catch (error) {
-  report = { contract: 'telehealth-authority-native-source/2', sourceCommit,
+  report = { contract: 'telehealth-authority-native-source/3', sourceCommit,
     execution: 'local_restricted_owner_source', managedRoleSemanticsVerified: false, hostedVerified: false,
     mandatoryScenarioCount: REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length, coverageComplete: false,
     ...(artifact ? { testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,

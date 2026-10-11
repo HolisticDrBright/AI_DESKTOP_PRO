@@ -33,7 +33,10 @@ test('runner binds complete successor, restricted owner and real lock observatio
   assert.match(source, /await unrelatedClinicTransfers\(\)/);
   assert.match(source, /await ordinaryPatientUpdate\(\)/);
   assert.match(source, /await queuedOtherClinicWithdrawal\(\)/);
-  assert.match(source, /await mixedLockOrderRecovery\(\)/);
+  assert.match(source, /await mixedLockOrderRecovery\('revoker'\)/);
+  assert.match(source, /await mixedLockOrderRecovery\('actor'\)/);
+  assert.match(source, /firstOutcome\.participant === expectedVictim/);
+  assert.match(source, /replayPreservedCounts/);
   assert.match(source, /passed: completeNativeAuthorityCoverage\(results\)/);
-  assert.match(source, /telehealth-authority-native-source\/2/);
+  assert.match(source, /telehealth-authority-native-source\/3/);
 });

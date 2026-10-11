@@ -11,7 +11,8 @@ export const REQUIRED_NATIVE_AUTHORITY_SCENARIOS = Object.freeze([
   'repeatable_read_refused_before_transfer', 'serializable_refused_before_transfer',
   'repeatable_read_withdrawal_during_wait', 'serializable_withdrawal_during_wait',
   'unrelated_clinic_transfers_share_fence', 'ordinary_patient_update_does_not_take_authority_fence',
-  'queued_other_clinic_withdrawal_refuses_later_transfer', 'mixed_lock_order_deadlock_rolls_back_atomically',
+  'queued_other_clinic_withdrawal_refuses_later_transfer',
+  'mixed_lock_order_revoker_deadlock_rolls_back_atomically', 'mixed_lock_order_actor_deadlock_rolls_back_atomically',
 ]);
 
 export function completeNativeAuthorityCoverage(results) {

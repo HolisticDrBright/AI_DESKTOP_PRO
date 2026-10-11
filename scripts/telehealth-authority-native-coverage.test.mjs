@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { REQUIRED_NATIVE_AUTHORITY_SCENARIOS, completeNativeAuthorityCoverage } from './telehealth-authority-native-coverage.mjs';
 const complete = () => REQUIRED_NATIVE_AUTHORITY_SCENARIOS.map(id => ({ id, passed: true }));
 
-test('the expanded source diagnostic has 28 distinct mandatory cases', () => {
-  assert.equal(REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length, 28);
-  assert.equal(new Set(REQUIRED_NATIVE_AUTHORITY_SCENARIOS).size, 28);
+test('the expanded source diagnostic has 29 distinct mandatory cases', () => {
+  assert.equal(REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length, 29);
+  assert.equal(new Set(REQUIRED_NATIVE_AUTHORITY_SCENARIOS).size, 29);
   assert.equal(completeNativeAuthorityCoverage(complete()), true);
 });
 test('missing or empty evidence cannot pass', () => {
