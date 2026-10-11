@@ -79,3 +79,9 @@ The target suite has 33 credential-free cases. The report suite has 42 cases.
 The embedded runner has four cases, including a real database with a matching
 114-row ledger but the wrong name, and the unchanged thirty-case handler journey.
 No test fixture represents an AWS deployment, consent release or owner approval.
+# Current selected source
+
+The current integration requires the complete 116-row ledger from clinic
+candidate `/4`, above the exact 115 key-fence parent. See
+[Clinic privacy source integration](clinic-source-integration-2026-10-10.md).
+Earlier 114-row observations are historical and cannot qualify the new candidate.

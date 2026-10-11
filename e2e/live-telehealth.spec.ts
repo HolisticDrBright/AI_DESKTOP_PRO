@@ -204,6 +204,30 @@ test("the imported unreviewed AI Companion note is frozen by one confirmed signa
   await expect(page.getByRole("link", { name: "View note" })).toBeVisible();
 });
 
+test("authorization loss during a failed transfer's recovery read removes the opened signed note", async ({ page }) => {
+  await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveText("Agree with the summary. Continue protocol.");
+  await page.route("**/api/live/telehealth/note/transfer", route => route.fulfill({
+    status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "unavailable", message: "Fictional transfer unavailable." } }),
+  }));
+  await page.route("**/api/live/telehealth/note?*", route => route.fulfill({
+    status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "You don't have access to this record." } }),
+  }));
+  await page.getByTestId("note-transfer").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Place in chart" }).click();
+  await expect(page.getByText("You don't have access to this record.")).toBeVisible();
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveCount(0);
+  await expect(page.getByText("Edited summary.", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Repeat ferritin in 8 weeks", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("note-chart-transfer")).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await page.unroute("**/api/live/telehealth/note?*");
+  await page.unroute("**/api/live/telehealth/note/transfer");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByTestId("signed-practitioner-notes")).toHaveText("Agree with the summary. Continue protocol.");
+  await expect(page.getByTestId("note-chart-transfer")).toHaveAttribute("data-transfer-state", "none");
+});
+
 test("placing the signed note in the chart creates one unsigned draft, links it, reaches the timeline, and a lost completion is reconciled without a second note", async ({ page, request }) => {
   await page.goto(`/telehealth/visit/${APPOINTMENT}/note?date=${DATE}`);
   await expect(page.getByTestId("note-signed")).toBeVisible();

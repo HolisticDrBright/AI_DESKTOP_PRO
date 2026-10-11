@@ -51,6 +51,17 @@ jobs:
           npm run test:telehealth-consent-copy
           npm run test:telehealth-consent-copy-candidate
           npm run build:telehealth-consent-copy-candidate
+      - name: Exact chart and clinic host successor assemblies (fictional database only)
+        run: |
+          npm run test:telehealth-chart-lifecycle-candidate
+          npm run test:zoom-host-authority-candidate
+          npm run build:zoom-host-authority-candidate
+          npm run test:zoom-host-authority
+          npm run test:telehealth-schema-source
+          npm run test:telehealth-native-source
+          npm run build:telehealth-key-fence-candidate
+          npm run test:telehealth-key-fence-candidate
+          npm run build:telehealth-schema-source
       - name: Separate patient consent Lambda and immutable blocked template (no AWS or approval)
         run: |
           npm run test:telehealth-consent-runtime
@@ -61,7 +72,14 @@ jobs:
       - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
         run: |
           npm run test:fullscript-upgrade-operator
+          npm run test:fullscript-native-owner-source
           npm run build:fullscript-upgrade
+          npm run test:telehealth-consent-upgrade
+          npm run build:telehealth-consent-upgrade
+          npm run test:telehealth-consent-upgrade-artifact
+          npm run test:telehealth-consent-copy-registration
+          npm run build:telehealth-consent-copy-operator
+          npm run test:telehealth-consent-copy-operator-artifact
       - name: Fullscript immutable target and actual API bundle (fictional AWS only)
         run: |
           npm run test:fullscript-target-runtime

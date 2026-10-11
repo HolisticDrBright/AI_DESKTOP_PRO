@@ -29,7 +29,7 @@ function input(transform = (_key, value) => value) {
 test('independently observes all metadata and the exact ordered ledger without a write operation', async () => {
   const { i, calls } = input(); const result = await observeClinicTarget(i);
   assert.equal(result.database, 'clinical_core_qualification'); assert.equal(result.sourceCommit, binding.sourceCommit);
-  assert.equal(result.migrationRows, 114); assert.equal(result.phiAllowed, false); assert.equal(result.humanReviewsVerified, false);
+  assert.equal(result.migrationRows, 116); assert.equal(result.phiAllowed, false); assert.equal(result.humanReviewsVerified, false);
   assert.equal(result.atomicAwsSnapshot, false); assert.ok(calls.includes('lambda/get-function')); assert.ok(calls.includes('secretsmanager/describe-secret'));
   assert.ok(calls.every(c => /\/(get-|describe-|list-)/.test(c))); assert.ok(!JSON.stringify(result).includes('Location'));
 });

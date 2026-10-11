@@ -9,8 +9,8 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const candidate = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'], {
   encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,
 }));
-if (candidate.candidate.contract !== 'clinic-record-privacy-candidate/3' || candidate.manifest.migrations.length !== 114) throw new Error('clinic_records_candidate_changed');
-const schema = candidate.files[candidate.manifest.migrations[113].file];
+if (candidate.candidate.contract !== 'clinic-record-privacy-candidate/4' || candidate.manifest.migrations.length !== 116) throw new Error('clinic_records_candidate_changed');
+const schema = candidate.files[candidate.manifest.migrations[115].file];
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
   'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim().length !== 0;
@@ -22,8 +22,8 @@ const manifest = {
   contract: 'clinic-records-source-candidate/1', status: 'unreleased', deployable: false,
   sourceCommit, sourceDirty,
   parentMigrationCount: candidate.candidate.parentMigrationCount, parentMigrationReleaseSha256: candidate.candidate.parentMigrationReleaseSha256,
-  migrationCount: 114, migrationReleaseSha256: candidate.candidate.migrationReleaseSha256, migrationAssemblySha256: candidate.releaseHash,
-  migrationFile: candidate.manifest.migrations[113].file, schemaSha256: sha(schema), librarySha256: sha(readFileSync(out + '/candidate-library.cjs')),
+  migrationCount: 116, migrationReleaseSha256: candidate.candidate.migrationReleaseSha256, migrationAssemblySha256: candidate.releaseHash,
+  migrationFile: candidate.manifest.migrations[115].file, schemaSha256: sha(schema), librarySha256: sha(readFileSync(out + '/candidate-library.cjs')),
   proposedRoutes: ['POST /clinical-core/consumer/clinic-records', 'POST /clinical-core/workforce/clinic-records'],
   routeAuthorizers: { 'POST /clinical-core/consumer/clinic-records': 'ConsumerJwtAuthorizer', 'POST /clinical-core/workforce/clinic-records': 'WorkforceJwtAuthorizer' },
   newTables: ['clinical_core.clinic_record_requests', 'clinical_core.clinic_record_request_events', 'clinical_core.clinic_record_copies',
@@ -37,7 +37,7 @@ const manifest = {
   privacyCoverage: 'clinic-held signed notes with addenda, telehealth visit records through chart-transfer receipts and accepted lab observations, '
     + 'as a snapshot copy per fulfilled request; correspondence stays with the care-message export; not whole-account export, not erasure',
   remaining: ['owner review and registration of clinic disclosure releases (clinical_private.clinic_disclosure_releases is empty)',
-    'registration of migration 114 after the chart-lifecycle successor is settled', 'route registration and deployment (Codex)',
+    'registration of migration 116 after the chart-lifecycle successor is settled', 'route registration and deployment (Codex)',
     'hosted qualification: two clinics, two patients, both pools, lock-wait races', 'reviewed retention posture for fulfilled copies (no expiry is invented)'],
 };
 writeFileSync(out + '/manifest.json', JSON.stringify(manifest, null, 2) + '\n');

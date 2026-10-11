@@ -91,6 +91,7 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     accessEpoch.current += 1;
     setImporting(false);
     setSigning(false);
+    setTransferring(false);
     setRow(null);
     setPractitionerNotes("");
     setSections(EMPTY_SECTIONS);
@@ -98,6 +99,8 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
     setImportMessage(null);
     setActionError(null);
     setConfirmSign(false);
+    setConfirmTransfer(false);
+    setTransferError(null);
     setState("error");
     setError({ message: isAdapterError(e) ? e.message : "This record isn't available.", signedOut: isAdapterError(e) && e.code === "unauthenticated" });
   }, []);
@@ -228,7 +231,12 @@ export function TelehealthNoteScreen({ appointmentId, date }: { appointmentId: s
         try {
           const visit = await api.telehealth.note(row.appointmentId);
           if (epoch === accessEpoch.current) setRow({ ...row, visit });
-        } catch { /* the error above stands */ }
+        } catch (recoveryError) {
+          // A lost transfer result does not retain read authority. An explicit
+          // authorization refusal on recovery must clear all opened clinical
+          // text and invalidate pending continuations just like a primary one.
+          if (epoch === accessEpoch.current) dropOpenedNote(recoveryError);
+        }
       }
     } finally {
       if (epoch === accessEpoch.current) setTransferring(false);

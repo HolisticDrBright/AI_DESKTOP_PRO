@@ -28,7 +28,7 @@ export function assertClinicTarget({ target: t, binding: b, candidate: c, deploy
     || !digest(t.foundationTemplateSha256) || !digest(t.reviewSha256) || !digest(t.databaseReviewSha256)) refuse('target_manifest');
   if (!d || typeof d.templateText !== 'string' || !Buffer.isBuffer(d.zip) || !Buffer.isBuffer(d.code)
     || d.manifest?.contract !== 'clinic-records-deployment/1' || d.manifest.sourceClean !== true
-    || d.manifest.sourceCommit !== b.sourceCommit || d.manifest.migrationCount !== 114
+    || d.manifest.sourceCommit !== b.sourceCommit || d.manifest.migrationCount !== 116
     || d.manifest.migrationReleaseSha256 !== c.migrationReleaseSha256 || d.manifest.extensionSha256 !== c.extensionSha256
     || hash(d.templateText) !== d.manifest.templateSha256 || hash(d.zip) !== d.manifest.deploymentZipSha256
     || hash(d.code) !== d.manifest.codeSha256 || d.zip.length !== d.manifest.deploymentZipBytes) refuse('target_local_artifact');
@@ -51,7 +51,7 @@ export function assertClinicTarget({ target: t, binding: b, candidate: c, deploy
       || spec.AllowedPattern && !new RegExp(`^(?:${spec.AllowedPattern})$`).test(value)
       || spec.MinLength !== undefined && value.length < spec.MinLength || spec.MaxLength !== undefined && value.length > spec.MaxLength) refuse('target_parameter_value');
   }
-  if (!Array.isArray(migrations) || migrations.length !== 114 || migrations.some((row, i) => !/^\d{14}$/.test(row?.version ?? '')
+  if (!Array.isArray(migrations) || migrations.length !== 116 || migrations.some((row, i) => !/^\d{14}$/.test(row?.version ?? '')
     || !digest(row?.sha256) || i > 0 && migrations[i - 1].version >= row.version)
     || hash(migrations.map(row => `${row.version}:${row.sha256}`).join('\n')) !== c.migrationReleaseSha256) refuse('target_local_ledger');
   return { template, parameters: required };

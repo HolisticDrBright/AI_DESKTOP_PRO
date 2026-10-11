@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { clinicRecordPrivacyCandidate, CLINIC_RECORD_PRIVACY_FILE } from './clinic-record-privacy-candidate.mjs';
-const parent = JSON.parse(execFileSync(process.execPath, ['scripts/build-telehealth-chart-lifecycle-candidate.mjs', '--json'],
+const parent = JSON.parse(execFileSync(process.execPath, ['scripts/build-telehealth-transfer-key-fence-candidate.mjs', '--json'],
   { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true }));
 const sql = readFileSync('infra/aws-clinical-core/production-candidates/clinic-record-privacy.sql', 'utf8').replace(/\r\n?/g, '\n');
-test('copies all 113 parent bytes unchanged and appends exactly one blocked forward migration', () => {
+test('copies all 115 parent bytes unchanged and appends exactly one blocked forward migration', () => {
   const a = clinicRecordPrivacyCandidate(parent, sql);
-  assert.equal(a.manifest.migrations.length, 114);
-  assert.deepEqual(a.manifest.migrations.slice(0, 113), parent.manifest.migrations);
-  assert.equal(a.manifest.migrations[113].file, CLINIC_RECORD_PRIVACY_FILE);
+  assert.equal(a.manifest.migrations.length, 116);
+  assert.deepEqual(a.manifest.migrations.slice(0, 115), parent.manifest.migrations);
+  assert.equal(a.manifest.migrations[115].file, CLINIC_RECORD_PRIVACY_FILE);
   for (const m of parent.manifest.migrations) assert.equal(a.files[m.file], parent.files[m.file]);
   assert.equal(a.candidate.phiAllowed, false); assert.equal(a.candidate.activation, 'blocked');
   assert.equal(a.candidate.deployment, 'not_deployed'); assert.equal(a.candidate.seededApprovals, false);
@@ -26,12 +26,16 @@ for (const [name, mutate] of [
   ['seeded admission keys', p => { p.candidate.seededAdmissionKeys = true; }],
   ['seeded transfers', p => { p.candidate.seededTransfers = true; }],
   ['wrong parent contract', p => { p.candidate.contract = 'telehealth-chart-lifecycle-candidate/2'; }],
-  ['wrong candidate count', p => { p.candidate.migrationCount = 114; }],
+  ['wrong candidate count', p => { p.candidate.migrationCount = 116; }],
   ['wrong ledger claim', p => { p.candidate.migrationReleaseSha256 = 'a'.repeat(64); }],
   ['extra file', p => { p.files['unlisted.sql'] = 'select 1;'; }],
   ['missing SQL', p => { delete p.files[p.manifest.migrations[0].file]; }],
   ['changed parent SQL', p => { p.files[p.manifest.migrations[0].file] += '\nselect 1;'; }],
-  ['changed 113 extension', p => { const m = p.manifest.migrations[112]; p.files[m.file] += '\n-- drift'; }],
+  ['changed lifecycle/4 extension', p => { const m = p.manifest.migrations[112]; p.files[m.file] += '\n-- drift'; }],
+  ['changed host/1 extension', p => { const m = p.manifest.migrations[113]; p.files[m.file] += '\n-- drift'; }],
+  ['changed key-fence/1 extension', p => { const m = p.manifest.migrations[114]; p.files[m.file] += '\n-- drift'; }],
+  ['extra parent permission claim', p => { p.candidate.providerAuthorized = true; }],
+  ['wrong parent assembly claim', p => { p.candidate.parentArtifactSha256 = 'b'.repeat(64); }],
   ['dropped parent migration', p => { const m = p.manifest.migrations.pop(); delete p.files[m.file]; }],
   ['duplicate version', p => { p.manifest.migrations[1].version = p.manifest.migrations[0].version; }],
   ['wrong source assembly', p => { p.releaseHash = 'b'.repeat(64); }],

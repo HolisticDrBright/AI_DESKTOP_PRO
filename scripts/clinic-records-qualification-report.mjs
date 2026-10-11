@@ -17,7 +17,7 @@ const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
 
 export const CLINIC_RECORDS_QUALIFICATION_TARGET = Object.freeze({ account: '588966314750', region: 'us-east-2', database: 'clinical_core_qualification',
-  migrationCount: 114, extensionSha256: CLINIC_RECORD_PRIVACY_SQL_SHA256 });
+  migrationCount: 116, extensionSha256: CLINIC_RECORD_PRIVACY_SQL_SHA256 });
 export const CLINIC_RECORDS_QUALIFICATION_ROUTES = Object.freeze(['POST /clinical-core/consumer/clinic-records', 'POST /clinical-core/workforce/clinic-records']);
 /** Fictional identities only. Every subject is a distinct qualification-pool user; the two "other clinic" subjects belong to a second fictional organization. */
 export const CLINIC_RECORDS_QUALIFICATION_SUBJECTS = Object.freeze(['patientA', 'patientB', 'patientRevoked', 'patientOtherClinic',
@@ -74,7 +74,7 @@ export const CLINIC_RECORDS_QUALIFICATION_CASES = Object.freeze([
 
 export function assertClinicRecordsQualificationBinding(binding, candidate) {
   const t = CLINIC_RECORDS_QUALIFICATION_TARGET;
-  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/3' || candidate.migrationCount !== t.migrationCount
+  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/4' || candidate.migrationCount !== t.migrationCount
     || candidate.extensionSha256 !== t.extensionSha256 || !hash.test(candidate.migrationReleaseSha256 ?? '') || candidate.activation !== 'blocked'
     || candidate.phiAllowed !== false || candidate.deployment !== 'not_deployed' || candidate.seededDisclosureReleases !== false
     || candidate.seededRequests !== false) refuse('candidate_refused');

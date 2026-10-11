@@ -12,7 +12,7 @@ import type { ClinicalCoreDatabase } from './database';
 import type { ClinicRecordConsumerRequest, ClinicRecordWorkforceRequest } from '../../contracts/clinicRecordRequests';
 
 /**
- * The distinct 114-migration clinic-record privacy candidate under the ACTUAL
+ * The distinct 116-migration clinic-record privacy candidate under the ACTUAL
  * restricted API role in an embedded database, through the production adapters
  * (consumer and workforce) and through raw SQL. Two clinics, two same-clinic
  * patients, consumers, practitioner/staff/admin roles, missing or revoked
@@ -130,8 +130,8 @@ const decision = (requestId: string, expectedRevision: number) => ({ requestId, 
 beforeAll(async () => {
   const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true })) as Artifact;
-  expect(artifact.manifest.migrations).toHaveLength(114);
-  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/3', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
+  expect(artifact.manifest.migrations).toHaveLength(116);
+  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/4', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
   pg = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version, name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
   const admin: ClinicalCoreDatabase = { transaction: work => pg.transaction(tx => work({ query: (sql, parameters = []) => tx.query(sql, [...parameters]) })) };

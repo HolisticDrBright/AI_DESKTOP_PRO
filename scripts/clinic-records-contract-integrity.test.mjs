@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
  * expo/contracts/fixtures/clinic-record-copy-lab-item.json in
  * AI_LONGEVITY_PRO_V2 are byte-identical mirrors of these two files, and the V2
  * suite (__tests__/clinic-records-contract-pins.test.ts) pins the SAME hashes.
- * The fixture is what the real 114 reader produced in embedded PostgreSQL
+ * The fixture is what the real 116 reader produced in embedded PostgreSQL
  * (clinic-record-privacy.database.test.ts regenerates and compares it).
  */
 const sha = path => createHash('sha256').update(readFileSync(path)).digest('hex');

@@ -369,3 +369,10 @@ release integration and device journeys remain outstanding.
 
 See `docs/clinic-records-qualification-target.md` for the required target fields
 and execution procedure. The fictional test fixture is not a runnable manifest.
+# Current integration status
+
+The successor `clinic-record-privacy-candidate/4` now follows the exact selected
+115 key-fence parent and builds a blocked 116 artifact. See
+[Clinic privacy source integration](clinic-source-integration-2026-10-10.md).
+The 114 `/3` identities and counts below describe the historical independent
+proposal, not a current apply target. No migration or release has been registered.

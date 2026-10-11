@@ -1,9 +1,9 @@
 -- Clinic-record privacy: patient copy and correction requests, practitioner
 -- review and fulfilment, and bounded reads of a fulfilled copy.
 --
--- Forward source candidate only. It becomes the 114th migration of a distinct
--- artifact whose first 113 files are byte-identical to the exact
--- telehealth-chart-lifecycle/3 candidate (scripts/clinic-record-privacy-candidate.mjs
+-- Forward source candidate only. It becomes the 116th migration of a distinct
+-- artifact whose first 115 files are byte-identical to the exact
+-- telehealth-transfer-key-fence/1 candidate (scripts/clinic-record-privacy-candidate.mjs
 -- pins the parent ledger and this file's SHA-256). It alters no historical
 -- migration, seeds no rows, registers no release and is not an instruction to apply.
 --

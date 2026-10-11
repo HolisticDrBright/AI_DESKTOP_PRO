@@ -537,7 +537,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     priceMinor: 0, currency: "USD", cancellationPolicy: "", cancellationWindowHours: 24, cancellationFeeDueMinor: 0, reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1",
     paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due", paymentIntentId: null, paidMinor: 0, refundedMinor: 0, ...overrides,
   });
-  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: "11111111-aaaa-4aaa-8aaa-111111111111", practitioner_name: "Dr",
+  const calendarRow = (overrides: Record<string, unknown> = {}) => ({ id: APPOINTMENT, patient_id: PATIENT, patient_name: "Synthetic Patient", practitioner_user_id: workforceClaims["custom:person_id"], practitioner_name: "Dr",
     title: null, appointment_type: "telehealth", location: "Telehealth", telehealth_url: null, status: "confirmed", version: 1, starts_at: "2026-10-09T17:00:00.000Z", ends_at: "2026-10-09T17:30:00.000Z", ...overrides });
   const start = (handlerConfig = zoomConfig, extra: Record<string, unknown> = {}) => createTelehealthHandler(handlerConfig)(event("POST /clinical-core/workforce/appointments/visits/start", { appointmentId: APPOINTMENT, hostDisplayName: "Dr. Synthetic", ...extra }, workforceClaims));
   const jsonResponse = (status: number, body: unknown, text?: string) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, body: new Response(text ?? JSON.stringify(body)).body, json: async () => body, text: async () => text ?? JSON.stringify(body) });
@@ -598,17 +598,20 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     };
   const identityRoutes = (options: { grant?: Record<string, unknown> | null; calendar?: Array<Record<string, unknown>> | (() => unknown); authority?: Record<string, unknown> | null | (() => unknown) } = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["/clinical-core/workforce/consent-artifact", () => jsonResponse(200, { data: ARTIFACT })],
-    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT, ...options.grant } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null } })],
-    ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted" } })],
+    ["/clinical-core/workforce/consents/current", () => jsonResponse(200, { data: options.grant ? { patientRecordId: PATIENT,
+      artifactVersion: ARTIFACT.artifactVersion, contentSha256: ARTIFACT.contentSha256, representativeAuthority: "self", ...options.grant,
+    } : { status: "none", patientRecordId: null, connectionId: null, consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null, representativeAuthority: null } })],
+    ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 1, recordedAt: "2026-10-10T00:00:00.000Z" } })],
     ["/clinical-core/workforce/consents/revoke", () => jsonResponse(201, { data: { status: "revoked" } })],
     ["/clinical-core/workforce/data-compatibility", compatibilityRoute(options)],
   ];
-  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
-  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
+  const meetingBody = (id: number, extra: Record<string, unknown> = {}) => ({ id, uuid: `uuid-${id}`, host_id: "zoom-host-id", type: 2, join_url: `https://zoom.us/j/${id}?pwd=ENCRYPTED-URL-TOKEN`, password: `real-password-${id}`, status: "waiting", ...extra });
+  const zoomRoutes = (overrides: Partial<Record<"token" | "list" | "create" | "zak" | "host" | "end" | "get" | "summary" | "delete", (url: string, init?: RequestInit) => unknown>> = {}): Array<[string | RegExp, (url: string, init?: RequestInit) => unknown]> => [
     ["zoom.us/oauth/token", overrides.token ?? (() => jsonResponse(200, { access_token: "zoom-access" }))],
     [/\/users\/[^/]+\/meetings\?/, overrides.list ?? (() => jsonResponse(200, { meetings: [] }))],
     [/\/users\/[^/]+\/meetings$/, overrides.create ?? (() => jsonResponse(201, meetingBody(900000001)))],
     ["/token?type=zak", overrides.zak ?? (() => jsonResponse(200, { token: "zak-token" }))],
+    [/\/users\/[^/?]+$/, overrides.host ?? (() => jsonResponse(200, { id: "zoom-host-id", account_id: "acct", email: "host@example.test", status: "active" }))],
     [/\/meetings\/[^/]+\/status$/, overrides.end ?? (() => jsonResponse(204, {}))],
     [/\/meetings\/[^/?]+\/meeting_summary$/, overrides.summary ?? (() => jsonResponse(404, {}))],
     [/\/meetings\/[^/?]+$/, (url, init) => (init?.method === "DELETE" ? (overrides.delete ?? (() => jsonResponse(204, {})))(url, init) : (overrides.get ?? ((u: string) => jsonResponse(200, meetingBody(Number(/\/meetings\/(\d+)/.exec(u)?.[1] ?? "0")))))(url, init))],
@@ -642,6 +645,62 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   });
 
   /* ---------------------------------------------------- appointment authority at the AWS boundary */
+
+  it.each([null, "99999999-9999-4999-8999-999999999999", "not-a-person-id"])("will not issue host authority when the assigned practitioner is %j", async (practitioner) => {
+    const calls = fetchRouter([...identityRoutes({ calendar: [calendarRow({ practitioner_user_id: practitioner })] }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(403);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "identity_refused" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each(["guardian", "healthcare_proxy", "legal_representative"])("retains historical %s consent but does not treat it as current provider authority", async (authority) => {
+    const calls = fetchRouter([...identityRoutes({ calendar: [calendarRow({ practitioner_user_id: workforceClaims["custom:person_id"] })] }), ...zoomRoutes()]);
+    queueGet(visitRecord({ consents: [receipt({ representativeAuthority: authority })] }));
+    const result = await start();
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each([
+    { representativeAuthority: "guardian" },
+    { representativeAuthority: null },
+    { artifactVersion: "different-release" },
+    { contentSha256: "c".repeat(64) },
+  ])("refuses a connected visit's mismatched current grant %j before provider access", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes({ grant: { status: "granted", connectionId: "44444444-4444-4444-8444-444444444444",
+      artifactId: ARTIFACT.artifactId, artifactStatus: "approved", ...mismatch } }), ...zoomRoutes()]);
+    queueGet(visitRecord({ requestId: REQUEST, consumerPersonId: claims["custom:person_id"] })); queueQuery({ Items: [requestRecord()] });
+    const result = await start();
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "consent_required" });
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+    expect(calls.filter((call) => call.url.includes("zoom.us"))).toHaveLength(0);
+  });
+
+  it.each([2, 3])("withholds the host session if practitioner assignment changes on authority read %i", async (changedOnRead) => {
+    let authorityReads = 0;
+    const calls = fetchRouter([...identityRoutes({ calendar: () => jsonResponse(200, { data: { appointments: [calendarRow({
+      practitioner_user_id: ++authorityReads < changedOnRead ? workforceClaims["custom:person_id"] : "99999999-9999-4999-8999-999999999999",
+    })] } }) }), ...zoomRoutes()]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "request_invalid" });
+    expect(JSON.parse(result.body ?? "{}")).not.toHaveProperty("data.session");
+    expect(putItems().some((item) => item.status === "in_visit")).toBe(false);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(changedOnRead === 2 ? 0 : 1);
+    // A real provider meeting already exists: retain its durable receipt for
+    // recovery, not a false claim that a denied host session erased it.
+    expect(putItems().some((item) => item.providerMeetingId === "900000001")).toBe(true);
+  });
 
   it("refuses a direct AWS call for an appointment the caller's calendar does not return — no write, no secret, no provider call", async () => {
     const calls = fetchRouter([...identityRoutes({ calendar: [] }), ...zoomRoutes()]);
@@ -743,6 +802,59 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
 
   /* ---------------------------------------------------- consent receipts */
 
+  it.each([
+    ["empty signer", { signerName: " " }],
+    ["non-text signer", { signerName: { name: "Signer" } }],
+    ["oversized signer", { signerName: "x".repeat(201) }],
+    ["control character in signer", { signerName: "Signer\u0000" }],
+    ["invalid Unicode in signer", { signerName: "Signer\ud800" }],
+    ["non-text location", { patientLocation: { state: "CA" } }],
+    ["oversized location", { patientLocation: "x".repeat(121) }],
+    ["control character in location", { patientLocation: "CA\u0000" }],
+    ["guardian without verified authority", { representativeAuthority: "guardian" }],
+    ["proxy without verified authority", { representativeAuthority: "healthcare_proxy" }],
+    ["legal representative without verified authority", { representativeAuthority: "legal_representative" }],
+    ["non-text authority", { representativeAuthority: ["self"] }],
+  ])("refuses %s before creating a connected patient's consent grant or visit", async (_label, invalid) => {
+    const calls = fetchRouter(identityRoutes({ grant: { status: "none", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }));
+    queueGet(undefined); queueQuery({ Items: [requestRecord()] }, { Items: [requestRecord()] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, requestId: REQUEST, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion,
+      contentSha256: ARTIFACT.contentSha256, signerName: "Signer", agreed: true, representativeAuthority: "self", ...invalid,
+    }, workforceClaims));
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "request_invalid" });
+    expect(calls.filter((call) => call.method !== "GET" && call.url.includes("/consents/grant"))).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect(secretsSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    "granted",
+    { consentId: "not-an-id", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "55555555-5555-4555-8555-555555555555", status: "granted" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "revoked" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "health_intake", version: 1, recordedAt: "2026-10-10T00:00:00.000Z" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 0, recordedAt: "2026-10-10T00:00:00.000Z" },
+    { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "44444444-4444-4444-8444-444444444444", status: "granted", scope: "telehealth_recording", version: 1, recordedAt: "never" },
+  ])("does not certify a visit from a malformed or mismatched grant reply %j", async (reply) => {
+    const calls = fetchRouter([
+      ["/clinical-core/workforce/consents/grant", () => jsonResponse(201, { data: reply })],
+      ...identityRoutes({ grant: { status: "none", connectionId: "44444444-4444-4444-8444-444444444444", artifactId: null, artifactStatus: null } }),
+    ]);
+    queueGet(undefined); queueQuery({ Items: [requestRecord()] }, { Items: [requestRecord()] });
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/visits/consent", {
+      appointmentId: APPOINTMENT, requestId: REQUEST, artifactId: ARTIFACT.artifactId, artifactVersion: ARTIFACT.artifactVersion,
+      contentSha256: ARTIFACT.contentSha256, signerName: "Signer", agreed: true, representativeAuthority: "self",
+    }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "service_unavailable" });
+    expect(calls.filter((call) => call.url.includes("/consents/grant"))).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+  });
+
   it("records a staff-attested consent only against the organization's current approved artifact, append-only, without the passcode", async () => {
     fetchRouter(identityRoutes());
     queueGet(visitRecord({ consents: [receipt()], passcode: "secret-passcode" }));
@@ -791,6 +903,228 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   });
 
   /* ---------------------------------------------------- one meeting per visit, with the real password */
+
+  it.each(["meeting-900000001", [900000001], "900000001-other"])("refuses a coerced summary meeting identity %j", async (meetingId) => {
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ summary: () => jsonResponse(200, {
+      meeting_id: meetingId, meeting_uuid: "uuid-900000001", summary_content: "Unrelated instance text must not be imported.",
+    }) })]);
+    queueGet(visitRecord({ status: "ended", providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001" }));
+    const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/visits/notes/import", { appointmentId: APPOINTMENT }, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(putItems()).toHaveLength(0);
+  });
+
+  it.each([
+    { meetings: [], next_page_token: 42 },
+    { meetings: [], next_page_token: null },
+    { meetings: [], next_page_token: "x".repeat(1025) },
+    { meetings: [null] },
+    { meetings: [{ id: [900000001], agenda: `alp-visit:${APPOINTMENT}` }] },
+  ])("refuses malformed recovery listing rather than creating or adopting a meeting %j", async (payload) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ list: () => jsonResponse(200, payload) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(creates(calls)).toHaveLength(0);
+    expect(putItems().some(item => item.providerMeetingId)).toBe(false);
+  });
+
+  it.each([
+    { id: [900000001] }, { password: ["real-password-900000001"] },
+    { password: { value: "real-password-900000001" } }, { password: "secret\u0000" },
+    { uuid: null }, { uuid: "" }, { uuid: "instance\u0000" },
+    { join_url: "https://unrelated.example.test/j/900000001" },
+    { join_url: "https://zoom.us@unrelated.example.test/j/900000001" },
+    { join_url: "https://zoom.us/j/900000002" },
+    { join_url: "https://zoom.us:444/j/900000001" },
+  ])("does not bind a coerced or unsafe create result %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ create: () => jsonResponse(201, meetingBody(900000001, mismatch)) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(creates(calls)).toHaveLength(1);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId)).toBe(false);
+    // The dispatched lease is retained: refusal cannot certify no Zoom effect.
+    expect(putItems().at(-1)?.meetingLease).toMatchObject({ state: "dispatched" });
+  });
+
+  it.each(["list", "create", "get"] as const)("cancels oversized %s bytes before binding or issuing a session", async (stage) => {
+    let cancelled = false;
+    const oversized = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('"' + "x".repeat(300_000) + '"')); },
+      cancel() { cancelled = true; },
+    }), { status: stage === "create" ? 201 : 200 });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: oversized })]);
+    queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(cancelled).toBe(true);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+  });
+
+  it.each(["list", "create", "get"] as const)("cancels a stalled %s body at the shared deadline", async (stage) => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let response: Response | undefined, cancelled = false;
+    try {
+      const stalled = () => response = new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(new TextEncoder().encode('{')); }, cancel() { cancelled = true; },
+      }), { status: stage === "create" ? 201 : 200 });
+      const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: stalled })]);
+      queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+      const pending = start();
+      for (let tick = 0; tick < 300 && !response?.body?.locked; tick += 1) await Promise.resolve();
+      expect(response?.body?.locked).toBe(true);
+      controller.abort();
+      const result = await pending;
+      expect(result.statusCode).toBe(503);
+      expect(cancelled).toBe(true);
+      expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+      expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+      if (stage === "create") expect(putItems().at(-1)?.meetingLease).toMatchObject({ state: "dispatched" });
+    } finally { timeout.mockRestore(); }
+  });
+
+  it.each(["list", "create", "get"] as const)("refuses a redirected %s response", async (stage) => {
+    const redirected = () => ({ ...jsonResponse(stage === "create" ? 201 : 200,
+      stage === "list" ? { meetings: [] } : meetingBody(900000001)), redirected: true });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ [stage]: redirected })]);
+    queueGet(visitRecord(stage === "get" ? { providerMeetingId: "900000001" } : {}));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(putItems().some(item => item.providerMeetingId && item.passcode)).toBe(false);
+  });
+
+  it("retains a valid regional Zoom join URL without substituting its encrypted token for the password", async () => {
+    const joinUrl = "https://us02web.zoom.us/j/900000001?pwd=ENCRYPTED-URL-TOKEN";
+    fetchRouter([...identityRoutes(), ...zoomRoutes({ create: () => jsonResponse(201, meetingBody(900000001, { join_url: joinUrl })) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.visit.joinUrl).toBe(joinUrl);
+    expect(JSON.parse(result.body ?? "{}").data.session.passcode).toBe("real-password-900000001");
+  });
+
+  it.each([
+    { host_id: "another-host" }, { host_id: null }, { uuid: "another-instance" }, { uuid: null },
+    { id: 900000002 }, { type: 8 }, { status: "deleted" }, { password: "changed-password" },
+  ])("withholds SDK and ZAK when the current provider meeting differs from its saved authority %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ get: () => jsonResponse(200, meetingBody(900000001, mismatch)) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it.each([
+    { account_id: "another-account" }, { account_id: null }, { id: null }, { email: "another@example.test" },
+    { status: "inactive" }, { status: null },
+  ])("withholds SDK and ZAK when Zoom does not verify the configured active host/account %j", async (mismatch) => {
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: "acct", email: "host@example.test", status: "active", ...mismatch }) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(calls.some(call => call.url.includes("/token?type=zak"))).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("keeps meeting lookup, create and SDK work on the same request-local credential snapshot", async () => {
+    const first = { accountId: "account-first", clientId: "client-first", clientSecret: "secret-first", userId: "host-first@example.test", sdkKey: "sdk-first", sdkSecret: "sdk-secret-first" };
+    secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify({ ...first, userId: "rotated@example.test", sdkKey: "sdk-rotated" }) });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: first.accountId, email: first.userId, status: "active" }) })]);
+    queueGet(visitRecord());
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
+    const hostCalls = calls.filter(call => call.url.includes("api.zoom.us/v2/users/"));
+    expect(hostCalls).toHaveLength(5);
+    expect(hostCalls.filter(call => !call.url.includes("/token?type=zak")).every(call => call.url.includes("host-first%40example.test"))).toBe(true);
+    expect(hostCalls.find(call => call.url.includes("/token?type=zak"))?.url).toContain("/users/zoom-host-id/");
+  });
+
+  it("uses one credential snapshot for both the SDK signature and its host OAuth/ZAK", async () => {
+    const first = { accountId: "account-first", clientId: "client-first", clientSecret: "secret-first", userId: "host-first@example.test", sdkKey: "sdk-first", sdkSecret: "sdk-secret-first" };
+    const rotated = { accountId: "account-rotated", clientId: "client-rotated", clientSecret: "secret-rotated", userId: "host-rotated@example.test", sdkKey: "sdk-rotated", sdkSecret: "sdk-secret-rotated" };
+    secretsSend.mockResolvedValueOnce({ SecretString: JSON.stringify(first) }).mockResolvedValue({ SecretString: JSON.stringify(rotated) });
+    let oauthAuthorization = "";
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ host: () => jsonResponse(200, { id: "zoom-host-id", account_id: first.accountId, email: first.userId, status: "active" }), token: (_url, init) => {
+      oauthAuthorization = (init?.headers as Record<string, string>).authorization;
+      return jsonResponse(200, { access_token: "first-access" });
+    } })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.session.sdkKey).toBe("sdk-first");
+    expect(oauthAuthorization).toBe(`Basic ${Buffer.from("client-first:secret-first").toString("base64")}`);
+    expect(calls.find((call) => call.url.includes("/token?type=zak"))?.url).toContain("/users/zoom-host-id/");
+    expect(secretsSend).toHaveBeenCalledTimes(1);
+    expect(result.body).not.toContain("sdk-secret-first");
+    expect(result.body).not.toContain("secret-first");
+  });
+
+  it.each(["host", "meeting", "alias"] as const)("withholds the session if %s authority changes while ZAK is being obtained", async (stage) => {
+    let afterZak = false;
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({
+      host: () => jsonResponse(200, { id: afterZak && stage === "alias" ? "another-host" : "zoom-host-id", account_id: "acct", email: "host@example.test", status: afterZak && stage === "host" ? "inactive" : "active" }),
+      get: () => jsonResponse(200, meetingBody(900000001, afterZak && stage !== "host" ? { host_id: "another-host" } : {})),
+      zak: () => { afterZak = true; return jsonResponse(200, { token: "must-not-return-zak" }); },
+    })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(calls.filter(call => call.url.includes("/token?type=zak"))).toHaveLength(1);
+    expect(result.body).not.toContain("must-not-return-zak");
+    expect(writes).toHaveLength(0);
+  });
+
+  it("accepts bounded long OAuth and ZAK tokens rather than the unrelated 500-character general field limit", async () => {
+    const access = "a".repeat(1500), zak = "z".repeat(2000);
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes({ token: () => jsonResponse(200, { access_token: access }), zak: () => jsonResponse(200, { token: zak }) })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "{}").data.session.zak).toBe(zak);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(1);
+  });
+
+  it.each(["oauth", "zak"] as const)("refuses an oversized %s stream without returning a host session", async (stage) => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(`{"token":"${"x".repeat(65_536)}`)); },
+      cancel() { cancelled = true; },
+    });
+    const oversized = () => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes(stage === "oauth" ? { token: oversized } : { zak: oversized })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(cancelled).toBe(true);
+    expect(writes).toHaveLength(0);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(stage === "oauth" ? 0 : 1);
+  });
+
+  it.each(["oauth", "zak"] as const)("refuses redirected %s responses without exposing a session", async (stage) => {
+    const redirected = () => ({ ...jsonResponse(200, { access_token: "unexpected-access", token: "unexpected-zak" }), redirected: true });
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes(stage === "oauth" ? { token: redirected } : { zak: redirected })]);
+    queueGet(visitRecord({ providerMeetingId: "900000001", providerMeetingUuid: "uuid-900000001", joinUrl: "https://zoom.us/j/900000001", passcode: "real-password-900000001" }));
+    const result = await start();
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(result.body).not.toContain("unexpected-");
+    expect(writes).toHaveLength(0);
+    expect(calls.filter((call) => call.url.includes("/token?type=zak"))).toHaveLength(stage === "oauth" ? 0 : 1);
+  });
 
   it("creates the provider meeting under a durable lease, binds it with Zoom's actual password (not the join-URL token), and refuses a racing start without a second meeting", async () => {
     const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);

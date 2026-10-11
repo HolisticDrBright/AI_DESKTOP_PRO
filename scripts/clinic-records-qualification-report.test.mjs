@@ -26,12 +26,12 @@ const row = (spec, i) => ({ id: spec.id, observed: true, at: at(i + 1), pool: sp
 const report = (b = binding()) => ({ contract: 'clinic-records-qualification-report/2', binding: b, startedAt: at(0), finishedAt: at(CASES.length + 1),
   mutationsOutsideQualificationDatabase: false, phiAllowed: false,
   evidenceKind: 'embedded', targetObservation: { contract: 'clinic-records-target-observation/1', account: T.account, region: T.region, database: T.database,
-    apiId: b.apiId, migrationRows: 114, migrationReleaseSha256: b.migrationReleaseSha256, routes: [...CLINIC_RECORDS_QUALIFICATION_ROUTES],
+    apiId: b.apiId, migrationRows: 116, migrationReleaseSha256: b.migrationReleaseSha256, routes: [...CLINIC_RECORDS_QUALIFICATION_ROUTES],
     sourceCommit: b.sourceCommit, extensionSha256: b.extensionSha256, zipSha256: hash,
     principalArn: 'arn:aws:sts::588966314750:assumed-role/OrganizationAccountAccessRole/fictional', functionArn: 'arn:aws:lambda:us-east-2:588966314750:function:fictional',
     foundationStackArn: 'arn:aws:cloudformation:us-east-2:588966314750:stack/fictional-foundation/1', candidateStackArn: 'arn:aws:cloudformation:us-east-2:588966314750:stack/fictional-candidate/2',
     phiAllowed: false, activation: 'blocked', qualification: 'enabled', humanReviewsVerified: false, atomicAwsSnapshot: false },
-  target: { account: T.account, region: T.region, database: T.database, apiId: b.apiId, migrationRows: 114,
+  target: { account: T.account, region: T.region, database: T.database, apiId: b.apiId, migrationRows: 116,
     migrationReleaseSha256: b.migrationReleaseSha256, routes: [...CLINIC_RECORDS_QUALIFICATION_ROUTES] },
   releaseRegistered: { ...b.disclosureRelease }, cases: CASES.map(row) });
 const category = fn => { try { fn(); } catch (e) { if (e instanceof ClinicRecordsQualificationError) return e.category; throw e; } return 'accepted'; };
@@ -83,7 +83,7 @@ for (const [name, mutate, expected] of [
   ['a report bound to a different binding', r => { r.binding = { ...r.binding, apiId: 'zzzzzzzzzz' }; }, 'report_refused'],
   ['a report allowing PHI', r => { r.phiAllowed = true; }, 'report_refused'],
   ['a mutation outside the qualification database', r => { r.mutationsOutsideQualificationDatabase = true; }, 'report_refused'],
-  ['a target at 113 rows', r => { r.target.migrationRows = 113; }, 'target_refused'],
+  ['a target at 115 rows', r => { r.target.migrationRows = 115; }, 'target_refused'],
   ['a target in another account', r => { r.target.account = '000000000000'; }, 'target_refused'],
   ['a missing route', r => { r.target.routes = r.target.routes.slice(0, 1); }, 'target_refused'],
   ['a registered release that differs from the binding', r => { r.releaseRegistered.sections = ['signed_notes']; }, 'release_refused'],
