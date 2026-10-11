@@ -1,6 +1,6 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/qualification-target-observation is server-only.");
 import { execFileSync } from "node:child_process";
-import { assertQualificationStackOutputs, designatedSubjects, QualificationTargetManifestError, type QualificationStackPosture, type QualificationTargetManifest } from "./qualification-target-manifest";
+import { assertQualificationFoundationOutputs, assertQualificationStackOutputs, designatedSubjects, QualificationTargetManifestError, type QualificationStackPosture, type QualificationTargetManifest } from "./qualification-target-manifest";
 
 /**
  * What a hosted run observed for itself. The acceptance CLIs used to take the account from
@@ -48,6 +48,11 @@ export function observeQualificationTarget(manifest: QualificationTargetManifest
   }
   const foundation = describe(runner, manifest.foundationStackName, manifest.awsRegion, "foundation");
   if (foundation.outputs.PhiAllowed !== "false") throw new QualificationTargetManifestError("target_stack_refused", "foundation");
+  if(manifest.schemaVersion==="aws-clinical-core-qualification-target/4"){
+    if(!["CREATE_COMPLETE","UPDATE_COMPLETE","UPDATE_ROLLBACK_COMPLETE","IMPORT_COMPLETE","IMPORT_ROLLBACK_COMPLETE"].includes(foundation.status))
+      throw new QualificationTargetManifestError("target_stack_refused","foundation_credentials");
+    assertQualificationFoundationOutputs(foundation.outputs,manifest);
+  }
   for (const [key, expected] of [["ApiId", manifest.apiId], ["ApiOrigin", manifest.apiOrigin], ["DatabaseName", manifest.databaseName], ["ExportBucketName", manifest.exportBucket]] as const) {
     if (foundation.outputs[key] !== undefined && foundation.outputs[key] !== expected) throw new QualificationTargetManifestError("target_stack_refused", "foundation");
   }

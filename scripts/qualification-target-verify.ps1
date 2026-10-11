@@ -19,7 +19,7 @@ function Get-QualificationSubjects($Target) {
 function Read-QualificationTarget([string]$Path, [string]$Region) {
   # Pre-network checks on the manifest itself; the Node CLI validates it again in full (qualification-target-manifest.ts).
   $target = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
-  if ($target.schemaVersion -notin @('aws-clinical-core-qualification-target/1','aws-clinical-core-qualification-target/2','aws-clinical-core-qualification-target/3')) { throw 'qualification_target_refused:schemaVersion' }
+  if ($target.schemaVersion -notin @('aws-clinical-core-qualification-target/1','aws-clinical-core-qualification-target/2','aws-clinical-core-qualification-target/3','aws-clinical-core-qualification-target/4')) { throw 'qualification_target_refused:schemaVersion' }
   if ($target.environment -ne 'synthetic-staging' -or $target.dataClassification -ne 'synthetic_only' -or $target.containsPhi -ne $false) { throw 'qualification_target_refused:posture' }
   if ($target.awsAccountId -notmatch '^\d{12}$' -or $target.awsAccountId -eq $QualificationTargetProductionAccount -or $target.awsAccountId -eq '000000000000') { throw 'qualification_target_refused:awsAccountId' }
   if ($target.awsRegion -ne $Region) { throw 'qualification_target_refused:awsRegion' }
@@ -32,6 +32,11 @@ function Read-QualificationTarget([string]$Path, [string]$Region) {
       $target.databaseName -in $QualificationTargetReservedDatabases -or $target.databaseName -eq $target.refused.stagingDatabaseName) { throw 'qualification_target_refused:databaseName' }
   if ($target.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $target.sourceCommit -match '^0+$') { throw 'qualification_target_refused:sourceCommit' }
   if ($target.migrationReleaseHash -cnotmatch '^[a-f0-9]{64}$' -or $target.migrationReleaseHash -match '^0+$') { throw 'qualification_target_refused:migrationReleaseHash' }
+  if ($target.schemaVersion -eq 'aws-clinical-core-qualification-target/4') {
+    if ($target.databaseSecretArn -cnotmatch '^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-[A-Za-z0-9-]+$' -or $target.databaseSecretArn -match 'replace') { throw 'qualification_target_refused:runtime_api_secret' }
+    if ($target.operatorDatabaseSecretArn -cnotmatch '^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$' -or $target.operatorDatabaseSecretArn -match 'replace' -or $target.operatorDatabaseSecretArn -eq $target.databaseSecretArn) { throw 'qualification_target_refused:operator_secret' }
+    if ($target.runtimeCredentialReviewSha256 -cnotmatch '^[a-f0-9]{64}$' -or $target.runtimeCredentialReviewSha256 -match '^0+$') { throw 'qualification_target_refused:runtime_credential_review' }
+  }
   if (-not $target.exportBucket -or $target.exportBucket -match 'replace') { throw 'qualification_target_refused:exportBucket' }
   if (-not $target.recordingBucket -or $target.recordingBucket -match 'replace' -or $target.recordingBucket -eq $target.exportBucket) { throw 'qualification_target_refused:recordingBucket' }
   if (-not $target.identitySubjects -or -not $target.identitySubjects.consumer -or -not $target.identitySubjects.workforce -or -not $target.identitySubjects.foreignConsumer) { throw 'qualification_target_refused:identitySubjects' }
@@ -39,14 +44,23 @@ function Read-QualificationTarget([string]$Path, [string]$Region) {
   if (-not $target.foundationStackName -or $target.foundationStackName -eq $target.refused.stagingFoundationStackName -or $target.foundationStackName -match 'synthetic-staging') { throw 'qualification_target_refused:foundationStackName' }
   if (-not $target.stacks) { throw 'qualification_target_refused:stacks' }
   $expectedCandidates = @('personal-storage','privacy-operations','owned-lab','owned-voice','recording-authority','recording-capture','recording-transcription','recording-drafting','recording-cleanup-review','recording-cleanup-execution')
-  if ($target.schemaVersion -in @('aws-clinical-core-qualification-target/2','aws-clinical-core-qualification-target/3')) { $expectedCandidates += 'care-messaging' }
-  if ($target.schemaVersion -eq 'aws-clinical-core-qualification-target/3') { $expectedCandidates += 'care-connections' }
+  if ($target.schemaVersion -in @('aws-clinical-core-qualification-target/2','aws-clinical-core-qualification-target/3','aws-clinical-core-qualification-target/4')) { $expectedCandidates += 'care-messaging' }
+  if ($target.schemaVersion -in @('aws-clinical-core-qualification-target/3','aws-clinical-core-qualification-target/4')) { $expectedCandidates += 'care-connections' }
   $listedCandidates = @($target.stacks.PSObject.Properties.Name)
   if ($listedCandidates.Count -ne $expectedCandidates.Count -or @($expectedCandidates | Where-Object { $_ -notin $listedCandidates }).Count -gt 0) { throw 'qualification_target_refused:stacks' }
   foreach ($stack in $target.stacks.PSObject.Properties) {
     if (-not $stack.Value -or $stack.Value -eq $target.refused.stagingFoundationStackName -or $stack.Value -match 'synthetic-staging') { throw "qualification_target_refused:stacks.$($stack.Name)" }
   }
   return $target
+}
+
+function Get-QualificationOperatorSecret($Target) {
+  # Explicit operator-only commands never borrow the request secret in version four.
+  if ($Target.schemaVersion -eq 'aws-clinical-core-qualification-target/4') {
+    if (-not $Target.operatorDatabaseSecretArn -or $Target.operatorDatabaseSecretArn -eq $Target.databaseSecretArn) { throw 'qualification_target_refused:operator_secret' }
+    return $Target.operatorDatabaseSecretArn
+  }
+  return $Target.databaseSecretArn
 }
 
 function Assert-QualificationDeploymentManifest($Target, [string]$DeploymentManifestPath, [string]$Region) {
@@ -96,6 +110,16 @@ function Assert-QualificationFoundation($Target, [string]$Region) {
   if ($outputs.ContainsKey('ApiId') -and $outputs['ApiId'] -ne $Target.apiId) { throw 'qualification_target_refused:foundation_api' }
   if ($outputs.ContainsKey('ApiOrigin') -and $outputs['ApiOrigin'] -ne $Target.apiOrigin) { throw 'qualification_target_refused:foundation_api' }
   if ($outputs.ContainsKey('DatabaseName') -and $outputs['DatabaseName'] -ne $Target.databaseName) { throw 'qualification_target_refused:foundation_database' }
+  if ($Target.schemaVersion -eq 'aws-clinical-core-qualification-target/4') {
+    if ($stack.StackStatus -notin @('CREATE_COMPLETE','UPDATE_COMPLETE','UPDATE_ROLLBACK_COMPLETE','IMPORT_COMPLETE','IMPORT_ROLLBACK_COMPLETE')) { throw 'qualification_target_refused:foundation_status' }
+    $credentialBindings = [ordered]@{ Activation='blocked'; QualificationExecution='disabled'; ApiId=$Target.apiId; ApiOrigin=$Target.apiOrigin;
+      DatabaseName=$Target.databaseName; ExportBucketName=$Target.exportBucket; DatabaseClusterArn=$Target.databaseClusterArn;
+      DatabaseSecretArn=$Target.operatorDatabaseSecretArn; OperatorDatabaseSecretArn=$Target.operatorDatabaseSecretArn;
+      RuntimeApiDatabaseSecretArn=$Target.databaseSecretArn; RuntimeCredentialReviewSha256=$Target.runtimeCredentialReviewSha256 }
+    foreach ($key in $credentialBindings.Keys) {
+      if (-not $outputs.ContainsKey($key) -or $outputs[$key] -ne $credentialBindings[$key]) { throw "qualification_target_refused:foundation_credentials.$key" }
+    }
+  }
   Write-Host "Verified qualification foundation $($Target.foundationStackName) (prepared infrastructure only; not candidate evidence)."
 }
 
@@ -105,7 +129,7 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
   # (or the staging foundation, or a missing stack) stops the run before any request.
   foreach ($candidate in $Candidates) {
     if ($candidate -eq 'care-messaging' -and ($Target.schemaVersion -eq 'aws-clinical-core-qualification-target/1' -or $Posture -ne 'qualification')) { throw 'qualification_target_refused:messaging_version_or_posture' }
-    if ($candidate -eq 'care-connections' -and ($Target.schemaVersion -ne 'aws-clinical-core-qualification-target/3' -or $Posture -ne 'qualification')) { throw 'qualification_target_refused:connection_version_or_posture' }
+    if ($candidate -eq 'care-connections' -and ($Target.schemaVersion -notin @('aws-clinical-core-qualification-target/3','aws-clinical-core-qualification-target/4') -or $Posture -ne 'qualification')) { throw 'qualification_target_refused:connection_version_or_posture' }
     $name = $Target.stacks.$candidate
     if (-not $name -or $name -eq $Target.refused.stagingFoundationStackName) { throw "qualification_target_refused:stacks.$candidate" }
     $described = aws cloudformation describe-stacks --stack-name $name --region $Region --query 'Stacks[0]' --output json

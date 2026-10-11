@@ -1,4 +1,4 @@
-import type { QualificationTargetManifest } from './qualification-target-manifest';
+import {qualificationOperatorDatabase,type QualificationTargetManifest} from './qualification-target-manifest';
 
 type AwsRead = (args:string[]) => Promise<unknown>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -18,6 +18,7 @@ export async function observeScheduledRetentionRemoval(manifest:QualificationTar
   if(manifest.awsAccountId!=='588966314750'||manifest.databaseName!=='clinical_core_qualification'
     ||manifest.containsPhi!==false||!UUID.test(jobId)||!Number.isFinite(start)||start>now
     ||typeof subject!=='string'||!/^svc-[a-z0-9][a-z0-9-]{2,60}$/.test(subject))throw fail();
+  const operatorDatabase=qualificationOperatorDatabase(manifest);
   const ruleName=`${manifest.apiId}-privacy-retention-sweep`;
   const ruleArn=`arn:aws:events:${manifest.awsRegion}:${manifest.awsAccountId}:rule/${ruleName}`;
   const rule=object(await aws(['events','describe-rule','--name',ruleName]));
@@ -32,6 +33,8 @@ export async function observeScheduledRetentionRemoval(manifest:QualificationTar
     ||configuration.ReservedConcurrentExecutions===0||env.RETENTION_SCHEDULE_ARN!==ruleArn
     ||env.PHI_ALLOWED!=='false'||env.SOURCE_COMMIT!==manifest.sourceCommit||env.RETENTION_SERVICE_SUBJECT!==subject
     ||env.CLINICAL_DATABASE_NAME!==manifest.databaseName||typeof logGroup!=='string'||!logGroup.startsWith('/aws/lambda/'))throw fail();
+  if(manifest.schemaVersion==='aws-clinical-core-qualification-target/4'
+    &&(env.CLINICAL_DATABASE_CLUSTER_ARN!==manifest.databaseClusterArn||env.CLINICAL_DATABASE_SECRET_ARN!==manifest.databaseSecretArn))throw fail();
   const logs=object(await aws(['logs','filter-log-events','--log-group-name',logGroup,'--start-time',String(start),
     '--end-time',String(now),'--filter-pattern','"aws.events"']));
   if(logs.nextToken||!Array.isArray(logs.events)||logs.events.length>10_000)throw fail();
@@ -56,7 +59,7 @@ export async function observeScheduledRetentionRemoval(manifest:QualificationTar
       where j.id=cast(:job as uuid) and j.object_deleted_at is not null and e.action='object.deleted'
       and r.identity_subject=:subject and r.approved_at<=e.recorded_at and (r.revoked_at is null or r.revoked_at>e.recorded_at)
       and e.recorded_at>=cast(:start as timestamptz) and e.recorded_at<=cast(:end as timestamptz)) as matched`;
-    const result=object(await aws(['rds-data','execute-statement','--resource-arn',manifest.databaseClusterArn,'--secret-arn',manifest.databaseSecretArn,
+    const result=object(await aws(['rds-data','execute-statement','--resource-arn',manifest.databaseClusterArn,'--secret-arn',operatorDatabase.secretArn,
       '--database',manifest.databaseName,'--sql',sql,'--parameters',parameters]));
     const rows=result.records;
     if(!Array.isArray(rows)||rows.length!==1||!Array.isArray(rows[0])||rows[0].length!==1)throw fail();

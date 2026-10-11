@@ -163,3 +163,62 @@ server shutdown. Bootstrap blockers/fixture changes remain local negative
 controls. Prior reports and candidate117 identity remain unchanged. A complete
 source assertion is not a physical run; qualification requires the actual
 fresh report from the committed source.
+
+## Versioned configuration for independent credentials
+
+The successor foundation adds optional, all-or-none runtime bindings without
+creating database logins, secrets, grants, IAM roles or handlers. All three new
+values must be empty or supplied together; shared secrets and an all-zero review
+digest are refused by template rules. PHI stays false and foundation execution
+stays disabled because the foundation is infrastructure, not an active candidate.
+
+| Credential | Foundation binding | Version-four use |
+| --- | --- | --- |
+| Administrative operator | Existing `DatabaseSecretArn`, also exposed as `OperatorDatabaseSecretArn` | `operatorDatabaseSecretArn`, only for named fixture/release commands and bounded private-audit observation |
+| Restricted request API | `RuntimeApiDatabaseSecretArn` | `databaseSecretArn` in the target and every request candidate parameter |
+| Restricted Fullscript worker | `FullscriptWorkerDatabaseSecretArn` | The separately reviewed Fullscript target; never the generic request API or operator binding |
+
+`RuntimeCredentialReviewSha256` binds the reviewed resource/credential packet.
+It is not an approval produced by the template. The API secret namespace is
+`alp/qualification/runtime-api-…`; the worker namespace is
+`alp/qualification/fullscript-worker-…`. A matching name does not prove that
+the stored login has the correct role: the existing actual-source metadata
+admission and managed positive/negative qualification remain required.
+
+Target contract `aws-clinical-core-qualification-target/4` preserves historical
+versions 1–3, requires the independent operator binding and review digest, and
+retains all twelve candidate names. Both Node and PowerShell must observe the
+finished foundation's exact cluster, API, database, export bucket, administrative
+secret, API secret and review outputs before request or fixture work. Candidate
+parameters continue to bind to the API secret. Recording fixture administration
+and retention release/inspection select only the operator secret. The scheduled
+cleanup observation verifies the service's actual API binding before using the
+operator credential for its fixed private-audit read. No absent operator value
+falls back to request authority.
+
+All ten generated parameter examples now use the API secret slot. Ten tests
+failed against the previous master-secret placeholders before this change.
+The version-four target example stays unfilled and refused. CI checks all four
+example versions, their drift, the source tests and the credential-free
+PowerShell runner matrix. Recording CLI wiring coverage is a source assertion,
+not a physical fixture write. Template rule evaluation and `cfn-lint` are local
+configuration evidence, not CloudFormation deployment evidence.
+
+The earlier nine failing-before configuration cases proved the missing new
+contract and slots. Existing negative tests that passed merely because version
+four was unsupported do not prove its implemented guards. The expanded tests
+exercise supported version-four positives and missing, mixed and mismatched
+bindings independently. A separate failing-before case exposed that the shared
+foundation-output helper still accepted a version-four master-as-API binding;
+the live observer now uses the same corrected helper instead of duplicating
+credential comparisons. Whole-suite and exact-head CI results must be recorded
+after their actual terminal observation; predecessor results do not count.
+
+Before any provisioning, prepare the exact review of two non-administrative
+logins, their allowed SET membership/grants, separate Secrets Manager resources,
+KMS and per-candidate IAM, rotation/revocation and the source/artifact bindings.
+Keep secrets out of review text, logs and source. Provisioning, schema upgrades
+and deployment require their respective reviewed authority. None is authorized
+by this source preparation, an old schema approval or a fictional test digest.
+Then prove actual-source admission, owner isolation, private-table/admin-role
+denials and rollback on the managed target before deploying guarded candidates.

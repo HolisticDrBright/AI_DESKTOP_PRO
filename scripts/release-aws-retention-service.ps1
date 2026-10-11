@@ -48,7 +48,7 @@ if ($QualificationTargetPath) {
   Assert-QualificationFoundation -Target $target -Region $Region
   $phiAllowed = 'false'
   $clusterArn = $target.databaseClusterArn
-  $secretArn = $target.databaseSecretArn
+  $secretArn = Get-QualificationOperatorSecret $target
   $databaseName = $target.databaseName
 } else {
   $outputs = aws cloudformation describe-stacks --stack-name $FoundationStackName --region $Region --query "Stacks[0].Outputs" --output json | ConvertFrom-Json

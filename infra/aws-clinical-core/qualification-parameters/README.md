@@ -13,7 +13,8 @@ Every value is fictional or a visible placeholder. Before deploying, replace:
 |---|---|
 | `REPLACE`-prefixed values, `replace-with-…` names | the real identifiers from the synthetic account (Cognito issuer and app client ids, authorizer id, S3 object version, secret suffix, table names) |
 | `0123456789abcdef…` (64 hex) | the SHA-256 of the reviewed evidence the parameter names (qualification policy, database review, MFA review, storage, provider, capture, cleanup, export, cross-store); each is a separate review |
-| `QualificationIdentitySubjects` | the consumer and workforce Cognito subjects of the fictional fixture identities from the reviewed synthetic acceptance manifest, and nothing else |
+| `QualificationIdentitySubjects` | the exact designated subjects in the reviewed target manifest: consumer, workforce, second consumer, and the retention service when the sweep is tested; no additional subject |
+| `DatabaseSecretArn` | the independently reviewed restricted API secret under `alp/qualification/runtime-api-…`, never the RDS master/operator secret |
 | `SourceCommit` | the exact commit of the artifact being deployed |
 | `55555555-…` release ids, `11111111-…` organization id | the reviewed release rows and the fixture organization in the qualification database |
 | KMS key, bucket, topic and cluster ARNs | the qualification resources (account `588966314750`, region `us-east-2`); the cluster ARN already names the synthetic cluster |
@@ -38,3 +39,11 @@ aws cloudformation deploy --stack-name ai-clinical-core-qualification-<candidate
 
 Keep filled files out of the repository (`*.filled.json` is ignored); they carry account-specific
 identifiers, never secrets. Nothing here is production activation evidence.
+
+The version-four target example is `../qualification-target-credentials.example.json`.
+Its `databaseSecretArn` names the request credential. Its separate
+`operatorDatabaseSecretArn` is used only by explicit fixture/release commands and
+the bounded private-audit observation, not by candidate handlers. The foundation
+must report both exact bindings and the reviewed credential digest before a run.
+The new example contains zero hashes and visible placeholders and is refused by
+the offline validator. Historical target examples remain unchanged.

@@ -38,8 +38,11 @@ receives the full production artifact through the unchanged production migration
 then seeded with fictional production-shaped fixtures. Candidates under qualification are deployed
 with `DatabaseName=clinical_core_qualification`; every candidate template already takes the database
 name as a parameter, so the staging stacks keep pointing at `clinical_core` and the qualification
-stacks point at the new database. Same account, same region, same cluster, same secret, same PHI
-posture (`false`), same STS pin.
+stacks point at the new database. Same account, same region, same cluster, same PHI
+posture (`false`), same STS pin. The original preparation used one administrative
+secret. That is no longer a valid request-service credential: the version-four
+target separates restricted API and explicit operator bindings, as described in
+[runtime database credential isolation](runtime-database-credential-isolation-2026-10-11.md).
 
 The alternative (reviewed forward-only synthetic equivalents of migrations 79 to 100 with
 synthetic-compatible handlers) was rejected: it would fork every owned-lab, personal-storage,
@@ -229,10 +232,25 @@ on asserted values needs `ACCEPTANCE_MODE=exploratory`, and its report line says
 the qualification database name, the designated subjects and the database's migration ledger against
 the built artifact before writing the encounter, so the populated staging database is refused by its
 own history. `scripts/test-qualification-acceptance-runners.ps1` runs all of these refusals
-credential-free in CI (52 cases, no AWS call, no request, no fixture write), alongside the 32-case
+credential-free in CI (96 cases, no AWS call, no request, no fixture write), alongside the 32-case
 name-refusal test for the preparation runner.
 
 ### Deploying the qualification profile (owner, Windows terminal)
+
+For the guarded runtime, start with the version-four
+`infra/aws-clinical-core/qualification-target-credentials.example.json`. Keep
+`databaseSecretArn` bound to the restricted API secret and the separate
+`operatorDatabaseSecretArn` bound to the reviewed operator credential. The
+foundation's original `DatabaseSecretArn` remains the operator binding; it must
+not be copied into a request candidate's parameter. Register reviewed independent
+API and Fullscript-worker credentials in the successor foundation configuration
+before preparing the filled target. No credential is created by the builder.
+
+`npm run check:aws-qualification-target -- --examples` verifies all four committed
+example versions offline and requires every example to remain refused as a run
+target. A filled manifest is checked with the same command followed by its path.
+Template validity and a nonzero review digest are not credential provisioning,
+managed positive verification, deployment or approval to activate PHI.
 
 Before CloudFormation changes, build all candidate templates and run
 `npm run check:aws-qualification-capacity -- --api-id <qualification-api-id> --profile ai-synthetic-member`.

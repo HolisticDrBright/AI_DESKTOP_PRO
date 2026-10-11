@@ -45,7 +45,7 @@
   },
   {
     "ParameterKey": "DatabaseSecretArn",
-    "ParameterValue": "arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-replace-with-secret-suffix"
+    "ParameterValue": "arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-replace-with-reviewed-secret-suffix"
   },
   {
     "ParameterKey": "DatabaseName",

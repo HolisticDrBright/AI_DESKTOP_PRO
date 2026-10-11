@@ -7,6 +7,10 @@ const sub = value => ({'Fn::Sub':value});
 const arn = name => ({'Fn::GetAtt':[name,'Arn']});
 const tags = [{Key:'Environment',Value:'synthetic-staging'},{Key:'DataClassification',Value:'synthetic_only'},{Key:'Purpose',Value:'isolated-qualification'},{Key:'PhiAllowed',Value:'false'}];
 const retain = {DeletionPolicy:'RetainExceptOnCreate',UpdateReplacePolicy:'Retain'};
+const empty = name => ({'Fn::Equals':[ref(name),'']});
+const notEmpty = name => ({'Fn::Not':[empty(name)]});
+const runtimeParameters=['RuntimeApiDatabaseSecretArn','FullscriptWorkerDatabaseSecretArn','RuntimeCredentialReviewSha256'];
+const noRuntimeBindings={'Fn::And':runtimeParameters.map(empty)};
 const bucket = (name,key,lifecycle) => ({Type:'AWS::S3::Bucket',...retain,Properties:{
   BucketName:sub(`alp-qualification-${name}-\${AWS::AccountId}-\${AWS::Region}`),
   PublicAccessBlockConfiguration:{BlockPublicAcls:true,BlockPublicPolicy:true,IgnorePublicAcls:true,RestrictPublicBuckets:true},
@@ -59,17 +63,34 @@ export function buildQualificationFoundation(){
  for(const resource of Object.values(resources)) resource.Condition='SyntheticAccountAndRegion';
  const out=value=>({Value:value});
  return {AWSTemplateFormatVersion:'2010-09-09',Description:'Isolated synthetic qualification support only: empty API, private versioned storage and logs; no clinical handlers or PHI activation.',
-  Metadata:{Qualification:{ContainsPhi:false,ProductionActivation:'blocked',ApplicationRoutes:0,FixturesSeeded:false,AlarmDeliveryVerified:false,ExportLifecycle:'Synthetic test-only fallback; not a production retention approval or deletion guarantee.'}},
+  Metadata:{Qualification:{ContainsPhi:false,ProductionActivation:'blocked',ApplicationRoutes:0,FixturesSeeded:false,AlarmDeliveryVerified:false,
+   CredentialBindingContract:'qualification-runtime-credential-bindings/1',CredentialsProvisioned:false,RuntimeCredentialQualification:false,
+   ExportLifecycle:'Synthetic test-only fallback; not a production retention approval or deletion guarantee.'}},
   Parameters:{
    DatabaseClusterArn:{Type:'String',AllowedValues:['arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa']},
    DatabaseSecretArn:{Type:'String',AllowedPattern:'^arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-[A-Za-z0-9-]+$'},
+   RuntimeApiDatabaseSecretArn:{Type:'String',Default:'',AllowedPattern:'^(|arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-[A-Za-z0-9-]+)$'},
+   FullscriptWorkerDatabaseSecretArn:{Type:'String',Default:'',AllowedPattern:'^(|arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/fullscript-worker-[A-Za-z0-9-]+)$'},
+   RuntimeCredentialReviewSha256:{Type:'String',Default:'',AllowedPattern:'^(|[a-f0-9]{64})$'},
    BaseSourceCommit:{Type:'String',AllowedPattern:'^[a-f0-9]{40}$'},TemplateSha256:{Type:'String',AllowedPattern:'^[a-f0-9]{64}$'},
   },
-  Conditions:{SyntheticAccountAndRegion:{'Fn::And':[{'Fn::Equals':[ref('AWS::AccountId'),ACCOUNT]},{'Fn::Equals':[ref('AWS::Region'),REGION]}]}},
+  Rules:{RuntimeCredentialBindings:{Assertions:[
+   {Assert:{'Fn::Or':[noRuntimeBindings,{'Fn::And':runtimeParameters.map(notEmpty)}]},AssertDescription:'Keep all runtime bindings empty or supply both independent secrets and the exact review digest.'},
+   {Assert:{'Fn::Or':[noRuntimeBindings,{'Fn::And':[
+    {'Fn::Not':[{'Fn::Equals':[ref('RuntimeApiDatabaseSecretArn'),ref('DatabaseSecretArn')]}]},
+    {'Fn::Not':[{'Fn::Equals':[ref('FullscriptWorkerDatabaseSecretArn'),ref('DatabaseSecretArn')]}]},
+    {'Fn::Not':[{'Fn::Equals':[ref('RuntimeApiDatabaseSecretArn'),ref('FullscriptWorkerDatabaseSecretArn')]}]},
+    {'Fn::Not':[{'Fn::Equals':[ref('RuntimeCredentialReviewSha256'),'0'.repeat(64)]}]},
+   ]}]},AssertDescription:'API, worker and administrative credentials must be separate; an all-zero digest is not a review.'},
+  ]}},
+  Conditions:{SyntheticAccountAndRegion:{'Fn::And':[{'Fn::Equals':[ref('AWS::AccountId'),ACCOUNT]},{'Fn::Equals':[ref('AWS::Region'),REGION]}]},
+   RuntimeBindingsSupplied:{'Fn::And':[{Condition:'SyntheticAccountAndRegion'},...runtimeParameters.map(notEmpty)]}},
   Resources:resources,Outputs:{
    Environment:out('synthetic-staging'),DataClassification:out('synthetic_only'),PhiAllowed:out('false'),Activation:out('blocked'),
    QualificationExecution:out('disabled'),QualificationInfrastructure:out('prepared_no_candidates'),
    DatabaseName:out('clinical_core_qualification'),DatabaseClusterArn:out(ref('DatabaseClusterArn')),DatabaseSecretArn:out(ref('DatabaseSecretArn')),
+   OperatorDatabaseSecretArn:out(ref('DatabaseSecretArn')),
+   ...Object.fromEntries(runtimeParameters.map(name=>[name,{Condition:'RuntimeBindingsSupplied',Value:ref(name)}])),
    BaseSourceCommit:out(ref('BaseSourceCommit')),TemplateSha256:out(ref('TemplateSha256')),
    ...Object.fromEntries(Object.entries({ApiId:ref('Api'),ApiOrigin:sub('https://${Api}.execute-api.${AWS::Region}.amazonaws.com'),CodeBucket:ref('CodeBucket'),ExportBucketName:ref('ExportBucket'),ExportKmsKeyArn:arn('ExportKey'),LogsKmsKeyArn:arn('LogsKey'),AlarmTopicArn:ref('AlarmTopic')}).map(([name,value])=>[name,{Condition:'SyntheticAccountAndRegion',Value:value}])),
   },

@@ -40,7 +40,7 @@ export function qualificationValue(candidate, name, definition) {
     QualificationIdentitySubjects: 'replace-with-consumer-cognito-sub,replace-with-workforce-cognito-sub',
     DatabaseName: QUALIFICATION_DATABASE_NAME,
     DatabaseClusterArn: `arn:aws:rds:${REGION}:${QUALIFICATION_ACCOUNT_ID}:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa`,
-    DatabaseSecretArn: `arn:aws:secretsmanager:${REGION}:${QUALIFICATION_ACCOUNT_ID}:secret:rds!cluster-replace-with-secret-suffix`,
+    DatabaseSecretArn: `arn:aws:secretsmanager:${REGION}:${QUALIFICATION_ACCOUNT_ID}:secret:alp/qualification/runtime-api-replace-with-reviewed-secret-suffix`,
     SecretKmsKeyArn: KEY.secret, LogsKmsKeyArn: KEY.logs, ClinicalCoreKeyArn: KEY.core,
     AlarmTopicArn: `arn:aws:sns:${REGION}:${QUALIFICATION_ACCOUNT_ID}:ai-clinical-core-qualification-alarms`,
     ApiId: 'abcdefghij', ClinicalApiId: 'abcdefghij', ConsumerJwtAuthorizerId: 'replace-with-consumer-authorizer-id',

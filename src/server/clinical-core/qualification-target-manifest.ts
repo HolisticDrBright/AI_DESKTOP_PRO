@@ -12,7 +12,7 @@ import { assertQualificationDatabaseName, PRODUCTION_ACCOUNT_ID } from "./qualif
  * themselves, so a direct CLI invocation cannot bypass the binding, and refuse any ambient override that disagrees.
  */
 export type QualificationTargetManifest = {
-  schemaVersion: "aws-clinical-core-qualification-target/1" | "aws-clinical-core-qualification-target/2" | "aws-clinical-core-qualification-target/3";
+  schemaVersion: "aws-clinical-core-qualification-target/1" | "aws-clinical-core-qualification-target/2" | "aws-clinical-core-qualification-target/3" | "aws-clinical-core-qualification-target/4";
   environment: "synthetic-staging";
   dataClassification: "synthetic_only";
   containsPhi: false;
@@ -26,6 +26,10 @@ export type QualificationTargetManifest = {
   apiOrigin: string;
   databaseClusterArn: string;
   databaseSecretArn: string;
+  /** Version four separates the restricted API credential from the reviewed operator credential.
+   * A digest binds a review record; it is not itself approval or positive credential qualification. */
+  operatorDatabaseSecretArn?: string;
+  runtimeCredentialReviewSha256?: string;
   /** The isolated qualification database (contains `qualification`; never the staging database). */
   databaseName: string;
   /** The reviewed export bucket the personal-storage candidate delivers to; the export harness downloads from this host only. */
@@ -88,9 +92,12 @@ export function loadQualificationTargetManifest(file: string): QualificationTarg
 /** Shape, posture, account, region, staging refusals and placeholders. A manifest that still carries an example value
  * (`replace…`, all-zero hashes) is refused: the owner fills a copy, and the example itself can never bind a run. */
 export function validateQualificationTargetManifest(value: unknown): QualificationTargetManifest {
-  if (!isRecord(value) || Object.keys(value).length !== TOP.length || TOP.some((k) => !(k in value))) throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
+  if (!isRecord(value)) throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
+  const separated=value.schemaVersion==="aws-clinical-core-qualification-target/4";
+  const expectedKeys=separated?[...TOP,"operatorDatabaseSecretArn","runtimeCredentialReviewSha256"]:TOP;
+  if(Object.keys(value).length!==expectedKeys.length||expectedKeys.some(k=>!(k in value)))throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
   if (Object.keys(value).some((k) => FORBIDDEN_KEY.test(k))) throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
-  if (!["aws-clinical-core-qualification-target/1", "aws-clinical-core-qualification-target/2", "aws-clinical-core-qualification-target/3"].includes(String(value.schemaVersion)) || value.environment !== "synthetic-staging" || value.dataClassification !== "synthetic_only" || value.containsPhi !== false) {
+  if (!["aws-clinical-core-qualification-target/1", "aws-clinical-core-qualification-target/2", "aws-clinical-core-qualification-target/3", "aws-clinical-core-qualification-target/4"].includes(String(value.schemaVersion)) || value.environment !== "synthetic-staging" || value.dataClassification !== "synthetic_only" || value.containsPhi !== false) {
     throw new QualificationTargetManifestError("target_manifest_invalid", "posture");
   }
   const account = str(value.awsAccountId, "awsAccountId"), region = str(value.awsRegion, "awsRegion");
@@ -102,6 +109,18 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
   const cluster = str(value.databaseClusterArn, "databaseClusterArn").match(CLUSTER), secret = str(value.databaseSecretArn, "databaseSecretArn").match(SECRET);
   if (!cluster || !secret) throw new QualificationTargetManifestError("target_manifest_invalid", "databaseClusterArn");
   if (cluster[1] !== region || cluster[2] !== account || secret[1] !== region || secret[2] !== account) throw new QualificationTargetManifestError("target_account_refused", "databaseClusterArn");
+  let operatorDatabaseSecretArn:string|undefined,runtimeCredentialReviewSha256:string|undefined;
+  if(separated){
+    operatorDatabaseSecretArn=str(value.operatorDatabaseSecretArn,"operatorDatabaseSecretArn");
+    runtimeCredentialReviewSha256=str(value.runtimeCredentialReviewSha256,"runtimeCredentialReviewSha256");
+    const operatorSecret=operatorDatabaseSecretArn.match(SECRET);
+    if(!operatorSecret||operatorSecret[1]!==region||operatorSecret[2]!==account)throw new QualificationTargetManifestError("target_account_refused","operatorDatabaseSecretArn");
+    if(!/^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp\/qualification\/runtime-api-[A-Za-z0-9-]+$/.test(secret[0])
+      ||operatorDatabaseSecretArn===secret[0]||!HEX64.test(runtimeCredentialReviewSha256))
+      throw new QualificationTargetManifestError("target_manifest_invalid","runtimeCredentials");
+    if(/^0+$/.test(runtimeCredentialReviewSha256))throw new QualificationTargetManifestError("target_placeholder","runtimeCredentialReviewSha256");
+    if(PLACEHOLDER.test(operatorDatabaseSecretArn))throw new QualificationTargetManifestError("target_placeholder","operatorDatabaseSecretArn");
+  }
   if (!isRecord(value.refused) || Object.keys(value.refused).length !== 3) throw new QualificationTargetManifestError("target_manifest_invalid", "refused");
   const refused = { stagingFoundationStackName: str(value.refused.stagingFoundationStackName, "refused"), stagingApiOrigin: str(value.refused.stagingApiOrigin, "refused"), stagingDatabaseName: str(value.refused.stagingDatabaseName, "refused") };
   if (!STACK.test(refused.stagingFoundationStackName) || !/^https:\/\/[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/.test(refused.stagingApiOrigin)) throw new QualificationTargetManifestError("target_manifest_invalid", "refused");
@@ -122,7 +141,7 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
   const designated = designatedSubjects(identitySubjects);
   if (new Set(designated).size !== designated.length) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
   const stackValues = value.stacks;
-  const CANDIDATES = value.schemaVersion === "aws-clinical-core-qualification-target/3" ? CONNECTION_CANDIDATES
+  const CANDIDATES = value.schemaVersion === "aws-clinical-core-qualification-target/3" || separated ? CONNECTION_CANDIDATES
     : value.schemaVersion === "aws-clinical-core-qualification-target/2" ? MESSAGING_CANDIDATES : LEGACY_CANDIDATES;
   if (!isRecord(stackValues) || CANDIDATES.some((c) => !(c in stackValues)) || Object.keys(stackValues).length !== CANDIDATES.length) throw new QualificationTargetManifestError("target_manifest_invalid", "stacks");
   const stacks: Record<string, string> = {};
@@ -141,7 +160,16 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
     if (PLACEHOLDER.test(candidate)) throw new QualificationTargetManifestError("target_placeholder", field);
   }
   return { schemaVersion: value.schemaVersion as QualificationTargetManifest["schemaVersion"], environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false, awsAccountId: account, awsRegion: region, foundationStackName, apiId, apiOrigin,
-    databaseClusterArn: cluster[0], databaseSecretArn: secret[0], databaseName, exportBucket, recordingBucket, sourceCommit, migrationReleaseHash, identitySubjects, stacks, refused, reviewedAt };
+    databaseClusterArn: cluster[0], databaseSecretArn: secret[0], ...(separated?{operatorDatabaseSecretArn,runtimeCredentialReviewSha256}:{}),databaseName, exportBucket, recordingBucket, sourceCommit, migrationReleaseHash, identitySubjects, stacks, refused, reviewedAt };
+}
+
+/** Only explicit administrative commands use this binding. Request candidates continue to use databaseSecretArn.
+ * Historical manifests retain their original binding; version four never falls back to it when the operator is absent. */
+export function qualificationOperatorDatabase(manifest:QualificationTargetManifest){
+  const separated=manifest.schemaVersion==="aws-clinical-core-qualification-target/4";
+  const checked=separated?validateQualificationTargetManifest(manifest):manifest;
+  return {clusterArn:checked.databaseClusterArn,secretArn:separated?checked.operatorDatabaseSecretArn!:checked.databaseSecretArn,
+    databaseName:checked.databaseName,stagingDatabaseName:checked.refused.stagingDatabaseName};
 }
 
 export type BoundQualificationTarget = {
@@ -207,7 +235,7 @@ export function assertQualificationStackOutputs(candidate: string, outputs: Reco
   if (!spec) refuse();
   if (!manifest.stacks[candidate]) refuse();
   if (candidate === "care-messaging" && (manifest.schemaVersion === "aws-clinical-core-qualification-target/1" || posture !== "qualification")) refuse();
-  if (candidate === "care-connections" && (manifest.schemaVersion !== "aws-clinical-core-qualification-target/3" || posture !== "qualification")) refuse();
+  if (candidate === "care-connections" && (!["aws-clinical-core-qualification-target/3","aws-clinical-core-qualification-target/4"].includes(manifest.schemaVersion) || posture !== "qualification")) refuse();
   if (outputs.PhiAllowed !== "false") refuse();
   if (posture === "drain") {
     if (outputs.Activation !== "draining" || outputs.QualificationExecution !== "disabled") refuse();
@@ -244,4 +272,11 @@ export function assertQualificationFoundationOutputs(outputs: Record<string, str
   if (outputs.ApiOrigin !== undefined && outputs.ApiOrigin !== manifest.apiOrigin) throw new QualificationTargetManifestError("target_stack_refused", "foundation");
   if (outputs.DatabaseName !== undefined && outputs.DatabaseName !== manifest.databaseName) throw new QualificationTargetManifestError("target_stack_refused", "foundation");
   if (outputs.Activation !== undefined && outputs.Activation !== "blocked") throw new QualificationTargetManifestError("target_stack_refused", "foundation");
+  if(manifest.schemaVersion==="aws-clinical-core-qualification-target/4"){
+    const expected={Activation:"blocked",QualificationExecution:"disabled",ApiId:manifest.apiId,ApiOrigin:manifest.apiOrigin,
+      DatabaseName:manifest.databaseName,ExportBucketName:manifest.exportBucket,DatabaseClusterArn:manifest.databaseClusterArn,
+      DatabaseSecretArn:manifest.operatorDatabaseSecretArn,OperatorDatabaseSecretArn:manifest.operatorDatabaseSecretArn,
+      RuntimeApiDatabaseSecretArn:manifest.databaseSecretArn,RuntimeCredentialReviewSha256:manifest.runtimeCredentialReviewSha256};
+    if(Object.entries(expected).some(([key,value])=>!value||outputs[key]!==value))throw new QualificationTargetManifestError("target_stack_refused","foundation_credentials");
+  }
 }

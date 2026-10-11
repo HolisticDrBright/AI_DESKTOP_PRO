@@ -59,6 +59,8 @@ describe("qualification parameter examples", () => {
       expect(values).toMatchObject({ PhiAllowed: "false", Activation: "blocked", ActivationEvidenceSha256: "", QualificationExecution: "enabled",
         QualificationAccountId: QUALIFICATION_ACCOUNT_ID, DatabaseName: QUALIFICATION_DATABASE_NAME });
       expect(values.DatabaseClusterArn).toContain(`:${QUALIFICATION_ACCOUNT_ID}:`);
+      expect(values.DatabaseSecretArn).toMatch(/^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp\/qualification\/runtime-api-/);
+      expect(values.DatabaseSecretArn).not.toContain('rds!cluster');
       expect(JSON.stringify(values)).not.toContain("173535830222");
       const inAccount = { ...values, "AWS::AccountId": QUALIFICATION_ACCOUNT_ID };
       expect(evaluate(template, template.Conditions.Qualification, inAccount)).toBe(true);

@@ -8,7 +8,7 @@ import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 import { loadClinicalCoreMigrations } from "./migrations";
 import { inspectProductionClinicalCoreMigrations, productionArtifactReleaseHash } from "./production-migrations";
 import { assertQualificationDatabaseName } from "./qualification-target";
-import { bindQualificationTarget, loadQualificationTargetManifest, QualificationTargetManifestError } from "./qualification-target-manifest";
+import { bindQualificationTarget, loadQualificationTargetManifest, qualificationOperatorDatabase, QualificationTargetManifestError } from "./qualification-target-manifest";
 import { observeQualificationTarget, RECORDING_ACCEPTANCE_CANDIDATES } from "./qualification-target-observation";
 
 /** Hosted runner, bound to the reviewed qualification target manifest (`CLINICAL_QUALIFICATION_TARGET`). `fixture` starts
@@ -36,7 +36,7 @@ async function main() {
     if (synthetic.awsAccountId !== target.expectedAwsAccountId || synthetic.awsAccountId === "173535830222") throw new Error("boundary_refused");
     if (synthetic.fixture.consumerSubject !== manifest.identitySubjects.consumer || synthetic.fixture.workforceSubject !== manifest.identitySubjects.workforce) throw new Error("boundary_refused");
     assertQualificationDatabaseName(target.database.databaseName, target.database.stagingDatabaseName);
-    const database = createRdsDataAdministrativeDatabase({ clusterArn: target.database.clusterArn, secretArn: target.database.secretArn, databaseName: target.database.databaseName, region: target.region }, { purpose: "reviewed_synthetic_migration" });
+    const database = createRdsDataAdministrativeDatabase({ ...qualificationOperatorDatabase(manifest),region:target.region }, { purpose: "reviewed_synthetic_migration" });
     const ledger = await inspectProductionClinicalCoreMigrations(database, migrations);
     if (!ledger.ledgerPresent || ledger.missing.length || ledger.mismatched.length || ledger.unknown.length || ledger.artifactReleaseHash !== target.migrationReleaseHash) throw new Error("qualification_schema_incomplete");
     console.log(JSON.stringify({ ok: true, mode: "recording_acceptance_fixture", database: target.database.databaseName, target: { source: "observed", stacks: observation!.stacks }, ...(await provisionRecordingAcceptanceEncounter(database, synthetic)) }));

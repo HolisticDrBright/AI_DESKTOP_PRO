@@ -97,7 +97,7 @@ function git { $global:LASTEXITCODE = 0; if ($args[0] -eq 'rev-parse') { return 
 function node {
   $global:External++; $global:LASTEXITCODE = 0
   $global:Selected = [ordered]@{ command = ($args -join ' '); target = $env:CLINICAL_QUALIFICATION_TARGET; apiOriginEnv = $env:CLINICAL_API_ORIGIN; databaseEnv = $env:CLINICAL_DATABASE_NAME
-    account = $env:OBSERVED_AWS_ACCOUNT_ID; source = $env:SOURCE_COMMIT; mode = $env:ACCEPTANCE_MODE }
+    account = $env:OBSERVED_AWS_ACCOUNT_ID; source = $env:SOURCE_COMMIT; mode = $env:ACCEPTANCE_MODE; secretEnv = $env:CLINICAL_DATABASE_SECRET_ARN }
   if ("$($args)" -match 'fixture') { return '{"ok":true,"encounterId":"11111111-1111-4111-8111-111111111111","database":"clinical_core_qualification","reused":false}' }
 }
 $global:Head = $commit
@@ -336,6 +336,67 @@ Set-ConnectionStack -Release ('c' * 64)
 Invoke-Case 'connection stack uses another ledger' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' } 'qualification_target_refused:messaging_release'
 Set-ConnectionStack
 Invoke-Case 'connections cannot use a drain posture' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' 'drain' } 'qualification_target_refused:connection_version_or_posture'
+
+# 10. Version four keeps restricted request credentials distinct from the explicit operator credential.
+# These are fictional identifiers, not provisioned logins or evidence of AWS acceptance.
+$apiSecret = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-fictional-AbCdEf'
+$operatorSecret = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-fictional-GhIjKl'
+$credentialPatch = @{ schemaVersion='aws-clinical-core-qualification-target/4'; databaseSecretArn=$apiSecret;
+  operatorDatabaseSecretArn=$operatorSecret; runtimeCredentialReviewSha256=('c' * 64) }
+$credentialStacks = @{ 'care-messaging'=$messagingStack; 'care-connections'=$connectionStack }
+$versionFour = Write-Target $credentialPatch -PatchStacks $credentialStacks
+function Credential-Target([hashtable]$Patch=@{}) {
+  $copy=@{}; foreach($key in $credentialPatch.Keys) { $copy[$key]=$credentialPatch[$key] }
+  foreach($key in $Patch.Keys) { $copy[$key]=$Patch[$key] }
+  return (Write-Target $copy -PatchStacks $credentialStacks)
+}
+function Credential-Foundation([hashtable]$Patch=@{},[string]$Status='UPDATE_COMPLETE') {
+  $outputs=[ordered]@{ PhiAllowed='false';Activation='blocked';QualificationExecution='disabled';ApiId=$target.apiId;ApiOrigin=$target.apiOrigin;
+    DatabaseName=$target.databaseName;ExportBucketName=$target.exportBucket;DatabaseClusterArn=$target.databaseClusterArn;
+    DatabaseSecretArn=$operatorSecret;OperatorDatabaseSecretArn=$operatorSecret;RuntimeApiDatabaseSecretArn=$apiSecret;
+    RuntimeCredentialReviewSha256=('c' * 64) }
+  foreach($key in $Patch.Keys) { if($null -eq $Patch[$key]) { $outputs.Remove($key) } else { $outputs[$key]=$Patch[$key] } }
+  return ([ordered]@{StackStatus=$Status;Outputs=@($outputs.Keys | ForEach-Object { @{OutputKey=$_;OutputValue=$outputs[$_]} });Parameters=@()} | ConvertTo-Json -Depth 6 -Compress)
+}
+$oldFoundation=$global:StackOutputs[$target.foundationStackName]
+$oldPersonal=$global:StackOutputs[$target.stacks['personal-storage']]
+$oldPrivacy=$global:StackOutputs[$target.stacks['privacy-operations']]
+try {
+  $global:StackOutputs[$target.foundationStackName]=Credential-Foundation
+  $global:StackOutputs[$target.stacks['personal-storage']]=CandidateStack @{DatabaseSecretArn=$apiSecret}
+  $global:StackOutputs[$target.stacks['privacy-operations']]=CandidateStack @{DatabaseSecretArn=$apiSecret}
+  Invoke-Case 'version four binds export requests to the independent API credential' { Export-Run $versionFour } $null
+  Invoke-Case 'version four retention inspection selects the explicit operator credential' { Retention-Run $versionFour } $null
+  if($global:Selected.secretEnv -ne $operatorSecret -or $global:Selected.secretEnv -eq $apiSecret) { throw 'version_four_retention_operator_binding_failed' }
+  foreach($case in @(
+    @{name='master as request';patch=@{databaseSecretArn=$operatorSecret};error='runtime_api_secret'},
+    @{name='worker as request';patch=@{databaseSecretArn='arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/fullscript-worker-fictional-KlMnOp'};error='runtime_api_secret'},
+    @{name='missing operator';patch=@{operatorDatabaseSecretArn=$null};error='operator_secret'},
+    @{name='shared operator and API';patch=@{operatorDatabaseSecretArn=$apiSecret};error='operator_secret'},
+    @{name='operator in production';patch=@{operatorDatabaseSecretArn=$operatorSecret.Replace('588966314750','173535830222')};error='operator_secret'},
+    @{name='zero credential review';patch=@{runtimeCredentialReviewSha256=('0' * 64)};error='runtime_credential_review'},
+    @{name='missing credential review';patch=@{runtimeCredentialReviewSha256=$null};error='runtime_credential_review'})) {
+    Invoke-Case $case.name { Export-Run (Credential-Target $case.patch) } ('qualification_target_refused:'+$case.error)
+    if($global:External -ne 0) { throw 'invalid_credential_manifest_reached_external_command' }
+  }
+  foreach($field in @('DatabaseSecretArn','OperatorDatabaseSecretArn','RuntimeApiDatabaseSecretArn','RuntimeCredentialReviewSha256',
+      'DatabaseClusterArn','ApiId','ApiOrigin','DatabaseName','ExportBucketName')) {
+    $missing=@{};$missing[$field]=$null
+    $global:StackOutputs[$target.foundationStackName]=Credential-Foundation $missing
+    Invoke-Case ('version four missing observed '+$field) { Export-Run $versionFour } ('qualification_target_refused:foundation_credentials.'+$field)
+  }
+  $global:StackOutputs[$target.foundationStackName]=Credential-Foundation @{RuntimeApiDatabaseSecretArn=$operatorSecret}
+  Invoke-Case 'version four foundation still declares master as API' { Export-Run $versionFour } 'qualification_target_refused:foundation_credentials.RuntimeApiDatabaseSecretArn'
+  $global:StackOutputs[$target.foundationStackName]=Credential-Foundation -Status 'UPDATE_IN_PROGRESS'
+  Invoke-Case 'version four unfinished foundation' { Export-Run $versionFour } 'qualification_target_refused:foundation_status'
+  $global:StackOutputs[$target.foundationStackName]=Credential-Foundation
+  $global:StackOutputs[$target.stacks['personal-storage']]=CandidateStack @{DatabaseSecretArn=$operatorSecret}
+  Invoke-Case 'version four candidate still using master' { Export-Run $versionFour } 'qualification_target_refused:stack_parameter.personal-storage.DatabaseSecretArn'
+} finally {
+  $global:StackOutputs[$target.foundationStackName]=$oldFoundation
+  $global:StackOutputs[$target.stacks['personal-storage']]=$oldPersonal
+  $global:StackOutputs[$target.stacks['privacy-operations']]=$oldPrivacy
+}
 
 foreach ($name in 'CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN','CLINICAL_FOREIGN_CONSUMER_ID_TOKEN','CLINICAL_STALE_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 $cleanupTarget = [System.IO.Path]::GetFullPath($work)

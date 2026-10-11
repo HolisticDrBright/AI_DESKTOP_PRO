@@ -13,14 +13,15 @@ const functionArn=`arn:aws:lambda:us-east-2:588966314750:function:${fn}`;
 const since='2026-09-27T10:00:00.000Z',startedAt='2026-09-27T10:00:01.000Z',endedAt='2026-09-27T10:00:05.000Z';
 const event={source:'aws.events','detail-type':'Scheduled Event',resources:[ruleArn],id:job};
 const evidence=()=>({ok:true,refused:null,invocation:retentionScheduleInvocation(event,request,ruleArn),run:{startedAt,endedAt,removed:1,outcome:'completed'}});
-function fixture(options:{log?:unknown;audit?:boolean;stream?:string;rule?:Record<string,unknown>;database?:string}={}){
+function fixture(options:{log?:unknown;audit?:boolean;stream?:string;rule?:Record<string,unknown>;database?:string;databaseSecret?:string;cluster?:string}={}){
   const calls:string[][]=[];
   const aws=async(args:string[])=>{
     calls.push(args);
     if(args[0]==='events'&&args[1]==='describe-rule')return {Arn:ruleArn,State:'ENABLED',ScheduleExpression:'rate(24 hours)',...options.rule};
     if(args[0]==='events')return {Targets:[{Arn:functionArn}]};
     if(args[0]==='lambda')return {FunctionArn:functionArn,State:'Active',LastUpdateStatus:'Successful',LoggingConfig:{LogGroup:`/aws/lambda/${manifest.apiId}-privacy-operations`},
-      Environment:{Variables:{PHI_ALLOWED:'false',SOURCE_COMMIT:manifest.sourceCommit,RETENTION_SCHEDULE_ARN:ruleArn,RETENTION_SERVICE_SUBJECT:manifest.identitySubjects.retentionService,CLINICAL_DATABASE_NAME:options.database??manifest.databaseName}}};
+      Environment:{Variables:{PHI_ALLOWED:'false',SOURCE_COMMIT:manifest.sourceCommit,RETENTION_SCHEDULE_ARN:ruleArn,RETENTION_SERVICE_SUBJECT:manifest.identitySubjects.retentionService,CLINICAL_DATABASE_NAME:options.database??manifest.databaseName,
+        CLINICAL_DATABASE_SECRET_ARN:options.databaseSecret??manifest.databaseSecretArn,CLINICAL_DATABASE_CLUSTER_ARN:options.cluster??manifest.databaseClusterArn}}};
     if(args[0]==='logs')return {events:[{message:JSON.stringify(options.log??evidence()),logStreamName:options.stream??`2026/09/27/${fn}[$LATEST][fictional]`}]};
     if(args[0]==='rds-data')return {records:[[{booleanValue:options.audit??true}]]};
     throw new Error('unexpected_read');
@@ -29,6 +30,31 @@ function fixture(options:{log?:unknown;audit?:boolean;stream?:string;rule?:Recor
 }
 const run=(f:ReturnType<typeof fixture>)=>observeScheduledRetentionRemoval(manifest,job,since,f.aws,Date.parse(endedAt)+1000);
 describe('scheduled export removal attribution',()=>{
+  const apiSecret='arn:aws:secretsmanager:us-east-2:588966314750:secret:alp/qualification/runtime-api-fictional-AbCdEf';
+  const operatorSecret='arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-fictional-GhIjKl';
+  const separated=validateQualificationTargetManifest({...manifest,schemaVersion:'aws-clinical-core-qualification-target/4',databaseSecretArn:apiSecret,
+    operatorDatabaseSecretArn:operatorSecret,runtimeCredentialReviewSha256:'c'.repeat(64),
+    stacks:{...manifest.stacks,'care-messaging':'qualification-care-messaging','care-connections':'qualification-care-connections'}});
+  test('version four observes the service API credential but reads private audit only with the operator credential',async()=>{
+    const f=fixture({databaseSecret:apiSecret});
+    expect(await observeScheduledRetentionRemoval(separated,job,since,f.aws,Date.parse(endedAt)+1000)).toBe(true);
+    const db=f.calls.find(c=>c[0]==='rds-data')!;
+    expect(db[db.indexOf('--secret-arn')+1]).toBe(operatorSecret);
+    expect(db).not.toContain(apiSecret);
+    expect(f.calls.every(c=>!c.includes('invoke')&&!c.includes('put-events'))).toBe(true);
+  });
+  test('version four refuses administrative or missing service credentials before private audit read',async()=>{
+    for(const secret of [operatorSecret,'']){
+      const f=fixture({databaseSecret:secret});
+      await expect(observeScheduledRetentionRemoval(separated,job,since,f.aws,Date.parse(endedAt)+1000)).rejects.toThrow('scheduled_retention_observation_refused');
+      expect(f.calls.some(c=>c[0]==='rds-data')).toBe(false);
+    }
+  });
+  test('version four cannot fall back to request authority for a missing operator',async()=>{
+    const f=fixture({databaseSecret:apiSecret});
+    await expect(observeScheduledRetentionRemoval({...separated,operatorDatabaseSecretArn:undefined},job,since,f.aws,Date.parse(endedAt)+1000)).rejects.toThrow();
+    expect(f.calls).toHaveLength(0);
+  });
   test('requires a scheduled invocation in the correct function stream plus this job service audit',async()=>{
     const f=fixture();expect(await run(f)).toBe(true);
     const db=f.calls.find(c=>c[0]==='rds-data')!;

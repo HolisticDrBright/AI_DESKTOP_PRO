@@ -138,7 +138,7 @@ jobs:
           npm run build:aws-care-connections
       - name: Versioned target and complete fleet capacity regressions (no AWS access)
         run: |
-          npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts
+          npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts src/server/clinical-core/qualification-runtime-credentials.test.ts src/server/clinical-core/scheduled-retention-observation.test.ts
           node --test scripts/check-aws-qualification-capacity.test.mjs
           node --test scripts/qualification-consent-ledger.test.mjs
           npm run test:care-messaging-qualification-observer
@@ -353,7 +353,7 @@ jobs:
       - name: Qualification parameter examples match their templates
         run: npm run check:aws-qualification-parameters
       - name: Qualification target example is a valid shape and is refused as a run target
-        run: npm run check:aws-qualification-target
+        run: npm run check:aws-qualification-target -- --examples
       - name: Qualification capacity preflight refuses insufficient or unknown limits (no AWS calls)
         run: npm run test:aws-qualification-capacity
       - name: AWS production provider-removal and foundation gates
