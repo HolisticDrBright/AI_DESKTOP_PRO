@@ -301,9 +301,6 @@ begin
   _expected_signature := pg_catalog.encode(public.hmac(pg_catalog.convert_to(_admission,'UTF8'),_key.secret,'sha256'),'hex');
   if _expected_signature<>pg_catalog.lower(_admission_signature) then
     raise exception using errcode='42501',message='telehealth_admission_refused'; end if;
-  -- The clock is read HERE, after authority resolution and the lock wait, never
-  -- at entry: an admission that expired while this call was blocked is expired.
-  _now := clock_timestamp();
   -- Every binding, recomputed here from what was received: a valid signature
   -- over a different transfer, subject, source, practitioner or bytes is refused.
   _content_sha := pg_catalog.encode(public.digest(pg_catalog.convert_to(_content,'UTF8'),'sha256'),'hex');
@@ -350,10 +347,6 @@ begin
   if _encounter_id is null then
     _encounter_id := clinical_core.start_encounter(_organization_id,_patient_id,'telehealth',_appointment_id);
   end if;
-  -- The admission must still be valid at the moment of mutation: a fresh clock
-  -- again, after destination resolution; a refusal here rolls everything back.
-  _now := clock_timestamp();
-  if _a_expires<=_now then raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
   -- The chart's own draft path: version 1, status draft, provenance recorded,
   -- note.draft_created audited. Nothing here signs.
   _now := clock_timestamp();
