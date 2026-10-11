@@ -30,4 +30,10 @@ test('runner binds complete successor, restricted owner and real lock observatio
   assert.match(source, /snapshotIsolation\('repeatable read', true\)/);
   assert.match(source, /snapshotIsolation\('serializable', true\)/);
   assert.match(source, /outcome\.marker === 'telehealth_transaction_isolation_refused'/);
+  assert.match(source, /await unrelatedClinicTransfers\(\)/);
+  assert.match(source, /await ordinaryPatientUpdate\(\)/);
+  assert.match(source, /await queuedOtherClinicWithdrawal\(\)/);
+  assert.match(source, /await mixedLockOrderRecovery\(\)/);
+  assert.match(source, /passed: completeNativeAuthorityCoverage\(results\)/);
+  assert.match(source, /telehealth-authority-native-source\/2/);
 });

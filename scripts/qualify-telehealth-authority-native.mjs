@@ -10,6 +10,7 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { TELEHEALTH_AUTHORITY_SQL_SHA256 } from './telehealth-transfer-authority-candidate.mjs';
+import { completeNativeAuthorityCoverage, REQUIRED_NATIVE_AUTHORITY_SCENARIOS } from './telehealth-authority-native-coverage.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = process.argv.slice(2);
@@ -277,6 +278,127 @@ async function snapshotIsolation(isolation, withdrawWhileBlocked) {
       && after.transfers === 0 && after.notes === 0 && after.encounters === 0 });
 }
 
+async function unrelatedClinicTransfers() {
+  const first = await fixture(), second = await fixture();
+  const firstAdmission = await admitted(first), secondAdmission = await admitted(second);
+  await context(first); await actor.query(transferSql, firstAdmission.args);
+  await context(second, peer);
+  const peerPid = (await peer.query('select pg_backend_pid() pid')).rows[0].pid;
+  let settled, observedLock = null;
+  const pending = peer.query(transferSql, secondAdmission.args).then(
+    value => (settled = { accepted: true, value }), error => (settled = { accepted: false, code: error.code }));
+  for (let i = 0; i < 100 && !settled; i++) {
+    const row = (await admin.query('select wait_event_type,wait_event from pg_stat_activity where pid=$1', [peerPid])).rows[0];
+    if (row?.wait_event_type === 'Lock') { observedLock = row.wait_event; break; }
+    await delay(25);
+  }
+  const completedBeforeFirstCommit = settled?.accepted === true;
+  const firstBeforeCommit = await counts(first), secondBeforeCommit = await counts(second);
+  await actor.query('commit'); const outcome = await pending;
+  await peer.query(outcome.accepted ? 'commit' : 'rollback');
+  const firstAfter = await counts(first), secondAfter = await counts(second);
+  results.push({ id: 'unrelated_clinic_transfers_share_fence', completedBeforeFirstCommit, observedLock,
+    firstBeforeCommit, secondBeforeCommit, firstAfter, secondAfter,
+    passed: completedBeforeFirstCommit && observedLock === null
+      && Object.values(firstBeforeCommit).every(n => n === 0) && Object.values(secondBeforeCommit).every(n => n === 0)
+      && Object.values(firstAfter).every(n => n === 1) && Object.values(secondAfter).every(n => n === 1) });
+}
+
+async function ordinaryPatientUpdate() {
+  const first = await fixture(), second = await fixture(), admission = await admitted(first);
+  await context(first); await actor.query(transferSql, admission.args);
+  await revoker.query('begin');
+  const pid = (await revoker.query('select pg_backend_pid() pid')).rows[0].pid;
+  let settled, observedLock = null;
+  const pending = revoker.query("update clinical_core.patient_records set first_name='FICTIONAL UPDATED' where id=$1", [second.patient])
+    .then(value => (settled = { changed: value.rowCount === 1 }), error => (settled = { changed: false, code: error.code }));
+  for (let i = 0; i < 100 && !settled; i++) {
+    const row = (await admin.query('select wait_event_type,wait_event from pg_stat_activity where pid=$1', [pid])).rows[0];
+    if (row?.wait_event_type === 'Lock') { observedLock = row.wait_event; break; }
+    await delay(25);
+  }
+  const completedBeforeFirstCommit = settled?.changed === true;
+  await actor.query('commit'); const outcome = await pending;
+  await revoker.query(outcome.changed ? 'commit' : 'rollback');
+  const changed = (await admin.query("select first_name='FICTIONAL UPDATED' changed from clinical_core.patient_records where id=$1", [second.patient])).rows[0].changed;
+  results.push({ id: 'ordinary_patient_update_does_not_take_authority_fence', completedBeforeFirstCommit, observedLock,
+    changed, passed: completedBeforeFirstCommit && observedLock === null && changed === true });
+}
+
+async function queuedOtherClinicWithdrawal() {
+  const first = await fixture(), second = await fixture();
+  const firstAdmission = await admitted(first), secondAdmission = await admitted(second);
+  await context(first); const writerPid = (await actor.query('select pg_backend_pid() pid')).rows[0].pid;
+  await actor.query(transferSql, firstAdmission.args);
+  await revoker.query('begin'); const revokerPid = (await revoker.query('select pg_backend_pid() pid')).rows[0].pid;
+  const withdrawal = revoker.query("update clinical_core.organizations set status='suspended' where id=$1", [second.org])
+    .then(() => ({ changed: true }), error => ({ changed: false, code: error.code }));
+  const withdrawalLock = await waitForBlocked(revokerPid);
+  const withdrawalBlockedByWriter = (await admin.query('select pg_blocking_pids($1) pids', [revokerPid])).rows[0].pids.includes(writerPid);
+  await context(second, peer); const peerPid = (await peer.query('select pg_backend_pid() pid')).rows[0].pid;
+  const transfer = peer.query(transferSql, secondAdmission.args).then(() => ({ accepted: true }),
+    error => ({ accepted: false, code: error.code, marker: error.message }));
+  const transferLock = await waitForBlocked(peerPid);
+  const transferBlockedByWithdrawal = (await admin.query('select pg_blocking_pids($1) pids', [peerPid])).rows[0].pids.includes(revokerPid);
+  await actor.query('commit'); const changed = await withdrawal;
+  await revoker.query(changed.changed ? 'commit' : 'rollback');
+  const outcome = await transfer; await peer.query(outcome.accepted ? 'commit' : 'rollback');
+  const after = await counts(second);
+  results.push({ id: 'queued_other_clinic_withdrawal_refuses_later_transfer', withdrawalLock, transferLock,
+    withdrawalBlockedByWriter, transferBlockedByWithdrawal, withdrawalCommitted: changed.changed,
+    accepted: outcome.accepted, refusalCode: outcome.code ?? null,
+    refusalMarker: /^[a-z_]+$/.test(outcome.marker ?? '') ? outcome.marker : null, after,
+    passed: withdrawalLock === 'advisory' && transferLock === 'advisory'
+      && withdrawalBlockedByWriter && transferBlockedByWithdrawal && changed.changed && !outcome.accepted
+      && /^(clinical_role_required|request_context_refused|telehealth_current_authority_refused)$/.test(outcome.marker ?? '')
+      && Object.values(after).every(n => n === 0) });
+}
+
+async function mixedLockOrderRecovery() {
+  const first = await fixture(), second = { ...first, patient: randomUUID(), appointment: randomUUID() };
+  await admin.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','SIBLING CHART')",
+    [second.patient, second.org, 'patient_' + second.patient.replaceAll('-', '')]);
+  await admin.query("insert into clinical_core.appointments(id,organization_id,patient_record_id,practitioner_person_id,appointment_type,status,starts_at,ends_at,created_by_person_id,updated_by_person_id) values($1,$2,$3,$4,'telehealth','completed','2026-10-09T17:00:00Z','2026-10-09T17:30:00Z',$4,$4)",
+    [second.appointment, second.org, second.patient, second.practitioner]);
+  const firstAdmission = await admitted(first), secondAdmission = await admitted(second);
+  await context(first); const writerPid = (await actor.query('select pg_backend_pid() pid')).rows[0].pid;
+  await actor.query(transferSql, firstAdmission.args);
+  // Deliberately inverted external writer order is a negative control, not a
+  // claim that a normal application workflow uses this bootstrap-only path.
+  await revoker.query('begin'); await revoker.query('select id from clinical_core.patient_records where id=$1 for update', [second.patient]);
+  const revokerPid = (await revoker.query('select pg_backend_pid() pid')).rows[0].pid;
+  const withdrawal = revoker.query('update clinical_core.patient_records set deleted_at=clock_timestamp() where id=$1', [second.patient])
+    .then(() => ({ participant: 'revoker', accepted: true }), error => ({ participant: 'revoker', accepted: false, code: error.code }));
+  const withdrawalLock = await waitForBlocked(revokerPid);
+  const withdrawalBlockedByWriter = (await admin.query('select pg_blocking_pids($1) pids', [revokerPid])).rows[0].pids.includes(writerPid);
+  const transfer = actor.query(transferSql, secondAdmission.args)
+    .then(() => ({ participant: 'actor', accepted: true }), error => ({ participant: 'actor', accepted: false, code: error.code }));
+  const transferLock = await waitForBlocked(writerPid);
+  const transferBlockedByWithdrawal = (await admin.query('select pg_blocking_pids($1) pids', [writerPid])).rows[0].pids.includes(revokerPid);
+  const firstOutcome = await Promise.race([withdrawal, transfer]);
+  let writerOutcome, withdrawalOutcome;
+  if (firstOutcome.participant === 'actor') {
+    writerOutcome = firstOutcome; await actor.query(writerOutcome.accepted ? 'commit' : 'rollback');
+    withdrawalOutcome = await withdrawal; await revoker.query(withdrawalOutcome.accepted ? 'commit' : 'rollback');
+  } else {
+    withdrawalOutcome = firstOutcome; await revoker.query(withdrawalOutcome.accepted ? 'commit' : 'rollback');
+    writerOutcome = await transfer; await actor.query(writerOutcome.accepted ? 'commit' : 'rollback');
+  }
+  const firstAfter = await counts(first), secondAfter = await counts(second);
+  const withdrawn = (await admin.query('select deleted_at is not null withdrawn from clinical_core.patient_records where id=$1', [second.patient])).rows[0].withdrawn;
+  const writerCommitted = writerOutcome.accepted && !withdrawalOutcome.accepted && withdrawalOutcome.code === '40P01' && !withdrawn
+    && Object.values(firstAfter).every(n => n === 1) && Object.values(secondAfter).every(n => n === 1);
+  const withdrawalCommitted = !writerOutcome.accepted && writerOutcome.code === '40P01' && withdrawalOutcome.accepted && withdrawn
+    && Object.values(firstAfter).every(n => n === 0) && Object.values(secondAfter).every(n => n === 0);
+  results.push({ id: 'mixed_lock_order_deadlock_rolls_back_atomically', execution: 'deliberately_inverted_external_lock_order',
+    withdrawalLock, transferLock, withdrawalBlockedByWriter, transferBlockedByWithdrawal,
+    writerAccepted: writerOutcome.accepted, writerCode: writerOutcome.code ?? null,
+    withdrawalAccepted: withdrawalOutcome.accepted, withdrawalCode: withdrawalOutcome.code ?? null,
+    withdrawn, firstAfter, secondAfter,
+    passed: withdrawalLock === 'advisory' && transferBlockedByWithdrawal && withdrawalBlockedByWriter
+      && !firstOutcome.accepted && firstOutcome.code === '40P01' && (writerCommitted || withdrawalCommitted) });
+}
+
 try {
   run('initdb', ['-D', data, '-U', 'postgres', '--encoding=UTF8', '--locale=C', '--auth=scram-sha-256', '--pwfile=' + passwordFile, '--data-checksums']);
   unlinkSync(passwordFile);
@@ -347,17 +469,25 @@ try {
   await snapshotIsolation('serializable', false);
   await snapshotIsolation('repeatable read', true);
   await snapshotIsolation('serializable', true);
-  report = { contract: 'telehealth-authority-native-source/1', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
+  stage = 'multi_clinic_fence';
+  await unrelatedClinicTransfers();
+  await ordinaryPatientUpdate();
+  await queuedOtherClinicWithdrawal();
+  await mixedLockOrderRecovery();
+  report = { contract: 'telehealth-authority-native-source/2', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
     execution: 'local_restricted_owner_source', postgresVersion: '17.7',
     sourceBootstrapOwner: 'postgres', sourceOwner: 'clinical_admin',
     apiSessionOwner: 'clinical_admin', apiCallerRole: 'clinical_core_api',
     managedRoleSemanticsVerified: false, hostedVerified: false, upgradeAuthorized: false, providerAuthorized: false, phiAllowed: false, activation: 'blocked',
-    passed: results.every(r => r.passed), results };
+    mandatoryScenarioCount: REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length,
+    coverageComplete: completeNativeAuthorityCoverage(results),
+    passed: completeNativeAuthorityCoverage(results), results };
 } catch (error) {
-  report = { contract: 'telehealth-authority-native-source/1', sourceCommit,
+  report = { contract: 'telehealth-authority-native-source/2', sourceCommit,
     execution: 'local_restricted_owner_source', managedRoleSemanticsVerified: false, hostedVerified: false,
+    mandatoryScenarioCount: REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length, coverageComplete: false,
     ...(artifact ? { testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash } } : {}), passed: false, stage,
     databaseErrorCode: /^[A-Z0-9]{5}$/.test(error?.code ?? '') ? error.code : null,
