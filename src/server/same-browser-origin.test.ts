@@ -35,4 +35,16 @@ describe('same-origin validation behind a TLS-terminating proxy',()=>{
   expect(sameBrowserOrigin(new Request('http://localhost:9999/api/live/x',{method:'POST',
    headers:{host:'localhost:3164',origin:'http://localhost:3164','sec-fetch-site':'same-origin'}}))).toBe(false);
  });
+ it('accepts Next loopback listener aliases only on the identical port',()=>{
+  for(const [originHost,listenerHost] of [['127.0.0.1','localhost'],['localhost','127.0.0.1']]) {
+   expect(sameBrowserOrigin(new Request(`http://${listenerHost}:3100/api/public/consult`,{method:'POST',
+    headers:{host:`${originHost}:3100`,origin:`http://${originHost}:3100`,'sec-fetch-site':'same-origin'}}))).toBe(true);
+  }
+ });
+ it('never accepts a loopback alias across ports, a non-loopback listener, or a mismatched browser host',()=>{
+  for(const url of ['http://localhost:3101/api/x','http://internal.example:3100/api/x']) {
+   expect(sameBrowserOrigin(new Request(url,{method:'POST',headers:{host:'127.0.0.1:3100',origin:'http://127.0.0.1:3100','sec-fetch-site':'same-origin'}}))).toBe(false);
+  }
+  expect(sameBrowserOrigin(new Request('http://localhost:3100/api/x',{method:'POST',headers:{host:'localhost:3100',origin:'http://127.0.0.1:3100','sec-fetch-site':'same-origin'}}))).toBe(false);
+ });
 });

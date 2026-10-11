@@ -49,7 +49,7 @@ describe("clinical-only authentication lifecycle", () => {
   });
 
   test("the public allow-list is exact: neighbouring paths still require sign-in", async () => {
-    for (const path of ["/consult", "/consultations/x", "/consult-admin/x", "/learn", "/learning/x", "/learn-more/x", "/telehealth-requests", "/programs/x"]) {
+    for (const path of ["/consult", "/consultations/x", "/consult-admin/x", "/learn", "/learning/x", "/learn-more/x", "/telehealth-requests", "/programs/x", "/funnels/longevity-program/preview"]) {
       const response = await middleware(new NextRequest("https://desktop.example.test" + path));
       expect(response.status, path).toBe(307);
       expect(new URL(response.headers.get("location")!).pathname, path).toBe("/login");

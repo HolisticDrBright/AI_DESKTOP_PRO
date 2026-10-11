@@ -31,6 +31,16 @@ describe('the public site origin', () => {
 });
 
 describe('indexing posture', () => {
+  it.each([
+    { CLINICAL_AWS_RUNTIME_MODE: 'synthetic' },
+    { CLINICAL_AWS_QUALIFICATION_EXECUTION: 'true' },
+    { NEXT_PUBLIC_APP_ENV: 'staging' },
+    { APP_RUNTIME_ENV: 'production-clinical', NEXT_PUBLIC_APP_ENV: 'development' },
+    { NEXT_PUBLIC_SITE_ORIGIN: 'https://127.0.0.1' },
+    { NEXT_PUBLIC_SITE_ORIGIN: 'https://[::1]' },
+  ])('refuses indexing when another runtime signal is synthetic or local: %j', signals => {
+    expect(indexingAllowed({ ...production, ...signals })).toBe(false);
+  });
   it('is allowed only on the production origin', () => {
     expect(indexingAllowed(production)).toBe(true);
     expect(indexingAllowed({ ...production, NEXT_PUBLIC_SITE_ORIGIN: undefined })).toBe(false);

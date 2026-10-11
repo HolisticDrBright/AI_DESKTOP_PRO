@@ -27,6 +27,15 @@ const form = (over: Partial<Described> = {}) => createElement(ConsultRequestView
 });
 
 describe('public consult page', () => {
+  it('shows a retryable service failure without claiming the link expired', () => {
+    const view = createElement(ConsultRequestView, { state: { kind: 'failed', onRetry: () => {} } });
+    const text = renderToText(view);
+    expect(text).toContain('The consultation service could not be reached');
+    expect(text).toContain('Try again');
+    expect(text).toContain('No request has been sent');
+    expect(text).not.toMatch(/withdrawn|expired|Your request has been sent/);
+    expect(renderToMarkup(view)).toContain('data-testid="consult-read-failed"');
+  });
   it('tells a visitor where not to put health information, and what sending does not do', () => {
     const text = renderToText(form());
     expect(text).toContain('Please do not describe symptoms or send health information here');

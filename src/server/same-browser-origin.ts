@@ -28,9 +28,13 @@ export function sameBrowserOrigin(request: Request): boolean {
     // An Origin carrying a path, query or credentials is not a bare origin.
     if (raw !== origin.origin || origin.host !== host) return false;
     if (origin.protocol === 'https:') return true;
-    // Plain HTTP is only ever local development, and only when the listener agrees.
+    // Next may expose its local listener as localhost even when the browser
+    // addressed 127.0.0.1. Browser Origin still must match Host above; only
+    // loopback listener aliases on the identical port are interchangeable.
+    const listener = new URL(request.url);
     return origin.protocol === 'http:' && LOOPBACK.includes(origin.hostname)
-      && origin.origin === new URL(request.url).origin;
+      && listener.protocol === 'http:' && LOOPBACK.includes(listener.hostname)
+      && origin.port === listener.port;
   } catch {
     return false;
   }

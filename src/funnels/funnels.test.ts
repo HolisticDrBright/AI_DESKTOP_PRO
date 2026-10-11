@@ -79,6 +79,11 @@ describe('the text rules', () => {
 });
 
 describe('publication', () => {
+  it.each(['weight-loss-program', 'diabetes-program'])('requires the recorded attorney review for %s', slug => {
+    const page = { ...published(), slug };
+    expect(funnelDefinition.safeParse(page).success).toBe(false);
+    expect(funnelDefinition.safeParse({ ...page, approval: { ...page.approval!, attorneyReview: true } }).success).toBe(true);
+  });
   it('needs recorded approval, a "what is included" section from the published program, and no draft note', () => {
     expect(funnelDefinition.safeParse(published()).success).toBe(true);
     expect(funnelDefinition.safeParse({ ...published(), approval: null }).success).toBe(false);

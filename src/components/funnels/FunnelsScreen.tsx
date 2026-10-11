@@ -54,6 +54,9 @@ export function describeHandoff(funnel: FunnelDefinition, read: LinkRead): { ton
 export function FunnelsView({ funnels, read, origin, onRetry }: { funnels: readonly FunnelDefinition[]; read: LinkRead; origin: string | null; onRetry: () => void }) {
   return (
     <div className="flex flex-col gap-3" data-testid="funnels-screen" data-links={read.state}>
+      <p role="status" className="m-0 rounded-lg border border-line bg-card p-3 text-[13px] text-body" data-testid="funnels-purchase-status">
+        Requested journey: visitors may book a consultation or buy the program directly. Program prices have not been selected. Paid checkout, payment confirmation and automatic course access are not connected yet. An active consult link does not mean purchases work.
+      </p>
       {origin === null && (
         <p role="status" data-testid="funnels-no-origin" className="m-0 text-[13px] text-subtle">
           No public web address is configured for this deployment, so these pages have no shareable address yet. Paths are shown instead of links.
@@ -74,6 +77,7 @@ export function FunnelsView({ funnels, read, origin, onRetry }: { funnels: reado
             <CardTitle>{funnel.title}</CardTitle>
             <p className="m-0 text-[12.5px] text-subtle">{funnel.programLabel} · {funnel.status === "published" ? "Published" : "Draft: not public"}{funnel.indexable ? " · may be listed by search engines on the production origin" : ""}</p>
             {funnel.draftNote && <p className="m-0 mt-1 text-[12.5px] text-body">{funnel.draftNote}</p>}
+            <p className="m-0 mt-2 text-[12.5px]"><a href={`/funnels/${funnel.slug}/preview`} className="text-action underline">Review draft page</a> · Private staff preview, not a published sales page</p>
             <p className="m-0 mt-2 break-all text-[12.5px] text-body">Public address: {pageUrl ?? `/learn/${funnel.slug} (no public address configured)`}</p>
             <p className="m-0 mt-1 break-all text-[12.5px] text-body">Consult link: {consultUrl ?? `/consult/${funnel.consultSlug} (no public address configured)`}</p>
             <p className={`m-0 mt-2 text-[12.5px] ${handoff.tone === "warning" ? "font-semibold text-critical" : "text-body"}`} data-testid={`funnel-handoff-${funnel.slug}`}>{handoff.text}</p>

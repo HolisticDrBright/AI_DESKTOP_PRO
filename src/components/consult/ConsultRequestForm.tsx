@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { ConsultIntakeResponse } from "@/contracts/consultRequests";
+import { consultIntakeResponse } from "@/contracts/consultRequests";
 
 import {
   ConsultRequestView, type ConsultFormValues, type Described, type Submitted,
@@ -15,14 +16,27 @@ import {
  * time, no patient identifier — a stranger cannot write anything clinical through this path,
  * and the page says so. What comes back is a reference code and nothing else.
  */
-async function post(body: unknown): Promise<{ data?: ConsultIntakeResponse; error?: string }> {
-  const response = await fetch("/api/public/consult", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify(body), cache: "no-store",
-  });
-  const payload = await response.json().catch(() => ({})) as { data?: ConsultIntakeResponse; error?: string };
-  if (!response.ok) return { error: payload.error ?? "service_unavailable" };
-  return payload;
+export async function postConsultRequest(body: unknown, fetcher: typeof fetch = fetch): Promise<{ data?: ConsultIntakeResponse; error?: string; status: number }> {
+  try {
+    const response = await fetcher("/api/public/consult", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body), cache: "no-store", signal: AbortSignal.timeout(20000),
+    });
+    const payload = await response.json().catch(() => ({})) as { data?: unknown; error?: string };
+    if (!response.ok) return { error: payload.error ?? "service_unavailable", status: response.status };
+    const parsed = consultIntakeResponse.safeParse(payload.data);
+    if (!parsed.success || parsed.data.action !== (body as { action?: unknown } | null)?.action) return { error: "service_unavailable", status: 503 };
+    return { data: parsed.data, status: response.status };
+  } catch { return { error: "service_unavailable", status: 503 }; }
+}
+
+export function consultDescriptionOutcome(result: Awaited<ReturnType<typeof postConsultRequest>>):
+  { kind: "ready"; link: Described } | { kind: "unavailable" } | { kind: "failed" } {
+  if (result.status >= 200 && result.status < 300 && !result.error && result.data?.action === "describe") return { kind: "ready", link: result.data };
+  // Keep the indistinguishable link refusal, but never claim a service outage
+  // or malformed reply proves the link was withdrawn or expired.
+  if ([400, 403, 409].includes(result.status)) return { kind: "unavailable" };
+  return { kind: "failed" };
 }
 
 const EMPTY: ConsultFormValues = { name: "", email: "", phone: "", visitType: "", reasonCode: "" };
@@ -30,6 +44,8 @@ const EMPTY: ConsultFormValues = { name: "", email: "", phone: "", visitType: ""
 export function ConsultRequestForm({ slug }: { slug: string }) {
   const [link, setLink] = useState<Described | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
+  const [readAttempt, setReadAttempt] = useState(0);
   const [values, setValues] = useState<ConsultFormValues>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Submitted | null>(null);
@@ -37,14 +53,17 @@ export function ConsultRequestForm({ slug }: { slug: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void post({ action: "describe", slug }).then(({ data, error }) => {
+    setLink(null); setUnavailable(false); setReadFailed(false);
+    void postConsultRequest({ action: "describe", slug }).then(reply => {
       if (cancelled) return;
-      if (error || !data || data.action !== "describe") { setUnavailable(true); return; }
-      setLink(data);
-      setValues(current => ({ ...current, visitType: data.visitTypes[0], reasonCode: data.reasonCodes[0] }));
+      const outcome = consultDescriptionOutcome(reply);
+      if (outcome.kind === "unavailable") { setUnavailable(true); return; }
+      if (outcome.kind === "failed") { setReadFailed(true); return; }
+      setLink(outcome.link);
+      setValues(current => ({ ...current, visitType: outcome.link.visitTypes[0], reasonCode: outcome.link.reasonCodes[0] }));
     });
     return () => { cancelled = true; };
-  }, [slug]);
+  }, [slug, readAttempt]);
 
   const onChange = useCallback((field: keyof ConsultFormValues, value: string) => {
     setValues(current => ({ ...current, [field]: value }));
@@ -52,7 +71,7 @@ export function ConsultRequestForm({ slug }: { slug: string }) {
 
   const onSubmit = useCallback(() => {
     setBusy(true); setFailure(null);
-    void post({
+    void postConsultRequest({
       action: "submit", slug, name: values.name, email: values.email,
       phone: values.phone.trim().length > 0 ? values.phone : null,
       visitType: values.visitType, reasonCode: values.reasonCode, preferredWindows: [],
@@ -65,6 +84,7 @@ export function ConsultRequestForm({ slug }: { slug: string }) {
   }, [slug, values]);
 
   if (unavailable) return <ConsultRequestView state={{ kind: "unavailable" }} />;
+  if (readFailed) return <ConsultRequestView state={{ kind: "failed", onRetry: () => setReadAttempt(attempt => attempt + 1) }} />;
   if (result) return <ConsultRequestView state={{ kind: "received", result }} />;
   if (!link) return <ConsultRequestView state={{ kind: "loading" }} />;
   return <ConsultRequestView state={{ kind: "form", link, values, busy, failure, onChange, onSubmit }} />;

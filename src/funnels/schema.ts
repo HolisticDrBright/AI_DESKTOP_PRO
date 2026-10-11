@@ -79,6 +79,9 @@ export const funnelDefinition = z.object({
   const included = funnel.sections.find(s => s.kind === 'what-is-included');
   if (funnel.status === 'published') {
     if (!funnel.approval) ctx.addIssue({ code: 'custom', message: 'a published funnel records who approved its exact text' });
+    if (['weight-loss-program', 'diabetes-program'].includes(funnel.slug) && funnel.approval?.attorneyReview !== true) {
+      ctx.addIssue({ code: 'custom', message: 'this program requires its recorded attorney review before publication' });
+    }
     if (!included || included.source !== 'published_program') ctx.addIssue({ code: 'custom', message: 'a published funnel describes what the real program includes' });
     if (funnel.draftNote !== null) ctx.addIssue({ code: 'custom', message: 'a published funnel carries no draft note' });
   } else if (funnel.draftNote === null) ctx.addIssue({ code: 'custom', message: 'a draft says why it is a draft' });

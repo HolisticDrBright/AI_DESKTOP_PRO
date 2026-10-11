@@ -20,11 +20,14 @@ export function publicSiteOrigin(env: PublicSiteEnv = process.env): string | nul
 }
 
 export function isStagingOrSynthetic(env: PublicSiteEnv = process.env): boolean {
-  const runtime = String(env.APP_RUNTIME_ENV ?? '').toLowerCase();
-  const environment = String(env.CLINICAL_AWS_ENVIRONMENT ?? '').toLowerCase();
+  const signals = [env.APP_RUNTIME_ENV, env.NEXT_PUBLIC_APP_ENV, env.CLINICAL_AWS_ENVIRONMENT, env.CLINICAL_AWS_RUNTIME_MODE]
+    .map(value => String(value ?? '').toLowerCase());
   const origin = publicSiteOrigin(env);
   const host = origin ? new URL(origin).hostname : '';
-  return runtime.includes('staging') || environment.includes('synthetic') || /(^|[.-])(staging|synthetic|stage|dev|test|localhost)([.-]|$)/.test(host);
+  return signals.some(value => /staging|synthetic|qualification|development|(^|[.-])(dev|test)([.-]|$)/.test(value))
+    || env.CLINICAL_AWS_QUALIFICATION_EXECUTION === 'true'
+    || host === '127.0.0.1' || host === '[::1]'
+    || /(^|[.-])(staging|synthetic|stage|dev|test|localhost)([.-]|$)/.test(host);
 }
 
 /** Indexing is allowed only for the production origin: configured, production runtime, nothing staging or synthetic. */

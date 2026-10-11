@@ -31,6 +31,7 @@ export type ConsultFormValues = { name: string; email: string; phone: string; vi
 export type ConsultViewState =
   | { kind: "loading" }
   | { kind: "unavailable" }
+  | { kind: "failed"; onRetry: () => void }
   | { kind: "received"; result: Submitted }
   | {
     kind: "form"; link: Described; values: ConsultFormValues; busy: boolean; failure: string | null;
@@ -42,6 +43,13 @@ const field = "mt-1 w-full rounded-md border border-hairline bg-canvas px-3 py-2
 export function ConsultRequestView({ state }: { state: ConsultViewState }) {
   if (state.kind === "loading") {
     return <p role="status" data-testid="consult-loading" className="text-[14px] text-faint">Loading this clinic&rsquo;s request form.</p>;
+  }
+  if (state.kind === "failed") {
+    return <section data-testid="consult-read-failed" className="rounded-lg border border-hairline bg-surface p-5">
+      <h1 className="m-0 text-[19px] font-bold">The consultation service could not be reached</h1>
+      <p className="mt-2 text-[14px] text-faint">We could not verify this link. No request has been sent. Please try again or contact the clinic directly.</p>
+      <button type="button" onClick={state.onRetry} className="mt-3 rounded-md bg-action px-3 py-2 text-white">Try again</button>
+    </section>;
   }
   if (state.kind === "unavailable") {
     return (
