@@ -43,7 +43,9 @@ test('private owner policy is not an API grant or global RLS bypass', () => {
   assert.match(sql, /for select to clinical_core_migrator/);
   assert.match(sql, /current_user=pg_catalog\.pg_get_userbyid/);
   assert.doesNotMatch(sql, /grant\s|disable row level|no force row level|bypassrls/i);
-  assert.match(sql, /after the entry authorization/);
-  assert.match(sql, /organization_memberships[\s\S]*?for share/);
-  assert.match(sql, /patient_records[\s\S]*?for share/);
+  assert.match(sql, /after entry authorization/);
+  assert.match(sql, /pg_advisory_xact_lock_shared/);
+  assert.match(sql, /before update or delete on clinical_core\.organization_memberships/);
+  assert.match(sql, /before update or delete on clinical_core\.patient_records/);
+  assert.match(sql, /for update to clinical_core_migrator/);
 });

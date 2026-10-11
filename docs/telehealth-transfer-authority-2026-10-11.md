@@ -32,10 +32,21 @@ clusters were confirmed stopped. No fixture was written to AWS.
 Owner-only policies are constrained to the actual table owner while exercising
 the migrator role. No API table grant, global RLS bypass or key is introduced.
 The existing key fence and immutable-key/append-only-record triggers remain.
-After the draft path finishes its potentially blocking work, identity,
-membership, patient and appointment authority are locked and checked again.
-A revocation which committed first must roll back draft, receipt and audit;
-later authority changes cannot commit ahead of a writer holding these rows.
+After the draft path finishes its potentially blocking work, a shared
+transaction fence protects a fresh identity, membership, patient and appointment
+check. Authority-bearing updates and deletes take the matching exclusive fence
+through triggers, including privileged direct SQL. A revocation which committed
+first must roll back draft, receipt and audit; later authority changes cannot
+commit ahead of a writer holding that shared fence. Concurrent transfers may
+share it. Unrelated names and appointment-time edits return without taking it.
+
+An initial unregistered 117 iteration allowed a key read but not the locking
+read's UPDATE policy, and its native positive refused. Candidate/2 uses a
+distinct migration timestamp and allows only the table-owning migrator's key
+read, locking/retirement and reviewed registration; the API remains denied.
+No clinical table UPDATE policy is broadened to obtain authorization locks.
+PostgreSQL applies UPDATE policies to locking reads as documented in its
+[policy reference](https://www.postgresql.org/docs/17/sql-createpolicy.html).
 
 Required after evidence includes a valid transfer under a real non-superuser
 session, API denial of private key and receipt-table reads, both retirement

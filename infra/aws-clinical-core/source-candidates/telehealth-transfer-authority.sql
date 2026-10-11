@@ -7,6 +7,19 @@ create policy telehealth_admission_keys_definer_read
   on clinical_private.telehealth_admission_keys for select to clinical_core_migrator
   using (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
     where oid='clinical_private.telehealth_admission_keys'::pg_catalog.regclass)));
+-- A locking SELECT also evaluates UPDATE policies. Permit only the owning
+-- migrator; immutable-key guards still restrict updates to retirement only.
+create policy telehealth_admission_keys_definer_lock
+  on clinical_private.telehealth_admission_keys for update to clinical_core_migrator
+  using (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
+    where oid='clinical_private.telehealth_admission_keys'::pg_catalog.regclass)))
+  with check (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
+    where oid='clinical_private.telehealth_admission_keys'::pg_catalog.regclass)));
+-- Reviewed key registration is an operator action, never an API role action.
+create policy telehealth_admission_keys_definer_register
+  on clinical_private.telehealth_admission_keys for insert to clinical_core_migrator
+  with check (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
+    where oid='clinical_private.telehealth_admission_keys'::pg_catalog.regclass)));
 create policy telehealth_note_transfers_definer_read
   on clinical_core.telehealth_note_transfers for select to clinical_core_migrator
   using (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
@@ -15,6 +28,43 @@ create policy telehealth_note_transfers_definer_insert
   on clinical_core.telehealth_note_transfers for insert to clinical_core_migrator
   with check (current_user=pg_catalog.pg_get_userbyid((select relowner from pg_catalog.pg_class
     where oid='clinical_core.telehealth_note_transfers'::pg_catalog.regclass)));
+
+-- Authority changes share one transaction fence with transfers. The fence is
+-- acquired only for authority-bearing updates/deletes, not ordinary names,
+-- appointment times or every clinical write. A shared transfer lock permits
+-- concurrent transfers; the short authority mutation takes the exclusive lock.
+-- A single namespace avoids cross-organization identity enumeration or new
+-- clinical table UPDATE policies merely to perform a locking SELECT.
+create function clinical_private.fence_telehealth_authority_change() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+  if tg_op='UPDATE' then
+    if tg_table_name='organization_memberships' and
+      (new.organization_id,new.person_id,new.role,new.status) is not distinct from
+      (old.organization_id,old.person_id,old.role,old.status) then return new; end if;
+    if tg_table_name='identities' and
+      (new.person_id,new.identity_pool,new.identity_subject,new.production_bound) is not distinct from
+      (old.person_id,old.identity_pool,old.identity_subject,old.production_bound) then return new; end if;
+    if tg_table_name='patient_records' and
+      (new.id,new.organization_id,new.status,new.deleted_at) is not distinct from
+      (old.id,old.organization_id,old.status,old.deleted_at) then return new; end if;
+    if tg_table_name='appointments' and
+      (new.id,new.organization_id,new.patient_record_id,new.practitioner_person_id,new.appointment_type,new.status,new.deleted_at) is not distinct from
+      (old.id,old.organization_id,old.patient_record_id,old.practitioner_person_id,old.appointment_type,old.status,old.deleted_at) then return new; end if;
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('telehealth-current-authority-v1',0));
+  if tg_op='DELETE' then return old; end if;
+  return new;
+end $$;
+revoke all on function clinical_private.fence_telehealth_authority_change() from public,clinical_core_api;
+create trigger telehealth_membership_authority_fence before update or delete on clinical_core.organization_memberships
+  for each row execute function clinical_private.fence_telehealth_authority_change();
+create trigger telehealth_identity_authority_fence before update or delete on clinical_core.identities
+  for each row execute function clinical_private.fence_telehealth_authority_change();
+create trigger telehealth_patient_authority_fence before update or delete on clinical_core.patient_records
+  for each row execute function clinical_private.fence_telehealth_authority_change();
+create trigger telehealth_appointment_authority_fence before update or delete on clinical_core.appointments
+  for each row execute function clinical_private.fence_telehealth_authority_change();
 
 -- Hold the registered admission key through transaction completion. A retirement
 -- that wins first refuses the transfer; a transfer that holds the key first
@@ -126,24 +176,16 @@ begin
   if _a_expires<=_now then
     raise exception using errcode='42501',message='telehealth_admission_mismatch'; end if;
   _saved := clinical_core.save_note_draft(_organization_id,_encounter_id,'narrative',_content_json,0,null,'manual',_provenance_json);
-  -- A draft/FK/trigger can wait after the entry authorization. Resolve the
-  -- actual authority rows only after that wait, then hold them through commit.
-  -- Revocation which committed first is observed and rolls this transaction
-  -- back; changes arriving after these locks cannot commit before this writer.
-  perform 1 from clinical_core.organization_memberships
-    where organization_id=_organization_id and person_id=_actor for share;
-  if not found then raise exception using errcode='42501',message='clinical_role_required'; end if;
-  perform 1 from clinical_core.identities where person_id=_actor and identity_pool='workforce'
-    and identity_subject=clinical_private.claim('identity_subject') and production_bound for share;
-  if not found then raise exception using errcode='42501',message='request_context_refused'; end if;
-  perform 1 from clinical_core.patient_records
-    where id=_patient_id and organization_id=_organization_id for share;
-  if not found then raise exception using errcode='P0002',message='patient_not_found'; end if;
-  select * into _appointment from clinical_core.appointments where id=_appointment_id for share;
+  -- Draft/FK/trigger work can wait after entry authorization. Take the shared
+  -- authority fence after that work, then read fresh authority. A revocation
+  -- which committed first rolls back all tentative writes; a later authority
+  -- change cannot commit before this transaction releases the shared fence.
+  perform pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('telehealth-current-authority-v1',0));
+  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
+  select * into _appointment from clinical_core.appointments where id=_appointment_id;
   if not found or _appointment.deleted_at is not null or _appointment.organization_id<>_organization_id
     or _appointment.patient_record_id is distinct from _patient_id or _appointment.appointment_type<>'telehealth' then
     raise exception using errcode='42501',message='telehealth_transfer_refused'; end if;
-  _actor := clinical_private.require_clinical_patient(_organization_id,_patient_id);
   -- Encounter/note authority checks, row locks and triggers may also wait.
   -- An expiry here raises in the same transaction and rolls back their writes.
   _now := clock_timestamp();

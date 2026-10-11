@@ -2,8 +2,8 @@
 import { createHash } from 'node:crypto';
 import { assertClinicSourceArtifact, CLINIC_SOURCE_IDENTITY } from './compile-clinic-schema-source.mjs';
 const sha = value => createHash('sha256').update(value).digest('hex');
-export const TELEHEALTH_AUTHORITY_FILE = '20261011010000_production_telehealth_transfer_authority.sql';
-export const TELEHEALTH_AUTHORITY_SQL_SHA256 = 'ad5858278e584954bc2f98ff3cfbb3466e8aa3070f22198e598f8d6be3168eb5';
+export const TELEHEALTH_AUTHORITY_FILE = '20261011020000_production_telehealth_transfer_authority.sql';
+export const TELEHEALTH_AUTHORITY_SQL_SHA256 = 'ff464b6e216939cc606ebcc96b3d817beddc03927e2c1494c50012152e57c9cc';
 export function telehealthTransferAuthorityCandidate(parent, source) {
   const refuse = () => { throw Error('telehealth_authority_artifact_refused'); };
   try { assertClinicSourceArtifact(parent); } catch { refuse(); }
@@ -17,7 +17,7 @@ export function telehealthTransferAuthorityCandidate(parent, source) {
   const migrationReleaseSha256 = sha(manifest.migrations.map(r => r.version + ':' + sha(files[r.file])).join('\n'));
   const releaseHash = sha(manifest.migrations.map(r => r.version + ':' + r.file + ':' + sha(files[r.file])).join('\n'));
   return { manifest, files, releaseHash, candidate: {
-    contract: 'telehealth-transfer-authority-candidate/1', parentContract: parent.candidate.contract,
+    contract: 'telehealth-transfer-authority-candidate/2', parentContract: parent.candidate.contract,
     parentMigrationCount: CLINIC_SOURCE_IDENTITY.count, parentMigrationReleaseSha256: CLINIC_SOURCE_IDENTITY.ledger,
     parentArtifactSha256: CLINIC_SOURCE_IDENTITY.assembly, migrationCount: 117, migrationReleaseSha256,
     extensionSha256: sha(sql), deployment: 'not_deployed', activation: 'blocked', phiAllowed: false,

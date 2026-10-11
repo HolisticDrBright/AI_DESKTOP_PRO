@@ -13,7 +13,7 @@ const source = readFileSync(resolve(root, 'infra/aws-clinical-core/source-candid
 const result = telehealthTransferAuthorityCandidate(parent, source);
 if (json) process.stdout.write(JSON.stringify(result));
 else {
-  const directory = resolve(root, 'dist/aws-clinical-core/telehealth-transfer-authority-candidate');
+  const directory = resolve(root, 'dist/aws-clinical-core/telehealth-transfer-authority-candidate-v2');
   mkdirSync(directory, { recursive: true });
   for (const [name, sql] of Object.entries(result.files)) writeFileSync(resolve(directory, name), sql);
   writeFileSync(resolve(directory, 'manifest.json'), JSON.stringify(result.manifest, null, 2) + '\n');
