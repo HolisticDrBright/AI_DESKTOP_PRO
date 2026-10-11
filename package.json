@@ -7,6 +7,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "build:telehealth-request-authority-candidate": "node scripts/build-telehealth-request-authority-candidate.mjs",
+    "test:telehealth-request-authority": "vitest run src/server/clinical-core/telehealth-request-authority.database.test.ts src/server/clinical-core/telehealth-request-authority-artifact.test.ts",
     "qualify:runtime-credential-native": "node scripts/qualify-runtime-credential-native.mjs",
     "build:telehealth-transfer-authority-candidate": "node scripts/build-telehealth-transfer-authority-candidate.mjs",
     "test:telehealth-transfer-authority-candidate": "node --test scripts/telehealth-transfer-authority-candidate.test.mjs",

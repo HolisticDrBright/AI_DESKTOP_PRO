@@ -167,6 +167,10 @@ jobs:
           npm run test:successor-qualification-binding
           npm run test:successor-qualification-runtime
           npm run build:successor-qualification-runtime
+      - name: Distinct blocked 118 telehealth authority observation (fictional SQL only; no AWS or runtime admission)
+        run: |
+          npm run test:telehealth-request-authority
+          npm run build:telehealth-request-authority-candidate
       - name: Separate successor consent and clinic-record request bindings (fictional SQL only, no AWS or approval)
         run: |
           npm run test:successor-provider-binding

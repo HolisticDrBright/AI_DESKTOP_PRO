@@ -234,6 +234,10 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   if (/\bcare_connection_approved_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_connection_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bcare_connection_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\btelehealth_request_identity_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\btelehealth_request_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\btelehealth_request_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\btelehealth_request_release_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("release_required");
   if (/\btelehealth_consent_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\btelehealth_consent_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\btelehealth_consent_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
