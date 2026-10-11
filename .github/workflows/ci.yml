@@ -183,6 +183,11 @@ jobs:
           npm run test:successor-fullscript-build
           npm run build:successor-fullscript-api
           cfn-lint dist/aws-clinical-core/successor-fullscript-api/template.json
+      - name: Separate Fullscript successor execution and native command (no AWS or approval)
+        run: |
+          npm run test:successor-fullscript-deployment
+          npm run test:successor-fullscript-deployment-build
+          npm run build:successor-fullscript-deployment-operator
       - name: Historical configuration and artifact byte checks (no AWS observation or activation)
         run: |
           npm run test:inventory-qualification-target
