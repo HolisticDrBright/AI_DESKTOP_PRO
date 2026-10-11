@@ -7,6 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "qualify:runtime-credential-native": "node scripts/qualify-runtime-credential-native.mjs",
     "build:telehealth-transfer-authority-candidate": "node scripts/build-telehealth-transfer-authority-candidate.mjs",
     "test:telehealth-transfer-authority-candidate": "node --test scripts/telehealth-transfer-authority-candidate.test.mjs",
     "qualify:telehealth-authority-native": "node scripts/qualify-telehealth-authority-native.mjs",

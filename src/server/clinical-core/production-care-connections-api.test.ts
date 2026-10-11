@@ -109,6 +109,8 @@ describe('unreleased connection gateway boundary', () => {
       async send(command) {
         const c = command as unknown as { constructor: { name: string }; input: { sql?: string } };
         if (c.constructor.name === 'BeginTransactionCommand') return { transactionId: 'fictional' };
+        if (c.constructor.name === 'ExecuteStatementCommand' && c.input.sql?.includes('clinical-runtime-credential/1'))
+          return {columnMetadata:[{name:'runtime_credential_admitted'}],records:[[{booleanValue:true}]]};
         if (c.constructor.name === 'ExecuteStatementCommand' && c.input.sql !== 'set local role clinical_core_api')
           throw Object.assign(new Error(message), { name: 'DatabaseErrorException' });
         return {};

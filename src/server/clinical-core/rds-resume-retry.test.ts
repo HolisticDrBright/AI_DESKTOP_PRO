@@ -24,11 +24,13 @@ describe('bounded Aurora resume handling',()=>{
     const db=createRdsDataClinicalCoreDatabase({clusterArn:'arn:aws:rds:us-east-2:123456789012:cluster:fictional',secretArn:'arn:aws:secretsmanager:us-east-2:123456789012:secret:fictional-AbCdEf',databaseName:'clinical_core'},
       {send:async command=>{const name=(command as object).constructor.name;calls.push(name);
         if(name==='BeginTransactionCommand'){if(++begun===1)throw resuming();return {transactionId:'fictional'};}
+        if(name==='ExecuteStatementCommand'&&String((command as {input:{sql:string}}).input.sql).includes('clinical-runtime-credential/1'))
+          return {columnMetadata:[{name:'runtime_credential_admitted'}],records:[[{booleanValue:true}]]};
         if(name==='CommitTransactionCommand')throw resuming();return {};
       }});
     const work=vi.fn(async()=>true);const pending=expect(db.transaction(work)).rejects.toThrow('query_failed');
     await vi.runAllTimersAsync();await pending;
     expect(work).toHaveBeenCalledTimes(1);
-    expect(calls).toEqual(['BeginTransactionCommand','BeginTransactionCommand','ExecuteStatementCommand','CommitTransactionCommand','RollbackTransactionCommand']);
+    expect(calls).toEqual(['BeginTransactionCommand','BeginTransactionCommand','ExecuteStatementCommand','ExecuteStatementCommand','CommitTransactionCommand','RollbackTransactionCommand']);
   });
 });

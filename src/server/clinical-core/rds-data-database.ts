@@ -13,6 +13,7 @@ import {
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
 import {retryDatabaseResume} from './rds-resume-retry';
 import { createSingleAttemptRdsClient } from './rds-single-attempt-client';
+import { RUNTIME_CREDENTIAL_ADMISSION_SQL, runtimeCredentialAdmitted } from './rds-runtime-credential';
 
 export type RdsDataConfiguration = {
   clusterArn: string;
@@ -87,6 +88,11 @@ function createRdsDataDatabase(
         if (!transactionId) throw new RdsDataDatabaseError("transaction_failed");
 
         if (assumeRole) {
+          const bound = bindParameters(RUNTIME_CREDENTIAL_ADMISSION_SQL, [assumeRole]);
+          const admission = await client.send(new ExecuteStatementCommand({
+            ...common, transactionId, ...bound, includeResultMetadata: true,
+          }));
+          if (!runtimeCredentialAdmitted(admission)) throw new RdsDataDatabaseError("configuration_invalid");
           await client.send(new ExecuteStatementCommand({
             ...common,
             transactionId,

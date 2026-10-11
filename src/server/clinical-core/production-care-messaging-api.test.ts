@@ -98,6 +98,8 @@ describe('unreleased care messaging API boundary', () => {
       async send(command) {
         const name = (command as { constructor: { name: string } }).constructor.name;
         if (name === 'BeginTransactionCommand') return { transactionId: 'fictional' };
+        if (name === 'ExecuteStatementCommand' && (command as unknown as { input: { sql: string } }).input.sql.includes('clinical-runtime-credential/1'))
+          return {columnMetadata:[{name:'runtime_credential_admitted'}],records:[[{booleanValue:true}]]};
         if (name === 'ExecuteStatementCommand' && (command as unknown as { input: { sql: string } }).input.sql !== 'set local role clinical_core_api') {
           throw Object.assign(new Error('care_message_consent_required'), { name: 'DatabaseErrorException' });
         }

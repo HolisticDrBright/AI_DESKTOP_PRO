@@ -27,6 +27,9 @@ function client(respond?: (seen: Seen) => Record<string, unknown> | Promise<Reco
           input: (command as { input: Record<string, unknown> }).input,
         };
         calls.push(item);
+        if (item.name === "ExecuteStatementCommand" && String(item.input.sql).includes("clinical-runtime-credential/1")) {
+          return { columnMetadata: [{ name: "runtime_credential_admitted" }], records: [[{ booleanValue: true }]] };
+        }
         if (respond) return respond(item);
         if (item.name === "BeginTransactionCommand") return { transactionId: "tx-1" };
         return {};
@@ -39,8 +42,8 @@ describe("Aurora RDS Data API transaction adapter", () => {
   test('Fullscript requests assume only the dedicated worker role, before any application query',async()=>{
     const mock=client();
     await createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(tx=>tx.query('select 1'));
-    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','ExecuteStatementCommand','CommitTransactionCommand']);
-    expect(mock.calls.filter(c=>c.name==='ExecuteStatementCommand').map(c=>c.input.sql))
+    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','ExecuteStatementCommand','ExecuteStatementCommand','CommitTransactionCommand']);
+    expect(mock.calls.filter(c=>c.name==='ExecuteStatementCommand'&&!String(c.input.sql).includes('clinical-runtime-credential/1')).map(c=>c.input.sql))
       .toEqual(['set local role fullscript_draft_worker','select 1']);
   });
   test('an unavailable worker role rolls back without falling back to API or administrative access',async()=>{
@@ -51,8 +54,8 @@ describe("Aurora RDS Data API transaction adapter", () => {
     });
     await expect(createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(tx=>tx.query('select 1')))
       .rejects.toThrow('query_failed');
-    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','RollbackTransactionCommand']);
-    expect(mock.calls[1].input.sql).toBe('set local role fullscript_draft_worker');
+    expect(mock.calls.map(c=>c.name)).toEqual(['BeginTransactionCommand','ExecuteStatementCommand','ExecuteStatementCommand','RollbackTransactionCommand']);
+    expect(mock.calls[2].input.sql).toBe('set local role fullscript_draft_worker');
   });
   test('a failed Fullscript request rolls back its worker transaction and preserves the opaque refusal',async()=>{
     const mock=client();
@@ -141,10 +144,11 @@ describe("Aurora RDS Data API transaction adapter", () => {
 
     expect(result.rows).toEqual([{ id: "opaque-id", active: true }]);
     expect(mock.calls.map((call) => call.name)).toEqual([
-      "BeginTransactionCommand", "ExecuteStatementCommand", "ExecuteStatementCommand", "CommitTransactionCommand",
+      "BeginTransactionCommand", "ExecuteStatementCommand", "ExecuteStatementCommand", "ExecuteStatementCommand", "CommitTransactionCommand",
     ]);
-    expect(mock.calls[1]!.input.sql).toBe("set local role clinical_core_api");
-    expect(mock.calls[2]!.input).toMatchObject({ transactionId: "tx-safe", sql: "select :p1 as id, :p2 as active" });
+    expect(String(mock.calls[1]!.input.sql)).toContain("clinical-runtime-credential/1");
+    expect(mock.calls[2]!.input.sql).toBe("set local role clinical_core_api");
+    expect(mock.calls[3]!.input).toMatchObject({ transactionId: "tx-safe", sql: "select :p1 as id, :p2 as active" });
   });
 
   test("administrative migration transactions do not assume the request role", async () => {

@@ -91,13 +91,15 @@ describe('actual RDS SDK middleware with fictional HTTP transport only', () => {
           const endpoint = request.path.split('/').at(-1)!;
           const action = endpoint === 'Execute' ? 'ExecuteStatement' : endpoint;
           const body = JSON.parse(String(request.body)) as { sql?: string };
-          calls.push(action === 'ExecuteStatement' && body.sql?.startsWith('set local role') ? 'role' : action);
+          const credentialCheck = action === 'ExecuteStatement' && body.sql?.includes('clinical-runtime-credential/1');
+          calls.push(credentialCheck ? 'credential' : action === 'ExecuteStatement' && body.sql?.startsWith('set local role') ? 'role' : action);
           if (action === 'BeginTransaction' && stage === 'begin'
             || action === 'ExecuteStatement' && body.sql?.startsWith('insert ') && stage === 'query'
             || action === 'CommitTransaction' && stage === 'commit') return failure(kind);
           // Simulate uncertain rollback as well: it must not repeat or convert
           // the original failure to success/deletion evidence.
           if (action === 'RollbackTransaction') return failure(kind);
+          if (credentialCheck) return response({columnMetadata:[{name:'runtime_credential_admitted'}],records:[[{booleanValue:true}]]});
           return response(action === 'BeginTransaction' ? { transactionId: 'fictional-tx' } : {});
         } } });
       const database = createRdsDataClinicalCoreDatabase({ clusterArn: parameters.resourceArn,
@@ -106,6 +108,7 @@ describe('actual RDS SDK middleware with fictional HTTP transport only', () => {
         await expect(database.transaction(tx => tx.query('insert into fictional_table values(1)')))
           .rejects.toThrow(stage === 'begin' ? 'transaction_failed' : 'query_failed');
         expect(calls.filter(c => c === 'BeginTransaction')).toHaveLength(1);
+        expect(calls.filter(c => c === 'credential')).toHaveLength(stage === 'begin' ? 0 : 1);
         expect(calls.filter(c => c === 'ExecuteStatement')).toHaveLength(stage === 'begin' ? 0 : 1);
         expect(calls.filter(c => c === 'CommitTransaction')).toHaveLength(stage === 'commit' ? 1 : 0);
         expect(calls.filter(c => c === 'RollbackTransaction')).toHaveLength(stage === 'begin' ? 0 : 1);
