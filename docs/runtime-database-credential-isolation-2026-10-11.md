@@ -222,3 +222,55 @@ and deployment require their respective reviewed authority. None is authorized
 by this source preparation, an old schema approval or a fictional test digest.
 Then prove actual-source admission, owner isolation, private-table/admin-role
 denials and rollback on the managed target before deploying guarded candidates.
+
+## Foundation credential declaration observation
+
+The normal full suite at source `7b6e4a5b303ac4a8bcf655ebbba293eb1f648181`
+finished with three foundation-observer failures, 7,229 passes and 11 skips.
+Exact CI38135961227 failed in the normal-unit and inventory-configuration jobs
+for the same three cases. These are source regressions, not timing failures.
+
+The fixture attempted to resolve new conditional outputs without supplying the
+new parameters or excluding inactive outputs. After the fixture was corrected
+to represent CloudFormation parameters and active outputs, the production
+observer itself refused the complete parameter set: it still expected only the
+old four parameters. Seven cases failed before the source repair, including
+the old positive infrastructure checks and new credential-binding cases.
+
+The observer now supplies all three declared runtime parameters explicitly.
+An unbound foundation requires empty values and no conditional credential
+outputs. A bound foundation requires an exact `runtimeCredentials` object
+containing `apiSecretArn`, `fullscriptWorkerSecretArn` and `reviewSha256`.
+Namespaces, account, region, independent secrets and a nonzero review digest
+are checked before cloud reads. The unchanged foundation rules are also
+evaluated. Actual parameter and output comparisons still reject missing,
+extra, changed or inactive-output substitutions; repeated stack reads detect
+ordinary drift. Missing references never receive a permissive fallback.
+
+The report distinguishes observed declaration bindings from credential
+qualification. It returns `runtimeCredentialsQualified: false`, with no
+acceptance, review, delivery, mutation or PHI claim. Matching declarations do
+not prove secret contents, database grants or IAM effectiveness. The fixture
+uses fictional ARNs and a fictional review digest; it creates no AWS resource
+and supplies no human review.
+
+Malformed root bindings and explicitly malformed credential objects also
+return `foundation_binding_refused` before cloud reads. One new test exposed
+an early `Object.hasOwn` call on null; that failure was reproduced and fixed.
+The four focused observer/stack/fleet-orchestration/credential files pass 99
+tests, and typecheck/lint pass. Record the successor normal whole-suite and
+exact-head CI only after their own terminal observations.
+
+The existing thirteen-file inventory qualification target suite passes all 232
+tests and its verifier build passes. Production-core, compatibility, operation
+inventory, stub-reset and Core gates pass. These source checks do not install
+the new foundation or establish the runtime login permissions.
+
+The generic inventory-fleet coordinator still derives foundation and bounded
+administrative-read bindings from the legacy generic database field. It does
+not yet carry the separately reviewed Fullscript worker binding. Complete its
+versioned credential mapping and operator-specific reads before using it for
+a separated-credential fleet. The direct foundation observer repair does not
+complete that integration or permit the administrative secret as a request
+credential. Hosted credential provisioning, the exact reviewed foundation
+successor, managed positive/negative acceptance and deployment remain open.

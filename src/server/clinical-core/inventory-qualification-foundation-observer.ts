@@ -3,14 +3,15 @@ import { buildQualificationFoundation } from '../../../scripts/build-aws-qualifi
 import { inventoryCanonical, inventoryRecord, inventoryRefuse, inventorySha, type InventoryCandidateArtifact, type InventoryTemplate } from './inventory-qualification-artifacts';
 import { inventoryObservedPolicy, inventoryServiceReader, type InventoryServiceRead } from './inventory-qualification-service-observer';
 import { inspectInventoryStackDeclarations, inventoryStackReader, type InventoryStackRead } from './inventory-qualification-stack-observer';
-import type { InventoryCandidateTarget } from './inventory-qualification-target';
+import { inventoryRules, type InventoryCandidateTarget } from './inventory-qualification-target';
 
 const account = '588966314750', region = 'us-east-2';
 // The infrastructure preparation has its own historical source identity. It is
 // never substituted for the current candidate fleet's source identity.
 export const INVENTORY_FOUNDATION_BASE = '12bc93e4e372b99fa91446463fa40b36376077ff';
 export type InventoryFoundationBinding = { foundationStackName: string; databaseClusterArn: string; databaseSecretArn: string;
-  apiId: string; apiOrigin: string; artifactBucket: string; exportBucket: string };
+  apiId: string; apiOrigin: string; artifactBucket: string; exportBucket: string;
+  runtimeCredentials?: { apiSecretArn: string; fullscriptWorkerSecretArn: string; reviewSha256: string } };
 type Row = Record<string, unknown>;
 const object = (v: unknown): Row => inventoryRecord(v) ? v : inventoryRefuse('foundation_shape_refused');
 const rows = (v: unknown): Row[] => Array.isArray(v) && v.length <= 512 ? v.map(object) : inventoryRefuse('foundation_shape_refused');
@@ -22,7 +23,10 @@ function parse(v: unknown): unknown {
   try { return JSON.parse(v); } catch { return inventoryRefuse('foundation_shape_refused'); }
 }
 function validateBinding(b: InventoryFoundationBinding) {
-  if (!inventoryRecord(b) || Object.keys(b).sort().join(',') !== 'apiId,apiOrigin,artifactBucket,databaseClusterArn,databaseSecretArn,exportBucket,foundationStackName'
+  if (!inventoryRecord(b)) return inventoryRefuse('foundation_binding_refused');
+  const expected = ['apiId', 'apiOrigin', 'artifactBucket', 'databaseClusterArn', 'databaseSecretArn', 'exportBucket', 'foundationStackName'];
+  if (Object.hasOwn(b, 'runtimeCredentials')) expected.push('runtimeCredentials');
+  if (Object.keys(b).sort().join(',') !== expected.sort().join(',')
     || !/^[A-Za-z][A-Za-z0-9-]{0,127}$/.test(b.foundationStackName) || !/^[a-z0-9]{10}$/.test(b.apiId)
     || b.apiOrigin !== `https://${b.apiId}.execute-api.${region}.amazonaws.com`
     || b.artifactBucket !== `alp-qualification-code-${account}-${region}` || b.exportBucket !== `alp-qualification-exports-${account}-${region}`)
@@ -30,6 +34,17 @@ function validateBinding(b: InventoryFoundationBinding) {
   const template = buildQualificationFoundation();
   if (!template.Parameters.DatabaseClusterArn.AllowedValues.includes(b.databaseClusterArn)
     || !new RegExp(template.Parameters.DatabaseSecretArn.AllowedPattern).test(b.databaseSecretArn)) return inventoryRefuse('foundation_binding_refused');
+  const r = b.runtimeCredentials;
+  if (Object.hasOwn(b, 'runtimeCredentials') && (!inventoryRecord(r)
+    || Object.keys(r).sort().join(',') !== 'apiSecretArn,fullscriptWorkerSecretArn,reviewSha256'
+    || typeof r.apiSecretArn !== 'string' || !r.apiSecretArn
+    || typeof r.fullscriptWorkerSecretArn !== 'string' || !r.fullscriptWorkerSecretArn
+    || typeof r.reviewSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(r.reviewSha256) || /^0+$/.test(r.reviewSha256)
+    || !new RegExp(template.Parameters.RuntimeApiDatabaseSecretArn.AllowedPattern).test(r.apiSecretArn)
+    || !new RegExp(template.Parameters.FullscriptWorkerDatabaseSecretArn.AllowedPattern).test(r.fullscriptWorkerSecretArn)
+    || new Set([b.databaseSecretArn, r.apiSecretArn, r.fullscriptWorkerSecretArn]).size !== 3)) return inventoryRefuse('foundation_binding_refused');
+  return { RuntimeApiDatabaseSecretArn: r?.apiSecretArn ?? '', FullscriptWorkerDatabaseSecretArn: r?.fullscriptWorkerSecretArn ?? '',
+    RuntimeCredentialReviewSha256: r?.reviewSha256 ?? '' };
 }
 function tags(input: unknown, expected: unknown, stackId: string, stackName: string, logicalId: string, map = false) {
   const raw = map ? Object.entries(object(input)).map(([Key, Value]) => ({ Key, Value })) : rows(input);
@@ -89,7 +104,7 @@ function configuration(service: string, operation: string, supplied: unknown): u
  * ordinary drift, not atomicity. No caller assertion can issue acceptance. */
 export async function observeInventoryFoundation(supplied: InventoryFoundationBinding,
   transport: InventoryServiceRead = inventoryServiceReader(), stacks: InventoryStackRead = inventoryStackReader()) {
-  const b = structuredClone(supplied); validateBinding(b);
+  const b = structuredClone(supplied), runtimeParameters = validateBinding(b);
   const observations: Array<{ service: string; operation: string; parameters: Record<string, string | string[]>; digest: string }> = [];
   const read: InventoryServiceRead = async (service, operation, parameters) => {
     const value = await transport(service, operation, parameters);
@@ -106,7 +121,8 @@ export async function observeInventoryFoundation(supplied: InventoryFoundationBi
     template, packages: [], bindings: [] };
   const candidate: InventoryCandidateTarget = { candidate: artifact.candidate, stackName: b.foundationStackName, templateSha256,
     manifestSha256: templateSha256, packages: [], parameters: { DatabaseClusterArn: b.databaseClusterArn, DatabaseSecretArn: b.databaseSecretArn,
-      BaseSourceCommit: INVENTORY_FOUNDATION_BASE, TemplateSha256: templateSha256 } };
+      ...runtimeParameters, BaseSourceCommit: INVENTORY_FOUNDATION_BASE, TemplateSha256: templateSha256 } };
+  inventoryRules(template, candidate.parameters);
   const initial = { stack: await stacks('describe-stacks', b.foundationStackName), template: await stacks('get-template', b.foundationStackName),
     resources: await stacks('list-stack-resources', b.foundationStackName) };
   const snapshot = inspectInventoryStackDeclarations(candidate, artifact, initial), o = snapshot.outputs;
@@ -229,6 +245,10 @@ export async function observeInventoryFoundation(supplied: InventoryFoundationBi
   return { contract: 'inventory-qualification-foundation-observation/1', principalVerified: true, foundationInfrastructureVerified: true,
     foundationStackId: snapshot.stackId, foundationBaseSourceCommit: INVENTORY_FOUNDATION_BASE, foundationTemplateSha256: templateSha256,
     resources: covered.size, observations: observations.length, observationSha256: inventorySha(inventoryCanonical(observations)),
+    runtimeCredentialBindingsObserved: b.runtimeCredentials !== undefined,
+    runtimeCredentialBindingsSha256: b.runtimeCredentials === undefined ? null
+      : inventorySha(inventoryCanonical({ operatorDatabaseSecretArn: b.databaseSecretArn, ...b.runtimeCredentials })),
+    runtimeCredentialsQualified: false,
     dependenciesVerified: false, sharedApiInventoryVerified: false, uploadedVersionsVerified: false, wholeLedgerVerified: false,
     liveFleetVerified: false, acceptance: false, alarmDeliveryVerified: false, humanReviewsVerified: false, phiAllowed: false, mutations: false };
 }

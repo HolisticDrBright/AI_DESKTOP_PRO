@@ -3,6 +3,7 @@ import { buildQualificationFoundation } from '../../../scripts/build-aws-qualifi
 import { inventoryCanonical, inventorySha, type InventoryTemplate } from './inventory-qualification-artifacts';
 import { INVENTORY_FOUNDATION_BASE, inventoryFoundationLifecycle, observeInventoryFoundation, type InventoryFoundationBinding } from './inventory-qualification-foundation-observer';
 import { resolveInventoryTemplate, type InventoryStackRead } from './inventory-qualification-stack-observer';
+import { inventoryCondition } from './inventory-qualification-target';
 import { inventoryServiceReader, type InventoryServiceRead } from './inventory-qualification-service-observer';
 import type { execFileSync } from 'node:child_process';
 
@@ -11,19 +12,27 @@ const account = '588966314750', region = 'us-east-2';
 const arn = (service: string, tail: string) => `arn:aws:${service}:${region}:${account}:${tail}`;
 const obj = (v: unknown) => v as R;
 const arr = (v: unknown) => v as R[];
-function fixture() {
+const runtimeCredentials = {
+  apiSecretArn: arn('secretsmanager', 'secret:alp/qualification/runtime-api-fictional-Ab1234'),
+  fullscriptWorkerSecretArn: arn('secretsmanager', 'secret:alp/qualification/fullscript-worker-fictional-Cd5678'),
+  reviewSha256: 'c'.repeat(64),
+};
+function fixture(runtime?: InventoryFoundationBinding['runtimeCredentials']) {
   const template = buildQualificationFoundation() as InventoryTemplate;
   const binding: InventoryFoundationBinding = { foundationStackName: 'fictional-qualification-foundation',
     databaseClusterArn: String(template.Parameters.DatabaseClusterArn.AllowedValues![0]),
     databaseSecretArn: arn('secretsmanager', 'secret:rds!cluster-fictional-secret'), apiId: 'abcdefghij',
     apiOrigin: 'https://abcdefghij.execute-api.us-east-2.amazonaws.com',
-    artifactBucket: `alp-qualification-code-${account}-${region}`, exportBucket: `alp-qualification-exports-${account}-${region}` };
+    artifactBucket: `alp-qualification-code-${account}-${region}`, exportBucket: `alp-qualification-exports-${account}-${region}`,
+    ...(runtime === undefined ? {} : { runtimeCredentials: runtime }) };
   const stackId = arn('cloudformation', `stack/${binding.foundationStackName}/fictional`);
   const logs = '/aws/apigateway/qualification/abcdefghij', topic = arn('sns', 'ai-clinical-core-qualification-alarms');
   const refs = { Api: binding.apiId, ExportKey: '11111111-1111-4111-8111-111111111111', LogsKey: '22222222-2222-4222-8222-222222222222',
     CodeBucket: binding.artifactBucket, ExportBucket: binding.exportBucket, CodeBucketPolicy: binding.artifactBucket, ExportBucketPolicy: binding.exportBucket,
     AccessLogs: logs, Stage: '$default', AlarmTopic: topic, AlarmTopicPolicy: topic, ApiFailureAlarm: 'ai-clinical-core-qualification-api-failures' };
   const params = { DatabaseClusterArn: binding.databaseClusterArn, DatabaseSecretArn: binding.databaseSecretArn,
+    RuntimeApiDatabaseSecretArn: runtime?.apiSecretArn ?? '', FullscriptWorkerDatabaseSecretArn: runtime?.fullscriptWorkerSecretArn ?? '',
+    RuntimeCredentialReviewSha256: runtime?.reviewSha256 ?? '',
     BaseSourceCommit: INVENTORY_FOUNDATION_BASE, TemplateSha256: inventorySha(JSON.stringify(template, null, 2) + '\n') };
   const attributes = { 'ExportKey.Arn': arn('kms', `key/${refs.ExportKey}`), 'LogsKey.Arn': arn('kms', `key/${refs.LogsKey}`),
     'CodeBucket.Arn': `arn:aws:s3:::${binding.artifactBucket}`, 'ExportBucket.Arn': `arn:aws:s3:::${binding.exportBucket}`,
@@ -34,7 +43,9 @@ function fixture() {
   const snapshots: Record<string, unknown> = {
     'describe-stacks': { Stacks: [{ StackName: binding.foundationStackName, StackId: stackId, StackStatus: 'CREATE_COMPLETE',
       Parameters: Object.entries(params).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })),
-      Outputs: Object.entries(template.Outputs).map(([OutputKey, v]) => ({ OutputKey, OutputValue: String(resolveInventoryTemplate(obj(v).Value, context)) })) }] },
+      Outputs: Object.entries(template.Outputs)
+        .filter(([, v]) => obj(v).Condition === undefined || inventoryCondition({ Condition: obj(v).Condition }, template, context.parameters) === true)
+        .map(([OutputKey, v]) => ({ OutputKey, OutputValue: String(resolveInventoryTemplate(obj(v).Value, context)) })) }] },
     'get-template': { TemplateBody: template }, 'list-stack-resources': { StackResourceSummaries: Object.entries(template.Resources).map(([id, r]) => ({
       LogicalResourceId: id, ResourceType: r.Type, PhysicalResourceId: refs[id as keyof typeof refs], ResourceStatus: 'CREATE_COMPLETE' })) },
   };
@@ -100,6 +111,81 @@ it('observes all twelve foundation resources, principal and repeats read-only st
   expect(report.principalVerified).toBe(true); expect(report.foundationInfrastructureVerified).toBe(true);
   for (const flag of ['dependenciesVerified', 'sharedApiInventoryVerified', 'uploadedVersionsVerified', 'wholeLedgerVerified', 'liveFleetVerified',
     'acceptance', 'alarmDeliveryVerified', 'humanReviewsVerified', 'phiAllowed', 'mutations'] as const) expect(report[flag]).toBe(false);
+});
+it('observes explicit empty runtime parameters and absent conditional outputs without inferring credentials', async () => {
+  const f = fixture(), stack = arr(obj(f.snapshots['describe-stacks']).Stacks)[0];
+  expect(arr(stack.Parameters).filter(p => /Runtime|Fullscript/.test(String(p.ParameterKey))).map(p => p.ParameterValue)).toEqual(['', '', '']);
+  expect(arr(stack.Outputs).some(p => /RuntimeApi|FullscriptWorker|RuntimeCredentialReview/.test(String(p.OutputKey)))).toBe(false);
+  const report = await observeInventoryFoundation(f.binding, f.transport, f.stacks);
+  expect(report.runtimeCredentialBindingsObserved).toBe(false);
+  expect(report.runtimeCredentialsQualified).toBe(false);
+});
+it('binds all three supplied runtime parameters and outputs without certifying login grants or review approval', async () => {
+  const f = fixture(runtimeCredentials);
+  const report = await observeInventoryFoundation(f.binding, f.transport, f.stacks);
+  expect(report.runtimeCredentialBindingsObserved).toBe(true);
+  expect(report.runtimeCredentialsQualified).toBe(false);
+  expect(report.humanReviewsVerified).toBe(false);
+  expect(report.acceptance).toBe(false);
+  expect(report.phiAllowed).toBe(false);
+});
+it('refuses partial invalid foreign or administrative runtime bindings before cloud reads', async () => {
+  const changes: Array<(r: R) => void> = [
+    r => { delete r.apiSecretArn; }, r => { delete r.fullscriptWorkerSecretArn; }, r => { delete r.reviewSha256; },
+    r => { r.apiSecretArn = ''; }, r => { r.fullscriptWorkerSecretArn = ''; }, r => { r.reviewSha256 = ''; },
+    r => { r.reviewSha256 = '0'.repeat(64); }, r => { r.reviewSha256 = 'C'.repeat(64); },
+    r => { r.apiSecretArn = arn('secretsmanager', 'secret:rds!cluster-fictional-secret'); },
+    r => { r.fullscriptWorkerSecretArn = r.apiSecretArn; },
+    r => { r.apiSecretArn = runtimeCredentials.apiSecretArn.replace(account, '173535830222'); },
+    r => { r.fullscriptWorkerSecretArn = runtimeCredentials.fullscriptWorkerSecretArn.replace(region, 'us-east-1'); },
+    r => { r.extra = 'unreviewed'; },
+  ];
+  for (const change of changes) {
+    const f = fixture(runtimeCredentials), changed = structuredClone(f.binding);
+    change(obj(changed.runtimeCredentials));
+    await expect(observeInventoryFoundation(changed, f.transport, f.stacks)).rejects.toThrow('foundation_binding_refused');
+    expect(f.calls()).toBe(0);
+  }
+});
+it('refuses malformed root or explicit malformed credential objects before cloud reads', async () => {
+  for (const value of [null, undefined, true, 'binding', [], 1]) {
+    const f = fixture();
+    await expect(observeInventoryFoundation(value as unknown as InventoryFoundationBinding, f.transport, f.stacks)).rejects.toThrow('foundation_binding_refused');
+    expect(f.calls()).toBe(0);
+  }
+  for (const value of [null, undefined, true, 'credentials', [], 1, {}]) {
+    const f = fixture(), changed = { ...f.binding, runtimeCredentials: value } as unknown as InventoryFoundationBinding;
+    await expect(observeInventoryFoundation(changed, f.transport, f.stacks)).rejects.toThrow('foundation_binding_refused');
+    expect(f.calls()).toBe(0);
+  }
+});
+it('refuses changed missing or extra runtime parameters and conditional outputs through the real declaration observer', async () => {
+  for (const field of ['RuntimeApiDatabaseSecretArn', 'FullscriptWorkerDatabaseSecretArn', 'RuntimeCredentialReviewSha256']) {
+    for (const section of ['Parameters', 'Outputs']) {
+      for (const remove of [false, true]) {
+        const f = fixture(runtimeCredentials), stack = arr(obj(f.snapshots['describe-stacks']).Stacks)[0];
+        const key = section === 'Parameters' ? 'ParameterKey' : 'OutputKey';
+        const valueKey = section === 'Parameters' ? 'ParameterValue' : 'OutputValue';
+        const rows = arr(stack[section]);
+        if (remove) stack[section] = rows.filter(r => r[key] !== field);
+        else rows.find(r => r[key] === field)![valueKey] = 'wrong-binding';
+        await expect(observeInventoryFoundation(f.binding, f.transport, f.stacks)).rejects.toThrow();
+      }
+    }
+  }
+  const unbound = fixture(), stack = arr(obj(unbound.snapshots['describe-stacks']).Stacks)[0];
+  arr(stack.Outputs).push({ OutputKey: 'RuntimeApiDatabaseSecretArn', OutputValue: runtimeCredentials.apiSecretArn });
+  await expect(observeInventoryFoundation(unbound.binding, unbound.transport, unbound.stacks)).rejects.toThrow('stack_outputs_refused');
+});
+it('detects a runtime binding changed between repeated stack reads', async () => {
+  const f = fixture(runtimeCredentials); let reads = 0;
+  await expect(observeInventoryFoundation(f.binding, f.transport, async (operation, name) => {
+    const result = await f.stacks(operation, name);
+    if (operation === 'describe-stacks' && ++reads === 2) {
+      arr(arr(obj(result).Stacks)[0].Outputs).find(r => r.OutputKey === 'RuntimeApiDatabaseSecretArn')!.OutputValue = 'changed';
+    }
+    return result;
+  })).rejects.toThrow('foundation_configuration_refused');
 });
 it('rejects altered infrastructure, missing resources, keys, policies, lifecycle, public API and stage settings from an admitted baseline', async () => {
   const baseline = fixture(); await observeInventoryFoundation(baseline.binding, baseline.transport, baseline.stacks);
