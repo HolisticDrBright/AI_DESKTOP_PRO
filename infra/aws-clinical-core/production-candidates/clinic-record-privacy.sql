@@ -34,8 +34,10 @@
 --      The wire form of an item is the exact UTF-8 text that was digested
 --      (payloadText, payloadSha256, byteLength): the device verifies the bytes
 --      it received before it parses them, and a decimal such as 1.20 or
---      0.0000001 is displayed as written. (Revision 2 of this candidate; the
---      first revision returned a re-serializable object and was never applied.)
+--      0.0000001 is displayed as written, and timestamps are rendered in UTC
+--      whatever the session TimeZone. (Revision 3 of this candidate: revision
+--      1 returned a re-serializable object, revision 2 rendered timestamps in
+--      the session zone; neither was applied anywhere.)
 --
 --   4. clinical_private.clinic_disclosure_releases — the disclosure authority.
 --      Fulfilling a copy requires a live, reviewed release for this organization
@@ -413,7 +415,8 @@ revoke all on function clinical_private.clinic_record_preview(uuid,uuid,text[]) 
 -- and counted as omitted, never silently dropped or claimed. Returns the copy id.
 create function clinical_private.clinic_record_build_copy(_r clinical_core.clinic_record_requests, _actor uuid, _include text[],
   _excluded jsonb, _release clinical_private.clinic_disclosure_releases) returns uuid
-language plpgsql security definer set search_path='' as $$
+-- The digested text must not depend on the session's TimeZone: timestamps are rendered in UTC whatever the connection set.
+language plpgsql security definer set search_path='' set "TimeZone"='UTC' as $$
 declare _copy uuid:=gen_random_uuid(); _now timestamptz:=clock_timestamp(); _s text; _seq integer; _rec record;
   _payload jsonb; _text text; _bytes integer; _items integer:=0; _total bigint:=0; _omitted integer; _included integer;
   _sections jsonb:='[]'::jsonb; _preview jsonb; _p jsonb; _manifest jsonb; _manifest_sha text; _x jsonb;

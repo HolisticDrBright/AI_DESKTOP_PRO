@@ -15,7 +15,7 @@ const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clini
   encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,
 }));
 const c = artifact.candidate;
-if (c.contract !== 'clinic-record-privacy-candidate/2' || c.migrationCount !== 114 || artifact.manifest.migrations.length !== 114
+if (c.contract !== 'clinic-record-privacy-candidate/3' || c.migrationCount !== 114 || artifact.manifest.migrations.length !== 114
   || c.activation !== 'blocked' || c.phiAllowed !== false || c.deployment !== 'not_deployed' || c.seededDisclosureReleases !== false) throw new Error('clinic_records_build_release_invalid');
 const sql = artifact.files[artifact.manifest.migrations[113].file];
 const match = /create function clinical_core\.clinic_record_request\(_request jsonb\) returns jsonb\nlanguage plpgsql security definer set search_path='' as \$\$([^]*?)\$\$;/.exec(sql);

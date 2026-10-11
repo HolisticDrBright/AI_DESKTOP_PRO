@@ -72,7 +72,7 @@ retention duration, deletion guarantee or disclosure approval is invented.
 | `clinic-record-copy/1` (manifest) | same files; produced by `clinical_private.clinic_record_build_copy` |
 | `clinic-record-journal/1` (V2 encrypted pending-command journal) | `expo/lib/clinicRecords/clinicRecordJournal.ts` |
 | `clinic-records-source-candidate/1` (bundled handler + SQL + manifest) | `scripts/build-clinic-records-source-candidate.mjs` |
-| `clinic-record-privacy-candidate/2` (114-migration artifact; `/1` returned a re-serializable object and is superseded, never applied) | `scripts/clinic-record-privacy-candidate.mjs` |
+| `clinic-record-privacy-candidate/3` (114-migration artifact; `/1` and `/2` superseded, never applied) | `scripts/clinic-record-privacy-candidate.mjs` |
 | `clinic-records-deployment/1` (compiled handler, deterministic zip, CloudFormation template, manifest) | `scripts/build-aws-clinic-records.mjs`, `src/server/clinical-core/clinic-records-deployment.ts`, `clinic-records-lambda.ts` |
 | `clinic-records-qualification-binding/1`, `clinic-records-qualification-report/1`, `clinic-records-qualification-cases/1` (Codex's synthetic hosted qualification: target binding, mandatory cases, report check) | `scripts/clinic-records-qualification-report.mjs` |
 
@@ -102,17 +102,20 @@ the database test regenerates and compares it, and the V2 client test replays
 it through the real transport (`AUDIT reads a valid decimal lab payload digested
 by PostgreSQL jsonb`).
 
-## The forward candidate (114, revision 2)
+## The forward candidate (114, revision 3)
 
 `infra/aws-clinical-core/production-candidates/clinic-record-privacy.sql` →
-`20261010230000_production_clinic_record_privacy.sql`, built by `npm run build:clinic-record-privacy-candidate` on the
+`20261011000000_production_clinic_record_privacy.sql`, built by `npm run build:clinic-record-privacy-candidate` on the
 EXACT 113 telehealth-chart-lifecycle/3 candidate (parent pins: count 113, ledger
-`0abad35b…`, assembly `2cb4ca8c…`). SQL SHA-256 `70252a4917af58b10153760afa4405217b9dc28cc05d749c5a9f790d4cffc51a`,
-114 ledger `91da02f57bfe65fe4c44bf3e686b7e98cd160a3b85e1d80d9bf09a81f1af3731`, assembly
-`dcfb2f524154405303d30f07763eb75b34a8c8eee13ad9318b94ee81451504fc`. It alters no historical migration, seeds
+`0abad35b…`, assembly `2cb4ca8c…`). SQL SHA-256 `0752dde7fdd2396d9cd62d3a9feb80ea0cd504d6bf50d788ee95f46aa0890327`,
+114 ledger `a6d5f7b8660e0f6b902738c5f1c19d25e59d108ce59b9f385ec1bf72f54f85e8`, assembly
+`a743b0eb8f9661aadcca84d93912ee4a2e1b31556825b7e08d4d375b9b3de9cb`. It alters no historical migration, seeds
 nothing (no request, copy, release), and is not an instruction to apply. The
-first revision (`20261010210000`, `clinic-record-privacy-candidate/1`) is
-superseded by this distinct version and hash; it was never applied anywhere.
+first revision (`20261010210000`, `/1`, re-serializable objects) and the
+second (`20261010230000`, `/2`, timestamps rendered in the session TimeZone)
+are superseded by this distinct version and hash; neither was applied anywhere.
+The copy builder sets `TimeZone='UTC'` on its own definition so the digested
+bytes never depend on the connection's clock.
 The candidate still depends on chart lifecycle `/3`: it cannot be deployed over
 the selected `/4` + Zoom-host + key-fence chain by changing a count; Codex
 supplies the selected parent and mapping before a combined release.

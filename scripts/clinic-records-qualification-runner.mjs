@@ -235,7 +235,7 @@ export async function createHostedPorts({ apiId, clusterArn, secretArn, database
   if (!/^[a-z0-9]{10}$/.test(apiId ?? '') || database !== TARGET.database || !/^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(clusterArn ?? '')
     || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:[A-Za-z0-9/_+=.@!-]+$/.test(secretArn ?? '') || region !== 'us-east-2') throw new ClinicRecordsRunnerError('hosted_target_refused');
   const { RDSDataClient, ExecuteStatementCommand } = await import('@aws-sdk/client-rds-data');
-  const client = new RDSDataClient({ region });
+  const client = new RDSDataClient({ region, maxAttempts: 1 });
   const origin = `https://${apiId}.execute-api.${region}.amazonaws.com`;
   return {
     http: async (route, token, body) => {

@@ -131,7 +131,7 @@ beforeAll(async () => {
   const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-clinic-record-privacy-candidate.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true })) as Artifact;
   expect(artifact.manifest.migrations).toHaveLength(114);
-  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/2', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
+  expect(artifact.candidate).toMatchObject({ contract: 'clinic-record-privacy-candidate/3', activation: 'blocked', phiAllowed: false, seededDisclosureReleases: false, seededRequests: false });
   pg = new PGlite({ extensions: { pgcrypto } });
   const migrations = artifact.manifest.migrations.map(entry => ({ version: entry.version, name: entry.file.slice(15, -4), sql: artifact.files[entry.file], sha256: sha(artifact.files[entry.file]) }));
   const admin: ClinicalCoreDatabase = { transaction: work => pg.transaction(tx => work({ query: (sql, parameters = []) => tx.query(sql, [...parameters]) })) };

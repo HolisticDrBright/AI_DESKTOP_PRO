@@ -74,7 +74,7 @@ export const CLINIC_RECORDS_QUALIFICATION_CASES = Object.freeze([
 
 export function assertClinicRecordsQualificationBinding(binding, candidate) {
   const t = CLINIC_RECORDS_QUALIFICATION_TARGET;
-  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/2' || candidate.migrationCount !== t.migrationCount
+  if (!record(candidate) || candidate.contract !== 'clinic-record-privacy-candidate/3' || candidate.migrationCount !== t.migrationCount
     || candidate.extensionSha256 !== t.extensionSha256 || !hash.test(candidate.migrationReleaseSha256 ?? '') || candidate.activation !== 'blocked'
     || candidate.phiAllowed !== false || candidate.deployment !== 'not_deployed' || candidate.seededDisclosureReleases !== false
     || candidate.seededRequests !== false) refuse('candidate_refused');

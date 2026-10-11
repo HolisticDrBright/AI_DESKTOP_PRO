@@ -4,8 +4,8 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 export const CLINIC_RECORD_PRIVACY_PARENT = Object.freeze({ count: 113,
   ledger: '0abad35bcaa986799597f4e29525374175b218eb3ea5a9559426252d113a0fab',
   assembly: '2cb4ca8cdfaef25cd2ddfbd12eb1b6bfa6de4e985bfc4bcb22e53f5a01f55ba1' });
-export const CLINIC_RECORD_PRIVACY_SQL_SHA256 = '70252a4917af58b10153760afa4405217b9dc28cc05d749c5a9f790d4cffc51a';
-export const CLINIC_RECORD_PRIVACY_FILE = '20261010230000_production_clinic_record_privacy.sql';
+export const CLINIC_RECORD_PRIVACY_SQL_SHA256 = '0752dde7fdd2396d9cd62d3a9feb80ea0cd504d6bf50d788ee95f46aa0890327';
+export const CLINIC_RECORD_PRIVACY_FILE = '20261011000000_production_clinic_record_privacy.sql';
 const ledger = a => sha(a.manifest.migrations.map(m => m.version + ':' + sha(a.files[m.file])).join('\n'));
 const assembly = a => sha(a.manifest.migrations.map(m => m.version + ':' + m.file + ':' + sha(a.files[m.file])).join('\n'));
 /**
@@ -38,7 +38,7 @@ export function clinicRecordPrivacyCandidate(parent, source) {
   const manifest = { ...parent.manifest, migrations: [...rows, { version: file.slice(0, 14), file }] };
   const files = { ...parent.files, [file]: sql }, artifact = { manifest, files };
   return { ...artifact, releaseHash: assembly(artifact), candidate: {
-    contract: 'clinic-record-privacy-candidate/2', parentMigrationCount: p.count, parentMigrationReleaseSha256: p.ledger,
+    contract: 'clinic-record-privacy-candidate/3', parentMigrationCount: p.count, parentMigrationReleaseSha256: p.ledger,
     parentArtifactSha256: p.assembly, migrationCount: 114, migrationReleaseSha256: ledger(artifact),
     extensionSha256: sha(sql), deployment: 'not_deployed', activation: 'blocked', phiAllowed: false,
     seededApprovals: false, seededConsents: false, seededTransfers: false, seededAdmissionKeys: false,
