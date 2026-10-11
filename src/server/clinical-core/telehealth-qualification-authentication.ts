@@ -21,6 +21,7 @@ const targetSchema = z.object({ contract: z.literal('telehealth-qualification-au
     ctx.addIssue({ code: 'custom', message: 'identity bindings must be distinct' });
 });
 export type TelehealthAuthenticationTarget = z.infer<typeof targetSchema>;
+export const parseTelehealthAuthenticationTarget = (raw: unknown): TelehealthAuthenticationTarget => targetSchema.parse(structuredClone(raw));
 type Pool = 'consumer' | 'workforce';
 type Headers = { headers?: Record<string, string | undefined> };
 type Reader = { send(command: unknown, options: { abortSignal: AbortSignal }): Promise<unknown> };
@@ -72,12 +73,13 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 export function createTelehealthQualificationAuthenticationSource(input: {
   target: unknown; cognito: Reader; jwt: Verifier; now?: () => number;
 }) {
-  const target = targetSchema.parse(structuredClone(input.target));
+  const target = parseTelehealthAuthenticationTarget(input.target);
   const clock = input.now ?? Date.now;
   const receipts = new WeakSet<object>();
   const authenticate = async (event: Headers, identityPool: Pool): Promise<TelehealthAuthenticatedIdentity> => {
     const startedAt = clock();
     if (!Number.isFinite(startedAt) || !['consumer', 'workforce'].includes(identityPool)) refuse();
+    let latestTime = startedAt;
     const headers = Object.entries(event.headers ?? {}).filter(([key]) => key.toLowerCase() === 'authorization');
     if (headers.length !== 1 || typeof headers[0][1] !== 'string' || headers[0][1].length > 16_384) refuse();
     const token = headers[0][1]!.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/)?.[1];
@@ -99,10 +101,11 @@ export function createTelehealthQualificationAuthenticationSource(input: {
     const designated = configured.identities.find(i => i.subject === claims.sub);
     const validateTime = () => {
       const current = clock();
-      if (!Number.isFinite(current) || current < startedAt || claims.exp * 1000 <= current
+      if (!Number.isFinite(current) || current < latestTime || claims.exp * 1000 <= current
         || claims.iat * 1000 > current || claims.auth_time * 1000 > current
         || claims.iat < claims.auth_time || claims.exp <= claims.iat || current - claims.auth_time * 1000 > 900_000) refuse();
       if (signal.aborted) throw new TelehealthAuthenticationError('service_unavailable');
+      latestTime = current;
       return current;
     };
     validateTime();
@@ -165,10 +168,10 @@ export function createTelehealthQualificationAuthenticationSource(input: {
 /** Uses the real verifier and account/region-pinned Cognito client. The target
  * is a SERVER artifact, not proof of deployment or patient authority. */
 export function createNativeTelehealthQualificationAuthentication(rawTarget: unknown) {
-  const target = targetSchema.parse(structuredClone(rawTarget));
+  const target = parseTelehealthAuthenticationTarget(rawTarget);
   const jwt = CognitoJwtVerifier.create([target.consumer, target.workforce].map(p => ({
     userPoolId: p.poolId, tokenUse: 'id' as const, clientId: p.clientId,
   })));
-  const cognito = new CognitoIdentityProviderClient({ region: target.region, maxAttempts: 1 });
+  const cognito = new CognitoIdentityProviderClient({ region: target.region, maxAttempts: 1, ignoreConfiguredEndpointUrls: true });
   return createTelehealthQualificationAuthenticationSource({ target, jwt, cognito });
 }

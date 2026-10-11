@@ -51,6 +51,13 @@ function rig(workforce = true, supplied: unknown = target) {
 }
 afterEach(() => vi.restoreAllMocks());
 
+it('rejects a backwards clock between later Cognito reads even when it remains after the original start', async () => {
+  const r = rig();
+  r.cognito.send.mockImplementationOnce(async () => { r.clock.mockReturnValue(now + 1_000); return structuredClone(r.replies.DescribeUserPoolCommand); });
+  r.cognito.send.mockImplementationOnce(async () => { r.clock.mockReturnValue(now + 500); return structuredClone(r.replies.DescribeUserPoolClientCommand); });
+  await expect(r.run()).rejects.toMatchObject({ category: 'reauth_required' }); expect(r.cognito.send).toHaveBeenCalledTimes(2);
+});
+
 it('verifies a real locally signed token and current workforce MFA before issuing a minimal identity observation', async () => {
   const r = rig(), observation = await r.run();
   expect(observation).toMatchObject({ identityPool: 'workforce', identitySubject: 'fictional-workforce', actorPersonId: workforcePerson,

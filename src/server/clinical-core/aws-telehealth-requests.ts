@@ -63,6 +63,18 @@ const WORKFORCE_VISIT_NOTE_TRANSFER = "POST /clinical-core/workforce/appointment
 const WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE = "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete";
 /** Record lifecycle: every telehealth text location for one visit, with digests — inventory, never deletion authority. */
 const WORKFORCE_VISIT_NOTE_INVENTORY = "GET /clinical-core/workforce/appointments/visits/notes/inventory";
+/** Compiled public route/pool binding for the separate native qualification
+ * factory. Internal events and webhooks are NOT JWT appointment routes. */
+export const TELEHEALTH_PUBLIC_ROUTE_POOLS = Object.freeze(Object.fromEntries([
+  ...[CONSUMER_CREATE, CONSUMER_LIST, CONSUMER_JOIN, CONSUMER_ACTION, CONSUMER_CHANGE_OUTCOME,
+    CONSUMER_PENDING_CHANGE, CONSUMER_RECOVER_CHANGE, CONSUMER_AVAILABILITY, CONSUMER_HOLD,
+    CONSUMER_PAYMENT_PROFILE, CONSUMER_PAYMENT_SETUP, CONSUMER_PAYMENT_AUTHORIZE].map(route => [route, "consumer"] as const),
+  ...[WORKFORCE_LIST, WORKFORCE_ACTION, WORKFORCE_SLOT_LIST, WORKFORCE_SLOT_CREATE, WORKFORCE_PAYMENT,
+    WORKFORCE_VISIT_LIST, WORKFORCE_VISIT_CONSENT_ARTIFACT, WORKFORCE_VISIT_CONSENT, WORKFORCE_VISIT_CONSENT_WITHDRAW,
+    WORKFORCE_VISIT_START, WORKFORCE_VISIT_END, WORKFORCE_VISIT_NOTE, WORKFORCE_VISIT_NOTE_IMPORT,
+    WORKFORCE_VISIT_NOTE_SIGN, WORKFORCE_VISIT_NOTE_TRANSFER, WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE,
+    WORKFORCE_VISIT_NOTE_INVENTORY].map(route => [route, "workforce"] as const),
+])) as Readonly<Record<string, "consumer" | "workforce">>;
 /** The one combined consent a telehealth visit requires. Wording is versioned; the version is recorded, never the text. */
 export const TELEHEALTH_CONSENT_TYPE = "telehealth_recording_combined";
 /** Meeting SDK signatures are short-lived: long enough for a visit, never a standing credential. */
