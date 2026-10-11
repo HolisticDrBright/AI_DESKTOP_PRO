@@ -59,4 +59,17 @@ describe('107 synthetic parent-handler envelope', () => {
     expect(JSON.stringify(response)).not.toContain('private'); expect(response).toMatchObject({ body: '{"error":"service_unavailable"}' });
     expect(response).not.toHaveProperty('headers.x-clinical-execution');
   });
+  it.each(['api', 'worker'] as const)('allows per-invocation trace changes for %s without ignoring authority drift', async kind => {
+    const e = env(), invoke = vi.fn(() => 'fictional-result');
+    const handle = createInventoryQualificationEnvelope(() => e, build(), 'TEST_ACTIVATION', kind, async () => {
+      e._X_AMZN_TRACE_ID = 'fictional-trace-one'; return invoke;
+    });
+    expect(await handle()).toBe('fictional-result');
+    e._X_AMZN_TRACE_ID = 'fictional-trace-two'; expect(await handle()).toBe('fictional-result');
+    delete e._X_AMZN_TRACE_ID; expect(await handle()).toBe('fictional-result');
+    e.EXTRA_REVIEW = 'changed';
+    if (kind === 'worker') await expect(handle()).rejects.toThrow('inventory_qualification_unavailable');
+    else expect(await handle()).toMatchObject({ statusCode: 503 });
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
 });

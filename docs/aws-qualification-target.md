@@ -327,3 +327,12 @@ and the prerequisites the gated capability build-out will need — is maintained
 V2 repository at `expo/docs/aws-work-for-codex-2026-09-29.md`. It supersedes the
 scattered per-document Codex notes as the single place to work from. This document
 remains authoritative for the qualification target's own architecture and policy.
+
+## October 11 successor source proposal
+
+The separate proposed 117-release request artifacts are described in
+`docs/successor-qualification-runtime-2026-10-11.md`. They preserve historical
+107 target/profile guards and do not register a complete successor target,
+deploy a candidate, qualify effective credentials or provide hosted acceptance.
+Additional provider and clinic artifacts and a complete target/observer remain
+required before the successor can be qualified.

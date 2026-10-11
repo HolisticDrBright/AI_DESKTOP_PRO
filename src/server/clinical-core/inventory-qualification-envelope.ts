@@ -9,10 +9,14 @@ type Operation = (...args: unknown[]) => unknown;
  * loaded only after target admission. Environment drift refuses cached parents. */
 export function createInventoryQualificationEnvelope(environment: () => Environment, supplied: InventoryQualificationBuild,
   activationKey: string, kind: 'api' | 'worker', load: () => Promise<Operation>) {
-  const build = structuredClone(supplied), captured = { ...environment() };
+  // Reserved invocation tracing is not deployment authority; only this exact
+  // field may change. Source, reviews, credentials and unknown keys remain bound.
+  // https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html
+  const stableEnvironment = () => Object.fromEntries(Object.entries(environment()).filter(([name]) => name !== '_X_AMZN_TRACE_ID'));
+  const build = structuredClone(supplied), captured = stableEnvironment();
   let parent: Promise<Operation> | undefined;
   const validate = () => {
-    const current = environment(), names = Object.keys(current);
+    const current = stableEnvironment(), names = Object.keys(current);
     if (names.length !== Object.keys(captured).length || names.some(name => current[name] !== captured[name])) {
       throw Error('inventory_qualification_environment_changed');
     }

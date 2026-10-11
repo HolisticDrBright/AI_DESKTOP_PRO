@@ -6,12 +6,14 @@ import { createProductionCareMessaging, createProductionCareMessageExport, Produ
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
+import { assertSuccessorQualificationBinding, type SuccessorQualificationBuild } from './successor-qualification-profile';
 
 export type CareMessagingBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly { schema: string; name: string; sha256: string; callable: boolean }[];
 };
 export type InventoryCareMessagingBuild = InventoryQualificationBuild & Pick<CareMessagingBuild, 'functions'>;
+export type SuccessorCareMessagingBuild = SuccessorQualificationBuild & Pick<CareMessagingBuild, 'functions'>;
 type Environment = Record<string, string | undefined>;
 const hash = /^[a-f0-9]{64}$/, commit = /^[a-f0-9]{40}$/;
 const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_message_receipts',
@@ -19,9 +21,10 @@ const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_m
 
 /** Checks deployment identity, not approval. A well-shaped review hash is never
  * created here or claimed to represent an executed review. */
-function binding(e: Environment, build: CareMessagingBuild | InventoryCareMessagingBuild, inventory: boolean) {
-  if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareMessagingBuild, 'CARE_MESSAGING_ACTIVATION');
-  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== (inventory ? 107 : 106)
+function binding(e: Environment, build: CareMessagingBuild | InventoryCareMessagingBuild | SuccessorCareMessagingBuild, inventory: boolean | 'successor') {
+  if (inventory === 'successor') assertSuccessorQualificationBinding(e, build as SuccessorCareMessagingBuild, 'CARE_MESSAGING_ACTIVATION');
+  else if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareMessagingBuild, 'CARE_MESSAGING_ACTIVATION');
+  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== (inventory === 'successor' ? 117 : inventory ? 107 : 106)
     || e.SOURCE_COMMIT !== build.sourceCommit || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
     || e.CARE_MESSAGING_ACTIVATION !== 'blocked' && e.CARE_MESSAGING_ACTIVATION !== 'approved'
     || e.PHI_ALLOWED !== 'false' && e.PHI_ALLOWED !== 'true' || e.AWS_REGION !== 'us-east-2') throw new Error('binding_refused');
@@ -107,9 +110,15 @@ export function createInventoryCareMessagingHandler(e: Environment, build: Inven
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   return createHandler(e, build, databaseFactory, now, true);
 }
-function createHandler(environment: Environment, supplied: CareMessagingBuild | InventoryCareMessagingBuild,
+/** Separately compiled 117 entry point. Neither older factory admits this build. */
+export function createSuccessorCareMessagingHandler(e: Environment, build: SuccessorCareMessagingBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(e, build, databaseFactory, now, 'successor');
+}
+function createHandler(environment: Environment, supplied: CareMessagingBuild | InventoryCareMessagingBuild | SuccessorCareMessagingBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined,
-  inventory: boolean): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  inventory: boolean | 'successor'): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   try {
     const e = { ...environment }, build = structuredClone(supplied);
     build.functions = validateFunctions(build.functions);

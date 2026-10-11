@@ -11,6 +11,8 @@ import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './
 import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
 import { ADOPTED_INVENTORY_UPGRADE } from './adopted-plan-inventory-schema-upgrade';
+import { assertSuccessorQualificationBinding, type SuccessorQualificationBuild } from './successor-qualification-profile';
+import { SUCCESSOR_QUALIFICATION_RELEASE } from '../../../scripts/successor-qualification-release.mjs';
 
 export type CareConnectionsBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
@@ -18,6 +20,7 @@ export type CareConnectionsBuild = {
   claimFunctions: readonly CareConnectionFunctionBinding[];
 };
 export type InventoryCareConnectionsBuild = InventoryQualificationBuild & Pick<CareConnectionsBuild, 'functions' | 'claimFunctions'>;
+export type SuccessorCareConnectionsBuild = SuccessorQualificationBuild & Pick<CareConnectionsBuild, 'functions' | 'claimFunctions'>;
 type Environment = Record<string, string | undefined>;
 const release = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
 const hash = /^[a-f0-9]{64}$/;
@@ -36,16 +39,23 @@ export function createInventoryCareConnectionsHandler(environment: Environment, 
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   return createHandler(environment, suppliedBuild, databaseFactory, now, true);
 }
-function createHandler(environment: Environment, suppliedBuild: CareConnectionsBuild | InventoryCareConnectionsBuild,
+/** Separately compiled successor; historical factories retain their exact counts. */
+export function createSuccessorCareConnectionsHandler(environment: Environment, suppliedBuild: SuccessorCareConnectionsBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataClinicalCoreDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  return createHandler(environment, suppliedBuild, databaseFactory, now, 'successor');
+}
+function createHandler(environment: Environment, suppliedBuild: CareConnectionsBuild | InventoryCareConnectionsBuild | SuccessorCareConnectionsBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined,
-  inventory: boolean): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  inventory: boolean | 'successor'): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   try {
     const e = { ...environment }, build = structuredClone(suppliedBuild);
-    if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareConnectionsBuild, 'CARE_CONNECTIONS_ACTIVATION');
-    const expectedRelease = inventory ? ADOPTED_INVENTORY_UPGRADE.to : release;
+    if (inventory === 'successor') assertSuccessorQualificationBinding(e, build as SuccessorCareConnectionsBuild, 'CARE_CONNECTIONS_ACTIVATION');
+    else if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareConnectionsBuild, 'CARE_CONNECTIONS_ACTIVATION');
+    const expectedRelease = inventory === 'successor' ? SUCCESSOR_QUALIFICATION_RELEASE.migrationReleaseSha256 : inventory ? ADOPTED_INVENTORY_UPGRADE.to : release;
     const functions = validateCareConnectionFunctions(build.functions);
     const claimFunctions = validateCareClaimFunctions(build.claimFunctions);
-    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== (inventory ? 107 : 106)
+    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== (inventory === 'successor' ? 117 : inventory ? 107 : 106)
       || build.migrationReleaseSha256 !== expectedRelease || e.SOURCE_COMMIT !== build.sourceCommit
       || e.MIGRATION_RELEASE_SHA256 !== expectedRelease || e.AWS_REGION !== 'us-east-2'
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.CONSUMER_ISSUER ?? '')

@@ -162,7 +162,12 @@ jobs:
           npx vitest run src/server/clinical-core/inventory-qualification-envelope.test.ts
           npm run test:inventory-qualification-fleet
           npm run build:inventory-qualification-fleet
-      - name: Exact configuration and artifact byte checks (no AWS observation or activation)
+      - name: Proposed 117 request artifacts and exact bindings (no AWS observation or activation)
+        run: |
+          npm run test:successor-qualification-binding
+          npm run test:successor-qualification-runtime
+          npm run build:successor-qualification-runtime
+      - name: Historical configuration and artifact byte checks (no AWS observation or activation)
         run: |
           npm run test:inventory-qualification-target
           npm run build:inventory-qualification-target
@@ -187,6 +192,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json
           find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
+          find dist/aws-clinical-core/successor-qualification-runtime -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)
     runs-on: ubuntu-latest
