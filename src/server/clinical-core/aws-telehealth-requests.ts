@@ -308,7 +308,7 @@ async function publishSlot(config: TelehealthConfiguration, actor: Actor, value:
     || value.currency !== "USD" || typeof value.cancellationPolicy !== "string" || value.cancellationPolicy.length < 10 || value.cancellationPolicy.length > 1000
     || !Number.isInteger(value.cancellationWindowHours) || Number(value.cancellationWindowHours) < 0 || Number(value.cancellationWindowHours) > 720) throw new TelehealthError("request_invalid");
   const existing = await rawSlots(config, actor.organizationId);
-  if (existing.some((slot) => slot.status !== "booked" && new Date(slot.start) < new Date(end) && new Date(slot.end) > new Date(start))) throw new TelehealthError("conflict");
+  if (existing.some((slot) => new Date(slot.start) < new Date(end) && new Date(slot.end) > new Date(start))) throw new TelehealthError("conflict");
   const slotId = randomUUID(); const now = new Date().toISOString();
   const slot: BookingSlot = { pk: `ORG#${actor.organizationId}`, sk: `SLOT#${start}#${slotId}`, slotId, organizationId: actor.organizationId, start, end, timeZone,
     visitTypes: visitTypes as BookingSlot["visitTypes"], priceMinor: Number(value.priceMinor), currency: "USD", cancellationPolicy: value.cancellationPolicy,
@@ -319,8 +319,8 @@ async function publishSlot(config: TelehealthConfiguration, actor: Actor, value:
 }
 
 async function rawSlots(config: TelehealthConfiguration, organizationId: string) {
-  const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk=:org AND begins_with(sk,:slot)", ExpressionAttributeValues: { ":org": `ORG#${organizationId}`, ":slot": "SLOT#" }, ScanIndexForward: true, Limit: 500 }));
-  return (result.Items ?? []) as BookingSlot[];
+  return await completeTelehealthQuery({ TableName: config.tableName, KeyConditionExpression: "pk=:org AND begins_with(sk,:slot)", ExpressionAttributeValues: { ":org": `ORG#${organizationId}`, ":slot": "SLOT#" }, ScanIndexForward: true, ConsistentRead: true, Limit: 500 },
+    { organizationId, prefix: "SLOT#" }) as BookingSlot[];
 }
 async function listWorkforceSlots(config: TelehealthConfiguration, actor: Actor) { return (await rawSlots(config, actor.organizationId)).map((slot) => publicSlot(slot, true)); }
 async function listAvailability(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
@@ -345,13 +345,70 @@ async function holdSlot(config: TelehealthConfiguration, actor: Actor, value: Re
 function publicSlot(slot: BookingSlot, workforce: boolean) { const result: Record<string, unknown> = { slotId: slot.slotId, start: slot.start, end: slot.end, timeZone: slot.timeZone, visitTypes: slot.visitTypes, priceMinor: slot.priceMinor, currency: slot.currency, cancellationPolicy: slot.cancellationPolicy, cancellationWindowHours: slot.cancellationWindowHours, status: slot.status }; if (workforce) Object.assign(result, { heldBy: slot.heldBy, holdExpiresAt: slot.holdExpiresAt ? new Date(slot.holdExpiresAt * 1000).toISOString() : null }); return result; }
 
 async function listConsumer(config: TelehealthConfiguration, actor: Actor) {
-  const result = await document.send(new QueryCommand({ TableName: config.tableName, IndexName: "ByConsumer", KeyConditionExpression: "gsi1pk = :person", ExpressionAttributeValues: { ":person": `PERSON#${actor.personId}` }, ScanIndexForward: false, Limit: 100 }));
-  return (result.Items ?? []).filter((item) => item.organizationId === actor.organizationId).map((item) => publicItem(item as AppointmentItem, "consumer"));
+  // A GSI cannot provide a strongly consistent read. Exhausting its pages is
+  // not a snapshot or proof that a just-written request is already indexed.
+  const items = await completeTelehealthQuery({ TableName: config.tableName, IndexName: "ByConsumer", KeyConditionExpression: "gsi1pk = :person", ExpressionAttributeValues: { ":person": `PERSON#${actor.personId}` }, ScanIndexForward: false, Limit: 100 },
+    { organizationId: actor.organizationId, prefix: "REQ#", consumerPersonId: actor.personId });
+  return items.filter((item) => item.organizationId === actor.organizationId).map((item) => publicItem(item as AppointmentItem, "consumer"));
 }
 
 async function listWorkforce(config: TelehealthConfiguration, actor: Actor) {
-  const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk = :org AND begins_with(sk, :request)", ExpressionAttributeValues: { ":org": `ORG#${actor.organizationId}`, ":request": "REQ#" }, ScanIndexForward: false, Limit: 200 }));
-  return (result.Items ?? []).map((item) => publicItem(item as AppointmentItem, "workforce"));
+  const items = await completeTelehealthQuery({ TableName: config.tableName, KeyConditionExpression: "pk = :org AND begins_with(sk, :request)", ExpressionAttributeValues: { ":org": `ORG#${actor.organizationId}`, ":request": "REQ#" }, ScanIndexForward: false, ConsistentRead: true, Limit: 200 },
+    { organizationId: actor.organizationId, prefix: "REQ#" });
+  return items.map((item) => publicItem(item as AppointmentItem, "workforce"));
+}
+
+/** Preserve the existing array response only after every page is observed.
+ * An unfinished, failed or inconsistent walk returns no partial records. This
+ * is bounded enumeration, NOT an atomic snapshot, write admission or a cure
+ * for concurrent slot publication. GSI reads remain eventually consistent. */
+async function completeTelehealthQuery(input: ConstructorParameters<typeof QueryCommand>[0], binding: {
+  organizationId: string; prefix: "REQ#" | "SLOT#"; consumerPersonId?: string;
+}): Promise<Record<string, unknown>[]> {
+  const index = binding.consumerPersonId !== undefined;
+  const keyNames = index ? ["pk", "sk", "gsi1pk", "gsi1sk"] : ["pk", "sk"];
+  const validKey = (value: unknown): value is Record<string, string> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const key = value as Record<string, unknown>;
+    if (Object.keys(key).length !== keyNames.length || keyNames.some(name =>
+      typeof key[name] !== "string" || Buffer.byteLength(key[name] as string) > 1024)) return false;
+    const partition = key.pk as string, sort = key.sk as string;
+    return (index ? partition.startsWith("ORG#") && UUID.test(partition.slice(4)) : partition === `ORG#${binding.organizationId}`)
+      && sort.startsWith(binding.prefix) && sort.length > binding.prefix.length
+      && (!index || key.gsi1pk === `PERSON#${binding.consumerPersonId}`
+        && (key.gsi1sk as string).startsWith("REQ#") && (key.gsi1sk as string).length > 4);
+  };
+  const rows: Record<string, unknown>[] = [], seenRows = new Set<string>(), seenEntities = new Set<string>(), seenCursors = new Set<string>();
+  let cursor: Record<string, string> | undefined, bytes = 0;
+  const signal = AbortSignal.timeout(10_000);
+  for (let page = 0; page < 20; page++) {
+    const result = await document.send(new QueryCommand({ ...input, ...(cursor ? { ExclusiveStartKey: cursor } : {}) }), { abortSignal: signal });
+    if (signal.aborted || !result || result.Items !== undefined && !Array.isArray(result.Items)
+      || (result.Items?.length ?? 0) > (input.Limit ?? 500)) throw new TelehealthError("service_unavailable");
+    for (const value of result.Items ?? []) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new TelehealthError("service_unavailable");
+      const key = Object.fromEntries(keyNames.map(name => [name, value[name]]));
+      if (!validKey(key) || value.pk !== `ORG#${value.organizationId}` || !UUID.test(String(value.organizationId))
+        || index && value.consumerPersonId !== binding.consumerPersonId
+        || binding.prefix === "REQ#" && (!UUID.test(String(value.requestId)) || !(value.sk as string).endsWith(`#${value.requestId}`))
+        || binding.prefix === "SLOT#" && !UUID.test(String(value.slotId)))
+        throw new TelehealthError("service_unavailable");
+      const rowKey = JSON.stringify([value.pk, value.sk]);
+      const entityKey = JSON.stringify([value.organizationId, binding.prefix === "SLOT#" ? value.slotId : value.requestId]);
+      if (seenRows.has(rowKey) || seenEntities.has(entityKey)) throw new TelehealthError("service_unavailable");
+      bytes += Buffer.byteLength(JSON.stringify(value));
+      if (bytes > 3 * 1024 * 1024) throw new TelehealthError("service_unavailable");
+      seenRows.add(rowKey); seenEntities.add(entityKey); rows.push(value);
+    }
+    const next = result.LastEvaluatedKey;
+    if (next === undefined) return rows;
+    if (next && typeof next === "object" && !Array.isArray(next) && Object.keys(next).length === 0) return rows;
+    if (!validKey(next)) throw new TelehealthError("service_unavailable");
+    const cursorKey = JSON.stringify(keyNames.map(name => next[name]));
+    if (seenCursors.has(cursorKey)) throw new TelehealthError("service_unavailable");
+    seenCursors.add(cursorKey); cursor = next;
+  }
+  throw new TelehealthError("service_unavailable");
 }
 
 async function find(config: TelehealthConfiguration, organizationId: string, requestId: string): Promise<AppointmentItem> {

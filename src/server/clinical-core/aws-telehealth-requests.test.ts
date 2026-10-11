@@ -1498,7 +1498,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   it("closes a visit when its booking is cancelled, deleting a meeting the visit itself created", async () => {
     const calls = fetchRouter([...zoomRoutes()]);
     const store = new FictionalAppointmentStore().seed(requestRecord({ providerMeetingId: null }),
-      { pk: `ORG#${ORG}`, sk: "SLOT#x", slotId: "55555555-5555-4555-8555-555555555555", start: "2026-10-09T17:00:00.000Z", cancellationWindowHours: 24, status: "booked" },
+      { pk: `ORG#${ORG}`, sk: "SLOT#x", organizationId: ORG, slotId: "55555555-5555-4555-8555-555555555555", start: "2026-10-09T17:00:00.000Z", cancellationWindowHours: 24, status: "booked" },
       visitRecord({ status: "scheduled", providerMeetingId: "900000003", joinUrl: "https://zoom.us/j/900000003" }));
     send.mockImplementation(store.send);
     const result = await createTelehealthHandler(zoomConfig)(event("POST /clinical-core/workforce/appointments/actions", { requestId: REQUEST, action: "cancel", expectedVersion: 2 }, workforceClaims));
