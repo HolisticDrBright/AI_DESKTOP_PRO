@@ -4,7 +4,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactGetCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { TELEHEALTH_RECORD_INVENTORY_CONTRACT, telehealthRecordLocation, type TelehealthRecordInventory } from "../../contracts/telehealthRecordInventory";
@@ -25,6 +25,7 @@ const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const MAX_BODY = 16_384;
 const CONSUMER_CREATE = "POST /clinical-core/consumer/appointments/requests";
 const CONSUMER_LIST = "GET /clinical-core/consumer/appointments/requests";
+const CONSUMER_JOIN = "POST /clinical-core/consumer/appointments/join";
 const CONSUMER_ACTION = "POST /clinical-core/consumer/appointments/actions";
 const CONSUMER_CHANGE_OUTCOME = "POST /clinical-core/consumer/appointments/change-outcome";
 const CONSUMER_PENDING_CHANGE = "POST /clinical-core/consumer/appointments/pending-change";
@@ -203,6 +204,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
       if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
       if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
+      if (route === CONSUMER_JOIN) return response(200, { data: await prepareConsumerJoin(config, actor, body(event)) });
       if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
       if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
       if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
@@ -343,6 +345,52 @@ async function holdSlot(config: TelehealthConfiguration, actor: Actor, value: Re
   return { holdId, slotId: slot.slotId, expiresAt: new Date(expiresAt * 1000).toISOString(), slot: publicSlot({ ...slot, status: "held", heldBy: actor.personId, holdId, holdExpiresAt: expiresAt }, false) };
 }
 function publicSlot(slot: BookingSlot, workforce: boolean) { const result: Record<string, unknown> = { slotId: slot.slotId, start: slot.start, end: slot.end, timeZone: slot.timeZone, visitTypes: slot.visitTypes, priceMinor: slot.priceMinor, currency: slot.currency, cancellationPolicy: slot.cancellationPolicy, cancellationWindowHours: slot.cancellationWindowHours, status: slot.status }; if (workforce) Object.assign(result, { heldBy: slot.heldBy, holdExpiresAt: slot.holdExpiresAt ? new Date(slot.holdExpiresAt * 1000).toISOString() : null }); return result; }
+
+/** Read-only, short-lived app join check. An old scheduled request is never
+ * evidence that the practitioner has kept an over-time visit open. Discovery
+ * is followed by one same-table transactional read of the request and visit.
+ * This is not a Zoom credential revocation mechanism: external copied links
+ * and a host ending after this check remain governed by Zoom itself. */
+async function prepareConsumerJoin(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["requestId", "expectedVersion"], ["requestId", "expectedVersion"]);
+  if (!UUID.test(String(value.requestId)) || !Number.isSafeInteger(value.expectedVersion) || Number(value.expectedVersion) < 1)
+    throw new TelehealthError("request_invalid");
+  if (!config.zoomEnabled || !config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
+  const discovered = await find(config, actor.organizationId, String(value.requestId));
+  if (discovered.consumerPersonId !== actor.personId || discovered.organizationId !== actor.organizationId) throw new TelehealthError("identity_refused");
+  if (!discovered.appointmentId || !UUID.test(discovered.appointmentId)) throw new TelehealthError("conflict");
+  const answer = await document.send(new TransactGetCommand({ TransactItems: [
+    { Get: { TableName: config.tableName, Key: { pk: discovered.pk, sk: discovered.sk } } },
+    { Get: { TableName: config.tableName, Key: visitKey(actor.organizationId, discovered.appointmentId) } },
+  ] }), { abortSignal: AbortSignal.timeout(10_000) });
+  if (!Array.isArray(answer.Responses) || answer.Responses.length !== 2) throw new TelehealthError("service_unavailable");
+  const item = answer.Responses[0]?.Item as AppointmentItem | undefined;
+  const visit = answer.Responses[1]?.Item as VisitItem | undefined;
+  if (!item) throw new TelehealthError("conflict");
+  if (item.pk !== discovered.pk || item.sk !== discovered.sk || item.organizationId !== actor.organizationId
+    || item.consumerPersonId !== actor.personId || item.requestId !== value.requestId) throw new TelehealthError("identity_refused");
+  if (item.appointmentId !== discovered.appointmentId || item.version !== value.expectedVersion || item.status !== "scheduled"
+    || item.mutationOperationId || !item.scheduledStart || !item.scheduledEnd || !date(item.scheduledStart) || !date(item.scheduledEnd)
+    || Date.parse(item.scheduledEnd) <= Date.parse(item.scheduledStart) || !item.providerMeetingId || !item.joinUrl) throw new TelehealthError("conflict");
+  let link: URL;
+  try { link = new URL(item.joinUrl); } catch { throw new TelehealthError("conflict"); }
+  if (link.protocol !== "https:" || link.username || link.password || link.port || item.joinUrl.length > 2048
+    || !["zoom.us", "zoomgov.com"].some(host => link.hostname === host || link.hostname.endsWith(`.${host}`))) throw new TelehealthError("conflict");
+  const now = Date.now(), end = Date.parse(item.scheduledEnd);
+  if (visit && (visit.pk !== `ORG#${actor.organizationId}` || visit.sk !== `VISIT#${item.appointmentId}`
+    || visit.organizationId !== actor.organizationId || visit.appointmentId !== item.appointmentId
+    || visit.consumerPersonId !== actor.personId || visit.requestId !== item.requestId
+    || visit.scheduledStart !== item.scheduledStart || visit.scheduledEnd !== item.scheduledEnd
+    || visit.mutationOperationId || !["scheduled", "in_visit"].includes(visit.status)
+    || visit.endedAt !== null || visit.providerShutdown?.status !== "not_started")) throw new TelehealthError("conflict");
+  const open = visit?.status === "in_visit" && Boolean(visit.startedAt && date(visit.startedAt) && Date.parse(visit.startedAt) <= now)
+    && Number.isSafeInteger(visit.version) && visit.version > 0
+    && visit.providerMeetingId === item.providerMeetingId && visit.joinUrl === item.joinUrl;
+  if (now >= end && !open) throw new TelehealthError("conflict");
+  return { protocol: "appointment-join/1", requestId: item.requestId, organizationId: actor.organizationId, appointmentId: item.appointmentId,
+    requestVersion: item.version, visitVersion: visit?.version ?? null, authority: now >= end ? "open_visit" : "scheduled_window",
+    checkedAt: new Date(now).toISOString(), validUntil: new Date(now >= end ? now + 30_000 : Math.min(end, now + 30_000)).toISOString(), joinUrl: link.toString() };
+}
 
 async function listConsumer(config: TelehealthConfiguration, actor: Actor) {
   // A GSI cannot provide a strongly consistent read. Exhausting its pages is

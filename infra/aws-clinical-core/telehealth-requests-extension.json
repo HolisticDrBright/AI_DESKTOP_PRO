@@ -3,7 +3,7 @@
   "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, disabled-by-default Zoom boundary, and consent-gated embedded telehealth visits bound to the governed consent authority with AI Companion note import.",
   "Metadata": {
     "ClinicalCore": {
-      "ContractVersion": "telehealth-requests/8",
+      "ContractVersion": "telehealth-requests/9",
       "DataClassification": "synthetic_only",
       "PhiAllowed": false,
       "ZoomEnabled": false,
@@ -810,6 +810,16 @@
         }
       }
     },
+    "ConsumerJoinRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "POST /clinical-core/consumer/appointments/join",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "ConsumerAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${Integration}" }
+      }
+    },
     "ConsumerActionRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
@@ -1268,7 +1278,7 @@
   },
   "Outputs": {
     "ContractVersion": {
-      "Value": "telehealth-requests/8"
+      "Value": "telehealth-requests/9"
     },
     "PhiAllowed": {
       "Value": "false"
