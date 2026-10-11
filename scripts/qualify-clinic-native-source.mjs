@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileClinicSchemaRestrictedOwnerSource } from './compile-clinic-schema-source.mjs';
-import { TELEHEALTH_SCHEMA_NAMES,projectTelehealthSchema } from './telehealth-schema-projection.mjs';
+import { TELEHEALTH_SCHEMA_NAMES } from './telehealth-schema-projection.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const refuse=()=>{throw Error('clinic_native_source_arguments_refused');};
