@@ -31,6 +31,12 @@ import {
 } from "@/components/ui/ClinicalStates";
 import { useFeedback } from "@/lib/feedback";
 import { patientPath } from "@/lib/routes";
+import { ConsumerProgramEditor, ConsumerProgramPreview } from "@/components/programs/ConsumerProgramEditor";
+import {
+  consumerProgramFromDetail,
+  validateConsumerProgram,
+  type ConsumerProgram,
+} from "@/lib/programs/consumerProgramAuthoring";
 
 /* ---------------------------------------------------------------- shared */
 
@@ -93,6 +99,9 @@ interface DraftModel {
   audience: string;
   disclaimer: string;
   modules: DraftModule[];
+  /** The patient-facing program: `undefined` when the service did not return the key (authoring unavailable,
+   * and the key is then left out of every save so stored content is never overwritten blind), `null` when none. */
+  consumerProgram: ConsumerProgram | null | undefined;
 }
 
 let keyCounter = 1;
@@ -109,6 +118,7 @@ function draftFromVersion(v: LiveProgramVersionDetail): DraftModel {
     summary: v.summary ?? "",
     audience: v.audience ?? "",
     disclaimer: v.disclaimer ?? "",
+    consumerProgram: consumerProgramFromDetail(v.consumerProgram),
     modules: v.modules.map((m) => ({
       key: nextKey(),
       name: m.name,
@@ -167,6 +177,7 @@ function blockContent(b: DraftBlock): Record<string, unknown> {
 
 function payloadFromDraft(d: DraftModel): LiveProgramDraftPayload {
   return {
+    ...(d.consumerProgram !== undefined ? { consumerProgram: d.consumerProgram } : {}),
     title: d.title,
     summary: d.summary || null,
     audience: d.audience || null,
@@ -386,6 +397,11 @@ export function ProgramStudio({ programId }: { programId: string }) {
   const editable = studio.editable;
   const published = studio.published;
   const checklistDone = checklist.content && checklist.disclaimer && checklist.commercial;
+  // A patient program that the shared contract refuses cannot be compiled by the service, so the version is not
+  // submitted for review with it: the reviewer would be approving something no patient could ever receive.
+  const consumerProgramInvalid = draft?.consumerProgram ? !validateConsumerProgram(draft.consumerProgram).ok : false;
+  const previewProgram = consumerProgramFromDetail((editable ?? published)?.consumerProgram);
+  const previewValidation = previewProgram ? validateConsumerProgram(draft?.consumerProgram ?? previewProgram) : null;
 
   return (
     <div className="flex flex-col gap-3" data-testid="program-studio">
@@ -458,6 +474,17 @@ export function ProgramStudio({ programId }: { programId: string }) {
                 : "Nothing to preview yet."}
           </p>
           <CurriculumPreview modules={(editable ?? published)?.modules ?? []} />
+          {previewProgram && previewValidation?.ok && (
+            <div className="mt-3 border-t border-line pt-3">
+              <CardTitle className="mb-2">Patient program, as the app would show it</CardTitle>
+              <ConsumerProgramPreview program={previewValidation.program} />
+            </div>
+          )}
+          {previewProgram && previewValidation && !previewValidation.ok && (
+            <ClinicalNote className="mt-3" data-testid="consumer-program-preview-invalid">
+              The patient program on this version cannot be compiled by the service, so no patient could be assigned it. Open the draft to see the issues.
+            </ClinicalNote>
+          )}
         </Card>
       )}
 
@@ -472,7 +499,8 @@ export function ProgramStudio({ programId }: { programId: string }) {
             {editable.status === "draft" && (
               <Btn
                 variant="primary"
-                disabled={busy}
+                disabled={busy || consumerProgramInvalid}
+                title={consumerProgramInvalid ? "The patient program cannot be compiled; fix the listed issues first." : undefined}
                 onClick={() => void runAction(() => api.programs.submit(editable.id))}
                 data-testid="submit-review"
               >
@@ -1100,6 +1128,20 @@ export function ProgramStudio({ programId }: { programId: string }) {
               </div>
             </div>
           )}
+          {/* patient program: what the service compiles and the consumer app renders */}
+          <div className="mt-3 border-t border-line pt-3" data-testid="consumer-program-section">
+            <CardTitle className="mb-1">Patient program</CardTitle>
+            <p className="m-0 mb-2 text-[11.5px] text-subtle">
+              Phases and steps in the exact shape the service compiles and the patient app renders. Authorship is a label,
+              a source is a reference and a media slot is an address; none is a dose, a claim or an approval. The patient
+              decides whether to add the program; their plan is unchanged until they do.
+            </p>
+            <ConsumerProgramEditor
+              value={draft.consumerProgram}
+              disabled={editable.status !== "draft" || busy}
+              onChange={(next) => touch((d) => ({ ...d, consumerProgram: next }))}
+            />
+          </div>
         </Card>
       )}
 
@@ -1400,7 +1442,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
       <ConfirmDialog
         open={confirm === "publish"}
         title="Publish this version?"
-        body="Publishing makes this version the one new enrollments receive. It creates no enrollment, charge, invoice, or message, and existing enrollments keep the exact version they are pinned to."
+        body="Publishing makes this version the one new enrollments receive. It creates no enrollment, charge, invoice, or message, and existing enrollments keep the exact version they are pinned to. If its patient program uses education fields or a catalog binding, the deployed service stores them but refuses to assign the version until the reviewed admission candidate is applied."
         confirmLabel="Publish"
         onCancel={() => setConfirm(null)}
         onConfirm={() => {

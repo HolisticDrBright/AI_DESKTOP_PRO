@@ -828,6 +828,13 @@ export interface LiveProgramVersionDetail {
   updatedAt: string;
   createdAt: string;
   modules: LiveProgramModule[];
+  /**
+   * The patient-facing program the version carries (`content.consumerProgram`), once the
+   * service returns it: `null` when none is authored. Absent when the deployed service does
+   * not return the key yet, which the Studio treats as authoring unavailable rather than as
+   * permission to overwrite content it cannot see.
+   */
+  consumerProgram?: unknown;
 }
 
 export interface LiveProgramHistoryEntry {
@@ -936,6 +943,8 @@ export interface LiveProgramDraftPayload {
       }[];
     }[];
   }[];
+  /** The authored patient program, sent only when the service returned the key on load. */
+  consumerProgram?: unknown;
 }
 
 export interface LiveProgramMutationResult {
