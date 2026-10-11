@@ -123,3 +123,4 @@ Every spec calls `resetBackend()` in `beforeAll`. If you add mutable state to
 | `docs/telehealth.md` | The Telehealth tab: embedded Zoom visits, the consent gate, AI Companion notes |
 | `docs/clinic-record-privacy-2026-10-10.md` | Patient copies and corrections of clinic-held records: contracts, the 114 candidate, fail-closed disclosure, practitioner fulfilment, the V2 Clinic Data Center |
 | `docs/telehealth-chart-lifecycle-2026-10-10.md` | Placing a signed telehealth note in the chart, the retained-record read authority, the record inventory, forward candidate 113 |
+| `docs/program-media-authoring-2026-10-11.md` | Governed lesson media: the dedicated-media design, the disabled authoring runtime over a fictional store, the blocked ledger candidate, and the ordered real-store qualification Codex owns |
