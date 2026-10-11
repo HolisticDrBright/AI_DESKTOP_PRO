@@ -4,6 +4,7 @@ import { inventoryCanonical, inventoryRefuse, inventorySha } from './inventory-q
 import { prepareInventoryQualificationConfiguration } from './inventory-qualification-configuration';
 import { observeInventoryFoundation } from './inventory-qualification-foundation-observer';
 import { observeInventoryDatabaseDependency } from './inventory-qualification-database-dependency';
+import { observeInventoryRuntimeSecretMetadata } from './inventory-qualification-runtime-secret-metadata';
 import { observeInventoryIdentityDependency } from './inventory-qualification-identity-dependency';
 import { inventoryDatabaseIdentityReader } from './inventory-qualification-database-identity';
 import { observeInventoryStackDeclarations } from './inventory-qualification-stack-observer';
@@ -59,6 +60,10 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       prepared.assertUnchanged();
       const foundation = await observeInventoryFoundation(foundationBinding);
       const dependency = await observeInventoryDatabaseDependency(databaseBinding);
+      const runtimeSecrets = separated ? await observeInventoryRuntimeSecretMetadata({ databaseClusterArn: base.databaseClusterArn,
+        operatorDatabaseSecretArn: operatorSecret, runtimeCredentialReviewSha256: base.runtimeCredentialReviewSha256!,
+        api: { secretArn: base.databaseSecretArn, kmsKeyArn: credentials!.apiSecretKmsKeyArn },
+        fullscriptWorker: { secretArn: credentials!.fullscriptWorkerDatabaseSecretArn, kmsKeyArn: credentials!.fullscriptWorkerSecretKmsKeyArn } }) : null;
       const identity = await observeInventoryIdentityDependency(identityBinding);
       // The successor-only adapter reads every row inside a read-only
       // transaction and requires rollback. A known 106 parent is not a pass.
@@ -79,13 +84,14 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       const snapshots = Object.fromEntries(candidates.map(c => [c.declaration.candidate, c.declaration.snapshot]));
       const api = await observeInventorySharedApi(target, snapshots, foundation.foundationStackId, artifacts);
       prepared.assertUnchanged();
-      return { foundation, dependency, identity, databaseIdentity, ledger, candidates, api };
+      return { foundation, dependency, runtimeSecrets, identity, databaseIdentity, ledger, candidates, api };
     };
     const first = await pass(), final = await pass();
     if (inventoryCanonical(first) !== inventoryCanonical(final)) return inventoryRefuse('fleet_observation_changed');
     prepared.assertUnchanged();
     return { contract: separated ? 'inventory-qualification-fleet-observation/2' : 'inventory-qualification-fleet-observation/1', status: 'not_completed',
-      observationScope: 'source_foundation_database_metadata_cognito_configuration_designated_synthetic_subjects_database_identity_authority_candidate_services_code_api_ledger',
+      observationScope: 'source_foundation_database_metadata_cognito_configuration_designated_synthetic_subjects_database_identity_authority_candidate_services_code_api_ledger'
+        + (separated ? '_api_worker_secret_and_key_metadata' : ''),
       sourceCommit: source.sourceCommit, sourceInputSha256: source.sourceInputSha256, buildManifestSha256: artifacts.manifestSha256,
       targetSha256, observationSha256: inventorySha(inventoryCanonical(first)), passes: 2,
       candidates: first.candidates.length, packages: first.candidates.reduce((n, c) => n + c.code.length, 0),
@@ -93,11 +99,13 @@ export async function observeInventoryQualificationFleet(args: string[]) {
       identityConfigurationVerified: true, designatedSyntheticSubjectsVerified: true,
       databaseIdentityAuthorityVerified: true,
       runtimeCredentialsQualified: false,
+      runtimeSecretMetadataObserved: separated, runtimeRotationQualified: false,
       // Deliberately NOT a qualification/acceptance verdict. Remove a remaining
       // gate only after engineering an independent observation for that scope.
       identityDependenciesVerified: false, networkVerified: false, providerDependenciesVerified: false,
       liveFleetVerified: false, acceptance: false, humanReviewsVerified: false, phiAllowed: false, mutations: false,
-      remaining: ['runtime secret contents, effective login/grants, API/worker secret encryption and rotation qualification',
+      remaining: [separated ? 'runtime secret contents, effective login/grants, cross-database isolation and reviewed rotation execution/authority'
+        : 'separate API/worker credentials and encryption/rotation metadata, effective login/grants and credential review',
         'retention-service authority, real sign-in and network/external provider dependency observations',
         'real interrupted custody and preservation qualification', 'runtime hosted acceptance',
         'matched releases and physical devices', 'human reviews and provider/policy approvals'] };

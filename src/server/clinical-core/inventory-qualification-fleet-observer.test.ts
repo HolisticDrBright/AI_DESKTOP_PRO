@@ -3,12 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 // Orchestration unit doubles only. No fictional transport report is hosted
 // evidence. Each real component's AWS response/digest tests run separately.
 const state = vi.hoisted(() => ({ prepare: vi.fn(), build: vi.fn(), artifact: vi.fn(), ledgerFactory: vi.fn(), ledger: vi.fn(),
-  foundation: vi.fn(), database: vi.fn(), identity: vi.fn(), databaseIdentityFactory: vi.fn(), databaseIdentity: vi.fn(),
+  foundation: vi.fn(), database: vi.fn(), runtimeSecrets: vi.fn(), identity: vi.fn(), databaseIdentityFactory: vi.fn(), databaseIdentity: vi.fn(),
   stack: vi.fn(), service: vi.fn(), code: vi.fn(), api: vi.fn(), guard: vi.fn(), dispose: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFileSync: state.build }));
 vi.mock('./inventory-qualification-configuration', () => ({ prepareInventoryQualificationConfiguration: state.prepare }));
 vi.mock('./inventory-qualification-foundation-observer', () => ({ observeInventoryFoundation: state.foundation }));
 vi.mock('./inventory-qualification-database-dependency', () => ({ observeInventoryDatabaseDependency: state.database }));
+vi.mock('./inventory-qualification-runtime-secret-metadata', () => ({ observeInventoryRuntimeSecretMetadata: state.runtimeSecrets }));
 vi.mock('./inventory-qualification-identity-dependency', () => ({ observeInventoryIdentityDependency: state.identity }));
 vi.mock('./inventory-qualification-database-identity', () => ({ inventoryDatabaseIdentityReader: state.databaseIdentityFactory }));
 vi.mock('./inventory-qualification-stack-observer', () => ({ observeInventoryStackDeclarations: state.stack }));
@@ -40,6 +41,7 @@ beforeEach(() => {
   state.artifact.mockReturnValue('fictional-exact-107-ledger'); state.ledgerFactory.mockReturnValue(state.ledger);
   state.foundation.mockResolvedValue({ foundationStackId: 'fictional-foundation-stack-id', observationSha256: 'fictional-foundation-digest' });
   state.database.mockResolvedValue({ observationSha256: 'fictional-database-digest' });
+  state.runtimeSecrets.mockResolvedValue({ observationSha256: 'fictional-runtime-secret-digest', runtimeCredentialsQualified: false });
   state.identity.mockResolvedValue({ observationSha256: 'fictional-identity-digest', personBindingsSha256: 'e'.repeat(64) });
   state.databaseIdentityFactory.mockReturnValue(state.databaseIdentity);
   state.databaseIdentity.mockResolvedValue({ observationSha256: 'fictional-database-identity-digest' });
@@ -73,6 +75,7 @@ it('rebuilds migration bytes, reads all twelve candidates and thirteen versions 
     identityDependenciesVerified: false, networkVerified: false, providerDependenciesVerified: false,
     humanReviewsVerified: false, phiAllowed: false, mutations: false });
   expect(result.observationSha256).toMatch(/^[a-f0-9]{64}$/); expect(state.dispose).toHaveBeenCalledTimes(1);
+  expect(state.runtimeSecrets).not.toHaveBeenCalled(); expect(result.runtimeSecretMetadataObserved).toBe(false);
 });
 it('passes exact shared foundation/database bindings rather than environment overrides', async () => {
   vi.stubEnv('DATABASE_NAME', 'clinical_core'); vi.stubEnv('QUALIFICATION_VERIFIED', 'true'); vi.stubEnv('PHI_ALLOWED', 'true');
@@ -113,6 +116,27 @@ it('routes separated fleet administrative reads to the operator and never substi
   for (const [binding] of state.databaseIdentity.mock.calls) expect(binding.database.DatabaseSecretArn).toBe('fictional-operator-secret');
   expect(result).toMatchObject({ contract: 'inventory-qualification-fleet-observation/2', runtimeCredentialsQualified: false,
     acceptance: false, phiAllowed: false, mutations: false });
+  // The actual coordinator must observe both runtime secrets, not merely
+  // accept their declarations or reuse the operator metadata report.
+  expect(state.runtimeSecrets).toHaveBeenCalledTimes(2);
+  expect(state.runtimeSecrets).toHaveBeenCalledWith({ databaseClusterArn: 'fictional-cluster', operatorDatabaseSecretArn: 'fictional-operator-secret',
+    runtimeCredentialReviewSha256: 'f'.repeat(64), api: { secretArn: 'fictional-api-secret', kmsKeyArn: 'fictional-customer-key' },
+    fullscriptWorker: { secretArn: 'fictional-worker-secret', kmsKeyArn: 'fictional-worker-key' } });
+  expect(result).toMatchObject({ runtimeSecretMetadataObserved: true, runtimeRotationQualified: false });
+});
+
+for (const mode of ['failure', 'drift']) it(`does not issue a fleet report after runtime secret ${mode}`, async () => {
+  const f = fixture();
+  state.prepare.mockReturnValue({ ...f, target: { ...f.target, contract: 'inventory-qualification-target/2', target: {
+    ...f.target.target, schemaVersion: 'aws-clinical-core-qualification-target/4', databaseSecretArn: 'fictional-api',
+    operatorDatabaseSecretArn: 'fictional-operator', runtimeCredentialReviewSha256: 'f'.repeat(64) }, databaseCredentials: {
+      apiSecretKmsKeyArn: 'fictional-customer-key', fullscriptWorkerDatabaseSecretArn: 'fictional-worker',
+      clusterKmsKeyArn: 'fictional-storage-key', operatorSecretKmsKeyArn: 'fictional-operator-key', fullscriptWorkerSecretKmsKeyArn: 'fictional-worker-key' } } });
+  if (mode === 'failure') state.runtimeSecrets.mockRejectedValueOnce(Error('runtime_secret_read_failed'));
+  else state.runtimeSecrets.mockResolvedValueOnce({ observationSha256: 'changed-runtime-secret' });
+  await expect(observeInventoryQualificationFleet(args)).rejects.toThrow(mode === 'failure' ? 'runtime_secret_read_failed' : 'fleet_observation_changed');
+  expect(state.dispose).toHaveBeenCalledTimes(1);
+  if (mode === 'failure') { expect(state.ledger).not.toHaveBeenCalled(); expect(state.runtimeSecrets).toHaveBeenCalledTimes(1); }
 });
 
 for (const mode of ['unknown-contract', 'mixed-legacy', 'missing-operator', 'missing-review', 'missing-credentials', 'wrong-request-key'])

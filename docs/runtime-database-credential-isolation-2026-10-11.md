@@ -317,10 +317,69 @@ keys refuse before cloud reads. Each observer remains read-only and the fleet
 report stays `not_completed`, with `runtimeCredentialsQualified`, acceptance,
 human review and PHI flags false.
 
-The live API/worker secret contents, encryption and rotation observations,
-effective login/grants, cross-database isolation, IAM/key policy, the reviewed
-foundation successor and managed positive/negative acceptance remain open.
+The live API/worker secret contents, effective login/grants, cross-database
+isolation, IAM/key policy, the reviewed foundation successor and managed
+positive/negative acceptance remain open. Runtime metadata observation is
+implemented separately below; its source tests do not establish live evidence.
 The selected worker role was absent in the last scoped managed system-role
 inspection; its unreleased candidate cannot be replaced by merely creating a
 secret. No credentials, grants, role, secret, historical SQL, release ledger,
 IAM resource, deployment or activation changes are made by this source work.
+
+## API and worker secret metadata observation
+
+The separated fleet coordinator previously observed only the operator secret.
+A failing-before orchestration case confirmed zero runtime-secret observations.
+It now invokes `observeInventoryRuntimeSecretMetadata` in each complete pass,
+using the exact API/worker namespaces and keys from the validated target. The
+standalone observer checks the synthetic member principal, independently reads
+both Secrets Manager metadata responses and each unique customer key, and
+repeats every read. Cross-window secret versions, rotation configuration and
+key changes refuse the report. Failed or denied reads are not absence evidence.
+
+The source accepts the exact key ARN or its UUID in `KmsKeyId`, matching the
+documented AWS representation, but does not infer a match from an alias or
+default AWS-managed key. Deleted, external or service-managed secrets, foreign
+resources, conflicting version stages and non-synthetic tags are refused. It
+uses only `DescribeSecret`, `DescribeKey`, `GetKeyRotationStatus` and STS identity
+metadata; no secret-value, write, rotation or database operation is admitted.
+[AWS DescribeSecret](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html).
+
+Rotation is observed, not approved. Secrets Manager may omit `RotationEnabled`
+for a secret never configured for rotation, and disabled rotation may retain
+an old schedule. Those states are reported as `not_configured` and `disabled`;
+they never become enabled by default. Configured schedules are bounded and
+hashed, not interpreted as review approval. Key rotation status likewise
+retains an observed disabled or unspecified-period state. Executing rotation,
+testing its database login updates/revocation, and reviewing its IAM and policy
+remain separate requirements. Ordinary access and next-schedule timestamps are
+excluded from drift comparison; version-stage identity, actual rotation and
+last-change metadata remain covered.
+
+The fleet continues to report `not_completed`. New metadata flags describe
+only completed metadata reads; runtime credentials, rotation qualification,
+review approval, grants, key-policy review, hosted acceptance and PHI remain
+false. No new provisioning authority, schedule, approval record, historical
+schema change, deployment or activation is created. The fourteen-file target
+suite and existing CI command include the new observer tests. Exact-source
+whole-suite, CI and actual managed observations require their own evidence.
+
+## Database isolation review before provisioning
+
+A separate read-only system-metadata inspection found `clinical_core_api`
+has CONNECT and TEMPORARY privileges, but not CREATE, on `clinical_core`,
+`clinical_core_qualification` and `postgres` in the shared synthetic cluster.
+Only `pg_catalog.pg_database` was queried; zero records were updated and the
+transaction returned `Rollback complete`. This does not prove a replacement
+login can reach another database or its records. A namespace, NOINHERIT login
+or point-in-time adapter admission is not a complete cross-database boundary.
+
+The reviewed provisioning design must account for the cluster-wide role and
+effective privileges on every accessible database, and physically test the
+eventual login's forbidden database/role/private-table paths. Do not silently
+revoke shared-cluster PUBLIC rights or invent an IAM database-name condition.
+The documented Data API authorization resources are clusters; its listed
+condition keys are resource tags, not a per-database name restriction.
+[AWS Data API service authorization](https://docs.aws.amazon.com/service-authorization/latest/reference/list_rds-data.html).
+Any shared-database privilege change or separate-cluster design requires its
+own preserving plan and review before execution. No such change is made here.
