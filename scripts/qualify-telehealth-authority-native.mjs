@@ -42,13 +42,68 @@ if (run('postgres', ['--version']) !== 'postgres (PostgreSQL) 17.7'
   || JSON.parse(readFileSync(join(driver, 'node_modules/pg/package.json'), 'utf8')).version !== '8.16.3') refuse('native_versions_refused');
 const runs = join(root, 'dist/native-authority-runs'); mkdirSync(runs, { recursive: true });
 const directory = mkdtempSync(join(runs, 'authority-pg17-'));
+const projectRequire = createRequire(join(root, 'package.json'));
+const { buildSync } = projectRequire('esbuild');
+const adapterBundle = join(directory, 'request-adapter.cjs'), metadataBundle = join(directory, 'credential-metadata.cjs');
+for (const [entry, outfile] of [['rds-data-database.ts', adapterBundle], ['rds-runtime-credential.ts', metadataBundle]])
+  buildSync({ entryPoints: [join(root, 'src/server/clinical-core', entry)], outfile,
+    bundle: true, platform: 'node', target: 'node22', format: 'cjs', logLevel: 'silent' });
+const { createRdsDataClinicalCoreDatabase } = projectRequire(adapterBundle);
+const { RUNTIME_CREDENTIAL_ADMISSION_SQL, runtimeCredentialAdmitted } = projectRequire(metadataBundle);
+const credentialBundleSha256 = sha(readFileSync(adapterBundle));
+const credentialMetadataSha256 = sha(readFileSync(metadataBundle));
 const data = join(directory, 'cluster'), passwordFile = join(directory, 'bootstrap-password');
 const password = randomBytes(32).toString('hex'), ownerPassword = randomBytes(32).toString('hex');
+const runtimePassword = randomBytes(32).toString('hex'), runtimeLogin = 'alp_api_qualification_native';
 const database = 'alp_owner_source_' + randomUUID().replaceAll('-', '');
 writeFileSync(passwordFile, password + '\n', { flag: 'wx', mode: 0o600 });
 let started = false, admin, compiler, blocker, actor, peer, revoker, configuration, report, artifact, stage = 'bootstrap';
 const results = [];
+const credentialEvidence = []; let credentialAdmissions = 0;
 const transferSql = 'select clinical_core.transfer_telehealth_note($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as result';
+const dataResponse = result => ({columnMetadata:result.fields.map(f=>({name:f.name})),
+  records:result.rows.map(row=>result.fields.map(f=>typeof row[f.name]==='boolean'
+    ?{booleanValue:row[f.name]}:{stringValue:String(row[f.name])}))});
+async function beginApi(connection, isolation = 'read committed') {
+  await connection.query('begin isolation level ' + isolation);
+  const metadata = await connection.query(RUNTIME_CREDENTIAL_ADMISSION_SQL, ['clinical_core_api']);
+  if (!runtimeCredentialAdmitted(dataResponse(metadata))) {
+    await connection.query('rollback'); refuse('native_runtime_credential_refused');
+  }
+  credentialAdmissions++;
+  await connection.query('set local role clinical_core_api');
+}
+async function sourceFactoryHandshake(connection, expected, label, loginName) {
+  const commands = []; let callbackCalls = 0, admitted = false;
+  const common = {clusterArn:'arn:aws:rds:us-east-2:123456789012:cluster:fictional-native',
+    secretArn:'arn:aws:secretsmanager:us-east-2:123456789012:secret:fictional-native-AbCd12',databaseName:database};
+  const transport = {async send(command) {
+    const name = command.constructor.name.replace(/\d+$/, ''); commands.push(name);
+    if (name==='BeginTransactionCommand') {await connection.query('begin');return {transactionId:'fictional-native'};}
+    if (name==='CommitTransactionCommand') {await connection.query('commit');return {};}
+    if (name==='RollbackTransactionCommand') {await connection.query('rollback');return {};}
+    if (name!=='ExecuteStatementCommand') refuse('native_adapter_command_refused');
+    const sql = command.input.sql.replace(/:p(\d+)\b/g, (_match,n)=>'$'+n);
+    const values = (command.input.parameters??[]).map(p=>p.value.stringValue);
+    if (sql!==RUNTIME_CREDENTIAL_ADMISSION_SQL && sql!=='set local role clinical_core_api'
+      && sql!=='select session_user as login_role,current_user as effective_role') refuse('native_adapter_sql_refused');
+    return dataResponse(await connection.query(sql,values));
+  }};
+  try {
+    await createRdsDataClinicalCoreDatabase(common,transport).transaction(async tx=>{
+      callbackCalls++;
+      const identity=(await tx.query('select session_user as login_role,current_user as effective_role')).rows[0];
+      if(identity.login_role!==loginName||identity.effective_role!=='clinical_core_api') refuse('native_adapter_identity_refused');
+    });
+    admitted=true;
+  } catch(error) {
+    if(expected||error?.name!=='RdsDataDatabaseError'||error.category!=='configuration_invalid') refuse('native_adapter_unexpected_refusal');
+  }
+  const passed=admitted===expected&&callbackCalls===(expected?1:0)
+    &&commands.at(-1)===(expected?'CommitTransactionCommand':'RollbackTransactionCommand');
+  credentialEvidence.push({id:label,actualSourceFactory:true,loginName,admitted,callbackCalls,transactionSettled:passed,passed});
+  if(!passed)refuse('native_adapter_handshake_failed');
+}
 async function fixture() {
   const [org, practitioner, patient, appointment] = Array.from({ length: 4 }, () => randomUUID());
   const key = { id: 'fictional-' + randomUUID(), bytes: randomBytes(32) };
@@ -63,7 +118,7 @@ async function fixture() {
 }
 async function context(f, connection = actor, isolation = 'read committed') {
   if (!['read committed', 'repeatable read', 'serializable'].includes(isolation)) refuse('native_isolation_refused');
-  await connection.query('begin isolation level ' + isolation); await connection.query('set local role clinical_core_api');
+  await beginApi(connection, isolation);
   await connection.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','production-clinical','clinical_phi')", [f.practitioner, f.org, 'subject-' + f.practitioner]);
 }
 async function admitted(f, expires = 60000) {
@@ -447,16 +502,30 @@ try {
   if (last.migrationCount !== artifact.candidate.migrationCount || last.migrationReleaseSha256 !== artifact.candidate.migrationReleaseSha256
     || last.assemblySha256 !== artifact.releaseHash) refuse('source_compile_refused');
   await compiler.end(); compiler = undefined;
-  // Bootstrap privileges are used only for clearly separated fictional fixture
-  // administration and blockers. Actual API calls use a non-superuser session
-  // and SET LOCAL clinical_core_api; managed Aurora semantics remain unproven.
+  // The schema owner compiles only. Request connections authenticate as their
+  // own restricted NOINHERIT login, never as the owner with a lowered role.
   admin = new Client(configuration); blocker = new Client(configuration); revoker = new Client(configuration);
-  actor = new Client(ownerConfiguration);
-  peer = new Client(ownerConfiguration);
-  await admin.connect(); await blocker.connect(); await revoker.connect(); await actor.connect(); await peer.connect();
+  await admin.connect(); await blocker.connect(); await revoker.connect();
+  await admin.query(`create role ${runtimeLogin} login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls password '${runtimePassword}';
+    grant clinical_core_api to ${runtimeLogin} with inherit false,set true`);
+  const runtimeConfiguration = {...configuration,user:runtimeLogin,password:runtimePassword};
+  actor = new Client(runtimeConfiguration);
+  peer = new Client(runtimeConfiguration);
+  await actor.connect(); await peer.connect();
+  stage = 'actual_factory_credential_admission';
+  await sourceFactoryHandshake(actor,true,'actor_runtime_admitted',runtimeLogin);
+  await sourceFactoryHandshake(peer,true,'peer_runtime_admitted',runtimeLogin);
+  compiler = new Client(ownerConfiguration); await compiler.connect();
+  await sourceFactoryHandshake(compiler,false,'schema_owner_credential_refused','clinical_admin');
+  await compiler.end(); compiler=undefined;
+  await actor.query('begin'); let elevatedCode=null;
+  try {await actor.query('set local role clinical_admin');} catch(error) {elevatedCode=error.code;}
+  await actor.query('rollback');
+  credentialEvidence.push({id:'runtime_admin_role_denied',loginName:runtimeLogin,refusalCode:elevatedCode,passed:elevatedCode==='42501'});
+  if(elevatedCode!=='42501')refuse('native_admin_role_return_allowed');
   stage = 'private_api_denials';
   for (const table of ['clinical_private.telehealth_admission_keys', 'clinical_core.telehealth_note_transfers']) {
-    await actor.query('begin'); await actor.query('set local role clinical_core_api');
+    await beginApi(actor);
     let code = null;
     try { await actor.query('select * from ' + table + ' limit 0'); } catch (error) { code = error.code; }
     await actor.query('rollback');
@@ -494,24 +563,28 @@ try {
   await queuedOtherClinicWithdrawal();
   await mixedLockOrderRecovery('revoker');
   await mixedLockOrderRecovery('actor');
-  report = { contract: 'telehealth-authority-native-source/3', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
+  const credentialComplete=credentialEvidence.length===4&&credentialEvidence.every(row => row.passed === true)&&credentialAdmissions>0;
+  report = { contract: 'telehealth-authority-native-source/4', sourceCommit, diagnosticSha256: sha(readFileSync(new URL(import.meta.url))),
     testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash },
     execution: 'local_restricted_owner_source', postgresVersion: '17.7',
     sourceBootstrapOwner: 'postgres', sourceOwner: 'clinical_admin',
-    apiSessionOwner: 'clinical_admin', apiCallerRole: 'clinical_core_api',
+    apiSessionOwner:runtimeLogin, apiCallerRole: 'clinical_core_api',
+    credentialBundleSha256,credentialMetadataSha256,credentialEvidence,credentialAdmissions,
+    credentialBoundaryVerified:credentialComplete,authorityTransactions:'native_sql_with_source_credential_admission',
     managedRoleSemanticsVerified: false, hostedVerified: false, upgradeAuthorized: false, providerAuthorized: false, phiAllowed: false, activation: 'blocked',
     mandatoryScenarioCount: REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length,
     coverageComplete: completeNativeAuthorityCoverage(results),
-    passed: completeNativeAuthorityCoverage(results), results };
+    passed: completeNativeAuthorityCoverage(results)&&credentialComplete, results };
 } catch (error) {
-  report = { contract: 'telehealth-authority-native-source/3', sourceCommit,
+  report = { contract: 'telehealth-authority-native-source/4', sourceCommit,
     execution: 'local_restricted_owner_source', managedRoleSemanticsVerified: false, hostedVerified: false,
     mandatoryScenarioCount: REQUIRED_NATIVE_AUTHORITY_SCENARIOS.length, coverageComplete: false,
     ...(artifact ? { testedArtifact: { contract: artifact.candidate.contract, migrationCount: artifact.candidate.migrationCount,
       migrationReleaseSha256: artifact.candidate.migrationReleaseSha256, assemblySha256: artifact.releaseHash } } : {}), passed: false, stage,
     databaseErrorCode: /^[A-Z0-9]{5}$/.test(error?.code ?? '') ? error.code : null,
     failure: /^[a-z_]+$/.test(error?.message ?? '') ? error.message : 'native_source_run_failed', results,
+    credentialBundleSha256,credentialMetadataSha256,credentialEvidence,credentialAdmissions,credentialBoundaryVerified:false,
     phiAllowed: false, activation: 'blocked', upgradeAuthorized: false, providerAuthorized: false };
 } finally {
   for (const connection of [actor, peer, blocker, revoker, compiler, admin]) if (connection) await connection.end().catch(() => {});

@@ -137,3 +137,29 @@ AWS documents successful rollback responses as HTTP 200 with a
 `transactionStatus` field; it does not enumerate the status strings. The exact
 accepted value comes from the observed managed response, not a guessed
 documentation example. [AWS RollbackTransaction API](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/API_RollbackTransaction.html).
+
+## Native authority tests with authenticated request credentials
+
+Historical native authority report contract `telehealth-authority-native-source/3`
+used a separately compiled non-superuser schema owner, but its request sessions
+also logged in as that owner before lowering the role. The 29 authority/lock
+results remain evidence for the SQL cases tested; they are not independent
+restricted-request credential evidence.
+
+Report contract `/4` separates compilation and request authentication. Bootstrap
+creates one fictional local NOINHERIT request login with only SET membership
+in clinical_core_api. Two request connections authenticate as that login.
+The real source adapter must admit both and refuse the schema-owner credential
+before request work. A physical attempt to assume clinical_admin must fail.
+Each authority transaction then runs the same source metadata admission SQL
+and parser before role assumption. No application or historical SQL is changed.
+
+The report binds the adapter and metadata bundles, records the four credential
+observations, and identifies the 29 authority cases as native SQL transactions
+with source credential admission. It does not claim all those transactions use
+the Data API factory or simulate a deployed API. A pass requires all four
+credential observations and the entire exact authority matrix, with confirmed
+server shutdown. Bootstrap blockers/fixture changes remain local negative
+controls. Prior reports and candidate117 identity remain unchanged. A complete
+source assertion is not a physical run; qualification requires the actual
+fresh report from the committed source.

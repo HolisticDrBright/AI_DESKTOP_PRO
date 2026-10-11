@@ -37,6 +37,18 @@ test('runner binds complete successor, restricted owner and real lock observatio
   assert.match(source, /await mixedLockOrderRecovery\('actor'\)/);
   assert.match(source, /firstOutcome\.participant === expectedVictim/);
   assert.match(source, /replayPreservedCounts/);
-  assert.match(source, /passed: completeNativeAuthorityCoverage\(results\)/);
-  assert.match(source, /telehealth-authority-native-source\/3/);
+  assert.match(source, /passed: completeNativeAuthorityCoverage\(results\)&&credentialComplete/);
+  assert.match(source, /telehealth-authority-native-source\/4/);
+});
+
+test('request sessions authenticate separately and exercise the source credential guard', () => {
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /actor = new Client\(runtimeConfiguration\)/);
+  assert.match(source, /peer = new Client\(runtimeConfiguration\)/);
+  assert.doesNotMatch(source, /(?:actor|peer) = new Client\(ownerConfiguration\)/);
+  assert.match(source, /login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls/);
+  assert.match(source, /createRdsDataClinicalCoreDatabase/);
+  assert.match(source, /runtimeCredentialAdmitted/);
+  assert.match(source, /await beginApi\(connection, isolation\)/);
+  assert.match(source, /credentialEvidence\.every\(row => row\.passed === true\)/);
 });
