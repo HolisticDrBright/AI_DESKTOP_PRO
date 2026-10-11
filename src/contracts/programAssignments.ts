@@ -42,12 +42,29 @@ export const programItemEducation = {
   media: z.array(z.object({ kind: z.enum(['video', 'image']), url: httpsUrl, caption: z.string().max(240).optional() }).strict()).max(5).optional(),
   authorship: z.enum(['practitioner_authored', 'consumer_ai', 'unreviewed']).optional(),
 };
+/**
+ * Catalog binding (program-item-catalog-binding/1): optional and additive. A supplement step may name the exact
+ * governed catalog product it was authored against: the product's stable id, the catalog version it was reviewed at and
+ * the service target that catalog belongs to. The app resolves a purchase action only through this binding — never by
+ * name, ingredient, similarity or the artifact's purchase destination — and a step without it stays followable and is
+ * never purchasable from the app. A published artifact that predates the binding keeps its digest. The binding is not
+ * a clinical claim, a dose or an approval; eligibility stays with the review and the server-prepared action.
+ */
+export const PROGRAM_CATALOG_TARGETS = ['synthetic-staging', 'production-clinical'] as const;
+export type ProgramCatalogTarget = typeof PROGRAM_CATALOG_TARGETS[number];
+export const programProductCatalogBinding = z.object({
+  stableId: z.string().regex(/^prd_[a-z0-9][a-z0-9_-]{2,95}$/),
+  version: z.number().int().min(1).max(1_000_000),
+  target: z.enum(PROGRAM_CATALOG_TARGETS),
+}).strict();
+export type ProgramProductCatalogBinding = z.infer<typeof programProductCatalogBinding>;
 export const programItem = z.object({
   id: key, title: text(240), kind: z.enum(['lesson', 'diet', 'habit', 'supplement']),
   instructions: z.string().max(4000), released: z.boolean(),
   product: z.object({
     id: key, ingredientKeys: z.array(key).min(1).max(40), dose: text(240),
     purchaseUrl: purchaseUrl.nullable(),
+    catalog: programProductCatalogBinding.optional(),
   }).strict().optional(),
   ...programItemEducation,
 }).strict().superRefine((value, ctx) => {

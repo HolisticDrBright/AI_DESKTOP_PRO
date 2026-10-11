@@ -108,3 +108,35 @@ describe('program item education fields (program-item-education/1) are additive'
     expect(() => parseProgramAssignmentResponse(readInput, value)).toThrow();
   });
 });
+
+describe('program product catalog binding (program-item-catalog-binding/1) is additive and typed', () => {
+  const enrollmentId = '11111111-1111-4111-8111-111111111111', when = '2026-10-08T12:00:00Z';
+  const product = () => ({ id: 'product-fictional', ingredientKeys: ['fictional-mineral'], dose: 'Fictional reviewed dose', purchaseUrl: null as string | null });
+  const base = () => ({ action: 'read', assignment: { enrollmentId, title: 'Fictional guide', state: 'active', revision: '2', sourceDigest: 'a'.repeat(64), programVersion: '1', phaseIndex: 0, finished: false, startedAt: when, phaseStartedAt: when,
+    phases: [{ id: 'phase-a', title: 'Fictional phase', days: 7, transition: 'scheduled', items: [{ id: 'supp-a', title: 'Fictional supplement', kind: 'supplement', instructions: 'Fictional instruction', released: true, product: product() as Record<string, unknown> }] }] },
+    completed: [] as string[], review: { planRevision: 'fictional-1', inventoryComplete: true, add: ['supp-a'], duplicate: [] as string[], held: [] as string[], conflicts: [] as string[] }, authorizations: [] as { phaseId: string; kind: string }[] });
+  const readInput = { action: 'read' as const, enrollmentId };
+  const binding = { stableId: 'prd_fictional_magnesium', version: 3, target: 'synthetic-staging' };
+  it('a product without the binding parses as before, and one with it keeps the exact identity', () => {
+    expect(parseProgramAssignmentResponse(readInput, base()).action).toBe('read');
+    const bound = base(); bound.assignment.phases[0]!.items[0]!.product.catalog = binding;
+    const parsed = parseProgramAssignmentResponse(readInput, bound);
+    expect(parsed.action === 'read' && parsed.assignment.phases[0]!.items[0]!.product).toMatchObject({ catalog: binding });
+  });
+  it.each([
+    ['a free-text product id as the stable id', { ...binding, stableId: 'Magnesium Glycinate' }],
+    ['a label id where a product id belongs', { ...binding, stableId: 'lbl_fictional' }],
+    ['a zero catalog version', { ...binding, version: 0 }],
+    ['a fractional catalog version', { ...binding, version: 1.5 }],
+    ['an invented target', { ...binding, target: 'sandbox' }],
+    ['a missing target', { stableId: binding.stableId, version: binding.version }],
+    ['an unknown field inside the binding', { ...binding, destinationUrl: 'https://shop.example.com/x' }],
+  ])('refuses %s', (_name, candidate) => {
+    const value = base(); value.assignment.phases[0]!.items[0]!.product.catalog = candidate;
+    expect(() => parseProgramAssignmentResponse(readInput, value)).toThrow();
+  });
+  it('a binding on a lesson is still a product on a lesson, which the contract refuses', () => {
+    const value = base(); value.assignment.phases[0]!.items[0] = { id: 'lesson-a', title: 'Lesson', kind: 'lesson', instructions: 'Read', released: true, product: { ...product(), catalog: binding } as never } as never;
+    expect(() => parseProgramAssignmentResponse(readInput, value)).toThrow();
+  });
+});
