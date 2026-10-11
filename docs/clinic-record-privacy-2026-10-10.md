@@ -310,3 +310,24 @@ device journeys are Codex's qualification.
   `accepted`; caregiver reads elsewhere include `flagged`).
 - Whether clinic-authored text later joins the owner's personal export.
 - Correspondence stays with the care-message export rather than this copy.
+
+## Source portability recheck
+
+Both mirrored source files are pinned to LF through Git attributes. The
+contract-integrity suite checks the effective attributes as well as the raw
+source hashes. Clinical payloadText is not normalized or reconstructed.
+
+The exact-byte database regression builds a new copy through candidate /3
+under UTC and Pacific/Honolulu database sessions, checks each against the same
+committed fixture, and verifies the builder restores the caller's time zone.
+It does not merely reread an already-built copy or change the process TZ.
+The candidate identity and SQL are unchanged by this regression.
+
+Focused database, runner and single-attempt suites pass38 tests, and the three
+contract-integrity checks pass. The predecessor source with the local test
+repair passed6,310 tests and11 existing skips; that result is not claimed as a
+full-suite run of this reconciled candidate. Exact d236b76 predecessor CI is
+green. Hosted target verification remains unfinished: the runner's migration
+count is not proof of database, ledger, AWS principal, API, stack or deployed
+source identity. Do not execute it as hosted acceptance until those independent
+observations are checked before requests and fixture/release writes.
