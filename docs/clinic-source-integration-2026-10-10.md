@@ -60,9 +60,11 @@ must be recorded separately after the source is committed and frozen.
 
 ## Remaining integration and execution
 
-1. Extend restricted-owner native source qualification to this exact 116 artifact
-   and preserve metadata/permissions for its added clinic tables and functions.
-   Existing 112/113/114 qualification is not automatically 116 qualification.
+1. Local restricted-owner native source qualification is now complete for this
+   exact 116 artifact in two independent PostgreSQL 17.7 clusters; see
+   `clinic-native-source-qualification-2026-10-10.md`. This checks source metadata,
+   direct API read denials and an empty schema, not an Aurora upgrade or hosted
+   acceptance. Existing runtime inspector and historical operators are unchanged.
 2. Prepare a separately reviewed preserving 112-to-116 operator with exact ledger,
    custody, protected-row and rollback evidence. Existing 107-to-112 approval is
    not permission to append this candidate or reuse a changed executable hash.

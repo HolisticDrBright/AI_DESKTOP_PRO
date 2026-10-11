@@ -48,10 +48,26 @@ remain in ignored `dist/native-source-runs/`; no global service is installed.
 
 ## Evidence and remaining requirements
 
-Credential-free source and argument refusal tests are wired into CI. Positive
-native runs must be recorded with their exact commit, independent report
-directories, schema fingerprints, table counts and confirmed shutdown. A local
-report is never hosted acceptance or permission to apply these migrations.
+All 66 credential-free source and argument refusal tests pass and are wired into
+CI. Typecheck and targeted lint pass. Two independent positive native runs,
+`clinic-pg17-k1j6AG` and `clinic-pg17-vqhR4y`, used clean source commit
+`52d17428d4a68d44508c6e3bf4873179e7cd7ba6`. Both denied all five direct reads,
+counted zero application rows in all 228 tables, and confirmed shutdown. Their
+complete schema projections match at every prefix:
+
+| Prefix | Projected items | PostgreSQL 17.7 restricted owner schema SHA256 |
+| --- | ---: | --- |
+| 112 | 1111 | ee570c4f14e36f94552a7267a28c47486260fd0acd2793fc4043d53b2903f640 |
+| 113 | 1121 | 0271c62d9f0846c19843401b00b9b310867ddf850f92fda4deef132b00f7375d |
+| 114 | 1144 | 8bb707f52e9ca2049ea6d6154836c5658a27a463eb5ea7f1757c9783bf6b5c8d |
+| 115 | 1144 | b4f1b20842e45b02823f39638b491565a558a4aa2f74149021555a541ada6721 |
+| 116 | 1172 | fe46eccd49db188f6c1e5dfe8e544506e2484fe3a11e6fe5528a7cca57529855 |
+
+The source-only contracts are `clinic-restricted-owner-source/1` and
+`clinic-native-source-qualification/1`. The binary provenance and its unsigned
+Windows status are unchanged from the telehealth native-source notes. These
+fingerprints describe the local owner profile, not Aurora managed memberships.
+A local report is never hosted acceptance or permission to apply migrations.
 
 The existing runtime inspector and historical operators are unchanged. A
 preserving 112-to-116 upgrade still needs its own protected-row, custody and
