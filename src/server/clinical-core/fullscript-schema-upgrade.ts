@@ -8,6 +8,7 @@ import { assertQualificationConfiguration } from './qualification-target';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { careErasurePreservation } from './care-erasure-schema-upgrade';
 import { FULLSCRIPT_UPGRADE } from './fullscript-migration-release';
+import { fullscriptExtensionShapeForVersion } from './fullscript-extension-shape-release';
 export { FULLSCRIPT_UPGRADE } from './fullscript-migration-release';
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const ledger = 'clinical_core.schema_migrations';
@@ -161,6 +162,9 @@ async function extensions(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[
 /** Read-only canonical 111 extension validation. Does not admit a migration,
  * certify empty tables, or approve any provider/consent/activation row. */
 export async function verifyFullscriptExtensionSchema(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[]) {
+  const versions = (await tx.query<{ version: string }>("select current_setting('server_version') as version")).rows;
+  const expectedShape = versions.length === 1 ? fullscriptExtensionShapeForVersion(versions[0].version) : undefined;
+  if (!expectedShape) throw new FullscriptUpgradeError('verification_failed', 'extension_engine');
   await verifyFullscriptWorkerMemberships(tx);
   const rows = (await tx.query<Table>(careErasurePreservation.tableQuery.replace("'commercial_reference'", "'commercial_reference','fullscript_delivery'"))).rows;
   const added = rows.filter(t=>addedTables.includes(careErasurePreservation.tableName(t)));
@@ -182,7 +186,7 @@ export async function verifyFullscriptExtensionSchema(tx: ClinicalCoreTransactio
       from pg_trigger t where t.tgrelid=c.oid and not t.tgisinternal)
   ) order by selected.name),'[]'::jsonb)::text,'UTF8')),'hex') digest
   from jsonb_array_elements_text($1::jsonb) selected(name) join pg_class c on c.oid=selected.name::regclass`,[JSON.stringify(addedTables)])).rows[0];
-  if(shape?.digest!==FULLSCRIPT_UPGRADE.extensionShape) throw new FullscriptUpgradeError('verification_failed','extension_shape');
+  if(shape?.digest!==expectedShape) throw new FullscriptUpgradeError('verification_failed','extension_shape');
   const source=m.slice(108).map(r=>r.sql).join('\n');
   const bodies = [...source.matchAll(/create function ([a-z_]+\.[a-z_]+)\(([^]*?)\)\s+returns ([a-z_.]+)([^]*?)as \$\$([^]*?)\$\$/g)]
     .map(x=>({name:x[1],hash:sha(x[5]),returns:x[3],definer:/\bsecurity definer\b/.test(x[4]),

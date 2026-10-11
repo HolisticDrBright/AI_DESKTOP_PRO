@@ -1,0 +1,32 @@
+{
+  "contract": "fullscript-extension-shape-source-receipt/1",
+  "execution": "local_fictional_operator_engine",
+  "parentSourceCommit": "10443ee21ac10b7859365dfd3d448e1ad3294bf2",
+  "migrationReleaseSha256": "98ef31a24baeafb83bfd65a7832b1e4e02dbe1c71b6e78f8efdad4e0b0e62d4c",
+  "sourceQuerySha256": "e1d840d8f18246325e7984d909c55080815f31286914eca05174aa201289707d",
+  "postgresBinarySha256": "098aafb55bf3bb121e2ef384ea3e8bcb7e0d8b2f340e2b830dd88c749fe83347",
+  "nativeVersion": "17.7",
+  "embeddedVersion": "18.3",
+  "nativeShapeSha256": "9bdcb1ffc4a0f9a28c631d2545c4c1fd276aa53c4edf186b3d4d7dbcd8e28ee5",
+  "embeddedShapeSha256": "3db36bba5d38a41b0e6a6264f956e852ad5be191af4048cc184db5862136ed0d",
+  "sourceOwner": "clinical_admin",
+  "difference": {
+    "additionalEmbeddedNotNullConstraints": 77,
+    "otherTableMetadataDifferences": 0
+  },
+  "reproductionRun": "pg17-ufvUhk",
+  "repairedRun": "pg17-Fz7VMG",
+  "repairedReportSha256": "a0a639d0bec695a5268de28f5582e8d352cbff34c8e590b5fbe802737ee63553",
+  "shapeNegativeCases": 3,
+  "membershipNegativeCases": 4,
+  "rollbackPreserved": true,
+  "shutdownConfirmed": true,
+  "targetObservedDigestUsed": false,
+  "managedRoleSemanticsVerified": false,
+  "protectedRowsVerified": false,
+  "operatorAcceptance": false,
+  "upgradeAuthorized": false,
+  "providerAuthorized": false,
+  "phiAllowed": false,
+  "activation": "blocked"
+}

@@ -179,6 +179,25 @@ describe('111 blocked candidate real-SQL preservation and rollback, not hosted e
     }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'extension_shape'});
     await absent();
   },30000);
+  it.each([
+    'alter table fullscript_delivery.draft_intents alter column state drop not null',
+    "alter table fullscript_delivery.draft_intents alter column state set default 'verified'",
+    'alter table fullscript_delivery.draft_intents drop constraint draft_intents_excluded_count_check',
+  ])('preserves exact shape safety after engine binding: %s',async change=>{
+    await expect(runFullscriptSchemaUpgrade(database(async(sql,tx)=>{
+      if(sql.includes('grant select,insert,update on fullscript_delivery.draft_intents'))await tx.query(change);
+    }),m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'extension_shape'});
+    await absent();
+  },30000);
+  it('cannot use a native source pin to approve the embedded engine projection',async()=>{
+    const wrongEngine:ClinicalCoreDatabase={transaction:work=>pg.transaction(tx=>work({query:async(sql,args=[])=>{
+      if(sql==="select current_setting('server_version') as version")return {rows:[{version:'17.7'}]};
+      if(sql==='select current_database() as name')return {rows:[{name:'clinical_core_qualification'}]};
+      return tx.query(sql,[...args]);
+    }} as ClinicalCoreTransaction))};
+    await expect(runFullscriptSchemaUpgrade(wrongEngine,m,c,'rehearse')).rejects.toMatchObject({category:'verification_failed',stage:'extension_shape'});
+    await absent();
+  },30000);
   it('preserves existing domain constraints, not only the pg_type row',async()=>{
     await pg.exec('create domain clinical_core.fictional_protected_domain as integer constraint fictional_positive check(value>0)');
     let changed=false;
