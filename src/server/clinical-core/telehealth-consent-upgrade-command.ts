@@ -2,6 +2,7 @@ if (typeof window !== 'undefined') throw Error('telehealth-consent-upgrade-comma
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
+import {finishSchemaUpgradeFence,type SchemaUpgradeSettlement} from './schema-upgrade-fenced-settlement';
 import type { ClinicalCoreDatabase } from './database';
 import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
@@ -32,9 +33,9 @@ export type TelehealthConsentCustodyBinding={build:TelehealthConsentUpgradeBuild
 export type TelehealthConsentOperatorFence={verify:()=>Promise<void>};
 export type TelehealthConsentCustodyStage='baseline'|'rehearsal'|'write_admitted'|'write_reply'|'readback_one'|'readback_two';
 export type TelehealthConsentWriterCustody={verify:()=>Promise<void>;record:(stage:TelehealthConsentCustodyStage,value:TelehealthConsentUpgradeResult)=>Promise<void>;
-  finding:()=>Promise<void>;settle:(value:TelehealthConsentUpgradeResult)=>Promise<{runId:string;journalSha256:string;custodySettled:true}>};
+  finding:()=>Promise<void>;settle:(value:TelehealthConsentUpgradeResult)=>Promise<SchemaUpgradeSettlement>};
 export type TelehealthConsentRecoveryCustody={baseline:TelehealthConsentUpgradeResult;writeAdmitted:boolean;verify:()=>Promise<void>;
-  settle:(value:TelehealthConsentUpgradeResult)=>Promise<{runId:string;journalSha256:string;custodySettled:true;originalWriteOutcome:'unknown'}>};
+  settle:(value:TelehealthConsentUpgradeResult)=>Promise<SchemaUpgradeSettlement>};
 export type TelehealthConsentUpgradeDependencies={
   readTarget:(file:string)=>Buffer; operatorSha256:()=>string;
   observeCaller:()=>unknown;observeFoundation:()=>unknown;loadMigrations:()=>ClinicalCoreMigration[];
@@ -103,7 +104,7 @@ export async function executeTelehealthConsentUpgradeCommand(args:readonly strin
   };
   if(command==='inspect'||command==='rehearse') {guard();const result=await invoke(command);guard();return {...result,...summary};}
   const binding:TelehealthConsentCustodyBinding={...target,build};
-  return d.withFence(async fence=>{
+  return finishSchemaUpgradeFence(d.withFence.bind(d),async fence=>{
     const check=async()=>{await fence.verify();guard();await fence.verify();};
     if(command==='reconcile') {
       await check();const custody=await d.openRecoveryCustody(structuredClone(binding),fence);
@@ -117,9 +118,9 @@ export async function executeTelehealthConsentUpgradeCommand(args:readonly strin
         await custody.verify();await check();observed=next;
       }
       const settled=await custody.settle(observed!);
-      return {contract:'telehealth-consent-upgrade-reconciliation/1',command,execution:'qualification',...summary,...settled,
+      return {settlement:settled,value:{contract:'telehealth-consent-upgrade-reconciliation/1',command,execution:'qualification',...summary,originalWriteOutcome:'unknown',
         observation:observed!.observedMigrationCount===112?'preserved_successor_observed':'preserved_predecessor_observed',
-        result:observed!,repeatedReadbackVerified:true,databaseMutationPerformed:false,retryPerformed:false,phiAllowed:false,activation:'blocked'};
+        result:observed!,repeatedReadbackVerified:true,databaseMutationPerformed:false,retryPerformed:false,phiAllowed:false,activation:'blocked'}};
     }
     await check();const baseline=await invoke('inspect-settled');
     if(baseline.observedMigrationCount!==telehealthConsentParentCount(target.configuration))fail('history_refused');
@@ -133,7 +134,7 @@ export async function executeTelehealthConsentUpgradeCommand(args:readonly strin
       for(const stage of ['readback_one','readback_two'] as const){await custody.verify();await check();const next=await invoke('inspect-settled');
         telehealthConsentPreserved(next,baseline);if(next.observedMigrationCount!==112)fail('verification_failed','readback');await custody.record(stage,next);}
       await custody.verify();await check();const settled=await custody.settle(result);
-      return {...result,...summary,...settled,rehearsal:{rolledBack:true,dataSha256:rehearsal.dataSha256,historicalSchemaSha256:rehearsal.historicalSchemaSha256}};
+      return {settlement:settled,value:{...result,...summary,rehearsal:{rolledBack:true,dataSha256:rehearsal.dataSha256,historicalSchemaSha256:rehearsal.historicalSchemaSha256}}};
     } catch(e) {try{await custody.finding();}catch{/* Original custody remains; no retry or retirement. */}throw e;}
   });
 }

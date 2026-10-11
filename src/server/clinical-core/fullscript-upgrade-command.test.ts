@@ -8,9 +8,9 @@ let m:ClinicalCoreMigration[];beforeAll(()=>{m=migrations();});
 function setup() {
   let count:107|111=107;
   const custody={verify:vi.fn(async()=>{}),record:vi.fn(async(_stage:FullscriptCustodyStage,_value:FullscriptUpgradeResult)=>{}),finding:vi.fn(async()=>{}),
-    settle:vi.fn(async()=>({runId:'fictional',journalSha256:'4'.repeat(64),custodySettled:true as const}))};
+    settle:vi.fn(async()=>({runId:'f'.repeat(32),journalSha256:'4'.repeat(64),retire:vi.fn(async()=>{})}))};
   const recovery={baseline:result('inspect-settled'),writeAdmitted:true,verify:vi.fn(async()=>{}),
-    settle:vi.fn(async()=>({runId:'fictional',journalSha256:'4'.repeat(64),custodySettled:true as const,originalWriteOutcome:'unknown' as const}))};
+    settle:vi.fn(async()=>({runId:'f'.repeat(32),journalSha256:'4'.repeat(64),retire:vi.fn(async()=>{})}))};
   const d:FullscriptUpgradeDependencies={readTarget:vi.fn(()=>bytes(target)),operatorSha256:()=>target.operatorSha256,
     observeCaller:vi.fn(()=>structuredClone(caller)),observeFoundation:vi.fn(()=>structuredClone(foundation)),loadMigrations:()=>m,
     createDatabase:vi.fn(()=>({transaction:async()=>{throw Error('unexpected_uninstrumented_database');}})),

@@ -1,10 +1,11 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync,appendFileSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync,appendFileSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {createNativeFullscriptCustody,openNativeFullscriptRecovery,readFullscriptOperatorFile} from './fullscript-native-custody';
-import {build,configuration,result,sha} from './__fixtures__/fullscript-upgrade';
+import {build,configuration,result,sha,bytes,target,caller,foundation,migrations} from './__fixtures__/fullscript-upgrade';
+import {executeFullscriptUpgradeCommand,type FullscriptUpgradeDependencies} from './fullscript-upgrade-command';
 import type {FullscriptCustodyBinding,FullscriptWriterCustody} from './fullscript-upgrade-command';
 const binding:FullscriptCustodyBinding={build,configuration,callerSha256:'3'.repeat(64),targetSha256:'4'.repeat(64)};
 let root:string,operatorFile:string,now:number,child:ChildProcess|undefined;
@@ -21,6 +22,47 @@ async function deadWriter(){child=spawn(process.execPath,['-e','setInterval(()=>
   await new Promise<void>((done,fail)=>{child!.once('spawn',()=>done());child!.once('error',fail);});return child.pid!;}
 async function stopWriter(){await new Promise<void>(done=>{child!.once('exit',()=>done());child!.kill();});now+=61000;}
 describe('Native file custody with real files/process liveness; fictional DB fence, not hosted evidence',()=>{
+
+  it.each((['upgrade','reconcile'] as const).flatMap(command=>
+    ['lost_exit','success','archive_changed','identical_archive_replaced'].map(outcome=>({command,outcome}))))
+    ('real $command custody survives $outcome or retires after successful exit',async({command,outcome})=>{
+    let count:107|111=107;
+    const commandBinding={...binding,targetSha256:sha(bytes(target))};
+    if(command==='reconcile'){
+      const pid=await deadWriter();const original=await createNativeFullscriptCustody(options(pid),commandBinding,result('inspect-settled'),fence);
+      await admitted(original);await stopWriter();count=111;
+    }
+    const d:FullscriptUpgradeDependencies={
+      readTarget:()=>bytes(target),operatorSha256:()=>target.operatorSha256,
+      observeCaller:()=>structuredClone(caller),observeFoundation:()=>structuredClone(foundation),
+      loadMigrations:migrations,createDatabase:()=>({transaction:async()=>{throw Error('unadmitted_database');}}),
+      run:async(_db,_m,_c,mode)=>{if(mode==='upgrade')count=111;return result(mode,count);},
+      withFence:async work=>{
+        let exited=false;const held={verify:async()=>{if(exited)throw Error('DB query after fence exit');}};
+        const value=await work(held);exited=true;
+        if(outcome==='lost_exit')throw Error('FICTIONAL outer fence commit reply lost');
+        const preparedFile=join(root,readdirSync(root).find(name=>name.endsWith(command==='upgrade'?'.fullscript.prepared.json':'.fullscript.reconciliation-prepared.json'))!);
+        if(outcome==='archive_changed')writeFileSync(preparedFile,'CHANGED');
+        if(outcome==='identical_archive_replaced'){
+          const original=readFileSync(preparedFile);renameSync(preparedFile,preparedFile+'.old');writeFileSync(preparedFile,original);
+        }
+        return value;
+      },
+      createCustody:(value,baseline,held)=>createNativeFullscriptCustody(options(),value,baseline,held),
+      openRecoveryCustody:(value,held)=>openNativeFullscriptRecovery(options(),value,held),
+    };
+    const args=[command,'--target',resolve(root,'FICTIONAL-target.json'),'--target-sha256',sha(bytes(target)),
+      command==='reconcile'?'--reconcile-fictional-fullscript-upgrade':'--confirm-fictional-fullscript-upgrade'];
+    if(outcome==='success'){
+      expect(await executeFullscriptUpgradeCommand(args,build,d)).toMatchObject({custodySettled:true});expect(existsSync(lock())).toBe(false);
+      if(command==='reconcile')expect(existsSync(join(root,'fullscript-upgrade-reconciliation.lock'))).toBe(false);
+    }else{
+      await expect(executeFullscriptUpgradeCommand(args,build,d)).rejects.toMatchObject({stage:outcome==='lost_exit'?'outer_fence_exit':'local_retirement'});
+      expect(existsSync(lock())).toBe(true);
+      if(command==='reconcile')expect(existsSync(join(root,'fullscript-upgrade-reconciliation.lock'))).toBe(true);
+    }
+  });
+
   it('retains immutable source, bound target and complete journal before publishing the shared lock',async()=>{
     const c=await createNativeFullscriptCustody(options(),binding,result('inspect-settled'),fence);
     const h=JSON.parse(readFileSync(lock(),'utf8'));expect(h).toMatchObject({purpose:'qualification-fullscript-upgrade',targetSha256:binding.targetSha256});
@@ -39,8 +81,9 @@ describe('Native file custody with real files/process liveness; fictional DB fen
   it('archives a complete custody receipt before retiring a verified normal writer',async()=>{
     const c=await createNativeFullscriptCustody(options(),binding,result('inspect-settled'),fence);await admitted(c);
     await c.record('write_reply',result('upgrade'));await c.record('readback_one',result('inspect-settled',111));
-    await c.record('readback_two',result('inspect-settled',111));expect(await c.settle(result('upgrade'))).toMatchObject({custodySettled:true});
-    expect(existsSync(lock())).toBe(false);expect(readdirSync(root).some(v=>v.endsWith('.fullscript.settled.json'))).toBe(true);
+    await c.record('readback_two',result('inspect-settled',111));const prepared=await c.settle(result('upgrade'));
+    expect(existsSync(lock())).toBe(true);expect(prepared).not.toHaveProperty('custodySettled');await prepared.retire();
+    expect(existsSync(lock())).toBe(false);expect(readdirSync(root).some(v=>v.endsWith('.fullscript.prepared.json'))).toBe(true);
   });
   it('a changed operator refuses before journal advancement and preserves the lock',async()=>{
     const c=await createNativeFullscriptCustody(options(),binding,result('inspect-settled'),fence);writeFileSync(operatorFile,'CHANGED');
@@ -57,7 +100,7 @@ describe('Native file custody with real files/process liveness; fictional DB fen
   it('requires stopped original process, original artifact, exact target and settlement interval',async()=>{
     const pid=await deadWriter();const c=await createNativeFullscriptCustody(options(pid),binding,result('inspect-settled'),fence);await admitted(c);
     await stopWriter();const r=await openNativeFullscriptRecovery(options(),binding,fence);expect(r.writeAdmitted).toBe(true);
-    expect(await r.settle(result('inspect-settled',111))).toMatchObject({custodySettled:true,originalWriteOutcome:'unknown'});
+    const prepared=await r.settle(result('inspect-settled',111));expect(existsSync(lock())).toBe(true);await prepared.retire();
     expect(existsSync(lock())).toBe(false);
   });
   it('stopped writer with no admission may observe predecessor but cannot certify successor',async()=>{
@@ -74,7 +117,7 @@ describe('Native file custody with real files/process liveness; fictional DB fen
     const pid=await deadWriter();await createNativeFullscriptCustody(options(pid),binding,result('inspect-settled'),fence);
     const journal=join(root,readdirSync(root).find(v=>v.endsWith('.fullscript.events.jsonl'))!);appendFileSync(journal,'{"stage":"write_admitted"');
     const bytes=readFileSync(journal);await stopWriter();const r=await openNativeFullscriptRecovery(options(),binding,fence);
-    expect(r.writeAdmitted).toBe(false);await r.settle(result('inspect-settled'));expect(readFileSync(journal).equals(bytes)).toBe(true);
+    expect(r.writeAdmitted).toBe(false);const prepared=await r.settle(result('inspect-settled'));await prepared.retire();expect(readFileSync(journal).equals(bytes)).toBe(true);
   });
   it('changed stored historical data refuses recovery settlement and keeps custody',async()=>{
     const pid=await deadWriter();const c=await createNativeFullscriptCustody(options(pid),binding,result('inspect-settled'),fence);await admitted(c);

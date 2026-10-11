@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { constants, openSync, closeSync, readSync, writeFileSync, fsyncSync, lstatSync, fstatSync, linkSync, unlinkSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
+import {pinSchemaCustodyFiles} from './schema-custody-file-pins';
 import { FullscriptUpgradeError, type FullscriptUpgradeResult } from './fullscript-schema-upgrade';
 import { verifyFullscriptUpgradeObservation, fullscriptParentCount } from './fullscript-upgrade-command';
 import type { FullscriptCustodyBinding, FullscriptCustodyStage, FullscriptOperatorFence, FullscriptRecoveryCustody, FullscriptWriterCustody } from './fullscript-upgrade-command';
@@ -153,12 +154,22 @@ export async function createNativeFullscriptCustody(options: Options, supplied: 
     const parsed = parseJournal(journalBytes, header, lockBytes, c.runtime.now());
     check(parsed.tail.length === 0 && same(parsed.events.map(e => e.stage), stages)
       && same(parsed.events[3].observation, value), 'settlement');
-    const receipt = { contract: 'fullscript-custody-settlement/1', runId, operatorSha256: c.operatorSha256,
+    const receipt = { contract: 'fullscript-custody-settlement/2', retirement: 'prepared_only', runId, operatorSha256: c.operatorSha256,
       journalSha256: sha(journalBytes), before: baseline, after: structuredClone(value), phiAllowed: false, activation: 'blocked' };
-    save(resolve(c.root, runId + '.fullscript.settled.json'), bytes(receipt));
-    archive(resolve(c.root, runId + '.fullscript.settled-lock.json'), lockBytes);
-    await verify(); unlinkSync(lock); live = false;
-    return { runId, journalSha256: sha(journalBytes), custodySettled: true };
+    const receiptFile=resolve(c.root, runId + '.fullscript.prepared.json');
+    const archivedLock=resolve(c.root, runId + '.fullscript.prepared-lock.json');
+    save(receiptFile, bytes(receipt));archive(archivedLock,lockBytes);
+    await verify();
+    const verifyPrepared=pinSchemaCustodyFiles([
+      {path:lock,bytes:lockBytes},{path:headerFile,bytes:lockBytes},{path:journal,bytes:journalBytes},
+      {path:resolve(c.root,runId+'.fullscript.operator.cjs'),bytes:c.operatorBytes},
+      {path:receiptFile,bytes:bytes(receipt)},{path:archivedLock,bytes:lockBytes},
+    ],bounded);
+    return {runId,journalSha256:sha(journalBytes),retire:async()=>{
+      // The caller has exited the DB fence. Recheck local identities and bytes
+      // synchronously; no await or DB query may occur before lock retirement.
+      check(live,'custody_changed');c.verifySource();verifyPrepared();unlinkSync(lock);live=false;
+    }};
   } };
 }
 
@@ -207,20 +218,26 @@ export async function openNativeFullscriptRecovery(options: Options, supplied: F
   return { baseline: structuredClone(parsed.baseline), writeAdmitted: parsed.writeAdmitted, verify, settle: async value => {
     await verify(); observation(value, 'inspect-settled'); preserved(value, parsed.baseline);
     check(parsed.writeAdmitted || value.observedMigrationCount === fullscriptParentCount(binding.configuration), 'unadmitted_successor');
-    const receipt = { contract: 'fullscript-custody-reconciliation/1', runId: h.runId, originalWriteOutcome: 'unknown',
+    const receipt = { contract: 'fullscript-custody-reconciliation/2', retirement:'prepared_only',runId: h.runId, originalWriteOutcome: 'unknown',
       currentCallerSha256: binding.callerSha256, operatorSha256: c.operatorSha256, originalJournalSha256: sha(journalBytes),
       tornJournalTail: parsed.tail.length > 0, before: parsed.baseline, after: structuredClone(value),
       retryPerformed: false, databaseMutationPerformed: false, phiAllowed: false, activation: 'blocked' };
-    archive(resolve(c.root, guardId + '.fullscript.reconciled.json'), bytes(receipt));
-    archive(resolve(c.root, h.runId + '.fullscript.reconciled-lock.json'), lockBytes);
-    // Retire the subsidiary guard first while still holding the database fence.
-    // If interrupted, the original lock remains available for another read-only
-    // reconciliation. Never leave a guard whose original lock was deleted.
-    await verify(); unlinkSync(guard);
-    await fence.verify(); c.verifySource();
-    check(bounded(lock, 16384).equals(lockBytes) && bounded(journal).equals(journalBytes), 'custody_changed');
-    unlinkSync(lock); live = false;
-    return { runId: h.runId, journalSha256: sha(journalBytes), custodySettled: true, originalWriteOutcome: 'unknown' };
+    const receiptFile=resolve(c.root,guardId+'.fullscript.reconciliation-prepared.json');
+    const archivedLock=resolve(c.root,h.runId+'.fullscript.reconciled-lock.json');
+    archive(receiptFile,bytes(receipt));archive(archivedLock,lockBytes);await verify();
+    const verifyPrepared=pinSchemaCustodyFiles([
+      {path:lock,bytes:lockBytes},{path:journal,bytes:journalBytes},
+      {path:resolve(c.root,h.runId+'.inventory-header.json'),bytes:lockBytes},
+      {path:resolve(c.root,h.runId+'.fullscript.operator.cjs'),bytes:c.operatorBytes},
+      {path:guard,bytes:guardBytes},{path:guardHeader,bytes:guardBytes},
+      {path:receiptFile,bytes:bytes(receipt)},{path:archivedLock,bytes:lockBytes},
+    ],bounded);
+    return {runId:h.runId,journalSha256:sha(journalBytes),retire:async()=>{
+      check(live&&stopped(h.pid),'recovery_changed');c.verifySource();verifyPrepared();
+      // No await between removing the subsidiary guard and original lock.
+      // An interrupted retirement always leaves the original lock last.
+      unlinkSync(guard);unlinkSync(lock);live=false;
+    }};
   } };
 }
 

@@ -50,6 +50,7 @@ jobs:
       - name: Fullscript operator journal and actual rollback composition (fictional AWS only)
         run: |
           npm run test:fullscript-upgrade-operator
+          npm run test:schema-upgrade-settlement
           npm run test:fullscript-native-owner-source
           npm run build:fullscript-upgrade
           npm run test:telehealth-consent-upgrade
