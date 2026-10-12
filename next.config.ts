@@ -204,6 +204,17 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // My courses: a learner's private lesson text once read, so same-origin only, never cached, never referred.
+        source: "/courses",
+        headers: [
+          { key: "Content-Security-Policy", value: FUNNEL_CSP },
+          { key: "Cache-Control", value: "no-store, private" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(), camera=(), geolocation=()" },
+        ],
+      },
+      {
         // The telehealth session routes carry the host token + SDK
         // signature: never cached, never referred.
         source: "/api/live/telehealth/:path*",

@@ -237,3 +237,54 @@ test("7: outages are said as outages; a later course version refuses new purchas
   expect(consult?.status()).toBeLessThan(500);
   expect(JSON.stringify((await fixture<{ commercial: Json }>(request, baseURL!, { action: "staff" })).commercial)).toBe(before);
 });
+
+test("8: My courses: no learner, no course; the learner reads the exact course, completes a lesson with a receipt; a tab that is behind shows the saved record; signing out elsewhere clears the open lesson; another learner sees none of it", async ({ browser, baseURL }) => {
+  const learnerA = await browser.newContext();
+  const learnerB = await browser.newContext();
+  try {
+    const tab1 = await learnerA.newPage();
+    // No learner session yet: nothing private is shown, and the page asks for a sign-in rather than saying "no courses".
+    await tab1.goto("/courses");
+    await expect(tab1.getByTestId("learner-error")).toContainText("Sign in");
+    await expect(tab1.getByTestId("learner-empty")).toHaveCount(0);
+    // The consumer identity service signs learner A in (the fixture's stand-in: an opaque, http-only session).
+    await fixture(learnerA.request, baseURL!, { action: "learner_session", learner: "a" });
+    const reply = tab1.waitForResponse(response => response.url().endsWith("/api/my-courses"));
+    await tab1.goto("/courses");
+    expect((await reply).headers()["cache-control"]).toBe("no-store, private");
+    await expect(tab1.getByTestId("learner-fixture-host")).toContainText("FICTIONAL FIXTURE HOST");
+    await tab1.getByTestId(`learner-open-${entitlementId}`).click();
+    // The version bought, not the later one published in case 7; progress as case 4 left it.
+    await expect(tab1.getByTestId("learner-curriculum")).toContainText("Fictional journey course (test fixture) (version 1)");
+    await expect(tab1.getByTestId("learner-progress")).toHaveText("1 of 3 lessons marked complete.");
+    const tab2 = await learnerA.newPage();
+    await tab2.goto("/courses");
+    await tab2.getByTestId(`learner-open-${entitlementId}`).click();
+    await expect(tab2.getByTestId("learner-progress")).toHaveText("1 of 3 lessons marked complete.");
+    // Tab one: open habit B (a resume point is recorded, never a completion), then complete it explicitly.
+    await tab1.getByTestId("learner-lesson-open-habit-b").click();
+    await expect(tab1.getByTestId("learner-lesson-text")).toHaveText("Fictional practice B for the journey fixture.");
+    await expect(tab1.getByTestId("learner-lesson-media-held")).toBeVisible();
+    await expect(tab1.getByTestId("learner-lesson-completed")).toHaveCount(0);
+    await tab1.getByTestId("learner-lesson-complete").click();
+    await expect(tab1.getByTestId("learner-lesson-completed")).toHaveText("Completed.");
+    await expect(tab1.getByTestId("learner-notice")).toContainText("Saved for this account");
+    // Tab two is behind: opening habit B tries to record a place at its old revision, is refused, and shows the saved record.
+    await tab2.getByTestId("learner-lesson-open-habit-b").click();
+    await expect(tab2.getByTestId("learner-lesson-completed")).toHaveText("Completed.");
+    await expect(tab2.getByTestId("learner-lesson-complete")).toHaveCount(0);
+    // Learner B, another account, sees its own course only.
+    await fixture(learnerB.request, baseURL!, { action: "learner_session", learner: "b" });
+    const other = await learnerB.newPage();
+    await other.goto("/courses");
+    await expect(other.getByTestId("learner-fixture-host")).toBeVisible();
+    await expect(other.locator('[data-testid^="learner-course-state-"]')).toHaveCount(1);
+    await expect(other.getByTestId(`learner-course-${entitlementId}`)).toHaveCount(0);
+    // Signed out elsewhere: the next request from tab one is refused, and the open lesson's text goes with it.
+    await fixture(learnerA.request, baseURL!, { action: "learner_revoke", learner: "a" });
+    await tab1.getByTestId("learner-lesson-next").click();
+    await expect(tab1.getByTestId("learner-error")).toContainText("Sign in");
+    await expect(tab1.getByTestId("learner-lesson-text")).toHaveCount(0);
+    await expect(tab1.getByTestId("learner-curriculum")).toHaveCount(0);
+  } finally { await learnerA.close(); await learnerB.close(); }
+});

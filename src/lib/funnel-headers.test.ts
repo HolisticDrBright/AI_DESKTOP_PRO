@@ -45,3 +45,18 @@ describe("program funnel route headers", () => {
     expect(routes.some((route) => /funnel|learn|\/buy\//.test(route))).toBe(false);
   });
 });
+
+describe("My courses route headers", () => {
+  it("serves the same strict same-origin policy, never cached and never referred", async () => {
+    vi.stubEnv("APP_EDITION", "clinical");
+    vi.stubEnv("NODE_ENV", "production");
+    const config = (await import("../../next.config")).default;
+    const entry = (await config.headers!()).find((candidate) => candidate.source === "/courses");
+    expect(entry).toBeDefined();
+    const value = (key: string) => entry!.headers.find((header) => header.key === key)?.value ?? "";
+    expect(value("Content-Security-Policy")).toMatch(/connect-src 'self'/);
+    expect(value("Content-Security-Policy")).toMatch(/frame-ancestors 'none'/);
+    expect(value("Cache-Control")).toBe("no-store, private");
+    expect(value("Referrer-Policy")).toBe("no-referrer");
+  });
+});

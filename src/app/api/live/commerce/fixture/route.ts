@@ -11,6 +11,7 @@ import { PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 } from '@/server/commerce/prog
 import { PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 } from '@/server/commerce/program-education-ledger-sql';
 import { purchaseRows } from '@/lib/programs/purchaseStatus';
 import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity-consent';
+import { FIXTURE_LEARNER_COOKIE, __resetLearnerHost, openFixtureLearnerSession, revokeFixtureLearnerSessions } from '@/server/learner/learner-host';
 import { liveGuard } from '../../route-helpers';
 
 /**
@@ -25,6 +26,9 @@ import { liveGuard } from '../../route-helpers';
  *   mailbox   the purchaser's inbox: what the real claim delivery sent to the fixture address;
  *   consumer  a verified consumer session: the REAL education access and progress services, called
  *             with a fixture consumer context the identity API would otherwise build;
+ *   learner_session  the consumer identity service signing a fictional learner in for the Desktop
+ *             My courses page: an opaque, http-only session the fixture learner host recognises;
+ *   learner_revoke   that identity service revoking the learner's sessions (signed out elsewhere);
  *   staff     a clinician of the fixture clinic: the real staff status, with the Studio's own rows;
  *   operator  a trusted operator: a replacement code, or a policy decision;
  *   publish   the Studio publishing a later course version (the stale-curriculum case);
@@ -44,6 +48,8 @@ const request = z.discriminatedUnion('action', [
   z.object({ action: z.literal('mailbox') }).strict(),
   z.object({ action: z.literal('consumer'), learner, service: z.enum(['access', 'progress']), body: z.unknown() }).strict(),
   z.object({ action: z.literal('staff') }).strict(),
+  z.object({ action: z.literal('learner_session'), learner }).strict(),
+  z.object({ action: z.literal('learner_revoke'), learner }).strict(),
   z.object({ action: z.literal('operator'), op: z.enum(['reissue', 'refund', 'operator_release']), orderId: z.string().uuid() }).strict(),
   z.object({ action: z.literal('publish'), variant: z.enum(['first', 'later']) }).strict(),
   z.object({ action: z.literal('age_claim'), orderId: z.string().uuid(), days: z.number().int().min(1).max(30) }).strict(),
@@ -64,7 +70,7 @@ export async function POST(req: Request) {
   try { body = request.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(req, 16_384, 5000)))); }
   catch { return json(400, { error: { code: 'invalid', message: 'request_invalid' } }); }
   if (body.action === 'reset') {
-    __resetProgramCommerceRuntime(); __resetJourneySeed();
+    __resetProgramCommerceRuntime(); __resetJourneySeed(); __resetLearnerHost();
     await ensureJourneySeed();
     return json(200, { data: { reset: true } });
   }
@@ -96,6 +102,13 @@ export async function POST(req: Request) {
         return json(category === 'request_invalid' ? 400 : category === 'identity_refused' ? 403 : 503, { error: { code: category, message: category } });
       }
     }
+    case 'learner_session': {
+      const response = json(200, { data: { learner: body.learner } });
+      response.cookies.set(FIXTURE_LEARNER_COOKIE, openFixtureLearnerSession(body.learner), { httpOnly: true, sameSite: 'strict', path: '/', secure: false });
+      return response;
+    }
+    case 'learner_revoke':
+      return json(200, { data: { revoked: revokeFixtureLearnerSessions(body.learner) } });
     case 'staff': {
       const staff = { kind: 'staff' as const, personId: JOURNEY_FIXTURE.staffPersonId, organizationId: JOURNEY_FIXTURE.organizationId, identitySubject: 'wf:' + JOURNEY_FIXTURE.staffPersonId };
       const commercial = await selection.education.listForProgram(staff, JOURNEY_FIXTURE.programId);

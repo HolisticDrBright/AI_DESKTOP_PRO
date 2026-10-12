@@ -21,6 +21,8 @@ const PUBLIC_PATHS: ReadonlyArray<{ prefix: string; width: string }> = [
   { prefix: "/consult", width: "max-w-[560px]" },
   { prefix: "/learn", width: "max-w-[960px]" },
   { prefix: "/buy", width: "max-w-[760px]" },
+  // My courses is a learner's page: the clinic's navigation is not theirs either.
+  { prefix: "/courses", width: "max-w-[860px]" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

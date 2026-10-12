@@ -48,6 +48,19 @@ describe("clinical-only authentication lifecycle", () => {
     expect(refreshSession).not.toHaveBeenCalled();
   });
 
+  test("a learner without a workforce session reaches My courses itself, and only that path", async () => {
+    for (const path of ["/courses", "/courses/"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+    }
+    for (const path of ["/courses/x", "/courses/x/lesson", "/course", "/courses-admin", "/coursesx"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname, path).toBe("/login");
+    }
+  });
+
   test("the public allow-list is exact: neighbouring paths still require sign-in", async () => {
     for (const path of ["/consult", "/consultations/x", "/consult-admin/x", "/learn", "/learning/x", "/learn-more/x", "/buy", "/buying/x", "/buy-now/x", "/buy/x/checkout", "/telehealth-requests", "/programs/x", "/funnels/longevity-program/preview"]) {
       const response = await middleware(new NextRequest("https://desktop.example.test" + path));

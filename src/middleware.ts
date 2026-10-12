@@ -37,6 +37,13 @@ const HAS_ENV_FALLBACK = Boolean(
 
 /** Exactly `/consult/<slug>` or `/learn/<slug>` (optional trailing slash). Everything else redirects. */
 export const PUBLIC_VISITOR_PAGE = /^\/(?:consult|learn|buy)\/[A-Za-z0-9][A-Za-z0-9_-]{0,119}\/?$/;
+/**
+ * Exactly `/courses` (optional trailing slash): a learner's My courses page. A learner holds no
+ * workforce session, so the workforce redirect does not apply to it; the page renders nothing
+ * private and reads only through `/api/my-courses`, where the learner host verifies the
+ * consumer. Nothing beneath `/courses` is admitted.
+ */
+export const LEARNER_PAGE = /^\/courses\/?$/;
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
 const inflight = new Map<string, Promise<Tokens>>();
@@ -78,7 +85,7 @@ export async function middleware(req: NextRequest) {
   // Public visitor pages: a consult link (/consult/<slug>) and a program funnel page
   // (/learn/<slug>). The allow-list is exact: one slug segment, nothing else under either
   // prefix, and the prefixes themselves still require a session.
-  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname);
+  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname) || LEARNER_PAGE.test(pathname);
   // The auth endpoints manage cookies themselves — never intercept them.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 
