@@ -194,6 +194,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The purchase page a funnel's buy choice leads to: public, same-origin only, same policy.
+        source: "/buy/:slug",
+        headers: [
+          { key: "Content-Security-Policy", value: FUNNEL_CSP },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(), camera=(), geolocation=()" },
+        ],
+      },
+      {
         // The telehealth session routes carry the host token + SDK
         // signature: never cached, never referred.
         source: "/api/live/telehealth/:path*",

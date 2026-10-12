@@ -10,8 +10,12 @@ describe('private draft review', () => {
     for (const funnel of FUNNELS) {
       const page = await Preview({ params: Promise.resolve({ slug: funnel.slug }) });
       expect(renderToText(page)).toContain('Private draft review — not published');
-      expect(renderToText(page)).toContain('Prices are not selected');
-      expect(renderToMarkup(page)).toContain('disabled=""');
+      // The buy choice is shown as the offer answers it: no page is bound to a program, so it is unavailable, with no link, no price and no button.
+      expect(renderToText(page)).toContain('Direct purchase is unavailable: This page is not linked to a program that can be bought yet.');
+      expect(renderToMarkup(page)).toContain('data-testid="funnel-buy-top" data-available="false"');
+      expect(renderToMarkup(page)).not.toMatch(/<(button|form|input)\b/i);
+      expect(renderToMarkup(page)).not.toContain('href="/buy/');
+      expect(renderToText(page)).not.toMatch(/USD|\$\d/);
       expect(renderToMarkup(page)).toContain(`href="/consult/${funnel.consultSlug}"`);
       expect(publishedFunnel(funnel.slug)).toBeNull();
     }

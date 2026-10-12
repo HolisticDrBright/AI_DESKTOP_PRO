@@ -36,7 +36,7 @@ const HAS_ENV_FALLBACK = Boolean(
 );
 
 /** Exactly `/consult/<slug>` or `/learn/<slug>` (optional trailing slash). Everything else redirects. */
-export const PUBLIC_VISITOR_PAGE = /^\/(?:consult|learn)\/[A-Za-z0-9][A-Za-z0-9_-]{0,119}\/?$/;
+export const PUBLIC_VISITOR_PAGE = /^\/(?:consult|learn|buy)\/[A-Za-z0-9][A-Za-z0-9_-]{0,119}\/?$/;
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
 const inflight = new Map<string, Promise<Tokens>>();

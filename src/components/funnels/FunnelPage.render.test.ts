@@ -4,6 +4,7 @@ import { renderToMarkup, renderToText } from '@/test-support/renderToText';
 import { FunnelPage } from './FunnelPage';
 import { FUNNELS, type FunnelDefinition } from '@/funnels';
 import { longevityProgram } from '@/funnels/definitions/longevity-program';
+import { unavailable, type PurchaseAvailability } from '@/contracts/programOffers';
 
 /**
  * A funnel page rendered for real: every section kind in the words the visitor reads, the
@@ -17,7 +18,10 @@ const withEverySection = (): FunnelDefinition => ({
   sections: [...longevityProgram.sections.slice(0, 4), practitioner, ...longevityProgram.sections.slice(4)],
 });
 const consultHref = 'https://clinic.fictional.example/consult/longevity-program';
-const render = (funnel: FunnelDefinition, href = consultHref) => createElement(FunnelPage, { funnel, consultHref: href });
+const buyHref = '/buy/longevity-program';
+const held: PurchaseAvailability = unavailable('program_unbound');
+const available: PurchaseAvailability = { available: true, offerId: '11111111-1111-4111-8111-111111111111', revision: 3, name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, curriculum: { versionId: '22222222-2222-4222-8222-222222222222', version: 2, sourceDigest: 'a'.repeat(64) }, accessTermsVersion: 'education-access-terms/1', accessDurationDays: 90, providerPriceRef: 'price_FictionalAbc123' };
+const render = (funnel: FunnelDefinition, href = consultHref, purchase: PurchaseAvailability = held) => createElement(FunnelPage, { funnel, consultHref: href, purchase, buyHref });
 
 describe('a funnel page', () => {
   it('renders every section kind with its heading and the program label', () => {
@@ -43,6 +47,26 @@ describe('a funnel page', () => {
     const filledText = renderToText(render(filled));
     expect(filledText).toContain('Fictional lesson one');
     expect(filledText).not.toContain('not shown yet');
+  });
+  it('shows the buy choice as the specific reason it is unavailable, with no price and no link, until the offer is available', () => {
+    for (const reason of ['program_unbound', 'commerce_disabled', 'offer_absent', 'offer_draft', 'curriculum_changed', 'commerce_unverifiable'] as const) {
+      const element = render(longevityProgram, consultHref, unavailable(reason));
+      const markup = renderToMarkup(element);
+      expect(markup, reason).toContain(`data-purchase="${reason}"`);
+      expect(markup, reason).toContain('data-testid="funnel-buy-top" data-available="false"');
+      expect(markup, reason).toContain('data-testid="funnel-buy-bottom" data-available="false"');
+      const text = renderToText(element);
+      expect(text, reason).toContain('Direct purchase is not available right now.');
+      expect(text, reason).not.toMatch(/USD|\$\d/);
+      expect([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]).every(h => h === consultHref), reason).toBe(true);
+    }
+    const live = render(longevityProgram, consultHref, available);
+    const markup = renderToMarkup(live);
+    expect(markup).toContain('data-purchase="available"');
+    expect(markup).toContain('data-testid="funnel-buy-top" data-available="true"');
+    expect(renderToText(live)).toContain('Buy the program 19.99 USD, one payment, 90 days of access');
+    expect(new Set([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]))).toEqual(new Set([consultHref, buyHref]));
+    expect(renderToText(live)).toContain('two choices: to request a consultation, or to buy the program when it is available');
   });
   it('has no form control, no image, no script and no external address; its only links are the consult address', () => {
     for (const funnel of [withEverySection(), ...FUNNELS]) {

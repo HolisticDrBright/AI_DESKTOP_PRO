@@ -6,6 +6,7 @@
  * client or credentials reach the browser bundle. Every failure surfaces as an
  * AdapterError with a safe message.
  */
+import type { ProgramOfferCommand, ProgramOfferResult } from "@/contracts/programOffers";
 import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
 import type { LabWorkspace } from "./labs.types";
 import type { KnowledgeImportBatch, KnowledgeImportSourceItem } from "./clinical-import.types";
@@ -157,7 +158,11 @@ async function liveFetch<T>(
 
   if (!res.ok || json.error) {
     const code = json.error?.code ?? codeFromHttpStatus(res.status);
-    throw new AdapterError(code, json.error?.message);
+    const error = new AdapterError(code, json.error?.message);
+    // A refusal may name the holds behind it (program-offer/1 publication); carried as data, never shown raw.
+    const holds = (json.error as { holds?: unknown } | undefined)?.holds;
+    if (Array.isArray(holds)) Object.assign(error, { holds: holds.filter((hold): hold is string => typeof hold === "string") });
+    throw error;
   }
   return json.data as T;
 }
@@ -478,15 +483,19 @@ export const liveClient = {
 
   upsertProgramOffer: (input: {
     programId: string;
-    offerId?: string | null;
-    name?: string | null;
-    priceCents?: number;
-    currency?: string;
-    accessDurationDays?: number | null;
-    paymentMode?: LiveProgramOfferPaymentMode;
-    enrollmentOpen?: boolean;
-    status?: "active" | "retired";
+    offerId: string | null;
+    name: string | null;
+    priceCents: number;
+    currency: "usd";
+    accessDurationDays: number | null;
+    paymentMode: LiveProgramOfferPaymentMode;
+    enrollmentOpen: boolean;
+    status: "active" | "retired";
   }) => liveFetch<LiveProgramMutationResult>("programs/offer", { method: "POST", body: input }),
+
+  /** program-offer/1 authoring: the command is the whole body; the server names the actor and the clinic. */
+  programOffers: (command: ProgramOfferCommand) =>
+    liveFetch<ProgramOfferResult>("commerce/offers", { method: "POST", body: command }),
 
   programEnroll: (input: {
     programId: string;

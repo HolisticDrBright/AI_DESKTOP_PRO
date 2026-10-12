@@ -23,6 +23,14 @@ describe('the three funnels', () => {
       expect(funnel.draftNote).toMatch(/approv/);
       expect(funnel.sections.find(s => s.kind === 'what-is-included')).toMatchObject({ source: 'pending', items: [] });
       expect(funnel.sections.map(s => s.kind)).toContain('call-to-action');
+      // No page is bound to a program yet: the buy choice is unavailable until Brandon names the program it sells.
+      expect(funnel.programBinding).toBeNull();
+      const faq = funnel.sections.find(s => s.kind === 'faq');
+      const text = JSON.stringify(funnel.sections);
+      expect(faq && JSON.stringify(faq)).toContain('Buying the program directly is a separate choice');
+      expect(text).toContain('Two ways to start');
+      expect(text).not.toContain('This page only requests a consultation');
+      expect(text).not.toMatch(/\$\s?\d|USD/);
     }
     expect(allFunnels()).toBe(FUNNELS);
   });
@@ -111,5 +119,13 @@ describe('publication', () => {
       funnel.sections.push({ kind, heading: 'x' });
       expect(funnelDefinition.safeParse(funnel).success, kind).toBe(false);
     }
+  });
+  it('binds the buy choice to a program by clinic and program id, never by slug or name', () => {
+    expect(funnelDefinition.safeParse({ ...longevityProgram, programBinding: { organizationId: '11111111-1111-4111-8111-111111111111', programId: '22222222-2222-4222-8222-222222222222' } }).success).toBe(true);
+    expect(funnelDefinition.safeParse({ ...longevityProgram, programBinding: { programSlug: 'longevity-program' } }).success).toBe(false);
+    expect(funnelDefinition.safeParse({ ...longevityProgram, programBinding: { organizationId: 'clinic', programId: 'longevity' } }).success).toBe(false);
+    expect(funnelDefinition.safeParse({ ...longevityProgram, programBinding: { organizationId: '11111111-1111-4111-8111-111111111111', programId: '22222222-2222-4222-8222-222222222222', price: 1999 } }).success).toBe(false);
+    const { programBinding: _binding, ...unbound } = longevityProgram;
+    expect(funnelDefinition.safeParse(unbound).success).toBe(false);
   });
 });

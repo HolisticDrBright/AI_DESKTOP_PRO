@@ -240,18 +240,22 @@ export const programsLive = {
     );
   },
 
-  /** Stores commercial terms ONLY. This application never processes payment. */
+  /**
+   * Stores LEGACY commercial terms ONLY. This application never processes payment. Every term is
+   * required and forwarded exactly: nothing here defaults a mode to free, a price to zero or a
+   * flag to open, because a default is a commercial claim nobody made.
+   */
   async upsertOffer(
     input: {
       programId: string;
-      offerId?: string | null;
-      name?: string | null;
-      priceCents?: number;
-      currency?: string;
-      accessDurationDays?: number | null;
-      paymentMode?: LiveProgramOfferPaymentMode;
-      enrollmentOpen?: boolean;
-      status?: "active" | "retired";
+      offerId: string | null;
+      name: string | null;
+      priceCents: number;
+      currency: "usd";
+      accessDurationDays: number | null;
+      paymentMode: LiveProgramOfferPaymentMode;
+      enrollmentOpen: boolean;
+      status: "active" | "retired";
     },
     sessionToken?: string | null,
   ): Promise<LiveProgramMutationResult> {
@@ -260,14 +264,14 @@ export const programsLive = {
       "upsert_program_offer",
       {
         _program_id: input.programId,
-        _offer_id: input.offerId ?? null,
-        _name: input.name ?? null,
-        _price_cents: input.priceCents ?? 0,
-        _currency: input.currency ?? "usd",
-        _access_duration_days: input.accessDurationDays ?? null,
-        _payment_mode: input.paymentMode ?? "free",
-        _enrollment_open: input.enrollmentOpen ?? true,
-        _status: input.status ?? "active",
+        _offer_id: input.offerId,
+        _name: input.name,
+        _price_cents: input.priceCents,
+        _currency: input.currency,
+        _access_duration_days: input.accessDurationDays,
+        _payment_mode: input.paymentMode,
+        _enrollment_open: input.enrollmentOpen,
+        _status: input.status,
       },
       token,
     );

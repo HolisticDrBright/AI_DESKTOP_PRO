@@ -1,29 +1,51 @@
 import type { FunnelDefinition, FunnelSection } from '@/funnels';
+import { formatAmount, type PurchaseAvailability } from '@/contracts/programOffers';
 
 /**
- * A funnel page, rendered on the server from its definition alone. Fixed sections, plain text, no
- * form control, no image, no script, and exactly one outbound link: the consult address built from
- * the configured public origin. When no origin is configured the call to action is a same-origin
- * path, so the page never prints an address that would not work.
+ * A funnel page, rendered on the server from its definition and the program's offer as the server
+ * read it. Fixed sections, plain text, no form control, no image, no script. Two destinations and no
+ * more: the consult address built from the configured public origin, and, only when the program's
+ * offer is actually available, the same-origin purchase page. When it is not, the page says exactly
+ * why in the visitor's words, and prints no address, no price and no promise.
  */
 const SECTION = 'mx-auto w-full max-w-[760px] px-5 py-8 md:px-8';
 const H2 = 'm-0 text-[22px] font-bold leading-tight text-body';
 const P = 'm-0 mt-3 text-[15px] leading-relaxed text-body';
+const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
-export function FunnelPage({ funnel, consultHref }: { funnel: FunnelDefinition; consultHref: string }) {
+export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string };
+
+export function FunnelPage({ funnel, consultHref, purchase, buyHref }: FunnelPageProps) {
   return (
-    <article data-testid="funnel-page" data-slug={funnel.slug} className="w-full">
-      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} />)}
+    <article data-testid="funnel-page" data-slug={funnel.slug} data-purchase={purchase.available ? 'available' : purchase.reason} className="w-full">
+      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} purchase={purchase} buyHref={buyHref} />)}
       <footer className={`${SECTION} border-t border-line`} data-testid="funnel-footer">
         <p className="m-0 text-[12.5px] leading-relaxed text-subtle">
-          {funnel.programLabel} is offered by The Holistic Approach LLC. This page describes a program and asks for a consultation. It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. Nothing is bought on this page.
+          {funnel.programLabel} is offered by The Holistic Approach LLC. This page describes a program and offers two choices: to request a consultation, or to buy the program when it is available. It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. No payment details are entered on this page; any purchase is completed on a separate secure checkout page.
         </p>
       </footer>
     </article>
   );
 }
 
-function Section({ section, consultHref, programLabel }: { section: FunnelSection; consultHref: string; programLabel: string }) {
+/** The buy choice as the visitor reads it: a link when the offer is available, otherwise the specific reason it is not. */
+export function PurchaseChoice({ purchase, buyHref, place }: { purchase: PurchaseAvailability; buyHref: string; place: 'top' | 'bottom' }) {
+  if (purchase.available) {
+    return (
+      <span data-testid={`funnel-buy-${place}`} data-available="true">
+        <a href={buyHref} className={BUTTON}>Buy the program</a>
+        <span className="ml-3 text-[13px] text-subtle">{formatAmount(purchase.pricing)}{purchase.accessDurationDays === null ? '' : `, ${purchase.accessDurationDays} days of access`}</span>
+      </span>
+    );
+  }
+  return (
+    <span data-testid={`funnel-buy-${place}`} data-available="false" data-reason={purchase.reason} className="text-[13.5px] text-subtle">
+      Direct purchase is not available right now. {purchase.explanation}
+    </span>
+  );
+}
+
+function Section({ section, consultHref, programLabel, purchase, buyHref }: { section: FunnelSection; consultHref: string; programLabel: string; purchase: PurchaseAvailability; buyHref: string }) {
   switch (section.kind) {
     case 'hero':
       return (
@@ -31,7 +53,7 @@ function Section({ section, consultHref, programLabel }: { section: FunnelSectio
           <p className="m-0 text-[12px] font-bold uppercase tracking-[0.08em] text-subtle">{programLabel}</p>
           <h1 className="m-0 mt-2 text-[34px] font-bold leading-[1.15] text-body">{section.heading}</h1>
           <p className={`${P} text-[17px]`}>{section.lead}</p>
-          <p className="mt-6"><a href={consultHref} className="inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white" data-testid="funnel-cta-top">Request a consultation</a></p>
+          <p className="mt-6 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta-top">Request a consultation</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="top" /></p>
         </header>
       );
     case 'who-it-is-for':
@@ -94,7 +116,7 @@ function Section({ section, consultHref, programLabel }: { section: FunnelSectio
         <section className={`${SECTION} rounded-[12px] bg-card`} data-testid="funnel-section-call-to-action">
           <h2 className={H2}>{section.heading}</h2>
           <p className={P}>{section.detail}</p>
-          <p className="mt-5"><a href={consultHref} className="inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white" data-testid="funnel-cta">{section.buttonLabel}</a></p>
+          <p className="mt-5 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta">{section.buttonLabel}</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="bottom" /></p>
         </section>
       );
   }

@@ -23,6 +23,7 @@
  * moves from UNAVAILABLE to LIVE only with a real authenticated read/write —
  * that is the whole migration, one domain at a time.
  */
+import type { ProgramOfferCommand } from "@/contracts/programOffers";
 import { AdapterError } from "./errors";
 import { getCommandGroups } from "./commands";
 import { mapLiveQueueItem } from "./tasks.map";
@@ -428,15 +429,21 @@ export const api = {
      */
     upsertOffer: async (input: {
       programId: string;
-      offerId?: string | null;
-      name?: string | null;
-      priceCents?: number;
-      currency?: string;
-      accessDurationDays?: number | null;
-      paymentMode?: LiveProgramOfferPaymentMode;
-      enrollmentOpen?: boolean;
-      status?: "active" | "retired";
+      offerId: string | null;
+      name: string | null;
+      priceCents: number;
+      currency: "usd";
+      accessDurationDays: number | null;
+      paymentMode: LiveProgramOfferPaymentMode;
+      enrollmentOpen: boolean;
+      status: "active" | "retired";
     }) => liveClient.upsertProgramOffer(input),
+    /**
+     * LIVE: program-offer/1 authoring (create, revise, approve the provider mapping, publish,
+     * retire, list). The server chooses the ledger and answers `commerce_disabled` when none is
+     * reviewed for this process; nothing here prices, charges or enrolls.
+     */
+    offers: async (command: ProgramOfferCommand) => liveClient.programOffers(command),
     /**
      * LIVE: enroll, pinned to the exact published version. Eligibility,
      * tenant agreement, comp reason + authorization, and the Stripe refusal

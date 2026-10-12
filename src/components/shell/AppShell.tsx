@@ -20,6 +20,7 @@ const PUBLIC_PATHS: ReadonlyArray<{ prefix: string; width: string }> = [
   // A consult form reads best narrow; a program page is a page, not a form.
   { prefix: "/consult", width: "max-w-[560px]" },
   { prefix: "/learn", width: "max-w-[960px]" },
+  { prefix: "/buy", width: "max-w-[760px]" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

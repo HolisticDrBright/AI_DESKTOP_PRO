@@ -270,6 +270,9 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   // A settled request id can never be admitted again; the caller must treat it as a
   // decided conflict, not as an identity problem it could retry past.
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // Program offer refusals (the BLOCKED commerce candidate): the token names the refusal and, for a
+  // refused publication, the holds after a colon. Tokens only; never SQL text or identifiers.
+  { const offer = /\bprogram_offer_[a-z_]+(?::[a-z_,]+)?/.exec(message); if (offer) return new ClinicalCoreDatabaseRejection("operation_refused", offer[0]); }
   if (/\bprogram_assignment_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(program_assignment_refused|program_assignment_unpublished|program_item_held|program_assignment_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   // The production program family is disabled until a reviewed activation row exists; the refusal is a decision, not a fault.

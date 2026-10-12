@@ -1,54 +1,49 @@
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { z } from "zod";
 import { programsLive } from "@/adapters/programs.live";
-import type { LiveProgramOfferPaymentMode } from "@/adapters/live-types";
 import { getRequestSession } from "@/server/session";
+import { readBoundedRequestBody } from "@/server/bounded-request-body";
+import { sameBrowserOrigin } from "@/server/same-browser-origin";
 import { liveGuard, runLive } from "../../route-helpers";
 
-const PAYMENT_MODES: LiveProgramOfferPaymentMode[] = ["free", "manual_comp", "stripe"];
-
 /**
- * POST — create or update an offer. Terms storage ONLY: the database never
- * charges, and a stripe-mode offer refuses enrollment as not configured.
+ * POST — create or update a LEGACY offer (the free / manual_comp / stripe terms the program
+ * dispatcher stores). Terms storage ONLY: the database never charges, and a stripe-mode offer
+ * refuses enrollment as not configured. Paid program sales use the program-offer/1 contract at
+ * /api/live/commerce/offers, not this route.
+ *
+ * Every field is required and exact. On 08d07b3 this route turned an unknown payment mode into
+ * `free`, a non-finite price into 0 and absent flags into open/active, so malformed paid terms
+ * reached the dispatcher as a free, open, active offer; it also read the body unbounded and
+ * without an origin check. Now a body that is not exactly the contract is refused with 400 and
+ * nothing is forwarded; nothing is defaulted.
  */
-export async function POST(req: NextRequest) {
+const legacyOffer = z.object({
+  programId: z.string().min(1).max(200),
+  offerId: z.string().min(1).max(200).nullable(),
+  name: z.string().trim().min(1).max(200).nullable(),
+  priceCents: z.number().int().min(0).max(1_000_000),
+  currency: z.enum(["usd"]),
+  accessDurationDays: z.number().int().min(1).max(3650).nullable(),
+  paymentMode: z.enum(["free", "manual_comp", "stripe"]),
+  enrollmentOpen: z.boolean(),
+  status: z.enum(["active", "retired"]),
+}).strict();
+
+const json = (status: number, value: unknown) => NextResponse.json(value, { status, headers: { "Cache-Control": "no-store" } });
+
+export async function POST(request: Request) {
   const blocked = liveGuard();
   if (blocked) return blocked;
+  if (!sameBrowserOrigin(request)) return json(403, { error: { code: "forbidden", message: "identity_refused" } });
+  let body: z.infer<typeof legacyOffer>;
+  try {
+    body = legacyOffer.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request, 4096, 5000))));
+  } catch {
+    return json(400, { error: { code: "invalid", message: "request_invalid" } });
+  }
   return runLive(async () => {
-    const b = (await req.json().catch(() => ({}))) as {
-      programId?: unknown;
-      offerId?: unknown;
-      name?: unknown;
-      priceCents?: unknown;
-      currency?: unknown;
-      accessDurationDays?: unknown;
-      paymentMode?: unknown;
-      enrollmentOpen?: unknown;
-      status?: unknown;
-    };
-    if (typeof b.programId !== "string" || !b.programId) {
-      throw new Error("programId is required");
-    }
-    const paymentMode = PAYMENT_MODES.includes(b.paymentMode as LiveProgramOfferPaymentMode)
-      ? (b.paymentMode as LiveProgramOfferPaymentMode)
-      : "free";
     const session = await getRequestSession();
-    return programsLive.upsertOffer(
-      {
-        programId: b.programId,
-        offerId: typeof b.offerId === "string" ? b.offerId : null,
-        name: typeof b.name === "string" ? b.name : null,
-        priceCents:
-          typeof b.priceCents === "number" && Number.isFinite(b.priceCents) ? b.priceCents : 0,
-        currency: typeof b.currency === "string" && b.currency ? b.currency : "usd",
-        accessDurationDays:
-          typeof b.accessDurationDays === "number" && Number.isFinite(b.accessDurationDays)
-            ? b.accessDurationDays
-            : null,
-        paymentMode,
-        enrollmentOpen: b.enrollmentOpen !== false,
-        status: b.status === "retired" ? "retired" : "active",
-      },
-      session.token,
-    );
+    return programsLive.upsertOffer(body, session.token);
   });
 }

@@ -65,8 +65,14 @@ export const funnelDefinition = z.object({
   indexable: z.boolean(),
   /** Display text only; never a lookup against program data. */
   programLabel: copy(80),
-  /** The consult link this funnel hands off to; the only outbound destination on the page. */
+  /** The consult link this funnel hands off to; one of the page's two destinations. */
   consultSlug: slug,
+  /**
+   * The program this page sells, by clinic and program id, or null while Brandon has not named one. The
+   * purchase choice reads the program's offer through this binding and nothing else: a slug or a title is
+   * not a product identity, and an unbound page cannot be bought from.
+   */
+  programBinding: z.object({ organizationId: z.string().uuid(), programId: z.string().uuid() }).strict().nullable(),
   sections: z.array(funnelSection).min(3).max(7),
   /** Who approved the exact published text and when; required to publish. */
   approval: z.object({ by: copy(80), on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), attorneyReview: z.boolean() }).strict().nullable(),

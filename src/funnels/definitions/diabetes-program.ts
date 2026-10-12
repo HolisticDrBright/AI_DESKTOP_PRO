@@ -15,6 +15,7 @@ export const diabetesProgram: FunnelDefinition = {
   indexable: true,
   programLabel: 'Diabetes program',
   consultSlug: 'diabetes-program',
+  programBinding: null,
   sections: [
     { kind: 'hero', heading: 'A structured lifestyle program for adults living with diabetes',
       lead: 'This program works alongside the care you already receive. It does not replace your own doctor, and it changes nothing about your medication; it adds structure, lessons and check-ins with a practitioner.' },
@@ -32,9 +33,10 @@ export const diabetesProgram: FunnelDefinition = {
     { kind: 'faq', heading: 'Questions people ask', questions: [
       { question: 'Does this replace my doctor?', answer: 'No. Your own doctor stays responsible for your diabetes care. This program runs alongside that care.' },
       { question: 'Will the program change my treatment?', answer: 'No. Nothing in the program alters what your doctor has prescribed. Questions about treatment belong with your doctor.' },
-      { question: 'Do I pay on this page?', answer: 'No. This page only requests a consultation. Any fees are discussed with the clinic after the first visit.' },
+      { question: 'Do I have to pay to start?', answer: 'No. Requesting a consultation costs nothing on this page. Buying the program directly is a separate choice; when it is available, the exact price and terms are shown before anything is charged, and payment is taken on a separate secure checkout page, never on this one.' },
+      { question: 'Does buying the program change my care?', answer: 'No. Buying the program gives you access to lessons and habits that run alongside the care you already receive. It changes nothing about your treatment and your own doctor stays responsible for your diabetes care.' },
     ] },
-    { kind: 'call-to-action', heading: 'Start with a consultation', detail: 'Choose preferred times and the clinic will reply. No account, no payment, no health questions on this page.', buttonLabel: 'Request a consultation' },
+    { kind: 'call-to-action', heading: 'Two ways to start', detail: 'Request a consultation: choose preferred times and the clinic will reply, with no account, no payment and no health questions on this page. Or buy the program when it is available; price and terms are shown before anything is charged, and nothing about your treatment changes.', buttonLabel: 'Request a consultation' },
   ],
   approval: null,
   draftNote: 'Not published until the "what is included" section is filled from the published program and the exact text is approved by Brandon and his attorney.',

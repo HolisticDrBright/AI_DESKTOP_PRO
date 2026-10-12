@@ -4,9 +4,10 @@ import { join } from "node:path";
 
 /**
  * The funnel route's PRODUCTION headers: same-origin only, no frame, no media, no external
- * script source. And a structural fact the handoff fixes: this work adds no API route, so the
- * set of unauthenticated routes is exactly what it was (the Lambda's declared public route is
- * asserted in authenticated-api-infrastructure.test.ts; the Desktop's is `/api/public/consult`).
+ * script source, on the funnel page and on the purchase page it leads to. And a structural fact:
+ * the funnel and purchase pages add no API route, so the set of unauthenticated routes is exactly
+ * what it was (the Lambda's declared public route is asserted in
+ * authenticated-api-infrastructure.test.ts; the Desktop's is `/api/public/consult`).
  */
 describe("program funnel route headers", () => {
   it("serves a strict same-origin policy with no frame and no external destination", async () => {
@@ -14,8 +15,9 @@ describe("program funnel route headers", () => {
     vi.stubEnv("NODE_ENV", "production");
     const config = (await import("../../next.config")).default;
     const headers = await config.headers!();
-    const funnel = headers.find((entry) => entry.source === "/learn/:slug");
-    expect(funnel).toBeDefined();
+    for (const source of ["/learn/:slug", "/buy/:slug"]) {
+    const funnel = headers.find((entry) => entry.source === source);
+    expect(funnel, source).toBeDefined();
     const value = (key: string) => funnel!.headers.find((header) => header.key === key)?.value ?? "";
     const csp = Object.fromEntries(value("Content-Security-Policy").split(";").map((directive) => {
       const [name, ...rest] = directive.trim().split(/\s+/);
@@ -32,6 +34,7 @@ describe("program funnel route headers", () => {
     for (const directive of Object.values(csp) as string[][]) for (const source of directive) expect(source).not.toMatch(/^https?:|^wss?:|\*/);
     expect(value("X-Content-Type-Options")).toBe("nosniff");
     expect(value("Permissions-Policy")).toBe("microphone=(), camera=(), geolocation=()");
+    }
   });
   it("adds no API route: the only unauthenticated Desktop route is still the consult intake", () => {
     const routes: string[] = [];
@@ -39,6 +42,6 @@ describe("program funnel route headers", () => {
     walk("src/app/api");
     const publicRoutes = routes.filter((route) => route.includes("/api/public/"));
     expect(publicRoutes).toEqual(["src/app/api/public/consult/route.ts"]);
-    expect(routes.some((route) => /funnel|learn/.test(route))).toBe(false);
+    expect(routes.some((route) => /funnel|learn|\/buy\//.test(route))).toBe(false);
   });
 });

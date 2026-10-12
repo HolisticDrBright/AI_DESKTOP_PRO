@@ -32,6 +32,7 @@ import {
 import { useFeedback } from "@/lib/feedback";
 import { patientPath } from "@/lib/routes";
 import { ConsumerProgramEditor, ConsumerProgramPreview } from "@/components/programs/ConsumerProgramEditor";
+import { ProgramOfferEditor } from "@/components/programs/ProgramOfferEditor";
 import {
   consumerProgramFromDetail,
   validateConsumerProgram,
@@ -1221,6 +1222,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
       )}
 
       {/* ------------------------------------------------------------ offers */}
+      <ProgramOfferEditor programId={studio.program.id} session={String(studioSession)} />
       <OffersPanel studio={studio} onChanged={load} />
 
       {/* ------------------------------------------------------------ roster */}
@@ -1534,14 +1536,26 @@ function OffersPanel({ studio, onChanged }: { studio: LiveProgramStudio; onChang
 
   const save = async () => {
     if (!name.trim() || saving) return;
+    // The typed amount is converted exactly or refused: garbage never becomes a zero-dollar term.
+    const priceMatch = /^\s*(\d{1,5})(?:\.(\d{1,2}))?\s*$/.exec(price);
+    const priceCents = priceMatch ? Number(priceMatch[1]) * 100 + Number((priceMatch[2] ?? "").padEnd(2, "0")) : null;
+    const accessDurationDays = duration.trim() === "" ? null : /^\d{1,4}$/.test(duration.trim()) && Number(duration) > 0 ? Number(duration) : Number.NaN;
+    if (priceCents === null || Number.isNaN(accessDurationDays)) {
+      announce("Enter the price as dollars and cents (for example 19.99) and the access duration as whole days.");
+      return;
+    }
     setSaving(true);
     try {
       const res = await api.programs.upsertOffer({
         programId: studio.program.id,
+        offerId: null,
         name: name.trim(),
-        priceCents: Math.max(0, Math.round(Number(price) * 100) || 0),
-        accessDurationDays: duration ? Number(duration) : null,
+        priceCents,
+        currency: "usd",
+        accessDurationDays,
         paymentMode: mode,
+        enrollmentOpen: true,
+        status: "active",
       });
       announce(res.message);
       setName("");

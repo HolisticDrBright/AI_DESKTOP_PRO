@@ -15,6 +15,7 @@ export const weightLossPeptideProgram: FunnelDefinition = {
   indexable: true,
   programLabel: 'Weight loss program',
   consultSlug: 'weight-loss-program',
+  programBinding: null,
   sections: [
     { kind: 'hero', heading: 'Weight loss with a clinician, not a checkout page',
       lead: 'This program starts with an evaluation. A clinician decides, with you, what is appropriate; nothing is prescribed from a form and nothing is promised in advance.' },
@@ -32,9 +33,10 @@ export const weightLossPeptideProgram: FunnelDefinition = {
     { kind: 'faq', heading: 'Questions people ask', questions: [
       { question: 'Will I be prescribed medication?', answer: 'Only a clinician can decide that, after an evaluation, and only if it is appropriate for you. Requesting a consultation does not mean a prescription.' },
       { question: 'How much weight will I lose?', answer: 'Nobody can promise an amount or a pace. The program is reviewed over time against what is actually measured.' },
-      { question: 'Do I pay on this page?', answer: 'No. This page only requests a consultation. Any fees are discussed with the clinic after the first visit.' },
+      { question: 'Do I have to pay to start?', answer: 'No. Requesting a consultation costs nothing on this page. Buying the program directly is a separate choice; when it is available, the exact price and terms are shown before anything is charged, and payment is taken on a separate secure checkout page, never on this one.' },
+      { question: 'Does buying the program include a prescription?', answer: 'No. Buying the program gives you access to the program lessons and habits only. Whether any prescription is appropriate is a clinician\'s decision after an evaluation, and it is not guaranteed by any purchase.' },
     ] },
-    { kind: 'call-to-action', heading: 'Start with an evaluation', detail: 'Choose preferred times and the clinic will reply. No account, no payment, no health questions on this page.', buttonLabel: 'Request a consultation' },
+    { kind: 'call-to-action', heading: 'Two ways to start', detail: 'Request an evaluation: choose preferred times and the clinic will reply, with no account, no payment and no health questions on this page. Or buy the program when it is available; price and terms are shown before anything is charged, and a purchase includes no prescription.', buttonLabel: 'Request a consultation' },
   ],
   approval: null,
   draftNote: 'Not published until the "what is included" section is filled from the published program and the exact text is approved by Brandon and his attorney.',
