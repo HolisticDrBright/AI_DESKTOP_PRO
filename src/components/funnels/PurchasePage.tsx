@@ -1,21 +1,32 @@
 import type { FunnelDefinition } from '@/funnels';
-import { formatAmount, type PurchaseAvailability } from '@/contracts/programOffers';
+import { formatAmount, PURCHASE_HOLD_EXPLANATIONS, type PurchaseAvailability, type PurchaseHoldReason } from '@/contracts/programOffers';
+import { CHECKOUT_HOLD_EXPLANATIONS, type CheckoutHoldReason } from '@/contracts/programCheckout';
 
 /**
  * The purchase page the buy choice leads to, rendered on the server from the funnel and the offer the
  * server read. It shows the exact terms a visitor would agree to (the price, how it is billed, the
  * program version it covers, the access duration where decided) and what a purchase does NOT include.
- * Starting checkout is a separate boundary (program-checkout, a later unit); until it is connected and
- * configured the page says so and offers the consult address instead. No price is shown unless the
- * offer is available, and nothing on this page takes a payment detail.
+ * Starting checkout is the program-checkout boundary: when the server has one, the page carries one
+ * form that posts the funnel slug and nothing else, and the visitor is sent to the processor's own
+ * page; until then the page says checkout is not available and offers the consult address instead.
+ * No price is shown unless the offer is available, and nothing on this page takes a payment detail.
  */
 const SECTION = 'mx-auto w-full max-w-[760px] px-5 py-8 md:px-8';
 const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
+/** The hold the checkout route sent the visitor back with, in words; an unknown token prints nothing. */
+export function holdWords(hold: string | undefined): string | null {
+  if (!hold) return null;
+  if (hold in CHECKOUT_HOLD_EXPLANATIONS) return CHECKOUT_HOLD_EXPLANATIONS[hold as CheckoutHoldReason];
+  if (hold in PURCHASE_HOLD_EXPLANATIONS) return PURCHASE_HOLD_EXPLANATIONS[hold as PurchaseHoldReason];
+  return null;
+}
+
 export type CheckoutStart =
+  | { ready: true }
   | { ready: false; reason: 'checkout_unconfigured' | 'commerce_disabled'; explanation: string };
 
-export function PurchasePage({ funnel, consultHref, purchase, checkout, learnHref }: { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; checkout: CheckoutStart; learnHref: string }) {
+export function PurchasePage({ funnel, consultHref, purchase, checkout, learnHref, hold }: { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; checkout: CheckoutStart; learnHref: string; hold?: string | null }) {
   return (
     <article data-testid="purchase-page" data-slug={funnel.slug} data-purchase={purchase.available ? 'available' : purchase.reason} className="w-full">
       <header className={`${SECTION} pt-14`}>
@@ -35,9 +46,18 @@ export function PurchasePage({ funnel, consultHref, purchase, checkout, learnHre
           <p className="m-0 mt-3 text-[14px] leading-relaxed text-body" data-testid="purchase-excludes">
             A purchase does not include a consultation, a prescription, a supplement, any clinical decision, or a connection to the clinic. Those are separate choices made by you and a practitioner.
           </p>
-          <p className="mt-5 flex flex-wrap items-center gap-3" data-testid="purchase-start" data-ready={checkout.ready ? 'true' : 'false'}>
-            <span className="text-[13.5px] text-subtle">Checkout is not available yet. {checkout.explanation}</span>
-          </p>
+          {hold && <p role="status" className="m-0 mt-3 text-[14px] leading-relaxed text-critical" data-testid="purchase-hold" data-hold={hold}>The checkout could not start. {hold}</p>}
+          {checkout.ready ? (
+            <form method="post" action="/api/live/commerce/checkout" className="mt-5" data-testid="purchase-start" data-ready="true">
+              <input type="hidden" name="funnelSlug" value={funnel.slug} />
+              <button type="submit" className={BUTTON} data-testid="purchase-start-button">Buy the program</button>
+              <span className="ml-3 text-[13px] text-subtle">You will be taken to a secure checkout page run by the payment processor.</span>
+            </form>
+          ) : (
+            <p className="mt-5 flex flex-wrap items-center gap-3" data-testid="purchase-start" data-ready="false">
+              <span className="text-[13.5px] text-subtle">Checkout is not available yet. {checkout.explanation}</span>
+            </p>
+          )}
         </section>
       ) : (
         <section className={SECTION} data-testid="purchase-unavailable" data-reason={purchase.reason}>

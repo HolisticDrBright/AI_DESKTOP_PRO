@@ -5,6 +5,10 @@ import { createHash } from "node:crypto";
 import type { CurriculumBinding } from "../../contracts/programOffers";
 import { isContractFixtureAllowed } from "../runtime/contractFixture";
 import { createFictionalProgramOfferLedger, type ProgramOfferLedger } from "./program-offer-ledger";
+import { createFictionalCheckoutLedger } from "./program-checkout-ledger";
+import { createFictionalCheckoutProcessor } from "./program-checkout-processor";
+import { createProgramCheckout } from "./program-checkout";
+import { publicSiteOrigin } from "../../lib/publicSite";
 
 /**
  * Which offer ledger this Desktop process may talk to.
@@ -47,6 +51,8 @@ export function selectProgramOfferLedger(env: Record<string, string | undefined>
 export function __resetProgramCommerceRuntime(): void {
   fictional?.reset();
   registry.clear();
+  fictionalCheckout?.ledger.reset();
+  fictionalCheckout = null;
 }
 
 /** The fictional digest of a published patient-facing program: canonical JSON of its phases, or null when none is authored. */
@@ -61,4 +67,30 @@ export function fictionalCurriculumDigest(consumerProgram: unknown): string | nu
 export function fictionalPersonId(email: string): string {
   const hex = createHash("sha256").update("fictional-person:" + email.trim().toLowerCase()).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Which checkout this Desktop process may run: the fictional boundary (fictional ledger and
+ * processor, in memory) under the local contract fixture only; otherwise none. The Stripe transport
+ * (program-checkout-stripe.ts) and the SQL ledger (program-checkout-ledger-sql.ts) are source for the
+ * clinical service's reviewed wiring; nothing in this process constructs them, so outside the fixture
+ * every start answers `checkout_unconfigured` and every webhook answers 503.
+ */
+export type ProgramCheckoutSelection =
+  | { kind: "disabled"; reason: "checkout_unconfigured" }
+  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger> };
+
+let fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null = null;
+/** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
+export const FIXTURE_RETURN_ORIGIN = "https://clinic.fictional.example";
+
+export function selectProgramCheckout(env: Record<string, string | undefined> = process.env): ProgramCheckoutSelection {
+  if (!isContractFixtureAllowed(env as never)) return { kind: "disabled", reason: "checkout_unconfigured" };
+  if (!fictionalCheckout) {
+    const ledger = createFictionalCheckoutLedger();
+    const processor = createFictionalCheckoutProcessor();
+    const checkout = createProgramCheckout({ offers: fictionalLedger(), ledger, processor, publicOrigin: publicSiteOrigin(env) ?? FIXTURE_RETURN_ORIGIN });
+    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger };
+  }
+  return fictionalCheckout;
 }

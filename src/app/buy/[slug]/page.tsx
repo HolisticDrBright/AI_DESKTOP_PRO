@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
-import { PurchasePage } from "@/components/funnels/PurchasePage";
+import { PurchasePage, holdWords } from "@/components/funnels/PurchasePage";
 import { PURCHASE_HOLD_EXPLANATIONS } from "@/contracts/programOffers";
+import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
 import { publishedFunnel } from "@/funnels";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { funnelPageUrl, publicSiteOrigin } from "@/lib/publicSite";
@@ -22,14 +23,18 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: funnel ? `Buy the ${funnel.programLabel} — The Holistic Approach` : "Page not found", robots: { index: false, follow: false } };
 }
 
-export default async function BuyRoute({ params }: { params: Promise<{ slug: string }> }) {
+export default async function BuyRoute({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { slug } = await params;
+  const query = await searchParams;
   const funnel = publishedFunnel(slug);
   if (!funnel) notFound();
   const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
   const purchase = await funnelPurchaseAvailability(funnel);
+  const checkout = selectProgramCheckout().kind === "fictional"
+    ? { ready: true as const }
+    : { ready: false as const, reason: "checkout_unconfigured" as const, explanation: PURCHASE_HOLD_EXPLANATIONS.checkout_unconfigured };
   return (
-    <PurchasePage funnel={funnel} consultHref={consultHref} purchase={purchase} learnHref={funnelPageUrl(funnel.slug) ?? `/learn/${funnel.slug}`}
-      checkout={{ ready: false, reason: "checkout_unconfigured", explanation: PURCHASE_HOLD_EXPLANATIONS.checkout_unconfigured }} />
+    <PurchasePage funnel={funnel} consultHref={consultHref} purchase={purchase} learnHref={funnelPageUrl(funnel.slug) ?? `/learn/${funnel.slug}`} checkout={checkout}
+      hold={holdWords(typeof query.hold === "string" ? query.hold : undefined)} />
   );
 }

@@ -14,7 +14,7 @@ import { funnelTextIssue } from '@/funnels/schema';
 const consultHref = 'https://clinic.fictional.example/consult/longevity-program';
 const available: PurchaseAvailability = { available: true, offerId: '11111111-1111-4111-8111-111111111111', revision: 3, name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'recurring', interval: 'month', intervalCount: 1 } }, curriculum: { versionId: '22222222-2222-4222-8222-222222222222', version: 2, sourceDigest: 'a'.repeat(64) }, accessTermsVersion: 'education-access-terms/1', accessDurationDays: null, providerPriceRef: 'price_FictionalAbc123' };
 const checkout = { ready: false as const, reason: 'checkout_unconfigured' as const, explanation: PURCHASE_HOLD_EXPLANATIONS.checkout_unconfigured };
-const render = (purchase: PurchaseAvailability) => createElement(PurchasePage, { funnel: longevityProgram, consultHref, purchase, checkout, learnHref: '/learn/longevity-program' });
+const render = (purchase: PurchaseAvailability, ready = false, hold: string | null = null) => createElement(PurchasePage, { funnel: longevityProgram, consultHref, purchase, checkout: ready ? { ready: true } : checkout, learnHref: '/learn/longevity-program', hold });
 
 describe('the purchase page', () => {
   it('shows the exact terms, what is excluded, and checkout as not available yet', () => {
@@ -32,6 +32,20 @@ describe('the purchase page', () => {
     expect(text).toContain('Checkout is not available yet. Online payment is not set up for this site.');
     expect(markup).not.toMatch(/<(form|input|textarea|select|button|img|script|iframe)\b/i);
     expect(new Set([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]))).toEqual(new Set(['/learn/longevity-program', consultHref]));
+  });
+  it('carries exactly one form, posting the funnel slug and nothing else, only when the server has a checkout; a hold is printed in words', () => {
+    const markup = renderToMarkup(render(available, true));
+    expect(markup).toContain('data-testid="purchase-start" data-ready="true"');
+    expect(markup).toMatch(/<form[^>]*action="\/api\/live\/commerce\/checkout"[^>]*>/);
+    expect(markup).toMatch(/<form[^>]*method="post"[^>]*>/);
+    expect(markup.match(/<form\b/g)).toHaveLength(1);
+    expect([...markup.matchAll(/<input[^>]*>/g)].map(m => m[0])).toEqual(['<input type="hidden" name="funnelSlug" value="longevity-program"/>']);
+    expect(markup).not.toMatch(/name="(amount|price|email|card|offer)/);
+    expect(renderToText(render(available, true))).toContain('taken to a secure checkout page run by the payment processor');
+    expect(renderToMarkup(render(unavailable('offer_draft'), true))).not.toContain('<form');
+    const held = render(available, true, 'The payment service could not be reached. Nothing was charged. Please try again later.');
+    expect(renderToMarkup(held)).toContain('data-testid="purchase-hold"');
+    expect(renderToText(held)).toContain('The checkout could not start. The payment service could not be reached.');
   });
   it('says why direct purchase is unavailable and still offers the consultation, printing no price', () => {
     for (const reason of ['program_unbound', 'commerce_disabled', 'offer_draft', 'offer_retired', 'commerce_unverifiable'] as const) {
