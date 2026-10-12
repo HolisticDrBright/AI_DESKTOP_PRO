@@ -586,3 +586,248 @@ credentials (the provider-configuration gate's credential pattern does not match
 | `fixture/route.test.ts` | 3 passed |
 | checkout, webhook, funnel-header, commerce server and funnel tests | 28 files, 238 passed |
 | `APP_EDITION=clinical` build, `check:clinical-bundle` | PASS; 318 client chunks clean |
+
+### Final local verification on `0858921`
+
+Run once, in this container, with nothing retried. The browser battery is the CI recipe, one process
+per direction, against the committed contract fixture.
+
+| Check | Result |
+| --- | --- |
+| `npm run test:unit` | exit 0: 500 files, 7,765 passed, 11 skipped (existing) |
+| Gates (32) | 28 pass. Four refuse for their inputs, as on `d14522b`: production readiness and the first real-data pilot need a reviewed local manifest, the production foundation needs its build output, qualification capacity needs its arguments |
+| `build:security-qualification` + `qualify:security` | exit 0: 29 of 29 passed, evidence `13b94f51…061f1a` |
+| Battery, forward (29 specs) | 305 passed, 2 failed, 19 skipped, 7 did not run (30.0 m) |
+| Battery, reverse (29 specs) | 308 passed, 3 failed, 19 skipped, 3 did not run (38.4 m) |
+| `e2e/commerce-journey.spec.ts` with the journey flag | 7 passed (52.1 s) |
+
+The five battery failures, as observed:
+
+| Direction | Case | What happened | Other direction |
+| --- | --- | --- | --- |
+| forward | `live-overview-reasoning.spec.ts:110` | `page.goto` ERR_CONNECTION_REFUSED: the dev server was restarting under its memory guard | passed |
+| forward | `live-telehealth.spec.ts:101` | `waitForURL` ERR_CONNECTION_REFUSED, the same restart; the serial suite's later cases did not run | passed |
+| reverse | `live-patient-relationships.spec.ts:17` | 2-minute test timeout | passed |
+| reverse | `live-programs.spec.ts:349` | 2-minute test timeout | passed |
+| reverse | `live-telehealth.spec.ts:231` | the reconciled-completion state read `unreconciled` within 45 s, where `completed` was expected | not run (skipped behind the forward failure above) |
+
+The reverse pass ran while I was running other unit-test loops in this container, which competed for
+the same CPU; the two timeouts fall in that window. That is a description of the conditions, not a
+cause shown for any one case. None of the five touches commerce code, and CI on the same head
+(38205988306) passed every live case in its shards. They are recorded here as local failures, not
+re-run until they pass.
+
+---
+
+## Return summary
+
+### 1. Bases, branches, commits and CI
+
+| Repository | Branch | Base | Final head |
+| --- | --- | --- | --- |
+| HolisticDrBright/AI_DESKTOP_PRO | `claude/program-commerce-closure-20261011` | `d14522b` (unit 5) | the commit carrying this record (code head `0858921`) |
+| HolisticDrBright/AI_LONGEVITY_PRO_V2 | `claude/program-commerce-closure-20261011` | `1a9fd82` (unit 5) | `160bc78` |
+
+Desktop commits, in order:
+
+| Commit | Package |
+| --- | --- |
+| `b03b1e8` | M0: the instant repair and the unit-6 closure record |
+| `9cfbbf8` | WP1: checkout and background recovery |
+| `f431361` | WP1 repair: the webhook body limits are private to the route module (see the CI failure below) |
+| `637c7f5` | WP2: claim delivery and purchaser recovery |
+| `b651725`, `34c34f6` | WP3: database authority separation and undecided-terms holds, and its open concerns |
+| `4c391ff` | WP4: learner progress |
+| `0858921` | WP5: the mounted fictional journey |
+| the child of `0858921` that carries this file | this return's final record (documentation and the CLAUDE.md index row only) |
+
+V2 commits, in order: `8c528c3` (WP2 mirror), `1724233` (WP3 mirror and refusal words), `764d252`
+(WP4 course view), `160bc78` (V2 summary).
+
+CI, as observed, failures included:
+
+| Repository | Run | Head | Result |
+| --- | --- | --- | --- |
+| Desktop | 38192228557 | `d14522b` | failed only at `test:unit` (the time-zone assertion M0 repaired) |
+| Desktop | 38202877502 | `b03b1e8` (M0) | **success**, 11 of 11 jobs (the deployed-backend job skipped itself: those secrets are not configured) |
+| Desktop | 38203121565 | `9cfbbf8` (WP1) | **failure**, 7 of 11 jobs: the clinical production build's type check refused `MAX_BODY_BYTES` and `BODY_DEADLINE_MS` as exports of a route module. Tests, lint and gates in the unit job had passed. I had not run the clinical build locally for WP1. |
+| Desktop | 38204996091 | `f431361` (WP1 repair) | **success** |
+| Desktop | 38205988306 | `0858921` (WP5) | **success**; the journey step passed in shard 1 of the live job. The deployed-backend job skipped itself (its secrets are not configured), which is not a hosted positive. |
+| V2 | 38203758830 | `764d252` | **success** |
+| V2 | 38205545379 | `160bc78` | **success** |
+
+Remote heads were read back after each push and matched the local heads. Both worktrees are clean
+at their final heads.
+
+### 2. Failing before, repairs, after
+
+Each package section above records its reproductions on the head before it, the repairs and the
+after results. In short:
+
+| Package | Reproduced before | After |
+| --- | --- | --- |
+| M0 | one CI assertion compared a rendering, not an instant | the instant, under three session zones |
+| WP1 | 17 failing cases for the named findings (3 already correct), plus the stream-reader and detached-processing reproductions | `checkout-recovery.test.ts` 25 passed; the recovery successor under PGlite |
+| WP2 | 5: code digest in staff status, plaintext code in a result, stranded purchaser, winner's retry refused, screens saying "sent" | `claim-delivery.test.ts` 16 passed |
+| WP3 | 5 direct API-role calls that succeeded, and 3 terms holds missing | `program-commerce-authority.database.test.ts` 8 passed, `commerce-terms-holds.test.ts` 3 passed |
+| WP4 | no way to record or read progress | 5 fictional, 5 PGlite, and 4 + 11 + 9 V2 |
+| WP5 | no positive mounted journey; two defects found by it | 7 browser cases, 3 route-level cases |
+
+**Already correct, proved and kept:** the immutable offer and order snapshots; one entitlement per
+verified order whichever path arrives first; a single-use expiring claim bound once; append-only
+intake and policy events; staff and consumer reads kept under separate keys; nothing clinical
+created by a purchase; V2's owner-bound reads and lifecycle clearing.
+
+**Unresolved concerns** are listed at the end of WP1, WP3 and WP5. The main ones:
+
+- The database cannot authenticate the caller that sets the request context; the identity
+  factory that does is a host input.
+- Real PostgreSQL contention is not modelled by PGlite.
+- The return page reads an order by its id.
+- Processor refund and dispute events are not mapped to policy holds by this build.
+
+### 3. Authority map: offer to progress
+
+| Step | Authority (who may act) | Durable record | Receipt | After a crash |
+| --- | --- | --- | --- | --- |
+| Offer | staff in a workforce context, `execute_program_offer_command`; publication needs reviewed terms | `program_offers` + revisions | the published revision | nothing in flight |
+| Checkout admission | the visitor's request path (API role), `admit_program_order` | the order with its immutable terms snapshot | the order id and revision | the next start or the worker finds it |
+| Creation request | request path, `advance_program_checkout` (never a payment outcome) | the saved creation request before contact | `creation_pending` | replayed with the same key; beyond retention an operator hold |
+| Provider authority | the processor credential, proven by account retrieval | — | the proven account | re-proven every pass |
+| Webhook intake | signature over the exact bytes, then `admit_checkout_intake` | append-only intake row | 200 admitted or duplicate | the worker processes it later; nothing runs in the request |
+| Observation | worker role, `transition_program_order` from the retrieved object | the order's state and verification | `payment_processing` / `payment_verified` / `payment_failed` | the next worker pass |
+| Settlement | worker role, `settle_program_order_sealed` | entitlement + claim (digest) + sealed delivery, one transaction | the entitlement | `unsettled_program_orders` backlog |
+| Claim delivery | delivery role, `due_program_claim_deliveries` / `record_program_claim_delivery` | delivery row; the sealed code until accepted | provider acceptance (not arrival) | retried under one idempotency key, at most six attempts |
+| Consumer claim | API role in a verified consumer context, `claim_program_entitlement_for_caller`; held terms refuse | claim used, entitlement active, one enrollment | the claim receipt (same on retry) | idempotent per code and subject |
+| Curriculum | API role in the owner's context, `education_curriculum_for_caller` | the pinned version, digest re-checked | served or withheld with a reason | stateless |
+| Progress | API role in the owner's context, `record_education_progress_for_caller` | revisioned progress row, append-only completions and receipts | one receipt per request id | the same request id answers the same receipt |
+| Policy | operator role, `record_entitlement_policy` | append-only policy events | the held or released entitlement | stateless |
+| Expiry | worker role, `expire_program_entitlements_due(limit)` by the database clock | the expired entitlement | expired count | the next pass |
+
+### 4. Contracts, mirrors, successors, grants and holds
+
+| Artifact | Identity |
+| --- | --- |
+| `program-checkout/2` | `src/contracts/programCheckout.ts` (Desktop only) |
+| `program-education-access/1` | mirrored; sha256 `61b8df5a09f5255bef1b1a9cf7d7c70933491504d22559a9ee692088e70005d3` |
+| `program-education-progress/1` | mirrored; sha256 `c86676406c05242aac330f7c2973521dea80f4862a93a5598f4912279ee40630` |
+| offer contract | reviewed access terms and five holds added (`programOffers.ts`, Desktop only) |
+| `program-checkout-recovery.sql` | `29d85d75da43176b1a6d007afc5a0a892f99a08994f44bb459a4a756e2e2efc0`; parent checkout `767ac13…` |
+| `program-education-delivery.sql` | `653965ff19f1d522067a6b636ac4ed5a4d2f9f1696cbb692c9545e3fc2046ae6`; parents education `e4f11e29…`, recovery `29d85d75…` |
+| `program-commerce-authority.sql` | `11e53bc2e7ff13d1aa66c219fc9da1c4e768faef8ea42e1ebc44ed375a8c6c62`; parent delivery `653965ff…` |
+| `program-education-progress.sql` | `7d4b3ee7027dca24e91423b409bc1cf5e387689e14d154ede448348f655a2eb5`; parent authority `11e53bc2…` |
+
+The predecessors (`4973461…` offer, `767ac13…` checkout, `e4f11e29…` education) are unchanged
+and recomputed by every candidate test. All four successors are BLOCKED, unregistered and absent
+from the manifest. The grants, the denied calls and the role table are in WP3, and the progress
+grants are in WP4.
+
+Route seams, registered nowhere:
+
+- `POST /clinical-core/consumer/education`
+- `POST /clinical-core/consumer/education/progress`
+
+Bounded worker interfaces: intake, reconcile, settle, deliver and expire, each with its own limit
+and its own unavailable report.
+
+Activation holds:
+
+- the activation row and its evidence naming every digest;
+- the SQL ledgers pinning the chain;
+- an empty reviewed-terms registry, so every paid offer is held;
+- the media reader seam, held.
+
+### 5. Ordered Codex execution inputs (names only)
+
+1. Review the four BLOCKED successors in order (recovery, delivery, authority, progress) against
+   the unchanged predecessors, with custody of each digest. Read the migration ledger before any
+   registration.
+2. Database roles and sessions: `clinical_core_api` (request path), `commercial_education_worker`,
+   `commercial_education_delivery`, `commercial_education_operator`, each a separate host session.
+3. The trusted identity factory that builds the consumer and workforce request contexts, and the
+   operator identity that becomes `OperatorContext`.
+4. Processor: the test-mode account id, the pinned API version, the secret key and webhook signing
+   secret schemas (from the environment's secret store), and account retrieval as the authority
+   check.
+5. Claim sealing: a KMS key with Encrypt for settlement and Decrypt for the delivery worker only,
+   the claim id as encryption context.
+6. Delivery recipient authority: the processor-collected purchaser email at send time, and the
+   transactional email provider with idempotency keys.
+7. Worker scheduling and alarms: pass frequency, the oldest-unresolved-item alarm, and the conflict
+   and `creation_unreconciled` operator queues.
+8. Route registration for the two consumer seams, behind the consumer pool.
+9. The media reader for `program-media-reference/1` (Codex's lane).
+10. Rollback: disabling the activation row, and the successors' reverse order.
+11. Actual synthetic acceptance on the qualification target (section 6).
+
+### 6. Hosted tests still owed (none ran locally)
+
+**Positive cases:**
+
+- a real sandbox delayed payment, from processing to success, with creation reconciliation after a
+  lost reply and beyond retention;
+- an independent worker restart mid-pass;
+- actual generic email delivery to a test inbox;
+- two consumer devices against the hosted service, with progress and resume.
+
+**Negative cases:**
+
+- both claim races under real PostgreSQL contention;
+- direct calls under the real reduced roles: the API role refused worker, delivery and operator
+  functions, and role assumption refused;
+- refunds and disputes under an approved policy mapping;
+- an oversized stream through the hosted gateway;
+- a forged account binding.
+
+### 7. Brandon's decisions
+
+- Program prices, billing frequency and access duration.
+- What each access-terms version says: duration policy, whether a course depends on Core, the
+  refund policy and the renewal policy. The registry is empty until you record these.
+- Course access versus Core: a purchase never grants Core, and Core stays $19.99 and separate.
+- Refund, renewal and tax policy, and how processor refunds and disputes map to holds.
+- Purchaser recovery: the code lifetime (7 days in source, a bound and not a policy), whether the
+  processor's collected email is sufficient purchaser authority, and who holds the operator role.
+- Whether staff may see a learner's lesson progress.
+- Funnel publication, the provider price mapping, and the storefront and territory classification.
+  There is no native purchase button and no web-checkout link in V2 until those are decided.
+
+### 8. Status
+
+| Node | Implemented | Locally verified | CI verified | Hosted | Device | Approved for PHI |
+| --- | --- | --- | --- | --- | --- | --- |
+| Checkout recovery (WP1) + recovery successor | yes | yes (unit, PGlite) | yes (`0858921`) | no | n/a | no |
+| Claim delivery (WP2) + delivery successor | yes | yes (unit, PGlite) | yes (`0858921`) | no | n/a | no |
+| Authority separation and terms holds (WP3) + authority successor | yes | yes (unit, PGlite with real role sessions) | yes (`0858921`) | no | n/a | no |
+| Learner progress, Desktop (WP4) + progress successor | yes | yes (unit, PGlite) | yes (`0858921`) | no | n/a | no |
+| Learner progress, V2 course view (WP4) | yes | yes (component) | yes (`764d252`) | no | no (component evidence only) | no |
+| Mounted fictional journey (WP5) | yes | yes (7 browser cases) | yes (its own step, `0858921`) | no | n/a | no |
+| Consumer route seams | seam only | asserted unregistered | yes (`0858921`) | no | no | no |
+| Activation, prices, products, webhook registration, real delivery | no (owner and Codex) | — | — | no | — | no |
+
+A quiet branch is not engineering complete: every hosted, device and approval column above is
+still open.
+
+### Graphify — append-ready
+
+The handoff observed the shared map at section 574. This container cannot read the map, so the
+block below carries no number: assign the next number when appending, after reading the map fresh
+under its modification-time and hash guard, preserving the whole prior byte prefix and leaving the
+canvas untouched. No graph update ran here; no graph tool is installed in this container.
+
+```
+NNN. Program commerce reliability and learner journeys (2026-10-12) — branch claude/program-commerce-closure-20261011
+     Desktop b03b1e8 (M0) 9cfbbf8 (WP1) f431361 (WP1 build repair) 637c7f5 (WP2) b651725 34c34f6 (WP3) 4c391ff (WP4) 0858921 (WP5) + final record
+     V2 8c528c3 (WP2 mirror) 1724233 (WP3 mirror) 764d252 (WP4 course view) 160bc78 (summary)
+     Successors (BLOCKED, unregistered): recovery 29d85d75… <- delivery 653965ff… <- authority 11e53bc2… <- progress 7d4b3ee7…
+     Mirrors: program-education-access/1 61b8df5a…, program-education-progress/1 c8667640…
+     Node | Implemented | Locally verified | CI verified | Hosted | Device | PHI
+     Checkout recovery + durable creation + delayed payment + bounded readers | yes | yes | see return §1 | no | n/a | never
+     Claim delivery (sealed code, provider idempotency, operator replacement) | yes | yes | see return §1 | no | n/a | never
+     Authority separation (API / worker / delivery / operator roles) + reviewed-terms holds | yes | yes (real role sessions in PGlite) | see return §1 | no | n/a | never
+     Learner progress contract + ledger + service seam + successor | yes | yes | see return §1 | no | n/a | never
+     V2 course view (lessons, completion receipt, two-device, resume, held media seam) | yes | yes (component) | green (764d252) | no | no | never
+     Mounted fictional journey (separately configured fixture, own CI step) | yes | yes (7 browser cases) | see return §1 | no | n/a | never
+     Defects found by the mounted journey: checkout redirect blocked by form-action; per-bundle fixture state | repaired | yes | see return §1 | — | — | —
+     Activation, prices, terms review, products, webhook registration, real delivery, route registration | no (owner/Codex) | — | — | no | — | never
+```
