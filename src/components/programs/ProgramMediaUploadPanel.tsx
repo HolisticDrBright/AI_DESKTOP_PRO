@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Btn } from '@/components/ui/Btn';
 import { onWorkforceSessionChange } from '@/lib/workforce-session-change';
 import { createProgramMediaUploadController, type ProgramMediaUploadScope } from '@/lib/programs/programMediaUpload';
@@ -25,8 +26,10 @@ export function ProgramMediaUploadPanel({ scope, disabled }: { scope: ProgramMed
   }, [view.authorityLost]);
   useEffect(() => {
     const unsubscribe = controller.subscribe(setView);
-    const clear = () => { previewRef.current?.pause(); controller.invalidate(); setCaption(''); setResumeId(''); setInputEpoch(n => n + 1);
-      setNotice('Local media information was cleared. This does not confirm remote cancellation or deletion.'); };
+    // External withdrawal events must clear the visible private form before
+    // returning, not merely abort work and queue a later concurrent render.
+    const clear = () => { flushSync(() => { previewRef.current?.pause(); controller.invalidate(); setCaption(''); setResumeId(''); setInputEpoch(n => n + 1);
+      setNotice('Local media information was cleared. This does not confirm remote cancellation or deletion.'); }); };
     const visibility = () => { if (document.visibilityState !== 'visible') clear(); };
     const off = onWorkforceSessionChange(clear);
     document.addEventListener('visibilitychange', visibility); window.addEventListener('pagehide', clear);

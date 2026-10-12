@@ -165,3 +165,36 @@ substitute. Exact-head CI will be recorded separately after pushing.
 Nothing has been deployed, activated, submitted or device verified. The native
 upload controls remain source for an explicitly installed, reviewed fictional
 host; a local successful form is not proof that the running Desktop has it.
+
+## CI observation and synchronous withdrawal repair
+
+Exact CI 38213509677 at `894d4182ec4f5f8586ab8979ba124ff87e525aaa`
+completed **failure**: ten jobs succeeded and the native editor browser step
+failed three of its 14 cases. Workforce, cross-tab and hidden-page withdrawal
+aborted transport immediately but the DOM still exposed the selected file name.
+The successful deployed-backend job withheld its actual checks for missing
+secrets; it does not establish hosted acceptance.
+
+Three added, deterministic browser cases read file, caption and saved-ID fields
+inside the same withdrawal event. All three fail against the old component,
+including locally. The repair synchronously flushes only external withdrawal
+event updates, not render or lifecycle code. This ensures private form state is
+removed before the event returns rather than merely scheduling a concurrent
+render. React documents this external-event use and its performance limits in
+[flushSync](https://react.dev/reference/react-dom/flushSync); it is not used for
+routine progress or file-hashing updates.
+
+The full mounted browser script now has 17 cases, preserving all original
+assertions and deadlines, and also refuses React warnings about invalid
+synchronous flushing or cross-component updates. It passes locally. The normal
+unit suite passed 484 files and 7,919 tests, with 11 existing skips. The
+clinical production build passed with 250 generated pages, and its strict
+bundle scan passed all 314 client chunks. Exact-source CI remains required for
+the repair; the prior
+14-case local run does not override the failed Linux result.
+
+The next reference-contract work was preserved separately before this repair:
+Desktop stash `1cda9f3ff7be89532751964660b6f1d096062afd` on the lesson-reference
+branch contains only its four owned source/test files. V2's unpublished mirror
+work remains on its separate lesson-reference branch. Neither is part of the
+editor's frozen source or deployment evidence.

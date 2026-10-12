@@ -23,6 +23,7 @@ after(async () => { await browser?.close(); });
 async function mount(t) {
   const page = await browser.newPage(); t.after(() => page.close());
   const errors = []; page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error' && /flushSync|cannot update a component/i.test(message.text())) errors.push(message.text()); });
   // A routed loopback document provides a secure context, with no real server.
   await page.route('**/*', route => route.request().url() === 'http://127.0.0.1:3919/'
     ? route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }) : route.abort());
@@ -86,6 +87,7 @@ async function mount(t) {
       }
       if (command?.operation === 'preview') {
         const a = f.artifact;
+        if (f.mode === 'preview-pending') await new Promise(done => f.pending.push(done));
         return response({ artifactId, version: a.version, state: 'ready', kind: a.kind, contentType: a.contentType, bytes: a.bytes, sha256: a.sha256,
           previewToken: 'https://fictional-education.s3.us-east-2.amazonaws.com/' + a.objectKey + '?versionId=fictional-v1',
           previewUntil: new Date(Date.now() + (f.mode === 'preview-expiry' ? 100 : 290000)).toISOString(), historical: false });
@@ -181,6 +183,26 @@ test('a current server authorization refusal drops all private form fields befor
   assert.equal(await page.getByLabel('Supplied educational media caption').inputValue(), '');
   assert.equal(await page.getByRole('button', { name: 'Private author preview' }).isDisabled(), true);
   assert.doesNotMatch(await page.locator('body').innerText(), /Save this upload ID|Private fictional explanation/);
+});
+
+for (const change of ['workforce', 'cross-tab', 'hidden']) test(`${change} synchronously purges an opened private form before returning from the withdrawal event`, async t => {
+  const page = await mount(t); await upload(page);
+  await page.getByLabel('Supplied educational media caption').fill('Private fictional explanation');
+  await page.getByLabel('Saved media upload ID').fill('44444444-4444-4444-8444-444444444444');
+  await page.evaluate(() => { window.mediaFixture.mode = 'preview-pending'; });
+  await page.getByRole('button', { name: 'Private author preview' }).click();
+  await page.waitForFunction(() => window.mediaFixture.pending.length === 1);
+  const immediate = await page.evaluate(change => {
+    if (change === 'workforce') window.dispatchEvent(new Event('alp-workforce-session-change'));
+    else if (change === 'cross-tab') window.dispatchEvent(new StorageEvent('storage', { key: 'alp-workforce-session-change' }));
+    else { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); }
+    return { file: document.querySelector('input[type=file]').value, caption: document.querySelector('textarea').value,
+      saved: document.querySelector('input[aria-label="Saved media upload ID"]').value,
+      preview: document.querySelector('img,video') !== null };
+  }, change);
+  assert.deepEqual(immediate, { file: '', caption: '', saved: '', preview: false });
+  await page.evaluate(() => window.mediaFixture.pending.splice(0).forEach(done => done()));
+  assert.equal(await page.locator('img,video').count(), 0);
 });
 test('preview expiry removes the capability but retains the confirmed artifact', async t => {
   const page = await mount(t); await upload(page); await page.evaluate(() => { window.mediaFixture.mode = 'preview-expiry'; });
