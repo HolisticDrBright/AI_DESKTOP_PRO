@@ -4,6 +4,10 @@ import {
   type DeliveryState, type EducationCurriculumRead, type EducationEnrollment, type EntitlementState, type PolicyEventKind, type ProgramClaim, type ProgramEntitlement,
 } from '../../contracts/programEducationAccess';
 import type { ProgramOrder } from '../../contracts/programCheckout';
+import {
+  PROGRAM_EDUCATION_PROGRESS_CONTRACT, courseLessons, educationProgress, sameLesson,
+  type EducationProgress, type EducationProgressOutcome, type EducationProgressRead, type EducationProgressRequest, type LessonCompletion, type LessonRef, type ProgressReceipt,
+} from '../../contracts/programEducationProgress';
 import type { ProgramCheckoutLedger } from './program-checkout-ledger';
 import { accessTermsHolds } from '../../contracts/programOffers';
 import { FICTIONAL_ACCESS_TERMS, accessTermsRegistry, isConsumerCaller, isStaffCaller, type AccessTermsRegistry, type ConsumerCaller, type StaffCaller } from './program-commerce-authority';
@@ -87,6 +91,10 @@ export interface ProgramEducationLedger {
   recordDelivery(deliveryId: string, expectedAttempts: number, outcome: DeliveryOutcome): Promise<DeliveryRecord>;
   /** Replace the code of an unclaimed entitlement: supersede every issued claim and withdraw its delivery, then issue the new one. Operator only. */
   reissueClaim(operator: OperatorContext, entitlementId: string, issue: ClaimIssue): Promise<{ claim: ProgramClaim; superseded: number }>;
+  /** The caller's own progress through one of their courses (program-education-progress/1). */
+  progress(caller: ConsumerCaller, entitlementId: string): Promise<EducationProgressRead>;
+  /** One explicit write (a completion or a resume position) by the caller, revision-checked and idempotent per request id. */
+  recordProgress(caller: ConsumerCaller, command: Extract<EducationProgressRequest, { action: 'complete' | 'position' }>): Promise<EducationProgressOutcome>;
 }
 
 export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; /** Reviewed access terms; the fixture entries by default, which read as fixtures. */ reviewedTerms?: AccessTermsRegistry; faults?: { before?: (operation: string) => void }; /** The fixture's published content by version id, for the staff read. */ content?: (binding: ProgramEntitlement['curriculum']) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null> };
@@ -120,6 +128,22 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
     const delivery: DeliveryRecord = { deliveryId: randomUUID(), claimId, entitlementId, orderId, state: 'pending', sealed, attempts: 0, nextAttemptAt: stamp(), lastAttemptAt: null, acceptedAt: null, providerRef: null, lastOutcome: null, claimExpiresAt };
     deliveries.set(delivery.deliveryId, delivery);
   };
+  type ProgressRecord = { revision: number; completed: LessonCompletion[]; position: LessonRef | null; updatedAt: string | null; receipts: Map<string, ProgressReceipt> };
+  const progressRecords = new Map<string, ProgressRecord>();
+  const progressOf = (entitlement: ProgramEntitlement, enrollment: EducationEnrollment): EducationProgress => {
+    const record = progressRecords.get(enrollment.enrollmentId);
+    return educationProgress.parse({
+      contract: PROGRAM_EDUCATION_PROGRESS_CONTRACT, entitlementId: entitlement.entitlementId, enrollmentId: enrollment.enrollmentId, curriculum: entitlement.curriculum,
+      revision: record?.revision ?? 0, completed: record?.completed ?? [], position: record?.position ?? null, updatedAt: record?.updatedAt ?? null,
+    });
+  };
+  /** The caller's own entitlement and enrollment, or null: another owner's id reveals nothing. */
+  const ownEnrollment = (subject: string, entitlementId: string) => {
+    const entitlement = entitlements.get(entitlementId);
+    if (!entitlement || entitlement.subject.kind !== 'claimed' || entitlement.subject.consumerSubject !== subject) return null;
+    const enrollment = [...enrollments.values()].find(n => n.entitlementId === entitlementId && n.consumerSubject === subject);
+    return enrollment ? { entitlement, enrollment } : null;
+  };
   const events: { entitlementId: string; kind: PolicyEventKind | 'settled' | 'claimed' | 'expired' | 'transition'; reference: string | null; at: string }[] = [];
   const fault = (operation: string) => { try { options.faults?.before?.(operation); } catch { throw new EducationLedgerError('store_unavailable'); } };
   const byOrder = (orderId: string) => [...entitlements.values()].find(e => e.orderId === orderId) ?? null;
@@ -133,7 +157,7 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
   };
   const ledger: ProgramEducationLedger & { entitlements: typeof entitlements; claims: typeof claims; deliveries: typeof deliveries; enrollments: typeof enrollments; events: typeof events; reset(): void } = {
     entitlements, claims, deliveries, enrollments, events,
-    reset() { entitlements.clear(); claims.clear(); deliveries.clear(); enrollments.clear(); events.length = 0; },
+    reset() { entitlements.clear(); claims.clear(); deliveries.clear(); enrollments.clear(); progressRecords.clear(); events.length = 0; },
     async settle(order, issue, expectedAccountRef) {
       fault('settle');
       const existing = byOrder(order.orderId);
@@ -304,6 +328,46 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       queue(claim.claimId, entitlementId, entitlement.orderId, issue.sealed, issue.claimExpiresAt);
       events.push({ entitlementId, kind: 'transition', reference: 'claim reissued by operator', at });
       return { claim: claimView(claim), superseded };
+    },
+    async progress(caller, entitlementId) {
+      fault('progress');
+      const own = ownEnrollment(consumerOnly(caller), entitlementId);
+      if (!own) return { outcome: 'refused', reason: 'not_owner' };
+      return { outcome: 'read', progress: progressOf(own.entitlement, own.enrollment) };
+    },
+    async recordProgress(caller, command) {
+      fault('recordProgress');
+      const own = ownEnrollment(consumerOnly(caller), command.entitlementId);
+      if (!own) return { outcome: 'refused', reason: 'not_owner', progress: null };
+      const { entitlement, enrollment } = own;
+      if (enrollment.enrollmentId !== command.enrollmentId) return { outcome: 'refused', reason: 'enrollment_mismatch', progress: null };
+      const record = progressRecords.get(enrollment.enrollmentId) ?? { revision: 0, completed: [], position: null, updatedAt: null, receipts: new Map<string, ProgressReceipt>() };
+      // The same request id answers with the same receipt, whatever happened since: a retry converges on one result.
+      const earlier = record.receipts.get(command.requestId);
+      if (earlier) {
+        if (earlier.action !== command.action || !sameLesson(earlier.lesson, command.lesson)) return { outcome: 'refused', reason: 'request_conflict', progress: null };
+        return { outcome: 'recorded', receipt: { ...earlier }, progress: progressOf(entitlement, enrollment) };
+      }
+      const at = now();
+      if (entitlement.state !== 'active' || enrollment.state !== 'active' || !entitlement.window || Date.parse(entitlement.window.startsAt) > at.getTime() || (entitlement.window.endsAt !== null && Date.parse(entitlement.window.endsAt) <= at.getTime())) {
+        return { outcome: 'refused', reason: 'not_active', progress: null };
+      }
+      const pin = command.curriculum, bought = entitlement.curriculum;
+      if (pin.versionId !== bought.versionId || pin.version !== bought.version || pin.sourceDigest !== bought.sourceDigest) return { outcome: 'refused', reason: 'stale_version', progress: null };
+      const content = options.content ? await options.content(entitlement.curriculum).catch(() => null) : null;
+      if (!content || content.sourceDigest !== bought.sourceDigest) return { outcome: 'refused', reason: 'service_unavailable', progress: null };
+      const lesson = courseLessons(content.phases).lessons.find(entry => sameLesson(entry.ref, command.lesson));
+      if (!lesson) return { outcome: 'refused', reason: 'unknown_lesson', progress: null };
+      if (command.action === 'complete' && !lesson.completable) return { outcome: 'refused', reason: 'not_completable', progress: null };
+      if (record.revision !== command.expectedRevision) return { outcome: 'refused', reason: 'revision_stale', progress: progressOf(entitlement, enrollment) };
+      const recordedAt = at.toISOString();
+      const revision = record.revision + 1;
+      const completed = command.action === 'complete' && !record.completed.some(entry => sameLesson(entry.lesson, command.lesson))
+        ? [...record.completed, { lesson: { ...command.lesson }, completedAt: recordedAt, requestId: command.requestId }] : record.completed;
+      const receipt: ProgressReceipt = { requestId: command.requestId, action: command.action, lesson: { ...command.lesson }, recordedAt, revision };
+      const receipts = new Map(record.receipts).set(command.requestId, receipt);
+      progressRecords.set(enrollment.enrollmentId, { revision, completed, position: command.action === 'position' ? { ...command.lesson } : record.position, updatedAt: recordedAt, receipts });
+      return { outcome: 'recorded', receipt: { ...receipt }, progress: progressOf(entitlement, enrollment) };
     },
     async staffCurriculum(staff, entitlementId) {
       fault('staffCurriculum');

@@ -398,3 +398,93 @@ and no claim activates.
   independently authenticated identity factory that sets the context is a host input Codex installs.
 - Concurrent settlement and claim races are tested against the real candidate in PGlite, which runs
   one connection at a time. Real PostgreSQL contention remains a hosted case.
+
+## WP4 — learner progress in V2 and Desktop
+
+### Already correct, and the gap
+
+The enrollment already stored a `phaseIndex`, and V2's My courses screen already read the exact
+purchased version read-only, cleared private state on session, environment and foreground changes,
+and discarded late replies. Nothing could record or read a learner's progress: the consumer
+contract had only access, claim and curriculum reads. Progress is now its own contract, ledger
+methods, service seam and BLOCKED successor. The clinical program-assignment service is not used.
+
+### The contract: `program-education-progress/1` (mirrored)
+
+`src/contracts/programEducationProgress.ts`, sha256
+`c86676406c05242aac330f7c2973521dea80f4862a93a5598f4912279ee40630`, byte-identical in V2
+`expo/contracts/programEducationProgress.ts` and held there by a digest test.
+
+- Lessons are named by the stable phase and item ids of the purchased version, pinned by version
+  id, number and digest.
+- Three requests: `read`; `complete` (the learner pressed "Mark this lesson complete"); `position`
+  (a resume point, never a completion). Each write carries the revision the device read and a
+  request id it generated.
+- A recorded write answers with a receipt: request id, action, lesson, time and new revision. The
+  same request id always answers with the same receipt. A different write under a used request id
+  is `request_conflict`.
+- Refusals: `not_owner`, `not_active`, `enrollment_mismatch`, `stale_version`, `unknown_lesson`,
+  `not_completable` (supplement steps and unreleased lessons), `revision_stale` (with the current
+  record, never merged), `request_conflict`, `service_unavailable`.
+- Pure navigation helpers: `courseLessons` (reads only the published shape and reports whether
+  every part was readable), `neighbours`, `isCompleted`, `resumeLesson` (the recorded position while
+  it is still a lesson of this version, else the first released lesson not completed).
+
+### Desktop
+
+- Ledger methods `progress(caller, entitlementId)` and `recordProgress(caller, command)` in the
+  fictional and SQL education ledgers, taking the verified `ConsumerCaller` only.
+- `education-progress-service.ts`: the consumer bridge, shaped for
+  `POST /clinical-core/consumer/education/progress` and **not registered**. Consumer pool, synthetic
+  boundary, `clinical_data` purpose, the caller from the context, the body strictly one of the three
+  requests, activation evidence naming the progress candidate, and an outage reported as unavailable.
+- BLOCKED successor `infra/aws-clinical-core/source-candidates/program-education-progress.sql`,
+  sha256 `7d4b3ee7027dca24e91423b409bc1cf5e387689e14d154ede448348f655a2eb5`
+  (`PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256`). Parent: the authority successor
+  `11e53bc2…`. One revisioned progress row per enrollment, append-only completions and receipts,
+  FORCE RLS on all three with every role revoked, and two functions granted to the API role only:
+  `education_progress_for_caller(entitlement)` and `record_education_progress_for_caller(command)`.
+  Both take the subject from `caller_consumer_subject()`. Lesson ids are validated against the
+  stored version through `clinical_private.program_consumer_content`, the same read the curriculum
+  function makes, with the digest re-checked. The SQL ledger's progress methods enable only with
+  this pin; nothing else depends on it.
+- Staff status does not include a learner's lesson progress. Progress is the learner's own
+  bookkeeping; whether a clinic sees it is a decision, not a default.
+
+### V2
+
+- `lib/education/awsEducationProgress.ts`: the transport, with the access transport's owner, epoch,
+  origin and size posture. A reply is accepted only for the request it answers: same action, course
+  and enrollment, and for a recorded write the same request id and lesson.
+- `lib/education/lessonMedia.ts`: the media reader seam, **held**, naming
+  `program-media-reference/1` and building no storage, signing or alternate media reference. Every
+  released lesson shows its governed text and says plainly that lesson video is not available in
+  the app yet.
+- `app/education.tsx`: course overview ("N of M lessons marked complete", Start or Continue), the
+  phase and lesson list, a lesson view with Back, Next and All lessons, and "Mark this lesson
+  complete". A completion says "Saving…" until the receipt. A failure says it was not saved and
+  offers to try again with the **same** request. A save from a device that is behind shows the saved
+  record and says the course was updated on another device. A supplement step says it is reviewed on
+  My programs and has no complete button; an unreleased lesson shows no text. Back in the foreground,
+  the course that was open is read again from the service and resumes where the service says; a
+  relaunch does the same from nothing kept on the device. Losing authorization clears lesson text and
+  progress. There is no purchase button, price, checkout link or Core term on the screen.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `education-progress.test.ts` (fictional ledger and service) | 5 passed |
+| `education-progress-candidate.database.test.ts` (PGlite, whole chain + progress successor) | 5 passed: disabled without its pin; no role reads the tables; no context or a workforce context refused; idempotent receipt with one completion row; two-device stale refusal; every refusal; a direct API session with Bob's context cannot write Alice's course; append-only completions and receipts; revision rises by exactly one |
+| V2 `education-progress-contract`, `education-progress-client`, `education-course-journey` | 4, 11 and 9 passed |
+| V2 education tests together | 7 files, 69 passed; `tsc` and `expo lint` clean |
+
+Device evidence here is component evidence: the screen, contract and transport are real, and only
+the native, session and network boundaries are substituted. A physical two-device run against a
+hosted service is still owed.
+
+### Additive overlap in a shared file
+
+`src/server/clinical-core/rds-data-database.ts` line 275: the commerce refusal token family gains
+`progress` and `terms` beside WP2's `delivery`. It is one alternation in one existing pattern; no
+other line changed.

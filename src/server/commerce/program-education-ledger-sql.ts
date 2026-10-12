@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { educationCurriculumRead, educationEnrollment, programClaim, programEntitlement, type EducationEnrollment, type ProgramClaim, type ProgramEntitlement } from '../../contracts/programEducationAccess';
 import { programOrder, type ProgramOrder } from '../../contracts/programCheckout';
+import { educationProgressOutcome, educationProgressRead } from '../../contracts/programEducationProgress';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from '../clinical-core/database';
 import { PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256, programCommerceActivationState } from './program-commerce-activation';
 import { PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256, PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 } from './program-checkout-ledger-sql';
@@ -28,10 +29,12 @@ import { PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256, isConsumerCaller, i
 export const PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 = 'e4f11e29f1b6a68f1478dbc112aaac1ea2bbf72adf86f9458dd5a20c8151df93';
 /** SHA-256 of infra/aws-clinical-core/source-candidates/program-education-delivery.sql (successor; parent above), held equal to the file by its test. */
 export const PROGRAM_EDUCATION_DELIVERY_SCHEMA_CANDIDATE_SHA256 = '653965ff19f1d522067a6b636ac4ed5a4d2f9f1696cbb692c9545e3fc2046ae6';
+/** SHA-256 of infra/aws-clinical-core/source-candidates/program-education-progress.sql (successor; parent: the authority successor), held equal to the file by its test. The progress methods enable only with it; nothing else depends on it. */
+export const PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256 = '7d4b3ee7027dca24e91423b409bc1cf5e387689e14d154ede448348f655a2eb5';
 
 export type SqlEducationLedgerDependencies = {
   database: ClinicalCoreDatabase; worker?: ClinicalCoreDatabase; delivery?: ClinicalCoreDatabase; operator?: ClinicalCoreDatabase; activation?: unknown;
-  checkoutCandidateSha256?: string; checkoutRecoveryCandidateSha256?: string; educationCandidateSha256?: string; educationDeliveryCandidateSha256?: string; commerceAuthorityCandidateSha256?: string;
+  checkoutCandidateSha256?: string; checkoutRecoveryCandidateSha256?: string; educationCandidateSha256?: string; educationDeliveryCandidateSha256?: string; commerceAuthorityCandidateSha256?: string; educationProgressCandidateSha256?: string;
 };
 
 const settled = z.object({ created: z.boolean(), entitlement: programEntitlement, claim: programClaim }).strict();
@@ -55,12 +58,13 @@ const CATEGORY: Record<string, EducationLedgerCategory> = {
   program_entitlement_order_not_verified: 'settlement_refused', program_entitlement_identity_immutable: 'transition_refused', program_entitlement_subject_immutable: 'transition_refused',
   program_entitlement_revision_must_increase: 'transition_refused', program_claim_settled: 'transition_refused', program_offer_activation_refused: 'store_unavailable',
   program_delivery_not_found: 'not_found', program_delivery_revision_stale: 'revision_stale', program_delivery_settled: 'transition_refused', program_delivery_request_invalid: 'request_invalid',
+  program_progress_request_invalid: 'request_invalid', program_progress_append_only: 'transition_refused', program_progress_identity_immutable: 'transition_refused', program_progress_revision_must_increase: 'transition_refused',
   program_delivery_attempt_must_increase: 'transition_refused', program_delivery_sealed_immutable: 'transition_refused', program_delivery_identity_immutable: 'transition_refused',
 };
 function rethrow(error: unknown): never {
   if (error instanceof EducationLedgerError) throw error;
   if (error instanceof ClinicalCoreDatabaseRejection) {
-    const match = error.reason ? /^(program_(?:entitlement|claim|delivery)_[a-z_]+|program_offer_activation_refused)(?::([a-z_]+))?/.exec(error.reason) : null;
+    const match = error.reason ? /^(program_(?:entitlement|claim|delivery|progress)_[a-z_]+|program_offer_activation_refused)(?::([a-z_]+))?/.exec(error.reason) : null;
     if (match && CATEGORY[match[1]!]) throw new EducationLedgerError(CATEGORY[match[1]!], match[2]);
     throw new EducationLedgerError(error.category === 'request_invalid' ? 'request_invalid' : 'store_unavailable');
   }
@@ -79,6 +83,8 @@ export function createSqlEducationLedger(deps: SqlEducationLedgerDependencies): 
     && deps.educationCandidateSha256 === PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 && deps.educationDeliveryCandidateSha256 === PROGRAM_EDUCATION_DELIVERY_SCHEMA_CANDIDATE_SHA256
     && deps.commerceAuthorityCandidateSha256 === PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256;
   const guard = () => { if (!enabled) throw new EducationLedgerError('store_unavailable'); };
+  const progressEnabled = enabled && deps.educationProgressCandidateSha256 === PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256;
+  const progressGuard = () => { if (!progressEnabled) throw new EducationLedgerError('store_unavailable'); };
   const on = async <T>(database: ClinicalCoreDatabase | undefined, schema: z.ZodType<T>, sql: string, params: unknown[]): Promise<T> => {
     guard();
     if (!database) throw new EducationLedgerError('store_unavailable');
@@ -140,6 +146,14 @@ export function createSqlEducationLedger(deps: SqlEducationLedgerDependencies): 
     async expireDue(limit) { return required(deps.worker, z.array(programEntitlement), 'select commercial_education.expire_program_entitlements_due($1) as data', [limit]); },
     async listForProgram(staff, programId): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }> {
       return required(deps.database, status, 'select commercial_education.program_education_status($1,$2) as data', [clinicalUuid(staff?.organizationId ?? ''), clinicalUuid(programId)], staffContext(staff));
+    },
+    async progress(caller, entitlementId) {
+      progressGuard();
+      return required(deps.database, educationProgressRead, 'select commercial_education.education_progress_for_caller($1) as data', [clinicalUuid(entitlementId)], consumer(caller));
+    },
+    async recordProgress(caller, command) {
+      progressGuard();
+      return required(deps.database, educationProgressOutcome, 'select commercial_education.record_education_progress_for_caller($1::jsonb) as data', [JSON.stringify(command)], consumer(caller));
     },
     async staffCurriculum(staff, entitlementId) {
       return required(deps.database, educationCurriculumRead, 'select commercial_education.education_curriculum_staff($1,$2) as data', [clinicalUuid(staff?.organizationId ?? ''), clinicalUuid(entitlementId)], staffContext(staff));
