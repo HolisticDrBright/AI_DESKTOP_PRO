@@ -63,8 +63,16 @@ describe('under the local fixture', () => {
     expect(commercial.orders.map(o => o.state)).toEqual(['payment_verified']);
     expect(commercial.entitlements.map(e => e.state)).toEqual(['awaiting_claim']);
     expect(commercial.claims.map(c => c.state)).toEqual(['issued']);
-    expect(JSON.stringify(status)).not.toContain('claimToken');
-    expect(JSON.stringify(status)).not.toContain(selection.deliveries[0]!.claimToken);
+    // Neither the code nor its digest is in the staff reply; the claim carries its delivery state instead.
+    selection.contacts.contacts.set(order.orderId, 'purchaser@fictional.example');
+    await selection.delivery.deliverDue();
+    const code = /^([A-Za-z0-9_-]{43,64})$/m.exec(selection.mailbox.at(-1)!.text)![1]!;
+    const after = JSON.stringify(await body(await POST(req({ action: 'status', programId: program }))));
+    expect(after).not.toContain(code);
+    for (const claim of selection.education.claims.values()) expect(after).not.toContain(claim.tokenHash);
+    expect(after).not.toMatch(/tokenHash|claimToken|sealed|ciphertext/);
+    expect(after).toContain('"delivery":{"state":"accepted"');
+    expect(after).not.toContain('purchaser@fictional.example');
     const read = await body(await POST(req({ action: 'curriculum', entitlementId: commercial.entitlements[0]!.entitlementId })));
     expect(read.data?.commercial.curriculum).toMatchObject({ outcome: 'served', title: 'Fictional guide' });
     session.mockResolvedValue({ token: 'fictional-token', orgId: '55555555-5555-4555-8555-555555555555', email: 'other@fictional.example' });

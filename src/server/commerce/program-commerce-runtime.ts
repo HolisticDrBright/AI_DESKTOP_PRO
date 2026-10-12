@@ -11,6 +11,7 @@ import { createProgramCheckout } from "./program-checkout";
 import { createFictionalEducationLedger } from "./program-education-ledger";
 import { createProgramSettlement } from "./program-settlement";
 import { createCommerceWorker } from "./program-commerce-worker";
+import { createClaimDelivery, createFictionalClaimSealer, createFictionalContactAuthority, createFictionalDeliveryProvider } from "./program-claim-delivery";
 import { publicSiteOrigin } from "../../lib/publicSite";
 
 /**
@@ -88,7 +89,7 @@ export function fictionalPersonId(email: string): string {
  */
 export type ProgramCheckoutSelection =
   | { kind: "disabled"; reason: "checkout_unconfigured" }
-  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; worker: ReturnType<typeof createCommerceWorker>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's stand-in for claim delivery: what an email would have carried. */ deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] };
+  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; worker: ReturnType<typeof createCommerceWorker>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's claim delivery, its purchaser contacts (what the fictional hosted page collected) and the mailbox a purchaser reads. */ delivery: ReturnType<typeof createClaimDelivery>; contacts: ReturnType<typeof createFictionalContactAuthority>; mailbox: ReturnType<typeof createFictionalDeliveryProvider>["mailbox"]; provider: ReturnType<typeof createFictionalDeliveryProvider> };
 
 let fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null = null;
 /** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
@@ -101,11 +102,15 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers: fictionalLedger(), ledger, processor, publicOrigin: publicSiteOrigin(env) ?? FIXTURE_RETURN_ORIGIN });
     const education = createFictionalEducationLedger({ orders: ledger, content: async binding => contents.get(binding.versionId) ?? null });
-    const deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] = [];
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => contents.get(binding.versionId) ?? null, expectedAccountRef: processor.accountRef, deliver: async delivery => { deliveries.push(delivery); } });
+    // Fixture seams only: a sealer whose key lives in this process, the contacts the fictional hosted page collected, and a mailbox.
+    const sealer = createFictionalClaimSealer();
+    const contacts = createFictionalContactAuthority();
+    const provider = createFictionalDeliveryProvider();
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => contents.get(binding.versionId) ?? null, expectedAccountRef: processor.accountRef, sealer });
+    const delivery = createClaimDelivery({ ledger: education, sealer, contacts, provider });
     // The webhook only admits; this worker is what processes admitted work. Under the fixture a test or a local operator runs its pass; a host schedules it in production.
-    const worker = createCommerceWorker({ ledger, checkout, settlement });
-    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, worker, education, settlement, deliveries };
+    const worker = createCommerceWorker({ ledger, checkout, settlement, delivery });
+    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, worker, education, settlement, delivery, contacts, mailbox: provider.mailbox, provider };
   }
   return fictionalCheckout;
 }

@@ -17,6 +17,11 @@ import { z } from 'zod';
  * assignment service's authority, with its connection, consent, Core checks, review and explicit
  * acceptance; nothing here calls it.
  *
+ * The one-time code is delivered to the purchaser contact the payment processor holds, never to an
+ * address a browser typed. Using it binds the subject once; the same verified subject presenting it
+ * again (a retry after a lost reply) receives the same receipt, and anyone else is refused. A new
+ * code replaces every earlier one atomically, and only an operator can ask for one.
+ *
  * Policy events (refund, dispute, chargeback, renewal changes) move an entitlement to a HELD state
  * that is visible to the operator; no automatic refund, revocation, renewal charge or deletion is
  * decided by this contract. Expiry follows the saved access duration, or never when none was decided.
@@ -27,7 +32,6 @@ const uuid = z.string().uuid();
 export const curriculumBinding = z.object({ versionId: uuid, version: z.number().int().min(1), sourceDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export type CurriculumBinding = z.infer<typeof curriculumBinding>;
 const timestamp = z.string().datetime({ offset: true });
-const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** The consumer identity subject as the identity API verifies it: opaque, never contact information. */
 export const consumerSubject = z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/);
 
@@ -88,16 +92,35 @@ export const programEntitlement = z.object({
 export type ProgramEntitlement = z.infer<typeof programEntitlement>;
 
 export const CLAIM_STATES = ['issued', 'used', 'expired', 'superseded'] as const;
+/**
+ * Where delivery of a claim's one-time code stands. `pending`: queued and not yet attempted, or due
+ * again; `provider_unknown`: an attempt was made and its outcome is unknown (retried under the same
+ * provider key); `accepted`: the provider accepted the message, which is NOT proof it arrived;
+ * `failed`: the provider refused it for good; `withdrawn`: the claim stopped being usable (used,
+ * expired or superseded) before delivery finished, and nothing more will be sent.
+ */
+export const DELIVERY_STATES = ['pending', 'provider_unknown', 'accepted', 'failed', 'withdrawn'] as const;
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+export const claimDelivery = z.object({
+  state: z.enum(DELIVERY_STATES),
+  attempts: z.number().int().min(0),
+  lastAttemptAt: timestamp.nullable(),
+  acceptedAt: timestamp.nullable(),
+}).strict();
+/**
+ * A claim as anyone outside the ledger sees it: its state and its delivery state. Neither the code
+ * nor any digest of it is part of this shape; the ledger keeps the digest privately to recognise the
+ * code, and the code itself exists only sealed for delivery.
+ */
 export const programClaim = z.object({
   claimId: uuid,
   entitlementId: uuid,
-  /** SHA-256 of the one-time token; the token itself is never stored. */
-  tokenHash: sha256,
   issuedAt: timestamp,
   expiresAt: timestamp,
   state: z.enum(CLAIM_STATES),
   usedAt: timestamp.nullable(),
   usedBy: consumerSubject.nullable(),
+  delivery: claimDelivery,
 }).strict();
 export type ProgramClaim = z.infer<typeof programClaim>;
 /** How long a claim token stays valid. A decision for Brandon; the source value is a bound, not a policy. */

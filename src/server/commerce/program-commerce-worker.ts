@@ -2,6 +2,7 @@ import type { IntakeRecord, OrderState } from '../../contracts/programCheckout';
 import type { CheckoutWorkStatus, ProgramCheckoutLedger } from './program-checkout-ledger';
 import type { OrderReconciliation, createProgramCheckout } from './program-checkout';
 import type { SettlementPass, createProgramSettlement } from './program-settlement';
+import type { DeliveryPass, createClaimDelivery } from './program-claim-delivery';
 
 /**
  * The commerce worker: the only place admitted work is processed. The webhook route admits an event
@@ -12,8 +13,10 @@ import type { SettlementPass, createProgramSettlement } from './program-settleme
  *   1. due intake, oldest first, one attempt each (the ledger bounds attempts and schedules backoff);
  *   2. reconciliation of orders whose outcome is not yet decided (a saved creation not yet confirmed,
  *      a payment still processing, an open checkout past its expiry): one bounded step each;
- *   3. settlement of verified orders into entitlements (idempotent per order);
- *   4. the operator status: counts by state and the oldest unresolved item.
+ *   3. settlement of verified orders into entitlements (idempotent per order), each with its sealed
+ *      code queued for delivery in the same step;
+ *   4. delivery of due codes (program-claim-delivery.ts): bounded attempts, outcome recorded;
+ *   5. the operator status: counts by state and the oldest unresolved item.
  *
  * Every step reports its own failure: an unreadable list is `unavailable`, never "no work"; an item
  * that throws is reported with its id, never dropped. Processor calls are made by the boundary
@@ -22,11 +25,12 @@ import type { SettlementPass, createProgramSettlement } from './program-settleme
  * lease expiry would not prove a processor call had stopped anyway. Scheduling this pass (how often,
  * where, with which alarms) is the host's decision and is not made here.
  */
-export type WorkerLimits = { intake: number; reconcile: number; settle: number };
+export type WorkerLimits = { intake: number; reconcile: number; settle: number; deliver: number };
 export type WorkerReport = {
   intake: { ok: true; results: { eventId: string; state: IntakeRecord['state'] | 'error'; detail: string | null }[] } | { ok: false; reason: 'intake_unavailable' };
   reconcile: { ok: true; results: (OrderReconciliation | { orderId: string; outcome: 'error'; detail: string })[] } | { ok: false; reason: 'orders_unavailable' };
   settlement: SettlementPass;
+  delivery: DeliveryPass | { ok: false; reason: 'delivery_unconfigured' };
   status: { ok: true; checkout: CheckoutWorkStatus } | { ok: false; reason: 'status_unavailable' };
 };
 
@@ -37,13 +41,15 @@ export function createCommerceWorker(deps: {
   ledger: ProgramCheckoutLedger;
   checkout: ReturnType<typeof createProgramCheckout>;
   settlement: ReturnType<typeof createProgramSettlement>;
+  /** Absent where no delivery is configured; the report then says so rather than "nothing to send". */
+  delivery?: ReturnType<typeof createClaimDelivery>;
   now?: () => Date;
   limits?: Partial<WorkerLimits>;
   /** An open checkout is reconciled only once its saved expiry has passed (its events normally arrive on their own). */
   reconcileOpenAfterExpiry?: boolean;
 }) {
   const now = deps.now ?? (() => new Date());
-  const limits: WorkerLimits = { intake: 25, reconcile: 25, settle: 25, ...deps.limits };
+  const limits: WorkerLimits = { intake: 25, reconcile: 25, settle: 25, deliver: 25, ...deps.limits };
   const errorText = (error: unknown) => (error instanceof Error ? error.name + ': ' + error.message : 'unknown').slice(0, 200);
   return {
     async runOnce(): Promise<WorkerReport> {
@@ -71,10 +77,11 @@ export function createCommerceWorker(deps: {
       } catch { reconcile = { ok: false, reason: 'orders_unavailable' }; }
 
       const settlement = await deps.settlement.settleDue(limits.settle);
+      const delivery: WorkerReport['delivery'] = deps.delivery ? await deps.delivery.deliverDue(limits.deliver) : { ok: false, reason: 'delivery_unconfigured' };
 
       let status: WorkerReport['status'];
       try { status = { ok: true, checkout: await deps.ledger.workStatus() }; } catch { status = { ok: false, reason: 'status_unavailable' }; }
-      return { intake, reconcile, settlement, status };
+      return { intake, reconcile, settlement, delivery, status };
     },
     /** The operator's view without doing any work. */
     async status(): Promise<WorkerReport['status']> {

@@ -10,7 +10,7 @@ const SECTION = 'mx-auto w-full max-w-[760px] px-5 py-8 md:px-8';
 const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
 export const RETURN_WORDS: Record<OrderState | 'unknown', { heading: string; detail: string }> = {
-  payment_verified: { heading: 'Your payment is confirmed', detail: 'The payment processor has confirmed this purchase. Your access to the program is prepared next, and the way to claim it is sent separately to the email you gave the payment processor. Nothing on this page is your access.' },
+  payment_verified: { heading: 'Your payment is confirmed', detail: 'The payment processor has confirmed this purchase. Your access is prepared next, and a one-time code to claim it is then emailed to the address you gave the payment processor. This page cannot tell whether that email has gone out; if it does not arrive, contact the clinic. Nothing on this page is your access. It is opened by the code, in your own account.' },
   checkout_open: { heading: 'Your payment is being confirmed', detail: 'We are waiting for the payment processor to confirm this purchase. This can take a few minutes. Arriving at this page is not confirmation; you can close it and return later.' },
   creation_unresolved: { heading: 'Your checkout could not be completed', detail: 'The checkout did not start cleanly. Nothing was charged on this site. You can start again from the program page.' },
   creation_pending: { heading: 'Your checkout is starting', detail: 'The checkout was recorded and is being opened with the payment processor. Nothing has been charged. You can start again from the program page; it will reopen this same checkout.' },

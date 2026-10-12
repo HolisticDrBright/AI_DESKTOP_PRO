@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ENTITLEMENT_TRANSITIONS, PROGRAM_EDUCATION_ACCESS_CONTRACT, accessWindow, educationEnrollment, programClaim, programEntitlement,
-  type EducationCurriculumRead, type EducationEnrollment, type EntitlementState, type PolicyEventKind, type ProgramClaim, type ProgramEntitlement,
+  type DeliveryState, type EducationCurriculumRead, type EducationEnrollment, type EntitlementState, type PolicyEventKind, type ProgramClaim, type ProgramEntitlement,
 } from '../../contracts/programEducationAccess';
 import type { ProgramOrder } from '../../contracts/programCheckout';
 import type { ProgramCheckoutLedger } from './program-checkout-ledger';
@@ -18,8 +18,14 @@ import type { ProgramCheckoutLedger } from './program-checkout-ledger';
  *     is refused and visible, never silently skipped;
  *   - a claim is single-use, expiring, bound to one entitlement; using it binds the subject, opens the
  *     window from the saved duration, and creates the learner's enrollment, all in one step;
- *   - a claimed entitlement cannot be claimed again, by anyone; a second claim by the same subject is
- *     "already used", by another subject "already claimed by other", and neither changes anything;
+ *   - a claimed entitlement cannot be claimed again by anyone else ("already claimed by other"); the
+ *     same verified subject presenting its used code again (a retry after a lost reply) gets the same
+ *     receipt and nothing changes: no second enrollment, no second window;
+ *   - the code's digest is private to the ledger and appears in no reply; the code itself exists only
+ *     SEALED in the delivery queue until delivery is accepted, fails for good, or the claim stops being
+ *     usable, and is erased then;
+ *   - a replacement code is an operator act: every issued claim of the entitlement is superseded and
+ *     its delivery withdrawn in the same step the new claim and its delivery are created;
  *   - every change raises the revision and follows ENTITLEMENT_TRANSITIONS; the order, offer and
  *     curriculum columns are immutable; policy events are appended, never edited;
  *   - the access read returns the subject's own rows only; an unclaimed entitlement belongs to nobody.
@@ -30,13 +36,26 @@ export class EducationLedgerError extends Error {
 }
 
 export type SettlementReceipt = { entitlement: ProgramEntitlement; claim: ProgramClaim; created: boolean };
+/** A one-time code sealed for delivery: opaque to the ledger, opened only by the delivery step's key. */
+export type SealedCode = { keyRef: string; iv: string; ciphertext: string; tag: string };
+/** What settlement or a replacement hands the ledger: the claim's id, the code's digest, its expiry and the sealed code. Never the code. */
+export type ClaimIssue = { claimId: string; tokenHash: string; claimExpiresAt: string; sealed: SealedCode };
+/** One delivery as the delivery step sees it. `sealed` is null once there is nothing left to send. */
+export type DeliveryRecord = {
+  deliveryId: string; claimId: string; entitlementId: string; orderId: string; state: DeliveryState; sealed: SealedCode | null;
+  attempts: number; nextAttemptAt: string | null; lastAttemptAt: string | null; acceptedAt: string | null; providerRef: string | null; lastOutcome: string | null; claimExpiresAt: string;
+};
+export type DeliveryOutcome = { state: 'accepted' | 'failed' | 'provider_unknown'; providerRef?: string | null; detail: string; nextAttemptAt?: string | null; at: string };
+/** The trusted operator context the host resolves; a learner or the general API role never has one. */
+export type OperatorContext = { kind: 'operator'; operatorId: string };
+export const MAX_DELIVERY_ATTEMPTS = 6;
 export type ClaimOutcome =
   | { outcome: 'claimed'; entitlement: ProgramEntitlement; enrollment: EducationEnrollment }
   | { outcome: 'refused'; reason: 'claim_invalid' | 'claim_expired' | 'claim_used' | 'claim_superseded' | 'entitlement_not_claimable' | 'already_claimed_by_other' };
 
 export interface ProgramEducationLedger {
   /** Create the entitlement and its first claim for a verified order, or return the ones that exist. The token hash is the caller's; a fresh hash is issued only when nothing existed. */
-  settle(order: ProgramOrder, tokenHash: string, claimExpiresAt: string, expectedAccountRef: string): Promise<SettlementReceipt>;
+  settle(order: ProgramOrder, issue: ClaimIssue, expectedAccountRef: string): Promise<SettlementReceipt>;
   /** Verified, paid orders with no entitlement yet: the durable admitted work a crashed settlement left behind. */
   unsettledOrders(limit: number): Promise<ProgramOrder[]>;
   claim(tokenHash: string, consumerSubject: string, at: string): Promise<ClaimOutcome>;
@@ -51,6 +70,12 @@ export interface ProgramEducationLedger {
   listForProgram(organizationId: string, programId: string): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
   /** The staff read of the exact purchased version for one of the clinic's entitlements. */
   staffCurriculum(actor: { personId: string; organizationId: string; identitySubject: string }, entitlementId: string): Promise<EducationCurriculumRead>;
+  /** Deliveries due now: pending or outcome-unknown, still usable, oldest first, bounded. Unusable ones are withdrawn on the way. */
+  dueDeliveries(at: string, limit: number): Promise<DeliveryRecord[]>;
+  /** Record one delivery attempt at the attempt count the caller read; a stale count is refused. */
+  recordDelivery(deliveryId: string, expectedAttempts: number, outcome: DeliveryOutcome): Promise<DeliveryRecord>;
+  /** Replace the code of an unclaimed entitlement: supersede every issued claim and withdraw its delivery, then issue the new one. Operator only. */
+  reissueClaim(operator: OperatorContext, entitlementId: string, issue: ClaimIssue): Promise<{ claim: ProgramClaim; superseded: number }>;
 }
 
 export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; faults?: { before?: (operation: string) => void }; /** The fixture's published content by version id, for the staff read. */ content?: (binding: ProgramEntitlement['curriculum']) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null> };
@@ -59,8 +84,27 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
   const now = options.now ?? (() => new Date());
   const stamp = () => now().toISOString();
   const entitlements = new Map<string, ProgramEntitlement>();
-  const claims = new Map<string, ProgramClaim>();
+  const claims = new Map<string, Omit<ProgramClaim, 'delivery'> & { tokenHash: string }>();
+  const deliveries = new Map<string, DeliveryRecord>();
   const enrollments = new Map<string, EducationEnrollment>();
+  /** The claim as anyone outside the ledger sees it: no digest, its delivery state attached. */
+  const claimView = (claim: Omit<ProgramClaim, 'delivery'> & { tokenHash: string }): ProgramClaim => {
+    const { tokenHash: _private, ...rest } = claim;
+    void _private;
+    const delivery = [...deliveries.values()].find(d => d.claimId === claim.claimId);
+    return programClaim.parse({ ...rest, delivery: delivery ? { state: delivery.state, attempts: delivery.attempts, lastAttemptAt: delivery.lastAttemptAt, acceptedAt: delivery.acceptedAt } : { state: 'withdrawn', attempts: 0, lastAttemptAt: null, acceptedAt: null } });
+  };
+  /** Stop sending a claim's code: nothing more will go out, and the sealed copy is erased. */
+  const withdraw = (claimId: string, detail: string) => {
+    for (const delivery of deliveries.values()) {
+      if (delivery.claimId === claimId && (delivery.state === 'pending' || delivery.state === 'provider_unknown')) deliveries.set(delivery.deliveryId, { ...delivery, state: 'withdrawn', sealed: null, nextAttemptAt: null, lastOutcome: detail });
+      else if (delivery.claimId === claimId) deliveries.set(delivery.deliveryId, { ...delivery, sealed: null });
+    }
+  };
+  const queue = (claimId: string, entitlementId: string, orderId: string, sealed: SealedCode, claimExpiresAt: string) => {
+    const delivery: DeliveryRecord = { deliveryId: randomUUID(), claimId, entitlementId, orderId, state: 'pending', sealed, attempts: 0, nextAttemptAt: stamp(), lastAttemptAt: null, acceptedAt: null, providerRef: null, lastOutcome: null, claimExpiresAt };
+    deliveries.set(delivery.deliveryId, delivery);
+  };
   const events: { entitlementId: string; kind: PolicyEventKind | 'settled' | 'claimed' | 'expired' | 'transition'; reference: string | null; at: string }[] = [];
   const fault = (operation: string) => { try { options.faults?.before?.(operation); } catch { throw new EducationLedgerError('store_unavailable'); } };
   const byOrder = (orderId: string) => [...entitlements.values()].find(e => e.orderId === orderId) ?? null;
@@ -72,15 +116,15 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
     events.push({ entitlementId: updated.entitlementId, kind: 'transition', reference: next, at: stamp() });
     return structuredClone(updated);
   };
-  const ledger: ProgramEducationLedger & { entitlements: typeof entitlements; claims: typeof claims; enrollments: typeof enrollments; events: typeof events; reset(): void } = {
-    entitlements, claims, enrollments, events,
-    reset() { entitlements.clear(); claims.clear(); enrollments.clear(); events.length = 0; },
-    async settle(order, tokenHash, claimExpiresAt, expectedAccountRef) {
+  const ledger: ProgramEducationLedger & { entitlements: typeof entitlements; claims: typeof claims; deliveries: typeof deliveries; enrollments: typeof enrollments; events: typeof events; reset(): void } = {
+    entitlements, claims, deliveries, enrollments, events,
+    reset() { entitlements.clear(); claims.clear(); deliveries.clear(); enrollments.clear(); events.length = 0; },
+    async settle(order, issue, expectedAccountRef) {
       fault('settle');
       const existing = byOrder(order.orderId);
       if (existing) {
-        const claim = [...claims.values()].find(c => c.entitlementId === existing.entitlementId && c.state === 'issued') ?? [...claims.values()].find(c => c.entitlementId === existing.entitlementId)!;
-        return { entitlement: structuredClone(existing), claim: structuredClone(claim), created: false };
+        const claim = [...claims.values()].find(c => c.entitlementId === existing.entitlementId && c.state === 'issued') ?? [...claims.values()].filter(c => c.entitlementId === existing.entitlementId).at(-1)!;
+        return { entitlement: structuredClone(existing), claim: claimView(claim), created: false };
       }
       // The order is re-read from its own ledger: a caller's copy is not evidence.
       const current = options.orders.orders.get(order.orderId);
@@ -94,10 +138,13 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
         offerId: current.offerId, offerRevision: current.offerRevision, curriculum: current.curriculum, accessTermsVersion: current.accessTermsVersion, accessDurationDays: current.accessDurationDays,
         subject: { kind: 'unclaimed' }, state: 'awaiting_claim', revision: 1, window: null, settlement: { verificationEventId: current.verification.eventId, settledAt: at }, policy: null, createdAt: at, updatedAt: at,
       });
-      const claim = programClaim.parse({ claimId: randomUUID(), entitlementId: entitlement.entitlementId, tokenHash, issuedAt: at, expiresAt: claimExpiresAt, state: 'issued', usedAt: null, usedBy: null });
+      if ([...claims.values()].some(c => c.claimId === issue.claimId || c.tokenHash === issue.tokenHash)) throw new EducationLedgerError('request_invalid');
+      const claim = { claimId: issue.claimId, entitlementId: entitlement.entitlementId, tokenHash: issue.tokenHash, issuedAt: at, expiresAt: issue.claimExpiresAt, state: 'issued' as const, usedAt: null, usedBy: null };
+      // One step: the entitlement, its claim and the sealed delivery exist together or not at all.
       entitlements.set(entitlement.entitlementId, entitlement); claims.set(claim.claimId, claim);
+      queue(claim.claimId, entitlement.entitlementId, current.orderId, issue.sealed, issue.claimExpiresAt);
       events.push({ entitlementId: entitlement.entitlementId, kind: 'settled', reference: current.orderId, at });
-      return { entitlement: structuredClone(entitlement), claim: structuredClone(claim), created: true };
+      return { entitlement: structuredClone(entitlement), claim: claimView(claim), created: true };
     },
     async unsettledOrders(limit) {
       fault('unsettledOrders');
@@ -108,16 +155,24 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       const claim = [...claims.values()].find(c => c.tokenHash === tokenHash);
       if (!claim) return { outcome: 'refused', reason: 'claim_invalid' };
       const entitlement = entitlements.get(claim.entitlementId)!;
-      if (claim.state === 'used') return { outcome: 'refused', reason: entitlement.subject.kind === 'claimed' && entitlement.subject.consumerSubject !== consumerSubject ? 'already_claimed_by_other' : 'claim_used' };
+      if (claim.state === 'used') {
+        if (claim.usedBy !== consumerSubject) return { outcome: 'refused', reason: 'already_claimed_by_other' };
+        // The winner retrying after a lost reply: the same receipt, nothing new.
+        const enrollment = [...enrollments.values()].find(n => n.entitlementId === entitlement.entitlementId && n.consumerSubject === consumerSubject);
+        if (!enrollment) throw new EducationLedgerError('store_unavailable');
+        return { outcome: 'claimed', entitlement: structuredClone(entitlement), enrollment: structuredClone(enrollment) };
+      }
       if (claim.state === 'superseded') return { outcome: 'refused', reason: 'claim_superseded' };
       if (claim.state === 'expired' || Date.parse(claim.expiresAt) <= Date.parse(at)) {
         claims.set(claim.claimId, { ...claim, state: 'expired' });
+        withdraw(claim.claimId, 'claim expired');
         return { outcome: 'refused', reason: 'claim_expired' };
       }
       if (entitlement.state !== 'awaiting_claim' || entitlement.subject.kind !== 'unclaimed') return { outcome: 'refused', reason: entitlement.subject.kind === 'claimed' && entitlement.subject.consumerSubject !== consumerSubject ? 'already_claimed_by_other' : 'entitlement_not_claimable' };
       const window = accessWindow(entitlement.accessDurationDays, new Date(at));
       const claimed = move(entitlement, entitlement.revision, 'active', { subject: { kind: 'claimed', consumerSubject, claimedAt: at }, window });
       claims.set(claim.claimId, { ...claim, state: 'used', usedAt: at, usedBy: consumerSubject });
+      withdraw(claim.claimId, 'claim used');
       const enrollment = educationEnrollment.parse({ enrollmentId: randomUUID(), entitlementId: claimed.entitlementId, consumerSubject, curriculum: claimed.curriculum, state: 'active', revision: 1, phaseIndex: 0, startedAt: at, updatedAt: at });
       enrollments.set(enrollment.enrollmentId, enrollment);
       events.push({ entitlementId: claimed.entitlementId, kind: 'claimed', reference: null, at });
@@ -166,7 +221,53 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       const mine = [...entitlements.values()].filter(e => e.organizationId === organizationId && e.programId === programId);
       const ids = new Set(mine.map(e => e.entitlementId));
       const orders = [...options.orders.orders.values()].filter(o => o.organizationId === organizationId && o.programId === programId).map(o => structuredClone(o));
-      return { orders, entitlements: mine.map(e => structuredClone(e)), enrollments: [...enrollments.values()].filter(n => ids.has(n.entitlementId)).map(n => structuredClone(n)), claims: [...claims.values()].filter(c => ids.has(c.entitlementId)).map(c => structuredClone(c)) };
+      return { orders, entitlements: mine.map(e => structuredClone(e)), enrollments: [...enrollments.values()].filter(n => ids.has(n.entitlementId)).map(n => structuredClone(n)), claims: [...claims.values()].filter(c => ids.has(c.entitlementId)).map(claimView) };
+    },
+    async dueDeliveries(at, limit) {
+      fault('dueDeliveries');
+      const due: DeliveryRecord[] = [];
+      for (const delivery of [...deliveries.values()].sort((a, b) => (a.nextAttemptAt ?? '').localeCompare(b.nextAttemptAt ?? ''))) {
+        // Due: never attempted, or its retry time has come.
+        if ((delivery.state !== 'pending' && delivery.state !== 'provider_unknown') || !delivery.nextAttemptAt || (delivery.attempts > 0 && delivery.nextAttemptAt > at)) continue;
+        const claim = claims.get(delivery.claimId)!;
+        if (claim.state !== 'issued' || Date.parse(claim.expiresAt) <= Date.parse(at)) { withdraw(claim.claimId, claim.state === 'issued' ? 'claim expired' : `claim ${claim.state}`); continue; }
+        due.push(structuredClone(deliveries.get(delivery.deliveryId)!));
+        if (due.length >= Math.max(1, Math.min(limit, 100))) break;
+      }
+      return due;
+    },
+    async recordDelivery(deliveryId, expectedAttempts, outcome) {
+      fault('recordDelivery');
+      const delivery = deliveries.get(deliveryId);
+      if (!delivery) throw new EducationLedgerError('not_found');
+      if (delivery.attempts !== expectedAttempts) throw new EducationLedgerError('revision_stale');
+      if (delivery.state !== 'pending' && delivery.state !== 'provider_unknown') throw new EducationLedgerError('transition_refused');
+      const attempts = delivery.attempts + 1;
+      const exhausted = outcome.state === 'provider_unknown' && attempts >= MAX_DELIVERY_ATTEMPTS;
+      const state: DeliveryState = exhausted ? 'failed' : outcome.state;
+      const keep = state === 'provider_unknown';
+      const updated: DeliveryRecord = { ...delivery, state, attempts, lastAttemptAt: outcome.at, acceptedAt: state === 'accepted' ? outcome.at : null, providerRef: outcome.providerRef ?? delivery.providerRef,
+        lastOutcome: exhausted ? 'attempts exhausted: ' + outcome.detail : outcome.detail, sealed: keep ? delivery.sealed : null, nextAttemptAt: keep ? outcome.nextAttemptAt ?? stamp() : null };
+      deliveries.set(deliveryId, updated);
+      return structuredClone(updated);
+    },
+    async reissueClaim(operator, entitlementId, issue) {
+      fault('reissueClaim');
+      if (operator?.kind !== 'operator' || !operator.operatorId) throw new EducationLedgerError('request_invalid');
+      const entitlement = entitlements.get(entitlementId);
+      if (!entitlement) throw new EducationLedgerError('not_found');
+      if (entitlement.state !== 'awaiting_claim' || entitlement.subject.kind !== 'unclaimed') throw new EducationLedgerError('transition_refused', 'entitlement_not_claimable');
+      if ([...claims.values()].some(c => c.claimId === issue.claimId || c.tokenHash === issue.tokenHash)) throw new EducationLedgerError('request_invalid');
+      let superseded = 0;
+      for (const claim of [...claims.values()]) {
+        if (claim.entitlementId === entitlementId && claim.state === 'issued') { claims.set(claim.claimId, { ...claim, state: 'superseded' }); withdraw(claim.claimId, 'claim superseded'); superseded += 1; }
+      }
+      const at = stamp();
+      const claim = { claimId: issue.claimId, entitlementId, tokenHash: issue.tokenHash, issuedAt: at, expiresAt: issue.claimExpiresAt, state: 'issued' as const, usedAt: null, usedBy: null };
+      claims.set(claim.claimId, claim);
+      queue(claim.claimId, entitlementId, entitlement.orderId, issue.sealed, issue.claimExpiresAt);
+      events.push({ entitlementId, kind: 'transition', reference: 'claim reissued by operator', at });
+      return { claim: claimView(claim), superseded };
     },
     async staffCurriculum(actor, entitlementId) {
       fault('staffCurriculum');

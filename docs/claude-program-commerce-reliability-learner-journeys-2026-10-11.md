@@ -157,3 +157,112 @@ WP3.
 - The education functions' grants (WP3).
 - Real Stripe behaviour (idempotency retention, payment intent expansion on a delayed method,
   account retrieval with a restricted key) is hosted work and is not claimed here.
+
+---
+
+## WP2 — claim delivery and purchaser recovery
+
+### Purchaser threat model
+
+Three gates, each proven separately and none standing in for another:
+
+| Gate | What proves it | What does not |
+| --- | --- | --- |
+| The payment happened | the retrieved processor object bound to the saved order (WP1) | a redirect, a success URL, an event alone |
+| This is a real account | a verified consumer session (the V2 Cognito session the bridge resolves) | a typed email, a name, a device |
+| This account is the purchaser | the one-time code, delivered to the contact the payment processor holds for the order, presented by that session | an order id, a processor reference, an email address, a success URL, the staff status |
+
+There is no email-equality or order-number recovery path, and none was added. A lost code is
+replaced only by an operator, and the replacement cancels every earlier code in the same step.
+
+### Failing before, on the WP1 head `15f4e0d`
+
+`src/server/commerce/claim-delivery.test.ts`, five reproductions, all failing for the stated reason:
+
+| Observation | Result before |
+| --- | --- |
+| The staff status reply carries the code's digest | the serialized `listForProgram` reply contained `tokenHash` (the SQL `claim_json` returned it too) |
+| The settlement result carries the plaintext code | the outcome JSON contained the 43-character code, so any worker report or log could |
+| A failed first delivery strands the purchaser | after a provider failure and a restart, no code was ever delivered again (the digest cannot be turned back into a code) |
+| The winner retrying after a lost reply is refused | the second identical claim answered `claim_used` |
+| Screens say a code was sent | the staff row said "the one-time code sent to the address…" and the return page "is sent separately", whatever delivery did |
+
+### Repairs
+
+1. **Sealed, durable delivery.** Settlement seals the new code (`ClaimSealer`) and the ledger stores
+   the entitlement, the claim (digest only) and a delivery row holding the sealed code in ONE step.
+   No return value, report or log carries the code. The sealed copy exists only while delivery is
+   pending or its outcome unknown and is erased when delivery is accepted, fails for good, or the
+   claim is used, expires or is superseded.
+2. **A delivery step** (`program-claim-delivery.ts`) opens the sealed code only at the moment it
+   sends it. The recipient comes only from `PurchaserContactAuthority` (the contact the payment
+   processor holds, read at send time, never stored here). Each message goes to the provider under
+   a stable per-delivery idempotency key, so a retry after a lost receipt cannot send a second
+   code. States: `pending`, `provider_unknown` (retried with backoff, bounded at six attempts),
+   `accepted` (not proof of arrival), `failed`, `withdrawn`. The copy is generic: "Your access code",
+   the code as text (never a link), its expiry, and "if you did not make this purchase, ignore this
+   message". No program, curriculum, price, lab, diagnosis or protocol word.
+3. **The worker** runs delivery as its fourth step and reports `delivery_unconfigured` where there is
+   none, never "nothing to send".
+4. **The winner's retry** returns the same receipt (same entitlement, same enrollment); anyone else
+   is `already_claimed_by_other`.
+5. **Operator replacement** (`settlement.reissue(operatorContext, entitlementId)`): only while nobody
+   holds the entitlement; supersedes every issued claim and withdraws its delivery atomically; a
+   learner or the general API cannot reach it (`not_operator` in source, `permission denied` in SQL).
+6. **Words.** Staff rows distinguish `code_delivery_pending`, `code_delivery_unknown`,
+   `code_delivery_failed` and (only after acceptance) `pending_account`, which says acceptance is not
+   proof of arrival. The return page no longer says a code was sent.
+7. **The contract** (`program-education-access/1`, mirrored): a claim is seen without any digest and
+   with its delivery state. Mirror digest
+   `17bf3d974571fb85204fc447eb5497571a677bad63ec755cb9acedcf49ea717f` in both repositories.
+
+### After
+
+| Check | Result |
+| --- | --- |
+| `claim-delivery.test.ts` | 16 passed: the five reproductions now held, interrupted first delivery and restart, a lost provider receipt (one message), bounded attempts, no contact (fails, nothing sent) versus a contact outage (retried), generic copy, expiry withdraws and erases, a sealed code opens only for its own claim, an unreadable queue is said, two delivery workers send one message, both claim race orders, operator-only replacement, and a replacement racing a claim (exactly one wins, either landing order) |
+| `program-education-access-candidate.database.test.ts` (PGlite; offer, checkout, recovery, education and delivery candidates under their own roles) | 7 passed, including the role case below |
+| All commerce-related files | 47 files, 725 passed |
+| V2 education tests with the mirrored contract | 45 passed; V2 `tsc` clean |
+
+The role case uses the embedded database's real reduced roles. The API role is refused the due
+queue, recording a delivery, a replacement, the parent's unsealed settlement, and every delivery
+and claim table. A session whose **session user** is the API role cannot `SET ROLE` to the delivery
+or operator role. A superuser session that only runs `SET ROLE` would prove nothing, so the case
+first sets the session authorization itself. The delivery role cannot replace, claim or read the
+tables. Every sealed code is erased once deliveries settle.
+
+### BLOCKED successor
+
+`infra/aws-clinical-core/source-candidates/program-education-delivery.sql`
+(`PROGRAM_EDUCATION_DELIVERY_SCHEMA_CANDIDATE_SHA256`, value pinned in
+`program-education-ledger-sql.ts` and held equal by its test). Parents, applied first and unchanged:
+`program-education-access.sql` `e4f11e29f1b6a68f1478dbc112aaac1ea2bbf72adf86f9458dd5a20c8151df93`
+and `program-checkout-recovery.sql`. It creates the NOLOGIN roles `commercial_education_delivery`
+and `commercial_education_operator` (granted to nobody), the delivery table, the sealed settlement,
+the replaced claim and claim view, the delivery queue and record functions (delivery role only), and
+the replacement function (operator role only), and revokes the parent's unsealed settlement from the
+API role.
+
+### Additive overlap in a shared file
+
+`src/server/clinical-core/rds-data-database.ts`: the commerce refusal token family now includes
+`program_delivery_*` (one alternation added to the existing pattern at line 275). No other line of the
+file changed; the media and telehealth lanes do not use that pattern.
+
+### Host inputs (names only)
+
+- `ClaimSealer`: a KMS key for envelope sealing whose `Decrypt` only the delivery worker's role holds
+  (`Encrypt` for the settlement role), the claim id bound as encryption context.
+- `PurchaserContactAuthority`: from the retrieved Checkout Session's collected customer email at send
+  time. Whether the processor-collected address is sufficient purchaser authority is a decision.
+- `ClaimDeliveryProvider`: a transactional email provider with idempotency keys; provider coverage
+  and data classification of the message require review before real delivery.
+- Database sessions for `commercial_education_delivery` and `commercial_education_operator`, and an
+  operator identity the host resolves into `OperatorContext`.
+
+### Decisions named (unchanged policy, safe state built)
+
+Code lifetime (7 days in source, a bound and not a policy), code format, whether the processor's
+collected email is sufficient purchaser authority, the operator role's holders, and account-first
+versus anonymous checkout.

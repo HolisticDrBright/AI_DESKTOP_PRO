@@ -25,22 +25,27 @@ const entitlement = (n: number, state: ProgramEntitlement['state'], claimed = st
   subject: claimed ? { kind: 'claimed', consumerSubject: 'sub:fictional-alice-0001', claimedAt: '2026-10-11T12:20:00Z' } : { kind: 'unclaimed' }, state, revision: 2,
   window: claimed ? { startsAt: '2026-10-11T12:20:00Z', endsAt } : null, settlement: { verificationEventId: 'evt_' + n, settledAt: '2026-10-11T12:15:00Z' }, policy: null, createdAt: '2026-10-11T12:15:00Z', updatedAt: `2026-10-11T13:${String(n).padStart(2, '0')}:00Z`,
 });
-const claim = (n: number, state: ProgramClaim['state'], expiresAt = '2026-10-18T12:00:00Z'): ProgramClaim => programClaim.parse({ claimId: id(200 + n), entitlementId: id(100 + n), tokenHash: 'c'.repeat(64), issuedAt: '2026-10-11T12:15:00Z', expiresAt, state, usedAt: null, usedBy: null });
+const claim = (n: number, state: ProgramClaim['state'], expiresAt = '2026-10-18T12:00:00Z', delivery: ProgramClaim['delivery']['state'] = 'accepted'): ProgramClaim => programClaim.parse({ claimId: id(200 + n), entitlementId: id(100 + n), issuedAt: '2026-10-11T12:15:00Z', expiresAt, state, usedAt: null, usedBy: null,
+  delivery: { state: delivery, attempts: delivery === 'pending' ? 0 : 1, lastAttemptAt: delivery === 'pending' ? null : '2026-10-11T12:16:00Z', acceptedAt: delivery === 'accepted' ? '2026-10-11T12:16:00Z' : null } });
 
 describe('purchase rows', () => {
   it('lands every order in exactly one distinct kind', () => {
     const orders = [order(1, 'checkout_open'), order(2, 'creation_unresolved'), order(3, 'checkout_expired'), order(4, 'checkout_cancelled'), order(5, 'payment_failed'), order(6, 'refused'), order(7, 'payment_verified'),
       order(8, 'payment_verified'), order(9, 'payment_verified'), order(10, 'payment_verified'), order(11, 'payment_verified'), order(12, 'payment_verified'), order(13, 'payment_verified'), order(14, 'payment_verified'), order(15, 'payment_verified'),
-      order(16, 'creation_pending'), order(17, 'creation_unreconciled'), order(18, 'payment_processing')];
-    const entitlements = [entitlement(8, 'awaiting_claim'), entitlement(9, 'awaiting_claim'), entitlement(10, 'active'), entitlement(11, 'active', true, '2026-10-11T23:00:00Z'), entitlement(12, 'held_refund'), entitlement(13, 'held_dispute'), entitlement(14, 'revoked'), entitlement(15, 'held_policy')];
-    const claims = [claim(8, 'issued'), claim(9, 'issued', '2026-10-11T23:00:00Z')];
+      order(16, 'creation_pending'), order(17, 'creation_unreconciled'), order(18, 'payment_processing'),
+      order(19, 'payment_verified'), order(20, 'payment_verified'), order(21, 'payment_verified')];
+    const entitlements = [entitlement(8, 'awaiting_claim'), entitlement(9, 'awaiting_claim'), entitlement(10, 'active'), entitlement(11, 'active', true, '2026-10-11T23:00:00Z'), entitlement(12, 'held_refund'), entitlement(13, 'held_dispute'), entitlement(14, 'revoked'), entitlement(15, 'held_policy'), entitlement(19, 'awaiting_claim'), entitlement(20, 'awaiting_claim'), entitlement(21, 'awaiting_claim')];
+    const claims = [claim(8, 'issued'), claim(9, 'issued', '2026-10-11T23:00:00Z'), claim(19, 'issued', undefined, 'pending'), claim(20, 'issued', undefined, 'provider_unknown'), claim(21, 'issued', undefined, 'failed')];
     const rows = purchaseRows({ orders, entitlements, claims, enrollments: [] }, now);
     const kinds = Object.fromEntries(rows.map(r => [r.orderId, r.kind])) as Record<string, PurchaseRowKind>;
     expect(kinds).toEqual({
       [id(1)]: 'checkout_open', [id(2)]: 'checkout_unresolved', [id(3)]: 'checkout_closed', [id(4)]: 'checkout_closed', [id(5)]: 'payment_failed', [id(6)]: 'order_refused', [id(7)]: 'paid_not_fulfilled',
       [id(8)]: 'pending_account', [id(9)]: 'claim_expired', [id(10)]: 'access_active', [id(11)]: 'access_expired', [id(12)]: 'held_refund', [id(13)]: 'held_dispute', [id(14)]: 'revoked', [id(15)]: 'held_policy',
       [id(16)]: 'checkout_open', [id(17)]: 'checkout_unconfirmed', [id(18)]: 'payment_processing',
+      [id(19)]: 'code_delivery_pending', [id(20)]: 'code_delivery_unknown', [id(21)]: 'code_delivery_failed',
     });
+    // Only an accepted delivery is described as handed to the email provider, and even that is not proof it arrived.
+    for (const kind of ['code_delivery_pending', 'code_delivery_unknown', 'code_delivery_failed'] as const) expect(PURCHASE_ROW_WORDS[kind]).not.toMatch(/accepted|\bsent\b/i);
     // A delayed payment is neither failed nor granted; an unconfirmed checkout cannot take a payment.
     expect(PURCHASE_ROW_WORDS.payment_processing).toMatch(/still processing/);
     expect(PURCHASE_ROW_WORDS.payment_processing).toMatch(/Nothing is granted/);

@@ -1,3 +1,4 @@
+import { fictionalDelivery } from '../../test-support/commerceDelivery';
 import { describe, expect, it } from 'vitest';
 import { createEducationAccessService, EducationAccessError, EDUCATION_ACCESS_ROUTE_SEAM } from './education-access-service';
 import { createProgramCheckout } from './program-checkout';
@@ -34,8 +35,8 @@ async function harness() {
   const processor = createFictionalCheckoutProcessor();
   const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: 'https://clinic.fictional.example' });
   const education = createFictionalEducationLedger({ orders: ledger });
-  const deliveries: { claimToken: string }[] = [];
-  const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => ({ title: 'Fictional guide', phases: [{ id: 'p' }], sourceDigest: curriculum.sourceDigest }), expectedAccountRef: processor.accountRef, deliver: async d => { deliveries.push(d); } });
+  const delivery = fictionalDelivery(education);
+  const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => ({ title: 'Fictional guide', phases: [{ id: 'p' }], sourceDigest: curriculum.sourceDigest }), expectedAccountRef: processor.accountRef, sealer: delivery.sealer });
   const started = await checkout.start({ funnelSlug: 'longevity-program', programBinding: { organizationId: org, programId: program }, attemptKey: 'browser-a' });
   const order = ledger.orders.get(started.started ? started.orderId : '')!;
   processor.settle(order.processor!.sessionRef, 'paid');
@@ -44,7 +45,7 @@ async function harness() {
   await checkout.processEvent('evt_1');
   await settlement.settleDue();
   const service = (over: Partial<Parameters<typeof createEducationAccessService>[0]> = {}) => createEducationAccessService({ settlement, activation: evidence(), checkoutCandidateSha256: CHECKOUT_SHA, educationCandidateSha256: EDUCATION_SHA, expectedCheckoutSha256: CHECKOUT_SHA, expectedEducationSha256: EDUCATION_SHA, ...over });
-  return { service, token: deliveries[0]!.claimToken, order };
+  return { service, token: await delivery.codeFor(order.orderId), order };
 }
 async function refusal(work: () => Promise<unknown>): Promise<EducationAccessError> {
   try { await work(); } catch (error) { if (error instanceof EducationAccessError) return error; throw error; }

@@ -1,10 +1,11 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   CLAIM_VALIDITY_DAYS, PROGRAM_EDUCATION_ACCESS_CONTRACT, educationAccessRequest, isAccessActive,
   type ClaimRefusal, type EducationAccessView, type EducationCurriculumRead, type PolicyEventKind, type ProgramEntitlement,
 } from '../../contracts/programEducationAccess';
 import type { CurriculumBinding } from '../../contracts/programOffers';
-import { EducationLedgerError, type ProgramEducationLedger, type SettlementReceipt } from './program-education-ledger';
+import { EducationLedgerError, type OperatorContext, type ProgramEducationLedger, type SettlementReceipt } from './program-education-ledger';
+import type { ClaimSealer } from './program-claim-delivery';
 
 /**
  * Settlement: from a verified payment to one entitlement, one claim and, on claim, one enrollment.
@@ -13,9 +14,10 @@ import { EducationLedgerError, type ProgramEducationLedger, type SettlementRecei
  * row that references it (unique per order). A crash between the two leaves the order unsettled
  * and `settleDue` picks it up; a concurrent webhook, a second distinct event for the same payment
  * and a polling client all converge on the same row because the ledger's settlement is idempotent
- * per order. The claim token is generated here, hashed before storage, and handed to the delivery
- * dependency (an email to the processor-verified address) which this source does NOT implement: the
- * token leaves this function to the caller's chosen delivery and nowhere else.
+ * per order. The claim code is generated here, and only two things leave this function with it: its
+ * digest (how the ledger recognises it) and its SEALED form, queued for delivery in the same ledger
+ * step that creates the entitlement. No return value, log or report ever carries the code; the
+ * delivery step (program-claim-delivery.ts) opens it at the moment it sends it.
  *
  * Nothing here reads a clinical table, creates a patient record, a membership, a consent or a
  * practitioner assignment, releases a product or touches anyone's protocol.
@@ -25,26 +27,17 @@ export type SettlementDependencies = {
   /** The published curriculum content for an entitlement's exact version, as this process can read it; null when it cannot. */
   curriculumContent: (binding: CurriculumBinding) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null>;
   expectedAccountRef: string;
-  /**
-   * Where the one copy of a new claim token goes: the delivery to the processor-verified address. This
-   * source implements no delivery; the fixture records it, and a real provider is a named dependency. A
-   * failed delivery is reported, never retried with a second token here (the claim stays issued and
-   * the operator sees it on the status view).
-   */
-  deliver?: (delivery: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }) => Promise<void>;
+  /** Seals each new code for the delivery queue. Without it nothing can be delivered, so nothing is issued. */
+  sealer: ClaimSealer | null;
   now?: () => Date;
 };
 
-/**
- * What happened to the hand-off of a new claim to delivery: `none` when this call created nothing
- * (the receipt existed), `not_configured` when no delivery exists in this process, `handed_off`
- * when the delivery dependency accepted it, `failed` when it threw. A hand-off is not a delivery:
- * nothing here may say a code was sent. Durable delivery and recovery are work package 2.
- */
-export type DeliveryHandOff = 'none' | 'not_configured' | 'handed_off' | 'failed';
+/** `queued`: this call created the entitlement and its sealed delivery; `none`: the receipt already existed. Nothing here says a code was sent. */
+export type DeliveryQueued = 'queued' | 'none';
 export type SettlementOutcome =
-  | { settled: true; receipt: SettlementReceipt; /** Present only when this call created the entitlement; the one copy of the token that ever exists. */ claimToken: string | null; delivery: DeliveryHandOff }
-  | { settled: false; reason: 'order_not_verified' | 'payment_not_paid' | 'account_mismatch' | 'mode_mismatch' | 'store_unavailable' };
+  | { settled: true; receipt: SettlementReceipt; delivery: DeliveryQueued }
+  | { settled: false; reason: 'order_not_verified' | 'payment_not_paid' | 'account_mismatch' | 'mode_mismatch' | 'store_unavailable' | 'sealer_unavailable' };
+export type ReissueOutcome = { reissued: true; claimId: string; superseded: number } | { reissued: false; reason: 'not_found' | 'not_claimable' | 'sealer_unavailable' | 'store_unavailable' | 'not_operator' };
 /** The worker's view of one settlement pass: the outcomes, or the plain fact that the backlog could not be read. */
 export type SettlementPass = { ok: true; outcomes: SettlementOutcome[] } | { ok: false; reason: 'backlog_unavailable' };
 
@@ -54,18 +47,17 @@ export const newClaimToken = () => randomBytes(32).toString('base64url');
 export function createProgramSettlement(deps: SettlementDependencies) {
   const now = deps.now ?? (() => new Date());
   const api = {
-    /** Settle one verified order. Idempotent: a second call returns the existing receipt and no token. */
+    /** Settle one verified order. Idempotent: a second call returns the existing receipt and queues nothing. */
     async settleOrder(order: { orderId: string }): Promise<SettlementOutcome> {
+      if (!deps.sealer) return { settled: false, reason: 'sealer_unavailable' };
+      const claimId = randomUUID();
       const token = newClaimToken();
       const expiresAt = new Date(now().getTime() + CLAIM_VALIDITY_DAYS * 86_400_000).toISOString();
+      let sealed;
+      try { sealed = await deps.sealer.seal(token, claimId); } catch { return { settled: false, reason: 'sealer_unavailable' }; }
       try {
-        const receipt = await deps.ledger.settle(order as never, hashClaimToken(token), expiresAt, deps.expectedAccountRef);
-        let delivery: DeliveryHandOff = 'none';
-        if (receipt.created) {
-          if (!deps.deliver) delivery = 'not_configured';
-          else delivery = await deps.deliver({ orderId: receipt.entitlement.orderId, entitlementId: receipt.entitlement.entitlementId, claimToken: token, expiresAt }).then(() => 'handed_off' as const, () => 'failed' as const);
-        }
-        return { settled: true, receipt, claimToken: receipt.created ? token : null, delivery };
+        const receipt = await deps.ledger.settle(order as never, { claimId, tokenHash: hashClaimToken(token), claimExpiresAt: expiresAt, sealed }, deps.expectedAccountRef);
+        return { settled: true, receipt, delivery: receipt.created ? 'queued' : 'none' };
       } catch (error) {
         if (error instanceof EducationLedgerError && error.category === 'settlement_refused') return { settled: false, reason: (error.detail as Exclude<Extract<SettlementOutcome, { settled: false }>['reason'], 'store_unavailable'>) ?? 'order_not_verified' };
         return { settled: false, reason: 'store_unavailable' };
@@ -78,6 +70,23 @@ export function createProgramSettlement(deps: SettlementDependencies) {
       const outcomes: SettlementOutcome[] = [];
       for (const order of due) outcomes.push(await api.settleOrder(order));
       return { ok: true, outcomes };
+    },
+    /** An operator's replacement code: every earlier code of the entitlement stops working in the same step. Learners and the general API never reach this. */
+    async reissue(operator: OperatorContext, entitlementId: string): Promise<ReissueOutcome> {
+      if (operator?.kind !== 'operator' || !operator.operatorId) return { reissued: false, reason: 'not_operator' };
+      if (!deps.sealer) return { reissued: false, reason: 'sealer_unavailable' };
+      const claimId = randomUUID();
+      const token = newClaimToken();
+      let sealed;
+      try { sealed = await deps.sealer.seal(token, claimId); } catch { return { reissued: false, reason: 'sealer_unavailable' }; }
+      try {
+        const result = await deps.ledger.reissueClaim(operator, entitlementId, { claimId, tokenHash: hashClaimToken(token), claimExpiresAt: new Date(now().getTime() + CLAIM_VALIDITY_DAYS * 86_400_000).toISOString(), sealed });
+        return { reissued: true, claimId: result.claim.claimId, superseded: result.superseded };
+      } catch (error) {
+        if (error instanceof EducationLedgerError && error.category === 'not_found') return { reissued: false, reason: 'not_found' };
+        if (error instanceof EducationLedgerError && error.category === 'transition_refused') return { reissued: false, reason: 'not_claimable' };
+        return { reissued: false, reason: 'store_unavailable' };
+      }
     },
     /** A verified consumer presents the one-time token. The subject comes from the verified identity, never from the body. */
     async claim(consumerSubject: string, token: string): Promise<{ outcome: 'claimed'; entitlement: ProgramEntitlement } | { outcome: 'refused'; reason: ClaimRefusal }> {

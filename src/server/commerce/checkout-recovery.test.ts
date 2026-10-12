@@ -7,6 +7,7 @@ import { createFictionalProgramOfferLedger, type OfferActor } from './program-of
 import { createFictionalEducationLedger } from './program-education-ledger';
 import { createProgramSettlement } from './program-settlement';
 import { createCommerceWorker } from './program-commerce-worker';
+import { createFictionalClaimSealer } from './program-claim-delivery';
 import type { VerifiedEvent } from '../stripe-boundary';
 
 /**
@@ -110,7 +111,7 @@ describe('finding 1: a completed, unpaid checkout is processing, not failed', ()
     expect(settled.state).toBe('payment_verified');
     expect(settled.verification).toMatchObject({ paymentStatus: 'paid', amountMinor: 1999 });
     const education = createFictionalEducationLedger({ orders: ledger });
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now });
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, sealer: createFictionalClaimSealer() });
     await settlement.settleOrder(settled); await settlement.settleOrder(settled);
     expect(education.entitlements.size).toBe(1);
   });
@@ -244,13 +245,13 @@ describe('finding 6: failed transitions are visible and bounded; two processors 
 });
 
 describe('finding 7: a failed backlog read and a failed delivery are reported, not hidden', () => {
-  it('settleDue reports an unreadable backlog instead of "no work", and settleOrder reports a failed delivery hand-off', async () => {
+  it('settleDue reports an unreadable backlog instead of "no work", and a settlement queues its sealed delivery in the same step', async () => {
     const t = clock();
     const offers = await published(t.now);
     const ledger = createFictionalCheckoutLedger({ now: t.now });
     let backlogDown = true;
     const education = createFictionalEducationLedger({ orders: ledger, faults: { before: op => { if (op === 'unsettledOrders' && backlogDown) throw new Error('down'); } } });
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, deliver: async () => { throw new Error('provider down'); } });
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, sealer: createFictionalClaimSealer() });
     expect(await settlement.settleDue()).toEqual({ ok: false, reason: 'backlog_unavailable' });
     backlogDown = false;
     const processor = createFictionalCheckoutProcessor({ now: t.now });
@@ -261,7 +262,8 @@ describe('finding 7: a failed backlog read and a failed delivery are reported, n
     await checkout.admitEvent(event('evt_paid', 'checkout.session.completed', order.processor!.sessionRef), 'raw', expected);
     await checkout.processEvent('evt_paid');
     const pass = await settlement.settleDue();
-    expect(pass).toMatchObject({ ok: true, outcomes: [{ settled: true, delivery: 'failed' }] });
+    expect(pass).toMatchObject({ ok: true, outcomes: [{ settled: true, delivery: 'queued' }] });
+    expect(education.deliveries.size).toBe(1);
   });
 });
 
@@ -273,7 +275,7 @@ describe('the worker: admitted work finishes with no visitor, and every step say
     const processor = createFictionalCheckoutProcessor({ now: t.now, retentionHours: options.retentionHours });
     const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: origin, now: t.now });
     const education = createFictionalEducationLedger({ orders: ledger });
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now });
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, sealer: createFictionalClaimSealer() });
     const worker = () => createCommerceWorker({ ledger, checkout: createProgramCheckout({ offers, ledger, processor, publicOrigin: origin, now: t.now }), settlement, now: t.now });
     return { t, ledger, processor, checkout, education, worker };
   }
@@ -333,9 +335,9 @@ describe('the worker: admitted work finishes with no visitor, and every step say
     const processor = createFictionalCheckoutProcessor({ now: t.now });
     const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: origin, now: t.now });
     const education = createFictionalEducationLedger({ orders: ledger, faults: { before: op => { if (op === 'unsettledOrders') throw new Error('down'); } } });
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now });
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, sealer: createFictionalClaimSealer() });
     expect(await createCommerceWorker({ ledger, checkout, settlement, now: t.now }).runOnce()).toEqual({
-      intake: { ok: false, reason: 'intake_unavailable' }, reconcile: { ok: false, reason: 'orders_unavailable' }, settlement: { ok: false, reason: 'backlog_unavailable' }, status: { ok: false, reason: 'status_unavailable' },
+      intake: { ok: false, reason: 'intake_unavailable' }, reconcile: { ok: false, reason: 'orders_unavailable' }, settlement: { ok: false, reason: 'backlog_unavailable' }, delivery: { ok: false, reason: 'delivery_unconfigured' }, status: { ok: false, reason: 'status_unavailable' },
     });
   });
 });

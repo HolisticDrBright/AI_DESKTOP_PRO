@@ -10,7 +10,7 @@ import { formatAmount } from '@/contracts/programOffers';
  */
 export type PurchaseRowKind =
   | 'checkout_open' | 'checkout_unresolved' | 'checkout_unconfirmed' | 'checkout_closed' | 'payment_processing' | 'payment_failed' | 'order_refused'
-  | 'paid_not_fulfilled' | 'pending_account' | 'claim_expired' | 'access_active' | 'access_expired'
+  | 'paid_not_fulfilled' | 'code_delivery_pending' | 'code_delivery_unknown' | 'code_delivery_failed' | 'pending_account' | 'claim_expired' | 'access_active' | 'access_expired'
   | 'held_refund' | 'held_dispute' | 'held_policy' | 'revoked';
 
 export type PurchaseRow = {
@@ -36,8 +36,11 @@ export const PURCHASE_ROW_WORDS: Record<PurchaseRowKind, string> = {
   payment_failed: 'The processor reported the payment as not completed; nothing was granted.',
   order_refused: 'The checkout was refused before any charge.',
   paid_not_fulfilled: 'Payment verified by the processor, but no access has been prepared yet. The settlement worker retries this; if it stays here, the store or the account binding is the problem.',
-  pending_account: 'Paid and access prepared; waiting for the purchaser to claim it with the one-time code sent to the address the processor verified. Nobody holds this access yet.',
-  claim_expired: 'Paid and access prepared, but the claim code expired unused. The purchaser needs a new code; this is a decision for the clinic.',
+  code_delivery_pending: 'Paid and access prepared; the one-time code is queued for delivery and has not reached the email provider yet. Nobody holds this access yet.',
+  code_delivery_unknown: 'Paid and access prepared; a delivery attempt for the one-time code has an unknown outcome and is being retried under the same provider key. Nobody holds this access yet.',
+  code_delivery_failed: 'Paid and access prepared, but delivery of the one-time code failed. The purchaser does not have a usable code; an operator can issue a replacement, which cancels every earlier code.',
+  pending_account: 'Paid and access prepared; the email provider accepted the one-time code for the address the payment processor holds. Acceptance is not proof it arrived. Waiting for the purchaser to claim it. Nobody holds this access yet.',
+  claim_expired: 'Paid and access prepared, but the claim code expired unused. The purchaser needs a new code; an operator can issue a replacement.',
   access_active: 'Claimed: the purchaser has education access to the exact version shown. This is not clinic membership, a chart, a consent or a protocol.',
   access_expired: 'Education access ended at the end of its window.',
   held_refund: 'Held: a refund was recorded by the processor. Access is withheld until the clinic decides.',
@@ -69,9 +72,10 @@ export function purchaseRows(input: { orders: ProgramOrder[]; entitlements: Prog
     }
     switch (entitlement.state) {
       case 'awaiting_claim': {
-        const issued = input.claims.filter(c => c.entitlementId === entitlement.entitlementId);
-        const live = issued.some(c => c.state === 'issued' && Date.parse(c.expiresAt) > now.getTime());
-        return row(live ? 'pending_account' : 'claim_expired', entitlement.updatedAt);
+        const live = input.claims.find(c => c.entitlementId === entitlement.entitlementId && c.state === 'issued' && Date.parse(c.expiresAt) > now.getTime());
+        if (!live) return row('claim_expired', entitlement.updatedAt);
+        const kind: PurchaseRowKind = live.delivery.state === 'accepted' ? 'pending_account' : live.delivery.state === 'pending' ? 'code_delivery_pending' : live.delivery.state === 'provider_unknown' ? 'code_delivery_unknown' : 'code_delivery_failed';
+        return row(kind, entitlement.updatedAt);
       }
       case 'active': return row(entitlement.window?.endsAt && Date.parse(entitlement.window.endsAt) <= now.getTime() ? 'access_expired' : 'access_active', entitlement.updatedAt);
       case 'expired': return row('access_expired', entitlement.updatedAt);

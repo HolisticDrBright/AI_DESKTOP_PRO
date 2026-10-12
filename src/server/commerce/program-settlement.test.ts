@@ -7,6 +7,8 @@ import { createProgramSettlement, hashClaimToken, newClaimToken } from './progra
 import { createFictionalProgramOfferLedger, type OfferActor } from './program-offer-ledger';
 import { ENTITLEMENT_TRANSITIONS, ENTITLEMENT_STATES, isAccessActive } from '../../contracts/programEducationAccess';
 import type { VerifiedEvent } from '../stripe-boundary';
+import { createFictionalClaimSealer } from './program-claim-delivery';
+import { fictionalDelivery } from '../../test-support/commerceDelivery';
 
 /**
  * Settlement over the fictional ledgers: one entitlement per verified order whichever path arrives
@@ -35,7 +37,8 @@ async function harness(accessDurationDays: number | null = 30) {
   const processor = createFictionalCheckoutProcessor({ now });
   const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: 'https://clinic.fictional.example', now });
   const education = createFictionalEducationLedger({ orders: ledger, now });
-  const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => binding.versionId === curriculum.versionId ? content : null, expectedAccountRef: expected.accountRef, now });
+  const delivery = fictionalDelivery(education, now);
+  const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => binding.versionId === curriculum.versionId ? content : null, expectedAccountRef: expected.accountRef, now, sealer: delivery.sealer });
   async function verifiedOrder(attemptKey = 'browser-a', eventId = 'evt_' + attemptKey) {
     const started = await checkout.start({ funnelSlug: 'longevity-program', programBinding: { organizationId: org, programId: program }, attemptKey });
     const order = ledger.orders.get(started.started ? started.orderId : '')!;
@@ -44,7 +47,7 @@ async function harness(accessDurationDays: number | null = 30) {
     await checkout.processEvent(eventId);
     return ledger.orders.get(order.orderId)!;
   }
-  return { offers, ledger, processor, checkout, education, settlement, verifiedOrder, tick, now, content };
+  return { offers, ledger, processor, checkout, education, settlement, verifiedOrder, tick, now, content, delivery, sealer: delivery.sealer, codeFor: delivery.codeFor };
 }
 
 describe('settlement', () => {
@@ -56,15 +59,18 @@ describe('settlement', () => {
     expect(order.state).toBe('payment_verified');
     const first = await h.settlement.settleOrder(order);
     expect(first.settled && first.receipt.created).toBe(true);
-    expect(first.settled && first.claimToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // No code in the reply: it was sealed and queued for delivery in the same step.
+    expect(first.settled && first.delivery).toBe('queued');
+    expect(JSON.stringify(first)).not.toMatch(/"[A-Za-z0-9_-]{43}"/);
     expect(first.settled && first.receipt.entitlement).toMatchObject({ orderId: order.orderId, state: 'awaiting_claim', subject: { kind: 'unclaimed' }, curriculum, offerRevision: 3, accessDurationDays: 30, settlement: { verificationEventId: 'evt_browser-a' } });
     const again = await h.settlement.settleOrder(order);
     expect(again.settled && again.receipt.created).toBe(false);
-    expect(again.settled && again.claimToken).toBeNull();
+    expect(again.settled && again.delivery).toBe('none');
     expect(h.education.entitlements.size).toBe(1);
     expect(h.education.claims.size).toBe(1);
-    // The claim is stored hashed; the token exists only in the first reply.
-    expect([...h.education.claims.values()][0]!.tokenHash).toBe(hashClaimToken(first.settled ? first.claimToken! : ''));
+    expect(h.education.deliveries.size).toBe(1);
+    // The ledger keeps only the digest; the purchaser's code is what the delivered message carried.
+    expect([...h.education.claims.values()][0]!.tokenHash).toBe(hashClaimToken(await h.codeFor(order.orderId)));
   });
   it('a crash between verification and settlement is recovered by the worker; concurrent settlements converge on one row', async () => {
     const h = await harness();
@@ -73,14 +79,15 @@ describe('settlement', () => {
     const outcomes = await Promise.all([h.settlement.settleOrder(a), h.settlement.settleOrder(a), h.settlement.settleDue()]);
     expect(h.education.entitlements.size).toBe(2);
     expect(outcomes[0].settled && outcomes[1].settled).toBe(true);
-    expect([outcomes[0], outcomes[1]].filter(o => o.settled && o.claimToken).length).toBe(1);
+    expect([outcomes[0], outcomes[1]].filter(o => o.settled && o.delivery === 'queued').length).toBe(1);
+    expect(h.education.deliveries.size).toBe(2);
     expect((await h.education.unsettledOrders(10)).length).toBe(0);
     expect((await h.education.entitlementForOrder(b.orderId))?.state).toBe('awaiting_claim');
   });
   it('refuses settlement of a payment from another processor account, and a failed payment', async () => {
     const h = await harness();
     const order = await h.verifiedOrder();
-    const other = createProgramSettlement({ ledger: h.education, curriculumContent: async () => null, expectedAccountRef: 'acct_FictionalOther99', now: h.now });
+    const other = createProgramSettlement({ ledger: h.education, curriculumContent: async () => null, expectedAccountRef: 'acct_FictionalOther99', now: h.now, sealer: h.sealer });
     expect(await other.settleOrder(order)).toEqual({ settled: false, reason: 'account_mismatch' });
     const failed = await h.checkout.start({ funnelSlug: 'longevity-program', programBinding: { organizationId: org, programId: program }, attemptKey: 'browser-f' });
     const failedOrder = h.ledger.orders.get(failed.started ? failed.orderId : '')!;
@@ -97,8 +104,8 @@ describe('the claim', () => {
   it('binds the first verified subject, opens the window from the saved duration, creates one enrollment, and is single-use', async () => {
     const h = await harness();
     const order = await h.verifiedOrder();
-    const settled = await h.settlement.settleOrder(order);
-    const token = settled.settled ? settled.claimToken! : '';
+    await h.settlement.settleOrder(order);
+    const token = await h.codeFor(order.orderId);
     expect(await h.settlement.access(alice)).toMatchObject({ entitlements: [], enrollments: [] });
     const claimed = await h.settlement.claim(alice, token);
     expect(claimed).toMatchObject({ outcome: 'claimed', entitlement: { state: 'active', subject: { kind: 'claimed', consumerSubject: alice }, window: { startsAt: '2026-10-11T12:00:00.000Z', endsAt: '2026-11-10T12:00:00.000Z' } } });
@@ -106,7 +113,8 @@ describe('the claim', () => {
     expect(access?.entitlements).toHaveLength(1);
     expect(access?.enrollments).toHaveLength(1);
     expect(access?.enrollments[0]).toMatchObject({ consumerSubject: alice, state: 'active', phaseIndex: 0, curriculum });
-    expect(await h.settlement.claim(alice, token)).toEqual({ outcome: 'refused', reason: 'claim_used' });
+    // The winner retrying after a lost reply gets the same receipt; anyone else is refused.
+    expect(await h.settlement.claim(alice, token)).toEqual(claimed);
     expect(await h.settlement.claim(bob, token)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
     expect(await h.settlement.access(bob)).toMatchObject({ entitlements: [], enrollments: [] });
     expect(h.education.enrollments.size).toBe(1);
@@ -114,8 +122,8 @@ describe('the claim', () => {
   it('refuses a forged, expired or malformed token, and an order number or receipt is not a claim', async () => {
     const h = await harness();
     const order = await h.verifiedOrder();
-    const settled = await h.settlement.settleOrder(order);
-    const token = settled.settled ? settled.claimToken! : '';
+    await h.settlement.settleOrder(order);
+    const token = await h.codeFor(order.orderId);
     expect(await h.settlement.claim(bob, newClaimToken())).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
     expect(await h.settlement.claim(bob, order.orderId)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
     expect(await h.settlement.claim(bob, order.processor!.sessionRef)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
@@ -131,7 +139,7 @@ describe('the claim', () => {
     const settled = await h.settlement.settleOrder(order);
     const entitlementId = settled.settled ? settled.receipt.entitlement.entitlementId : '';
     expect(await h.settlement.curriculum(alice, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
-    await h.settlement.claim(alice, settled.settled ? settled.claimToken! : '');
+    await h.settlement.claim(alice, await h.codeFor(order.orderId));
     expect(await h.settlement.curriculum(alice, entitlementId)).toMatchObject({ outcome: 'served', curriculum, title: 'Fictional guide' });
     expect(await h.settlement.curriculum(bob, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
     h.content.sourceDigest = 'b'.repeat(64);
@@ -148,8 +156,8 @@ describe('policy, expiry and the table', () => {
   it('a refund, dispute or renewal event holds the entitlement visibly; release and revoke are recorded operator decisions; nothing is deleted', async () => {
     const h = await harness(null);
     const order = await h.verifiedOrder();
-    const settled = await h.settlement.settleOrder(order);
-    await h.settlement.claim(alice, settled.settled ? settled.claimToken! : '');
+    await h.settlement.settleOrder(order);
+    await h.settlement.claim(alice, await h.codeFor(order.orderId));
     const held = await h.settlement.recordPolicy(order.orderId, 'refund', 're_fictional_1');
     expect(held).toMatchObject({ state: 'held_refund', policy: { kind: 'refund', reference: 're_fictional_1' } });
     expect(isAccessActive(held!, h.now())).toBe(false);
@@ -164,8 +172,8 @@ describe('policy, expiry and the table', () => {
     expect(h.education.entitlements.size).toBe(1);
     // An entitlement with no decided duration never expires on its own.
     const open = await h.verifiedOrder('browser-b');
-    const second = await h.settlement.settleOrder(open);
-    await h.settlement.claim(bob, second.settled ? second.claimToken! : '');
+    await h.settlement.settleOrder(open);
+    await h.settlement.claim(bob, await h.codeFor(open.orderId));
     h.tick(400 * 86_400_000);
     expect((await h.settlement.access(bob))?.entitlements[0]).toMatchObject({ state: 'active', window: { endsAt: null } });
   });
@@ -178,7 +186,7 @@ describe('policy, expiry and the table', () => {
     const h = await harness();
     const order = await h.verifiedOrder();
     const broken = createFictionalEducationLedger({ orders: h.ledger, faults: { before: () => { throw new Error('fictional outage'); } } });
-    const settlement = createProgramSettlement({ ledger: broken, curriculumContent: async () => null, expectedAccountRef: expected.accountRef });
+    const settlement = createProgramSettlement({ ledger: broken, curriculumContent: async () => null, expectedAccountRef: expected.accountRef, sealer: createFictionalClaimSealer() });
     expect(await settlement.settleOrder(order)).toEqual({ settled: false, reason: 'store_unavailable' });
     expect(await settlement.access(alice)).toBeNull();
     expect(await settlement.claim(alice, newClaimToken())).toEqual({ outcome: 'refused', reason: 'service_unavailable' });

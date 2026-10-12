@@ -107,7 +107,7 @@ describe('durable intake', () => {
     // processor client and no visitor, finishes the admitted work.
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers: { availability: async () => { throw new Error('the worker never admits'); } } as never, ledger: selection.ledger, processor, publicOrigin: null });
-    const settlement = createProgramSettlement({ ledger: selection.education, curriculumContent: async () => null, expectedAccountRef: processor.accountRef });
+    const settlement = createProgramSettlement({ ledger: selection.education, curriculumContent: async () => null, expectedAccountRef: processor.accountRef, sealer: null });
     const report = await createCommerceWorker({ ledger: selection.ledger, checkout, settlement }).runOnce();
     expect(report.intake).toMatchObject({ ok: true, results: [{ eventId: 'evt_fictional_webhook_1', state: 'refused', detail: 'no order for session' }, { eventId: 'evt_fictional_webhook_2', state: 'unhandled' }] });
     expect(report.status).toMatchObject({ ok: true, checkout: { intake: { refused: 1, unhandled: 1, pending: 0 } } });

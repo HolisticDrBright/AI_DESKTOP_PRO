@@ -1,3 +1,4 @@
+import { fictionalDelivery } from '../../test-support/commerceDelivery';
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -60,7 +61,8 @@ describe('a consultation and a purchase racing', () => {
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: 'https://clinic.fictional.example' });
     const education = createFictionalEducationLedger({ orders: ledger });
-    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: processor.accountRef });
+    const delivery = fictionalDelivery(education);
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: processor.accountRef, sealer: delivery.sealer });
     // The consult request is a separate authority with its own store; here it is represented by a counter that commerce cannot reach.
     const consultRequests: string[] = [];
     const requestConsultation = async () => { consultRequests.push('requested'); };
@@ -83,7 +85,8 @@ describe('a consultation and a purchase racing', () => {
     expect(ledger.orders.get(order.orderId)!.state).toBe('payment_verified');
     expect(education.entitlements.size).toBe(1);
     expect(education.enrollments.size).toBe(0);
-    expect(outcomes.filter(o => o.settled && o.claimToken).length).toBe(1);
+    expect(outcomes.filter(o => o.settled && o.delivery === 'queued').length).toBe(1);
+    expect(education.deliveries.size).toBe(1);
     expect(consultRequests).toEqual(['requested', 'requested']);
     // Nothing in the commercial stores names a consultation, a clinic connection, a patient or a protocol.
     const everything = JSON.stringify({ orders: [...ledger.orders.values()], entitlements: [...education.entitlements.values()], events: education.events });
