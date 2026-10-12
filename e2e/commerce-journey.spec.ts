@@ -264,7 +264,7 @@ test("8: My courses: no learner, no course; the learner reads the exact course, 
     // Tab one: open habit B (a resume point is recorded, never a completion), then complete it explicitly.
     await tab1.getByTestId("learner-lesson-open-habit-b").click();
     await expect(tab1.getByTestId("learner-lesson-text")).toHaveText("Fictional practice B for the journey fixture.");
-    await expect(tab1.getByTestId("learner-lesson-media-held")).toBeVisible();
+    await expect(tab1.getByTestId("learner-lesson-media-held")).toHaveCount(0);
     await expect(tab1.getByTestId("learner-lesson-completed")).toHaveCount(0);
     await tab1.getByTestId("learner-lesson-complete").click();
     await expect(tab1.getByTestId("learner-lesson-completed")).toHaveText("Completed.");

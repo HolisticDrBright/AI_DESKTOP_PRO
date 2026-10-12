@@ -158,7 +158,7 @@ function LessonView({ lesson, lessons, progress, pending, placeNote, busy, activ
       <CardTitle className="mb-1"><span data-testid="learner-lesson-title">{lesson.title}</span></CardTitle>
       {lesson.kind === "supplement" && <p className="m-0 text-[12.5px] text-subtle" data-testid="learner-lesson-supplement">This is a supplement step. It is reviewed with your practitioner before anything is added, and it cannot be marked complete here.</p>}
       {lesson.released ? <p className="m-0 whitespace-pre-wrap text-[14px] text-body" data-testid="learner-lesson-text">{lesson.instructions}</p> : <p className="m-0 text-[13px] text-subtle" data-testid="learner-lesson-unreleased">This lesson is not released yet.</p>}
-      {lesson.released && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-media-held">Lesson video is not available here yet. The written lesson above is the lesson as published.</p>}
+      {lesson.released && lesson.hasMedia && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-media-held">Lesson media is not available here yet. The written lesson above is the lesson as published.</p>}
       {done && <p className="m-0 mt-2 text-[13px] text-body" data-testid="learner-lesson-completed">Completed.</p>}
       {mine?.state === "saving" && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-pending">Saving… not marked complete until the course service confirms it.</p>}
       {mine?.state === "unsaved" && <div className="mt-2"><Btn type="button" size="sm" disabled={busy} onClick={() => onRetry(mine.command)} data-testid="learner-lesson-retry">Try saving again</Btn></div>}

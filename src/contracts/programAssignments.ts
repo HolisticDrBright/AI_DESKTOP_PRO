@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { programLessonNativeMedia } from './programLessonMedia';
 /**
  * Program assignment: the authorized artifact that joins a published Desktop
  * program version to one patient, and the operations on it.
@@ -41,6 +42,8 @@ export const programItemEducation = {
   sources: z.array(z.object({ title: text(240), url: httpsUrl }).strict()).max(10).optional(),
   media: z.array(z.object({ kind: z.enum(['video', 'image']), url: httpsUrl, caption: z.string().max(240).optional() }).strict()).max(5).optional(),
   authorship: z.enum(['practitioner_authored', 'consumer_ai', 'unreviewed']).optional(),
+  /** Separate native publication identities; never turn them into legacy URLs or preview grants. */
+  nativeMedia: programLessonNativeMedia.optional(),
 };
 /**
  * Catalog binding (program-item-catalog-binding/1): optional and additive. A supplement step may name the exact
@@ -68,6 +71,9 @@ export const programItem = z.object({
   }).strict().optional(),
   ...programItemEducation,
 }).strict().superRefine((value, ctx) => {
+  if ((value.media?.length ?? 0) + (value.nativeMedia?.length ?? 0) > 5) {
+    ctx.addIssue({ code: 'custom', message: 'program_media_slot_limit' });
+  }
   // A supplement without a governed product is not reviewable, and a product on a
   // lesson is a claim nobody approved.
   if ((value.kind === 'supplement') !== (value.product !== undefined)) {

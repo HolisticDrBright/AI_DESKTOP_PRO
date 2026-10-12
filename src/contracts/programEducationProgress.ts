@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { programItemEducation } from './programAssignments';
 
 /**
  * Education progress (program-education-progress/1): a learner's own bookkeeping through the exact
@@ -96,12 +97,14 @@ export type EducationProgressOutcome = z.infer<typeof educationProgressOutcome>;
 
 /* ------------------------------------------------------- course navigation */
 
-const servedItem = z.object({ id: stableId, title: z.string().min(1).max(240), kind: z.enum(['lesson', 'diet', 'habit', 'supplement']), instructions: z.string().max(4000), released: z.boolean() }).passthrough();
+const servedItem = z.object({ id: stableId, title: z.string().min(1).max(240), kind: z.enum(['lesson', 'diet', 'habit', 'supplement']), instructions: z.string().max(4000), released: z.boolean(), media: programItemEducation.media, nativeMedia: programItemEducation.nativeMedia }).passthrough().superRefine((item, ctx) => {
+  if ((item.media?.length ?? 0) + (item.nativeMedia?.length ?? 0) > 5) ctx.addIssue({ code: 'custom', message: 'program_media_slot_limit' });
+});
 const servedPhase = z.object({ id: stableId, title: z.string().min(1).max(240), items: z.array(z.unknown()) }).passthrough();
 
 export type CourseLesson = {
   ref: LessonRef; phaseIndex: number; itemIndex: number; phaseTitle: string;
-  title: string; kind: (typeof COMPLETABLE_KINDS)[number] | 'supplement'; instructions: string; released: boolean; completable: boolean;
+  title: string; kind: (typeof COMPLETABLE_KINDS)[number] | 'supplement'; instructions: string; released: boolean; completable: boolean; hasMedia: boolean;
 };
 
 /**
@@ -143,6 +146,7 @@ export function courseLessons(phases: readonly unknown[]): { lessons: CourseLess
         ref: { phaseId: phase.data.id, itemId: item.data.id }, phaseIndex, itemIndex, phaseTitle: phase.data.title,
         title: item.data.title, kind, instructions: item.data.instructions, released: item.data.released,
         completable: item.data.released && (COMPLETABLE_KINDS as readonly string[]).includes(kind),
+        hasMedia: (item.data.media?.length ?? 0) + (item.data.nativeMedia?.length ?? 0) > 0,
       });
     });
   });

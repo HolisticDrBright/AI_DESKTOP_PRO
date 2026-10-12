@@ -29,7 +29,7 @@ export const SQL_ADMISSION_CURRENT = {
   itemKeys: ['id', 'title', 'kind', 'instructions', 'released'] as const,
   productKeys: ['id', 'ingredientKeys', 'dose', 'purchaseUrl'] as const,
 } as const;
-export const EDUCATION_KEYS = ['rationale', 'sources', 'media', 'authorship'] as const;
+export const EDUCATION_KEYS = ['rationale', 'sources', 'media', 'authorship', 'nativeMedia'] as const;
 
 export type PendingAdmission = { education: string[]; catalog: string[] };
 export function pendingAdmission(program: ConsumerProgram): PendingAdmission {
