@@ -71,6 +71,20 @@ export function validateGovernedCatalogApi(foundation, extension) {
   assert(errors, JSON.stringify(permission?.SourceArn).includes("/*/clinical-core/*"), "catalog Lambda invoke permission must be path bounded");
   assert(errors, resources.CatalogApiLogGroup?.Properties?.RetentionInDays === 30 && resources.CatalogApiLogGroup?.Properties?.KmsKeyId, "catalog logs must be encrypted and expire");
   assert(errors, resources.CatalogApiErrorAlarm?.Properties?.Threshold === 1, "first catalog Lambda error must alarm");
+  const alertParameter = extension.Parameters?.QualificationAlarmTopicArn;
+  assert(errors, alertParameter?.Default === "" && alertParameter?.AllowedPattern === "^$|^arn:aws:sns:us-east-2:588966314750:ai-clinical-core-qualification-alarms$", "qualification alert topic must default off and pin the reviewed synthetic topic");
+  const alertCondition = extension.Conditions?.SyntheticQualificationAlerting;
+  assert(errors, JSON.stringify(alertCondition) === JSON.stringify({ "Fn::And": [
+    { "Fn::Equals": [{ Ref: "EnvironmentName" }, "synthetic-staging"] },
+    { "Fn::Equals": [{ Ref: "AWS::AccountId" }, "588966314750"] },
+    { "Fn::Not": [{ "Fn::Equals": [{ Ref: "QualificationAlarmTopicArn" }, ""] }] },
+  ] }), "catalog alerting must be synthetic-account-only and opt-in");
+  assert(errors, JSON.stringify(resources.CatalogApiErrorAlarm?.Properties?.AlarmActions) === JSON.stringify({
+    "Fn::If": ["SyntheticQualificationAlerting", [{ Ref: "QualificationAlarmTopicArn" }], { Ref: "AWS::NoValue" }],
+  }), "catalog error alarm must route only to the reviewed synthetic topic when enabled");
+  assert(errors, JSON.stringify(resources.CatalogApiErrorAlarm?.Properties?.AlarmName) === JSON.stringify({
+    "Fn::If": ["SyntheticQualificationAlerting", "ai-clinical-core-qualification-governed-catalog-errors", { Ref: "AWS::NoValue" }],
+  }), "catalog error alarm name must match the qualification SNS publish policy");
 
   const serialized = JSON.stringify(extension).toLowerCase();
   for (const forbidden of ["service_role", "requestbody", "responsebody", "email", "phone", "dateofbirth"]) {
