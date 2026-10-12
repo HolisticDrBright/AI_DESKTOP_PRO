@@ -6,7 +6,7 @@ import {programMediaStorageSchema,programMediaPrepareRequest,programMediaReadReq
  programMediaTextRequest,programMediaVersionRequest,programMediaReference,type ProgramMediaStorage} from '@/contracts/programMedia';
 import {ProgramMediaError,createProgramMediaAuthoring,PROGRAM_MEDIA_ACTIVATION} from './program-media-authoring';
 import {createProgramMediaNativeLedger} from './program-media-native-ledger';
-import {createAwsProgramMediaStoreSource,type AwsProgramMediaStoreConfiguration} from './aws-program-media-store';
+import {createAwsProgramMediaStoreSource,type AwsProgramMediaStoreConfiguration,type ProgramMediaMultipartPolicyReview} from './aws-program-media-store';
 
 const requests=z.discriminatedUnion('operation',[
  z.object({operation:z.literal('prepare'),request:programMediaPrepareRequest}).strict(),
@@ -34,9 +34,12 @@ export function createProgramMediaNativeRequestSource(input:{
  resolveContext:()=>Promise<ClinicalRequestContext>;
  credentialsForProgram:(scope:{clinic:string;programId:string},signal:AbortSignal)=>Promise<AwsProgramMediaStoreConfiguration>;
  activation?:{enabled:boolean;evidenceSha256:string};
+ policyReview?:ProgramMediaMultipartPolicyReview;
 }){
  const activation=Object.freeze({... (input.activation??{enabled:false,evidenceSha256:''})});
  const storage=Object.freeze(programMediaStorageSchema.parse(input.storage));
+ const policyReview=input.policyReview===undefined?undefined:Object.freeze(z.object({contract:z.literal('program-media-multipart-resource-review/1'),
+  policySha256:z.string().regex(/^[a-f0-9]{64}$/),evidenceSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(input.policyReview));
  const ledger=createProgramMediaNativeLedger(input.database,activation.enabled&&/^[a-f0-9]{64}$/.test(activation.evidenceSha256)
   ?{evidenceSha256:activation.evidenceSha256,storage}:undefined);
  return Object.freeze({
@@ -75,7 +78,7 @@ export function createProgramMediaNativeRequestSource(input:{
    if(requestSignal.aborted)throw new ProgramMediaError('access_refused');
    if(storeConfig.scope.clinic!==scope.clinic||storeConfig.scope.programId!==scope.programId||stable(storeConfig.storage)!==stable(storage))
     throw new ProgramMediaError('storage_unverified');
-   const opened=await createAwsProgramMediaStoreSource(storeConfig,requestSignal);
+   const opened=await createAwsProgramMediaStoreSource(storeConfig,requestSignal,policyReview);
    try{
     const api=createProgramMediaAuthoring({ledger,store:opened.store,storage,
      activation:{enabled:true,reason:'Bound native educational-media qualification source'}});

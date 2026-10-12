@@ -153,7 +153,7 @@ export async function openAwsProgramMediaResourceSource(input: AwsProgramMediaSt
     const block = access.PublicAccessBlockConfiguration;
     const tag = (key: string, value: string) => tags.TagSet?.filter(t => t.Key === key).length === 1 && tags.TagSet?.some(t => t.Key === key && t.Value === value);
     if (versioning.Status !== 'Enabled' || rule?.length !== 1 || rule[0].ApplyServerSideEncryptionByDefault?.SSEAlgorithm !== 'aws:kms'
-      || rule[0].ApplyServerSideEncryptionByDefault?.KMSMasterKeyID !== storage.kmsKeyArn
+      || rule[0].ApplyServerSideEncryptionByDefault?.KMSMasterKeyID !== storage.kmsKeyArn || rule[0].BucketKeyEnabled === true
       || !block || [block.BlockPublicAcls, block.IgnorePublicAcls, block.BlockPublicPolicy, block.RestrictPublicBuckets].some(v => v !== true)
       || ownership.OwnershipControls?.Rules?.length !== 1 || ownership.OwnershipControls.Rules[0].ObjectOwnership !== 'BucketOwnerEnforced'
       || !tag('alp:purpose', 'educational_media') || !tag('alp:classification', 'synthetic_only') || !tag('alp:phi-allowed', 'false') || !tag('alp:dedicated', 'true')
@@ -164,9 +164,10 @@ export async function openAwsProgramMediaResourceSource(input: AwsProgramMediaSt
   return Object.freeze({ storage, scope, s3, bucket: Object.freeze(bucket), live, after, bounded, close });
 }
 
-export async function createAwsProgramMediaStoreSource(input: AwsProgramMediaStoreConfiguration, requestSignal: AbortSignal):
+export async function createAwsProgramMediaStoreSource(input: AwsProgramMediaStoreConfiguration, requestSignal: AbortSignal,
+  multipartReview?: ProgramMediaMultipartPolicyReview):
 Promise<{ store: ProgramMediaObjectStore; close(): void }> {
-  const { storage, scope, s3, bucket, live, after, bounded, close } = await openAwsProgramMediaResourceSource(input, requestSignal);
+  const { storage, scope, s3, bucket, live, after, bounded, close } = await openAwsProgramMediaResourceSource(input, requestSignal, multipartReview);
 
   function checked(value: ProgramMediaReservation | ProgramMediaArtifact) {
     live();

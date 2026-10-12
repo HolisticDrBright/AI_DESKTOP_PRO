@@ -97,6 +97,7 @@ describe('native program media source over fictional SDK sends', () => {
     ['malformed session', 'GetCallerIdentityCommand', { Account: ACCOUNT, Arn: `arn:aws:sts::${ACCOUNT}:assumed-role/ALPProgramMediaQualification/session/other` }],
     ['versioning suspension', 'GetBucketVersioningCommand', { Status: 'Suspended' }],
     ['missing encryption', 'GetBucketEncryptionCommand', {}],
+    ['bucket-wide KMS encryption context', 'GetBucketEncryptionCommand', { ServerSideEncryptionConfiguration: { Rules: [{ BucketKeyEnabled: true, ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'aws:kms', KMSMasterKeyID: KMS } }] } }],
     ['wrong encryption key', 'GetBucketEncryptionCommand', { ServerSideEncryptionConfiguration: { Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'aws:kms', KMSMasterKeyID: CLINICAL_KMS } }] } }],
     ['missing public blocks', 'GetPublicAccessBlockCommand', {}],
     ['public policy', 'GetPublicAccessBlockCommand', { PublicAccessBlockConfiguration: { BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: false, RestrictPublicBuckets: true } }],

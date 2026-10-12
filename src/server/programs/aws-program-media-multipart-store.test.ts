@@ -90,6 +90,11 @@ async function open(c = config(), r = review(), requestSignal = signal()) {
 const failure = (name: string, status: number) => new S3ServiceException({ name, $fault: 'client', $metadata: { httpStatusCode: status }, message: 'fictional detail must not escape' });
 
 describe('qualified multipart SDK source with fictional network', () => {
+  it('refuses bucket-wide KMS context instead of broadening a program-scoped key grant', async () => {
+    respond = c => c.name === 'GetBucketEncryptionCommand' ? { ServerSideEncryptionConfiguration: { Rules: [{ BucketKeyEnabled: true,
+      ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'aws:kms', KMSMasterKeyID: KMS } }] } } : ordinary(c);
+    await expect(open()).rejects.toThrow('storage_unverified'); expect(sent.some(c => /CreateMultipart|UploadPart|CompleteMultipart/.test(c.name))).toBe(false);
+  });
   it.each(['missing', 'wrong', 'drift', 'old policy', 'conditional denial missing'])('refuses %s multipart review or policy before mutation', async what => {
     let r = review();
     if (what === 'missing') r = undefined as never;
