@@ -29,8 +29,10 @@ mobile build, PHI setting or deployment changes here.
   `E2E_LIVE` gate and skipped all eight cases; that skipped run is not used as
   evidence. The combined exact CI remains required.
 - Mock-import, AWS compatibility and operation-inventory gates passed. The
-  operation-inventory CLI still prints "140 require provider-specific rewrites";
-  that legacy flag count is not a verified count of unfinished source work.
+  reporting repair from `3b3ed85c` was applied as a separate commit after the
+  merge. Its three regression tests pass. The CLI now labels 140 as historical
+  provider dependency flags and states that current provider completion is
+  unverified by this source gate.
 
 The next functional increment is a learner-authorized, exact-published-version
 media read with immutable caption/transcript text snapshots. Neither the
