@@ -13,8 +13,9 @@ import {
  * Authoring of governed lesson media: prepare, admit within bounds, commit with integrity recorded,
  * attach supplied captions or transcripts, preview by a separate read, publish by exact artifact
  * and version, retire, reconcile and clean up. The ledger and the object store are interfaces; the
- * complete ledger implementation remains fictional (program-media-fictional.ts). The AWS SDK
- * storage source is separately tested over fictional network replies, not installed or hosted
+ * native ledger has an embedded-PostgreSQL restricted-role journey; its candidate is still
+ * BLOCKED and uninstalled. The AWS SDK storage source and native request factory are
+ * separately tested over fictional network replies, not installed or hosted
  * qualified. Activation is off: `PROGRAM_MEDIA_ACTIVATION.enabled` is false and every operation refuses until a
  * reviewed store and ledger exist. A fictional store proving these journeys certifies nothing hosted.
  *
@@ -183,7 +184,7 @@ export function createProgramMediaAuthoring(input: {
       const parsed = programMediaAdmitRequest.safeParse(request);
       if (!parsed.success || !(bytes instanceof Uint8Array) || bytes.byteLength !== parsed.data.bytes
         || bytes.byteLength > Math.max(storage.maxImageBytes, storage.maxVideoBytes)) throw new ProgramMediaError('request_invalid');
-      const admittedBytes = bytes.slice();
+      const admittedBytes = new Uint8Array(bytes);
       if (createHash('sha256').update(admittedBytes).digest('hex') !== parsed.data.sha256) throw new ProgramMediaError('request_invalid');
       const reservation = await owned(context, () => ledger.reservation(context, parsed.data.artifactId));
       if (reservation.sha256 !== parsed.data.sha256 || reservation.bytes !== parsed.data.bytes) throw new ProgramMediaError('request_invalid');

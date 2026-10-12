@@ -70,6 +70,12 @@ async function store(config = configuration(), requestSignal = signal()) {
 function serviceError(name: string, status: number) { return new S3ServiceException({ name, $fault: 'client', $metadata: { httpStatusCode: status }, message: 'fictional provider detail must not escape' }); }
 
 describe('native program media source over fictional SDK sends', () => {
+  it('copies a Node Buffer before passing upload bytes to the asynchronous SDK',async()=>{
+    const opened=await createAwsProgramMediaStoreSource(configuration(),signal());close=opened.close;
+    const mutable=Buffer.from(bytes),upload=opened.store.put(reservation,mutable,signal());mutable.fill(0);await upload;
+    const body=sent.find(c=>c.name==='PutObjectCommand')!.input.Body as Uint8Array;
+    expect(Buffer.from(body)).toEqual(Buffer.from(bytes));
+  });
   it.each([
     ['production account', (c: AwsProgramMediaStoreConfiguration) => { c.storage.expectedBucketOwner = '173535830222'; }],
     ['wrong region', (c: AwsProgramMediaStoreConfiguration) => { c.storage.region = 'us-east-1'; }],

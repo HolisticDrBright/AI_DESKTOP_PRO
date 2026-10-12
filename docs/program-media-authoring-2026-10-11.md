@@ -135,6 +135,8 @@ the Studio's media slot still accepts an https address and is unchanged.
 
 ## Prerequisites Codex owns before activation
 
+The native ledger, restricted RDS worker and per-request factory now have disabled source implementations. See `docs/program-media-native-ledger-2026-10-11.md` for their distinct candidate, local evidence and remaining source/hosted work. The prerequisites below remain activation and delivery requirements; their presence does not mean the native source is deployed or that the browser/V2 media routes exist.
+
 1. **Store.** A dedicated bucket in the qualification account (`588966314750`,
    `us-east-2`) for educational media: versioning, bucket-owner-enforced ownership, all
    public access blocked, SSE-KMS with a key that is not the clinical recording key or is

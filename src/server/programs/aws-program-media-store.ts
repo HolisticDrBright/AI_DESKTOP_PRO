@@ -144,7 +144,7 @@ Promise<{ store: ProgramMediaObjectStore; close(): void }> {
       try {
         r = checked(value); bounded(signal);
         if (!(bytes instanceof Uint8Array) || bytes.byteLength !== r.bytes) throw invalid();
-        accepted = bytes.slice();
+        accepted = new Uint8Array(bytes);
         if (createHash('sha256').update(accepted).digest('hex') !== r.sha256) throw invalid();
       } catch { throw new ProgramMediaWriteError(true); }
       try {

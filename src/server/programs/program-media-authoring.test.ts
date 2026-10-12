@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClinicalRequestContext, SyntheticRequestContext } from '@/server/clinical-core/aws-identity-consent';
 import { programMediaArtifact, programMediaReference, programMediaReservation, type ProgramMediaStorage } from '@/contracts/programMedia';
 import { createProgramMediaAuthoring, PROGRAM_MEDIA_ACTIVATION, ProgramMediaError, type ProgramMediaAuthoring } from './program-media-authoring';
@@ -47,6 +47,13 @@ async function ready() {
 }
 
 describe('Codex independent negative audit of the returned source', () => {
+  it('copies a Node Buffer before yielding to authorization',async()=>{
+    const reservation=await authoring.prepare(context(),prepare()),mutable=Buffer.from(image),write=vi.spyOn(store,'put');
+    vi.spyOn(ledger,'authorize').mockImplementation(async()=>{mutable.fill(0);return true;});
+    const artifact=await authoring.admit(context(),{artifactId:reservation.artifactId,sha256:sha(image),bytes:image.length},mutable);
+    expect(artifact.state).toBe('ready');expect(artifact.sha256).toBe(sha(image));
+    expect(Buffer.from(write.mock.calls[0][1])).toEqual(Buffer.from(image));
+  });
   it('keeps a written object discoverable after an expired admission retry', async () => {
     const reservation = await authoring.prepare(context(), prepare());
     await store.put(reservation, image, AbortSignal.timeout(1_000));
