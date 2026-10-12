@@ -44,7 +44,8 @@ const event = (id: string, type: string, sessionRef: string, extra: Json = {}): 
   ({ id, type, livemode: false, created: Math.floor(Date.now() / 1000), api_version: "2025-08-27.basil", data: { object: { object: "checkout.session", id: sessionRef } }, ...extra });
 const consumer = <T = Json>(request: APIRequestContext, baseURL: string, learner: "a" | "b", service: "access" | "progress", body: Json) =>
   fixture<T>(request, baseURL, { action: "consumer", learner, service, body });
-const codeIn = (messages: { text: string }[]) => messages.map(m => /\b([A-Za-z0-9_-]{43})\b/.exec(m.text)?.[1]).filter(Boolean).at(-1)!;
+// The code is base64url and stands on its own line; a word-boundary pattern misses one that starts or ends with '-'.
+const codeIn = (messages: { text: string }[]) => messages.map(m => /^([A-Za-z0-9_-]{43})$/m.exec(m.text)?.[1]).filter(Boolean).at(-1)!;
 
 /** The processor's hosted page: the only interception, on the processor's own fictional host. */
 async function hostedCheckoutStandIn(page: Page) {

@@ -80,7 +80,7 @@ describe('purchase to learning through the route handlers', () => {
     await fixture({ action: 'work' });
     const mail = await fixture<{ messages: { text: string }[] }>({ action: 'mailbox' });
     expect(mail.data.messages).toHaveLength(1);
-    const code = /\b([A-Za-z0-9_-]{43})\b/.exec(mail.data.messages[0]!.text)![1]!;
+    const code = /^([A-Za-z0-9_-]{43})$/m.exec(mail.data.messages[0]!.text)![1]!;
     // Learner A claims; learner B, another account, cannot take it.
     expect((await consumer('a', 'access', { action: 'claim', token: code })).data).toMatchObject({ action: 'claim', outcome: 'claimed' });
     expect((await consumer('b', 'access', { action: 'claim', token: code })).data).toMatchObject({ action: 'claim', outcome: 'refused', reason: 'already_claimed_by_other' });
