@@ -456,7 +456,7 @@ export function sanitizeMeasuredLabBiomarkers(
 /** The version of the rule table that produced a consideration, and the version of the rule that fired. A clinician
  * reviewing the basis of a recommendation has to be able to name the basis; "the rules as they were at some point" is not
  * a basis. Stamping both means an output can be traced to an exact, citable rule rather than to a moving target. */
-export const SUPPLEMENT_CONSIDERATION_RULESET_VERSION = "measured-supplement-considerations/1" as const;
+export const SUPPLEMENT_CONSIDERATION_RULESET_VERSION = "measured-supplement-considerations/2" as const;
 
 type MeasuredSupplementConsideration = {
   recommendationId: string;
@@ -511,7 +511,7 @@ const SUPPLEMENT_CONSIDERATION_RULES = [
     url: "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
   },
   {
-    key: "iron", version: "iron/1", signals: [{ aliases: ["iron", "ferritin"], direction: "below" as const }],
+    key: "iron", version: "iron/2", signals: [{ aliases: ["iron", "ferritin"], direction: "below" as const }],
     name: "Iron status support consideration",
     mechanism: "Iron is required for oxygen transport. Low iron markers have multiple possible causes, and unnecessary iron can be harmful, so confirm the pattern and safety before starting a product.",
     title: "NIH Office of Dietary Supplements — Iron Fact Sheet for Health Professionals",
@@ -530,6 +530,9 @@ const SUPPLEMENT_CONSIDERATION_RULES = [
   },
 ] as const;
 
+/** Iron-panel markers whose HIGH value contradicts an iron consideration (normalized names). */
+const IRON_PANEL_MARKERS = new Set(["iron", "serum iron", "ferritin", "transferrin saturation", "iron saturation", "tsat"]);
+
 function normalizedMarkerName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -541,6 +544,11 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
   const recommendations: MeasuredSupplementConsideration[] = [];
   const citations: SupplementEvidenceCitation[] = [];
   const used = new Set<string>();
+  // iron/2: any iron-panel marker above its printed or functional upper bound withholds the iron
+  // consideration for the whole panel. A low marker beside a high one is a contradiction to review,
+  // not a signal to add iron (overload, inflammation and haemolysis all present this way).
+  const ironPanelHigh = biomarkers.some((biomarker) => IRON_PANEL_MARKERS.has(normalizedMarkerName(biomarker.canonicalName))
+    && [biomarker.labMax, biomarker.functionalMax].some((bound) => bound !== null && bound !== undefined && biomarker.value > bound));
   for (const biomarker of biomarkers) {
     const markerName = normalizedMarkerName(biomarker.canonicalName);
     const matched = SUPPLEMENT_CONSIDERATION_RULES.flatMap((rule) => rule.signals.map((signal) => ({ rule, signal })))
@@ -554,9 +562,11 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
     const labTriggered = labBound !== null && labBound !== undefined
       && (signal.direction === "below" ? biomarker.value < labBound : biomarker.value > labBound);
     if ((!functionalTriggered && !labTriggered) || used.has(rule.key)) continue;
+    if (rule.key === "iron" && ironPanelHigh) continue;
     used.add(rule.key);
     const sourceId = stableUuid(`supplement-evidence-source:${rule.key}`);
-    const claimId = stableUuid(`supplement-evidence-claim:${rule.key}:below-reporting-lab-range`);
+    // The claim names the actual trigger; the original below-reporting-range claim keeps its id.
+    const claimId = stableUuid(`supplement-evidence-claim:${rule.key}:${signal.direction}-${functionalTriggered ? "governed-functional" : "reporting-lab"}-range`);
     citations.push({
       sourceId,
       sourceVersion: "nih-ods-health-professional/2026-09",

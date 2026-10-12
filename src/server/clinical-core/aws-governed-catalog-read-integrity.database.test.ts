@@ -116,6 +116,31 @@ describe("real catalog SQL, review transitions and API-role RLS (local, not host
     });
   }
 
+  // The consumer catalog route served every approved product, including practitioner-only,
+  // injectable, declared-restricted and peptide products with their full clinical payload. The
+  // consumer audience now reads only open, unrestricted supplements; the workforce read is unchanged.
+  for (const [name, overrides] of [
+    ["practitioner only", { productType: "practitioner_only", accessTier: "practitioner_gated", directOrderAllowed: false }],
+    ["injectable", { productType: "injectable_peptide", accessTier: "injectable", directOrderAllowed: false }],
+    ["declared restricted", { accessTier: "practitioner_gated", declaredRestricted: true, directOrderAllowed: false }],
+    ["oral peptide", { productType: "oral_peptide", directOrderAllowed: true }],
+  ] as const) {
+    it(`never returns a ${name} product to the consumer audience, while the workforce still sees it`, async () => {
+      const f = await fixture();
+      await approve(release(f.key, 2, overrides));
+      const workforce = await createAwsGovernedCatalogReader(api, "synthetic-staging").listProducts({ limit: 100 });
+      const consumer = await createAwsGovernedCatalogReader(api, "synthetic-staging").listProducts({ limit: 100, audience: "consumer" });
+      expect(workforce.products.some(p => p.stableId === f.productId)).toBe(true);
+      expect(consumer.products.some(p => p.stableId === f.productId)).toBe(false);
+      expect(consumer.products.every(p => p.productType === "supplement" && p.accessTier === "open" && !p.declaredRestricted)).toBe(true);
+    });
+  }
+  it("still returns an open, unrestricted supplement to the consumer audience", async () => {
+    const f = await fixture();
+    const consumer = await createAwsGovernedCatalogReader(api, "synthetic-staging").listProducts({ limit: 100, audience: "consumer" });
+    expect(consumer.products.some(p => p.stableId === f.productId)).toBe(true);
+  });
+
   for (const subjectType of ["product_version", "affiliate_offer_version"] as const) {
     for (const outcome of ["rejected", "changes_requested"] as const) {
       it(`a ${outcome} review actually withdraws the active ${subjectType}`, async () => {

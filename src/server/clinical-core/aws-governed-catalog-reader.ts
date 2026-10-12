@@ -81,7 +81,8 @@ export type TemplatePage = {
 };
 
 export interface AwsGovernedCatalogReader {
-  listProducts(input: { limit: number; cursor?: string }): Promise<CatalogPage>;
+  /** `consumer` reads only open, unrestricted supplements; the workforce (default) reads every approved product. */
+  listProducts(input: { limit: number; cursor?: string; audience?: "workforce" | "consumer" }): Promise<CatalogPage>;
   listProtocolTemplates(input: { limit: number; cursor?: string }): Promise<TemplatePage>;
 }
 
@@ -120,8 +121,9 @@ export function createAwsGovernedCatalogReader(
              where p.review_status = 'approved'
                and p.environment = $3 and p.contains_phi = false
                and ($1 = '' or v.product_stable_id > $1)
+               and ($4 = 'workforce' or (v.product_type = 'supplement' and v.access_tier = 'open' and v.declared_restricted = false))
              order by v.product_stable_id limit $2`,
-            [input.cursor ?? "", input.limit + 1, environment],
+            [input.cursor ?? "", input.limit + 1, environment, input.audience === "consumer" ? "consumer" : "workforce"],
           );
           const pageRows = rows.rows.slice(0, input.limit);
           const productIds = pageRows.map((row) => row.product_stable_id);

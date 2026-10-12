@@ -306,6 +306,68 @@ describe("synthetic AWS functional lab rules", () => {
   });
 });
 
+// Iron is the one consideration where the wrong direction harms: "unnecessary iron can be harmful".
+// A low serum iron or a low ferritin is not an iron consideration when another iron marker in the
+// same panel is HIGH (iron overload, inflammation and haemolysis all look like this). The panel is
+// read as a whole, and a contradiction withholds the consideration rather than picking a side.
+describe("iron considerations read the whole iron panel", () => {
+  const names = (rows: Parameters<typeof buildMeasuredSupplementConsiderations>[0]) => buildMeasuredSupplementConsiderations(rows).recommendations.map((row) => row.ruleKey);
+  test("low serum iron with HIGH ferritin is not an iron consideration (fails before: it was)", () => {
+    expect(names([
+      { canonicalName: "Iron", value: 40, unit: "mcg/dL", labMin: 50, labMax: 170 },
+      { canonicalName: "Ferritin", value: 420, unit: "ng/mL", labMin: 30, labMax: 400 },
+    ])).not.toContain("iron");
+  });
+  test("low ferritin with HIGH serum iron or a high transferrin saturation is not either", () => {
+    expect(names([
+      { canonicalName: "Ferritin", value: 12, unit: "ng/mL", labMin: 30, labMax: 400 },
+      { canonicalName: "Iron", value: 210, unit: "mcg/dL", labMin: 50, labMax: 170 },
+    ])).not.toContain("iron");
+    expect(names([
+      { canonicalName: "Ferritin", value: 12, unit: "ng/mL", labMin: 30, labMax: 400 },
+      { canonicalName: "Transferrin Saturation", value: 62, unit: "%", labMin: 20, labMax: 50 },
+    ])).not.toContain("iron");
+  });
+  test("a high marker above a functional bound vetoes too, and order in the panel does not matter", () => {
+    const rows = [
+      { canonicalName: "Ferritin", value: 180, unit: "ng/mL", labMin: 30, labMax: 400, functionalMin: 40, functionalMax: 150 },
+      { canonicalName: "Iron", value: 40, unit: "mcg/dL", labMin: 50, labMax: 170 },
+    ];
+    expect(names(rows)).not.toContain("iron");
+    expect(names([...rows].reverse())).not.toContain("iron");
+  });
+  test("low ferritin with no high iron marker is still a consideration, with no dose and no product", () => {
+    const { recommendations } = buildMeasuredSupplementConsiderations([
+      { canonicalName: "Ferritin", value: 12, unit: "ng/mL", labMin: 30, labMax: 400 },
+      { canonicalName: "Iron", value: 90, unit: "mcg/dL", labMin: 50, labMax: 170 },
+    ]);
+    expect(recommendations.map((row) => row.ruleKey)).toEqual(["iron"]);
+    expect(recommendations[0]).toMatchObject({ dose: null, productId: null, interactionReview: "required_before_starting" });
+  });
+  test("the veto withholds only iron: a low vitamin D in the same panel is unaffected", () => {
+    expect(names([
+      { canonicalName: "Iron", value: 40, unit: "mcg/dL", labMin: 50, labMax: 170 },
+      { canonicalName: "Ferritin", value: 420, unit: "ng/mL", labMin: 30, labMax: 400 },
+      { canonicalName: "Vitamin D", value: 18, unit: "ng/mL", labMin: 30, labMax: 100 },
+    ])).toEqual(["vitamin-d"]);
+  });
+});
+
+// The claim a consideration cites must name what actually triggered it. Before, every claim read
+// "below-reporting-lab-range", including a functional-range trigger and a HIGH triglyceride.
+describe("consideration claims name their actual trigger", () => {
+  test("a reporting-range low, a functional-range low and a reporting-range high cite different claims", () => {
+    const reporting = buildMeasuredSupplementConsiderations([{ canonicalName: "Vitamin D", value: 18, unit: "ng/mL", labMin: 30, labMax: 100 }]);
+    const functional = buildMeasuredSupplementConsiderations([{ canonicalName: "Vitamin D", value: 42, unit: "ng/mL", labMin: 30, labMax: 100, functionalMin: 50, functionalMax: 80 }]);
+    const high = buildMeasuredSupplementConsiderations([{ canonicalName: "Triglycerides", value: 180, unit: "mg/dL", labMin: 0, labMax: 150 }]);
+    const ids = [reporting, functional, high].map((output) => output.recommendations[0]?.citationIds[0]);
+    expect(new Set(ids).size).toBe(3);
+    for (const output of [reporting, functional, high]) expect(output.citations[0]?.claimIds).toEqual(output.recommendations[0]?.citationIds);
+    expect(functional.recommendations[0]?.reason).toContain("governed functional");
+    expect(high.recommendations[0]?.reason).toContain("above the available reporting laboratory range");
+  });
+});
+
 // A clinician reviewing the basis of a recommendation has to be able to name the basis. Every consideration therefore
 // carries the rule table's version, the rule's own version and its key, and the evidence citation names a dated source
 // rather than "current", so an output can be traced to an exact artefact rather than to a moving target.

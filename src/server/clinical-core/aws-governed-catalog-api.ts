@@ -53,7 +53,8 @@ export function createAwsGovernedCatalogApiHandler(input: {
       if (event.body) throw new CatalogApiError("request_invalid");
       const page = parsePage(event.queryStringParameters);
       const data = route.operation === "products"
-        ? await reader.listProducts(page)
+        // A consumer never receives a practitioner-only, injectable, peptide or declared-restricted product.
+        ? await reader.listProducts(route.pool === "consumer" ? { ...page, audience: "consumer" } : page)
         : await reader.listProtocolTemplates(page);
       return response(200, {
         contractVersion: "governed-catalog-api/1",

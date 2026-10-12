@@ -48,7 +48,7 @@ describe("AWS governed catalog API", () => {
       realPatientDataAllowed: false,
       data: { products: [], commercial: { offers: [] } },
     });
-    expect(value.listProducts).toHaveBeenCalledWith({ limit: 50 });
+    expect(value.listProducts).toHaveBeenCalledWith({ limit: 50, audience: "consumer" });
   });
 
   test("allows protocol templates only on the workforce route", async () => {
