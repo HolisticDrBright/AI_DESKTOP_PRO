@@ -1,5 +1,11 @@
 # Artifact-bound care messaging deployment candidate
 
+> Historical candidate note: this page describes the earlier 104-ledger design.
+> The current build defaults to a pinned 106-ledger artifact, and a separate
+> fictional-only 112-ledger build is described in
+> [care-messaging-112-qualification-candidate-2026-10-12.md](care-messaging-112-qualification-candidate-2026-10-12.md).
+> Do not use the release count/hash below as a current deployment instruction.
+
 The messaging handler and CloudFormation template now exist. This is an engineering/deployment **candidate**, not a deployed or activated service. The older `build:care-messaging-source` artifact remains an explicitly non-deployable library and points here. No reviewed evidence, consent grant, practitioner approval or PHI permission is created by either build.
 
 ## Build and immutable identities

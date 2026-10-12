@@ -40,6 +40,28 @@ function transport(valid = true) {
   return { query, factory };
 }
 describe('artifact-bound messaging runtime', () => {
+  it('accepts only the exact fictional 112 release in qualification mode', async () => {
+    const successor: CareMessagingBuild = { ...build, migrationCount: 112,
+      migrationReleaseSha256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4' };
+    const qualified = { ...env(), MIGRATION_RELEASE_SHA256: successor.migrationReleaseSha256 };
+    const valid = transport();
+    expect(await createCareMessagingHandler(qualified, successor, valid.factory, () => now)(event()))
+      .toMatchObject({ statusCode: 200, headers: { 'x-clinical-execution': 'qualification' } });
+    expect(valid.factory).toHaveBeenCalledOnce();
+
+    const mismatched = transport();
+    expect(await createCareMessagingHandler(qualified, { ...successor, migrationReleaseSha256: build.migrationReleaseSha256 },
+      mismatched.factory, () => now)(event())).toMatchObject({ statusCode: 503 });
+    expect(mismatched.factory).not.toHaveBeenCalled();
+
+    const productionLike = transport();
+    expect(await createCareMessagingHandler({ ...qualified, PHI_ALLOWED: 'true', CARE_MESSAGING_ACTIVATION: 'approved',
+      QUALIFICATION_EXECUTION: 'disabled', DEPLOYMENT_ACCOUNT_ID: '173535830222', CLINICAL_DATABASE_NAME: 'clinical_core',
+      CLINICAL_DATABASE_CLUSTER_ARN: 'arn:aws:rds:us-east-2:173535830222:cluster:production',
+      CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:173535830222:secret:production-AbCd12' },
+    successor, productionLike.factory, () => now)(event())).toMatchObject({ statusCode: 503 });
+    expect(productionLike.factory).not.toHaveBeenCalled();
+  });
   it('is blocked by default without constructing a database client', async () => {
     const test = transport(); const config = { ...env(), QUALIFICATION_EXECUTION: 'disabled' };
     expect(await createCareMessagingHandler(config, build, test.factory, () => now)(event())).toMatchObject({ statusCode: 503, body: '{"error":"production_not_activated","phiAllowed":false}' });

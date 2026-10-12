@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 let directory: string;
 type Value = null | string | number | boolean | Value[] | { [name: string]: Value };
 type Template = { Parameters: Record<string, { Default?: Value; AllowedValues?: string[] }>; Conditions: Record<string, Value>; Resources: Record<string, { Type: string; Properties: Record<string, Value> }>; Rules: Record<string, Value> };
-let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationReleaseSha256: string; codeSha256: string; templateSha256: string; deploymentZipSha256: string; deploymentZipBytes: number; functions: unknown[]; defaults: unknown };
+let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationCount: number; migrationReleaseSha256: string; qualificationOnly: boolean; codeSha256: string; templateSha256: string; deploymentZipSha256: string; deploymentZipBytes: number; functions: unknown[]; defaults: unknown };
 function evaluate(value: Value, parameters: Record<string, Value>): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(v => evaluate(v, parameters));
@@ -43,6 +43,32 @@ const qualified = (): Record<string, Value> => ({ ...defaults(), 'AWS::AccountId
   QualificationIdentitySubjects: 'fictional-consumer,fictional-workforce', DatabaseName: 'clinical_core_qualification',
   ...Object.fromEntries(reviews.map(key => [key, 'fictional-reviewed-shape'])) });
 describe('care messaging deployment artifact', () => {
+  it('builds a distinct 112-ledger fictional qualification artifact without widening the historical 106 mode', () => {
+    const successorDir = mkdtempSync(join(tmpdir(), 'care-messaging-112-artifact-'));
+    try {
+      execFileSync(process.execPath, ['scripts/build-aws-care-messaging.mjs', '--release=112', `--out-dir=${successorDir}`],
+        { encoding: 'utf8', timeout: 60000 });
+      const successor = JSON.parse(readFileSync(join(successorDir, 'artifact-manifest.json'), 'utf8'));
+      const successorTemplate = JSON.parse(readFileSync(join(successorDir, 'template.json'), 'utf8'));
+      expect(manifest.migrationReleaseSha256).toBe('514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b');
+      expect(manifest.qualificationOnly).toBe(false);
+      expect(successor.migrationCount).toBe(112);
+      expect(successor.migrationReleaseSha256).toBe('45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4');
+      expect(successor.qualificationOnly).toBe(true);
+      expect(successor.functions).toEqual(manifest.functions);
+      expect(successorTemplate.Parameters.PhiAllowed.AllowedValues).toEqual(['false']);
+      expect(successorTemplate.Parameters.Activation.AllowedValues).toEqual(['blocked']);
+      expect(successorTemplate.Parameters.MigrationReleaseSha256.AllowedValues).toEqual([successor.migrationReleaseSha256]);
+      expect(createHash('sha256').update(readFileSync(join(successorDir, 'deployment.zip'))).digest('hex'))
+        .toBe(successor.deploymentZipSha256);
+      expect(() => execFileSync(process.execPath, ['scripts/build-aws-care-messaging.mjs', '--release=113', `--out-dir=${successorDir}`],
+        { encoding: 'utf8', timeout: 60000, stdio: 'pipe' })).toThrow();
+    } finally {
+      const target = resolve(successorDir);
+      if (dirname(target) !== resolve(tmpdir()) || !basename(target).startsWith('care-messaging-112-artifact-')) throw new Error('temporary_cleanup_boundary_refused');
+      rmSync(target, { recursive: true, force: true });
+    }
+  }, 65000);
   it('pins immutable object version, compiled source/release and exact emitted byte hashes', () => {
     const sha = (file: string) => createHash('sha256').update(readFileSync(join(directory, file))).digest('hex');
     expect(manifest.codeSha256).toBe(sha('index.js')); expect(manifest.templateSha256).toBe(sha('template.json'));

@@ -7,14 +7,25 @@ import { resolve } from 'node:path';
 import { careMessagingZip } from './care-messaging-zip.mjs';
 import { qualificationConditions, qualificationEnvironment, qualificationParameters, qualificationRules } from './qualification-execution-template.mjs';
 const args = process.argv.slice(2);
-if (args.length > 1 || args.length && !/^--out-dir=.+$/.test(args[0])) throw new Error('care_message_build_argument_invalid');
-const out = args.length ? resolve(args[0].slice(10)) : 'dist/aws-clinical-core/care-messaging';
+if (args.length > 2 || args.some(arg => !/^--out-dir=.+$/.test(arg) && arg !== '--release=112')
+  || args.filter(arg => arg.startsWith('--out-dir=')).length > 1
+  || args.filter(arg => arg === '--release=112').length > 1) throw new Error('care_message_build_argument_invalid');
+const qualification112 = args.includes('--release=112');
+const outArg = args.find(arg => arg.startsWith('--out-dir='));
+const out = outArg ? resolve(outArg.slice(10)) : qualification112
+  ? 'dist/aws-clinical-core/care-messaging-qualification-112' : 'dist/aws-clinical-core/care-messaging';
 const sha = value => createHash('sha256').update(value).digest('hex');
-const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'], {
+const artifact = JSON.parse(execFileSync(process.execPath, [qualification112
+  ? 'scripts/build-telehealth-consent-copy-candidate.mjs' : 'scripts/build-aws-production-clinical-core.mjs', '--json'], {
   encoding: 'utf8', timeout: 15000, maxBuffer: 8 * 1024 * 1024,
 }));
 const migrationReleaseSha256 = sha(artifact.manifest.migrations.map(m => `${m.version}:${sha(artifact.files[m.file])}`).join('\n'));
-if (artifact.manifest.migrations.length !== 106 || migrationReleaseSha256 !== '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b') throw new Error('care_message_build_release_invalid');
+const migrationCount = qualification112 ? 112 : 106;
+const expectedRelease = qualification112 ? '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4'
+  : '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
+if (artifact.manifest.migrations.length !== migrationCount || migrationReleaseSha256 !== expectedRelease
+  || qualification112 && (artifact.candidate?.contract !== 'telehealth-consent-copy-candidate/1'
+    || artifact.candidate.activation !== 'blocked' || artifact.candidate.phiAllowed !== false)) throw new Error('care_message_build_release_invalid');
 const sql = artifact.files['20261006010000_production_care_messaging.sql'];
 const functions = [...sql.matchAll(/create function (clinical_(?:core|private))\.(production_care_message_[a-z]+)\([^]*?security definer set search_path='' as \$\$([^]*?)\$\$/g)]
   .map(([, schema, name, body]) => ({ schema, name, sha256: sha(body), callable: schema === 'clinical_core' }));
@@ -25,22 +36,24 @@ const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: ['src/server/clinical-core/care-messaging-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
   platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none',
-  define: { __CARE_MESSAGING_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount: 106, migrationReleaseSha256, functions }) } });
+  define: { __CARE_MESSAGING_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount, migrationReleaseSha256, functions }) } });
 const ref = name => ({ Ref: name }), sub = value => ({ 'Fn::Sub': value });
 const nonempty = name => ({ 'Fn::Not': [{ 'Fn::Equals': [ref(name), ''] }] });
 const hash = { Type: 'String', Default: '', AllowedPattern: '^$|^[a-f0-9]{64}$' };
 const reviewed = ['DatabaseReviewSha256', 'WorkforceMfaReviewSha256', 'MessagingReviewSha256', 'RetentionReviewSha256', 'AlarmTopicArn'];
 const required = ['ActivationEvidenceSha256', ...reviewed];
 const template = {
-  AWSTemplateFormatVersion: '2010-09-09', Description: 'Artifact-bound retained care messaging; blocked/logs-only by default; no reviews seeded',
+  AWSTemplateFormatVersion: '2010-09-09', Description: qualification112
+    ? 'Artifact-bound retained care messaging on approved fictional 112 schema; qualification-only, blocked/logs-only by default; no reviews seeded'
+    : 'Artifact-bound retained care messaging; blocked/logs-only by default; no reviews seeded',
   Parameters: {
     ApiId: { Type: 'String', AllowedPattern: '^[a-z0-9]{10}$' },
     ConsumerIssuer: { Type: 'String', AllowedPattern: '^https://cognito-idp\\.us-east-2\\.amazonaws\\.com/us-east-2_[A-Za-z0-9]+$' },
     WorkforceIssuer: { Type: 'String', AllowedPattern: '^https://cognito-idp\\.us-east-2\\.amazonaws\\.com/us-east-2_[A-Za-z0-9]+$' },
     ConsumerAudience: { Type: 'String', AllowedPattern: '^[a-zA-Z0-9]{20,128}$' }, WorkforceAudience: { Type: 'String', AllowedPattern: '^[a-zA-Z0-9]{20,128}$' },
     OrganizationId: { Type: 'String', AllowedPattern: '^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$' },
-    PhiAllowed: { Type: 'String', Default: 'false', AllowedValues: ['false', 'true'] },
-    Activation: { Type: 'String', Default: 'blocked', AllowedValues: ['blocked', 'approved'] },
+    PhiAllowed: { Type: 'String', Default: 'false', AllowedValues: qualification112 ? ['false'] : ['false', 'true'] },
+    Activation: { Type: 'String', Default: 'blocked', AllowedValues: qualification112 ? ['blocked'] : ['blocked', 'approved'] },
     ActivationEvidenceSha256: hash, DatabaseReviewSha256: hash, WorkforceMfaReviewSha256: hash, MessagingReviewSha256: hash, RetentionReviewSha256: hash,
     DatabaseClusterArn: { Type: 'String', AllowedPattern: '^arn:aws:rds:us-east-2:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$' },
     DatabaseSecretArn: { Type: 'String', AllowedPattern: '^arn:aws:secretsmanager:us-east-2:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$' },
@@ -130,7 +143,7 @@ writeFileSync(`${out}/template.json`, JSON.stringify(template, null, 2) + '\n');
 const zip=careMessagingZip(readFileSync(`${out}/index.js`));
 writeFileSync(`${out}/deployment.zip`,zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'care-messaging-deployment/1', sourceCommit, sourceClean,
-  migrationCount: 106, migrationReleaseSha256, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
+  migrationCount, migrationReleaseSha256, qualificationOnly: qualification112, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
   deploymentZipSha256:sha(zip), deploymentZipBytes:zip.length,
   functions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled' }, deploymentPerformed: false,
   remaining: ['independent reviews', 'hosted target/operator binding and acceptance', 'clinic lifecycle/amendments', 'V2 production wiring', 'device acceptance'] }, null, 2) + '\n');

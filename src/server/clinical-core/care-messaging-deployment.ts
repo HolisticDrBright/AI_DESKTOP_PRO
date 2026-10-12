@@ -8,12 +8,14 @@ import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
 
 export type CareMessagingBuild = {
-  sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
+  sourceCommit: string; sourceClean: boolean; migrationCount: 106 | 112; migrationReleaseSha256: string;
   functions: readonly { schema: string; name: string; sha256: string; callable: boolean }[];
 };
 export type InventoryCareMessagingBuild = InventoryQualificationBuild & Pick<CareMessagingBuild, 'functions'>;
 type Environment = Record<string, string | undefined>;
 const hash = /^[a-f0-9]{64}$/, commit = /^[a-f0-9]{40}$/;
+const release106 = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
+const qualificationRelease112 = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_message_receipts',
   'clinical_core.care_message_cancellations', 'clinical_audit.care_message_access_events'];
 
@@ -21,10 +23,19 @@ const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_m
  * created here or claimed to represent an executed review. */
 function binding(e: Environment, build: CareMessagingBuild | InventoryCareMessagingBuild, inventory: boolean) {
   if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareMessagingBuild, 'CARE_MESSAGING_ACTIVATION');
-  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== (inventory ? 107 : 106)
+  const releaseValid = inventory ? build.migrationCount === 107
+    : (build.migrationCount === 106 && build.migrationReleaseSha256 === release106)
+      || (build.migrationCount === 112 && build.migrationReleaseSha256 === qualificationRelease112);
+  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256)
+    || !releaseValid
     || e.SOURCE_COMMIT !== build.sourceCommit || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
     || e.CARE_MESSAGING_ACTIVATION !== 'blocked' && e.CARE_MESSAGING_ACTIVATION !== 'approved'
     || e.PHI_ALLOWED !== 'false' && e.PHI_ALLOWED !== 'true' || e.AWS_REGION !== 'us-east-2') throw new Error('binding_refused');
+  // The 112 artifact is an isolated fictional qualification successor. A
+  // separate production release must be reviewed rather than inheriting this
+  // synthetic schema test's approval or active-mode template conditions.
+  if (!inventory && build.migrationCount === 112
+    && (e.PHI_ALLOWED !== 'false' || e.CARE_MESSAGING_ACTIVATION !== 'blocked')) throw new Error('binding_refused');
   const activation = e.CARE_MESSAGING_ACTIVATION === 'approved' ? 'approved' as const : 'blocked' as const;
   const qualification = resolveQualificationExecution(e, activation);
   const serving = qualification !== undefined || e.PHI_ALLOWED === 'true';
