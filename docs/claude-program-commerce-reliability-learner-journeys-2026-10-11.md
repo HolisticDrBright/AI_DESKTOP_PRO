@@ -392,3 +392,9 @@ and no claim activates.
   returns is a hosted review item.
 - Processor refund and dispute events are not handled by this build's intake. Policy holds are
   operator decisions only until a reviewed intake mapping exists.
+- The database binds each consumer and staff call to the request context, and refuses a person and
+  subject pair that does not exist or does not match. It cannot authenticate the caller. The API
+  role sets the context, so a compromised API process could still name any existing pair. The
+  independently authenticated identity factory that sets the context is a host input Codex installs.
+- Concurrent settlement and claim races are tested against the real candidate in PGlite, which runs
+  one connection at a time. Real PostgreSQL contention remains a hosted case.
