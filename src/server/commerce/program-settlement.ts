@@ -107,6 +107,13 @@ export function createProgramSettlement(deps: SettlementDependencies) {
     },
     /** The exact purchased curriculum for an active entitlement the subject owns; withheld otherwise, with the reason. */
     async curriculum(caller: ConsumerCaller, entitlementId: string): Promise<EducationCurriculumRead> {
+      // A store that reads the curriculum itself (the SQL chain, by the database clock and digest) is the authority; its answer is used as given.
+      if (deps.ledger.curriculumForCaller) {
+        try {
+          const read = await deps.ledger.curriculumForCaller(caller, entitlementId);
+          return read.entitlementId === entitlementId ? read : { outcome: 'withheld', entitlementId, reason: 'service_unavailable' };
+        } catch { return { outcome: 'withheld', entitlementId, reason: 'service_unavailable' }; }
+      }
       let entitlement: ProgramEntitlement | null;
       try { entitlement = await deps.ledger.ownEntitlement(caller, entitlementId); } catch { return { outcome: 'withheld', entitlementId, reason: 'service_unavailable' }; }
       if (!entitlement || entitlement.subject.kind !== 'claimed' || entitlement.subject.consumerSubject !== caller.identitySubject) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };

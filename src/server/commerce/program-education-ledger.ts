@@ -85,6 +85,12 @@ export interface ProgramEducationLedger {
   listForProgram(staff: StaffCaller, programId: string): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
   /** The staff read of the exact purchased version for one of the clinic's entitlements. */
   staffCurriculum(staff: StaffCaller, entitlementId: string): Promise<EducationCurriculumRead>;
+  /**
+   * The caller's own exact purchased curriculum, read and checked (owner, active window, version, digest)
+   * by the store itself. A SQL store implements it (`education_curriculum_for_caller`); the in-memory
+   * ledger does not, and settlement then reads content through its own callback as before.
+   */
+  curriculumForCaller?(caller: ConsumerCaller, entitlementId: string): Promise<EducationCurriculumRead>;
   /** Deliveries due now: pending or outcome-unknown, still usable, oldest first, bounded. Unusable ones are withdrawn on the way. */
   dueDeliveries(at: string, limit: number): Promise<DeliveryRecord[]>;
   /** Record one delivery attempt at the attempt count the caller read; a stale count is refused. */

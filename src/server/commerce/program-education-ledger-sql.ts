@@ -155,6 +155,9 @@ export function createSqlEducationLedger(deps: SqlEducationLedgerDependencies): 
       progressGuard();
       return required(deps.database, educationProgressOutcome, 'select commercial_education.record_education_progress_for_caller($1::jsonb) as data', [JSON.stringify(command)], consumer(caller));
     },
+    async curriculumForCaller(caller, entitlementId) {
+      return required(deps.database, educationCurriculumRead, 'select commercial_education.education_curriculum_for_caller($1) as data', [clinicalUuid(entitlementId)], consumer(caller));
+    },
     async staffCurriculum(staff, entitlementId) {
       return required(deps.database, educationCurriculumRead, 'select commercial_education.education_curriculum_staff($1,$2) as data', [clinicalUuid(staff?.organizationId ?? ''), clinicalUuid(entitlementId)], staffContext(staff));
     },

@@ -13,6 +13,9 @@ import { createProgramSettlement } from "./program-settlement";
 import { createCommerceWorker } from "./program-commerce-worker";
 import { createClaimDelivery, createFictionalClaimSealer, createFictionalContactAuthority, createFictionalDeliveryProvider } from "./program-claim-delivery";
 import { publicSiteOrigin } from "../../lib/publicSite";
+import { sqlAcceptanceAllowed } from "./sql-acceptance-gate";
+import type { ProgramCheckoutLedger } from "./program-checkout-ledger";
+import type { ProgramEducationLedger } from "./program-education-ledger";
 
 /**
  * Which offer ledger this Desktop process may talk to.
@@ -48,6 +51,8 @@ type FictionalRuntimeState = {
   fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null;
   /** Fixture-only outage switch for the journey fixture's catalog-outage case; never set outside a test. */
   fixtureFaults: { offers: boolean };
+  /** The SQL acceptance host's stack, installed by that test target only (sql-acceptance-host.ts). */
+  acceptance?: Extract<ProgramCheckoutSelection, { kind: "acceptance" }> | null;
 };
 const STATE_KEY = Symbol.for("alp.commerce.fictional-runtime");
 const state: FictionalRuntimeState = ((globalThis as unknown as Record<symbol, FictionalRuntimeState | undefined>)[STATE_KEY] ??=
@@ -111,13 +116,22 @@ export function fictionalPersonId(email: string): string {
  */
 export type ProgramCheckoutSelection =
   | { kind: "disabled"; reason: "checkout_unconfigured" }
+  /** The SQL acceptance host (a separately configured test target): the real services over the candidate SQL and reduced sessions. */
+  | { kind: "acceptance"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; ledger: ProgramCheckoutLedger; education: ProgramEducationLedger; settlement: ReturnType<typeof createProgramSettlement>; worker: ReturnType<typeof createCommerceWorker> }
   | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; worker: ReturnType<typeof createCommerceWorker>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's claim delivery, its purchaser contacts (what the fictional hosted page collected) and the mailbox a purchaser reads. */ delivery: ReturnType<typeof createClaimDelivery>; contacts: ReturnType<typeof createFictionalContactAuthority>; mailbox: ReturnType<typeof createFictionalDeliveryProvider>["mailbox"]; provider: ReturnType<typeof createFictionalDeliveryProvider> };
 
 /** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
 export const FIXTURE_RETURN_ORIGIN = "https://clinic.fictional.example";
 
+/** For the SQL acceptance host only, and only where its gate admits it: the stack the routes then use. */
+export function installAcceptanceCheckout(selection: Extract<ProgramCheckoutSelection, { kind: "acceptance" }> | null, env: Record<string, string | undefined> = process.env): void {
+  if (selection && !sqlAcceptanceAllowed(env)) throw new Error("sql_acceptance_not_admitted");
+  state.acceptance = selection;
+}
+
 export function selectProgramCheckout(env: Record<string, string | undefined> = process.env): ProgramCheckoutSelection {
   if (!isContractFixtureAllowed(env as never)) return { kind: "disabled", reason: "checkout_unconfigured" };
+  if (state.acceptance && sqlAcceptanceAllowed(env)) return state.acceptance;
   if (!state.fictionalCheckout) {
     const ledger = createFictionalCheckoutLedger();
     const processor = createFictionalCheckoutProcessor();
