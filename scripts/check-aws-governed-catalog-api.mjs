@@ -83,8 +83,17 @@ export function validateGovernedCatalogApi(foundation, extension) {
     "Fn::If": ["SyntheticQualificationAlerting", [{ Ref: "QualificationAlarmTopicArn" }], { Ref: "AWS::NoValue" }],
   }), "catalog error alarm must route only to the reviewed synthetic topic when enabled");
   assert(errors, JSON.stringify(resources.CatalogApiErrorAlarm?.Properties?.AlarmName) === JSON.stringify({
-    "Fn::If": ["SyntheticQualificationAlerting", "ai-clinical-core-qualification-governed-catalog-errors", { Ref: "AWS::NoValue" }],
+    "Fn::If": ["SyntheticQualificationAlerting", "ai-clinical-core-qualification-synthetic-staging-catalog-lambda-errors", { Ref: "AWS::NoValue" }],
   }), "catalog error alarm name must match the qualification SNS publish policy");
+  const api5xxAlarm = resources.SyntheticStagingApi5xxAlarm;
+  assert(errors, api5xxAlarm?.Condition === "SyntheticQualificationAlerting"
+    && api5xxAlarm?.Properties?.AlarmName === "ai-clinical-core-qualification-synthetic-staging-api-5xx"
+    && api5xxAlarm?.Properties?.Namespace === "AWS/ApiGateway"
+    && api5xxAlarm?.Properties?.MetricName === "5xx"
+    && JSON.stringify(api5xxAlarm?.Properties?.Dimensions) === JSON.stringify([{ Name: "ApiId", Value: { Ref: "ClinicalApiId" } }])
+    && JSON.stringify(api5xxAlarm?.Properties?.AlarmActions) === JSON.stringify([{ Ref: "QualificationAlarmTopicArn" }])
+    && api5xxAlarm?.Properties?.Threshold === 1,
+  "handled catalog 503 responses require a synthetic-only shared API 5xx alarm");
 
   const serialized = JSON.stringify(extension).toLowerCase();
   for (const forbidden of ["service_role", "requestbody", "responsebody", "email", "phone", "dateofbirth"]) {

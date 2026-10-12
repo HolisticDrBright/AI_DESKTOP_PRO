@@ -17,6 +17,8 @@ for (const [name, mutate] of [
   ["production environment allowed", (copy) => { copy.Conditions.SyntheticQualificationAlerting["Fn::And"][0]["Fn::Equals"][1] = "production-clinical"; }],
   ["alarm action unconditional", (copy) => { copy.Resources.CatalogApiErrorAlarm.Properties.AlarmActions = [{ Ref: "QualificationAlarmTopicArn" }]; }],
   ["alarm name outside topic policy", (copy) => { copy.Resources.CatalogApiErrorAlarm.Properties.AlarmName["Fn::If"][1] = "synthetic-catalog-errors"; }],
+  ["API 5xx alarm ungated", (copy) => { delete copy.Resources.SyntheticStagingApi5xxAlarm.Condition; }],
+  ["API 5xx alarm replaced with Lambda errors", (copy) => { copy.Resources.SyntheticStagingApi5xxAlarm.Properties.MetricName = "Errors"; }],
 ]) {
   test(`catalog alert gate refuses ${name}`, () => {
     const copy = structuredClone(extension);
