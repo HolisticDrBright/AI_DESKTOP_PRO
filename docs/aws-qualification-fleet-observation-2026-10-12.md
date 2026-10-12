@@ -56,6 +56,16 @@ education-access/progress, care-messaging, or care-connection route. Source
 service seams and local tests therefore do not mean V2 can reach those
 features on this API.
 
+The current Desktop source cannot be used as a parameter-only messaging
+update against this database: `scripts/build-aws-care-messaging.mjs` and
+`care-messaging-deployment.ts` pin the candidate to 106 migrations and release
+`514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b`.
+The live isolated ledger has 112 migrations. Its approved 107→111→112 upgrades
+are preserved in separate candidate/operator custody, not yet promoted into
+the current source's canonical production-migration manifest, which ends at
+106. Do not change the pin, pass a different hash, or claim a matched candidate
+without a reviewed canonical successor and full regression/rollback evidence.
+
 ## Next controlled step
 
 Before a new stack update or creation, choose an exact reviewed source commit
