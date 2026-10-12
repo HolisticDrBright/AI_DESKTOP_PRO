@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { curriculumBinding, offerPricing, type OfferPricing } from './programOffers';
+import { curriculumBinding, offerPricing } from './programOffers';
 
 /**
- * The program checkout contract (program-checkout/1): one order per purchase attempt, admitted
+ * The program checkout contract (program-checkout/2): one order per purchase attempt, admitted
  * durably BEFORE anything leaves for the processor, bound to the exact offer revision and curriculum
  * it was priced against, and settled only from the processor's own authoritative object.
  *
@@ -16,19 +16,43 @@ import { curriculumBinding, offerPricing, type OfferPricing } from './programOff
  * attributed to a person by an email string, an order number or a success URL; fulfilment waits for
  * a separately verified, expiring, one-time claim (unit 3). The state vocabulary here ends at
  * verification; settlement states follow in the settlement contract.
+ *
+ * Revision 2 (reliability work package 1) adds what recovery needs and nothing commercial:
+ *   - the complete outbound creation request is recorded on the order (`creation`) BEFORE the
+ *     processor is contacted, with its exact parameter digest, the destinations and the expiry it
+ *     names; every replay sends those saved bytes under the same key, never fresh clock-derived
+ *     fields, and an unknown outcome beyond the processor's idempotency retention is a visible
+ *     `creation_unreconciled` hold, never a second key;
+ *   - a completed checkout whose payment is still processing is `payment_processing`, not failed;
+ *     it settles from the retrieved object (payment intent status), never from event arrival order;
+ *   - an observation that contradicts a decided order is a visible `conflict` intake, never
+ *     silently dropped and never applied.
  */
-export const PROGRAM_CHECKOUT_CONTRACT = 'program-checkout/1' as const;
+export const PROGRAM_CHECKOUT_CONTRACT = 'program-checkout/2' as const;
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 
-export const ORDER_STATES = ['admitted', 'checkout_open', 'creation_unresolved', 'checkout_expired', 'checkout_cancelled', 'payment_verified', 'payment_failed', 'refused'] as const;
+export const ORDER_STATES = ['admitted', 'creation_pending', 'creation_unresolved', 'creation_unreconciled', 'checkout_open', 'payment_processing', 'checkout_expired', 'checkout_cancelled', 'payment_verified', 'payment_failed', 'refused'] as const;
 export type OrderState = (typeof ORDER_STATES)[number];
-/** Every transition the order may make; anything else is refused by both ledgers. */
+/** Orders a returning browser's attempt key still owns: another start answers these instead of admitting a second order. */
+export const OPEN_ORDER_STATES = ['admitted', 'creation_pending', 'creation_unresolved', 'creation_unreconciled', 'checkout_open'] as const satisfies readonly OrderState[];
+/**
+ * Every transition the order may make; anything else is refused by both ledgers.
+ *   admitted               the terms snapshot is durable; nothing has left
+ *   creation_pending       the exact creation request is durable; it may now be sent, and only it
+ *   creation_unresolved    the request was sent and its outcome is unknown (timeout, lost reply, 5xx)
+ *   creation_unreconciled  the outcome is still unknown and the processor can no longer prove it; operator hold
+ *   checkout_open          a session bound to the saved request exists
+ *   payment_processing     the session completed and its payment is still processing (delayed method)
+ */
 export const ORDER_TRANSITIONS: Readonly<Record<OrderState, readonly OrderState[]>> = {
-  admitted: ['checkout_open', 'creation_unresolved', 'refused'],
-  creation_unresolved: ['checkout_open', 'checkout_expired', 'refused'],
-  checkout_open: ['checkout_expired', 'checkout_cancelled', 'payment_verified', 'payment_failed'],
+  admitted: ['creation_pending', 'refused'],
+  creation_pending: ['checkout_open', 'creation_unresolved', 'refused'],
+  creation_unresolved: ['checkout_open', 'creation_unreconciled', 'checkout_expired', 'refused'],
+  creation_unreconciled: ['checkout_open', 'checkout_expired', 'refused'],
+  checkout_open: ['checkout_expired', 'checkout_cancelled', 'payment_processing', 'payment_verified', 'payment_failed'],
+  payment_processing: ['payment_verified', 'payment_failed'],
   checkout_expired: [],
   checkout_cancelled: [],
   payment_verified: [],
@@ -60,6 +84,45 @@ export const paymentVerification = z.object({
   verifiedAt: timestamp,
 }).strict();
 
+/**
+ * The complete outbound creation request, recorded before the processor is contacted. `request` is
+ * exactly what the processor receives (form fields in this order); `requestSha256` is the digest of
+ * its canonical encoding, so a replay can prove it sent the same bytes. The processor learns the
+ * price reference, the opaque order id and the two return addresses, and nothing else.
+ */
+export const checkoutCreationRequest = z.object({
+  mode: z.enum(['payment', 'subscription']),
+  priceRef: z.string().regex(/^price_[A-Za-z0-9]{8,64}$/),
+  quantity: z.literal(1),
+  successUrl: z.string().url(),
+  cancelUrl: z.string().url(),
+  clientReferenceId: uuid,
+  metadataOrderId: uuid,
+  /** Whole seconds since the epoch: the processor's own unit, so nothing is rounded on replay. */
+  expiresAtUnix: z.number().int().positive(),
+}).strict();
+export type CheckoutCreationRequest = z.infer<typeof checkoutCreationRequest>;
+export const checkoutCreation = z.object({
+  idempotencyKey: z.string().regex(/^program-order:[0-9a-f-]{36}$/),
+  request: checkoutCreationRequest,
+  requestSha256: sha256,
+  recordedAt: timestamp,
+}).strict();
+export type CheckoutCreation = z.infer<typeof checkoutCreation>;
+/** The canonical encoding the processor receives and the digest is taken over: fixed key order, form-encoded. */
+export function encodeCreationRequest(request: CheckoutCreationRequest): string {
+  const form = new URLSearchParams();
+  form.append('mode', request.mode);
+  form.append('line_items[0][price]', request.priceRef);
+  form.append('line_items[0][quantity]', String(request.quantity));
+  form.append('success_url', request.successUrl);
+  form.append('cancel_url', request.cancelUrl);
+  form.append('client_reference_id', request.clientReferenceId);
+  form.append('metadata[order_id]', request.metadataOrderId);
+  form.append('expires_at', String(request.expiresAtUnix));
+  return form.toString();
+}
+
 export const orderSubject = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unclaimed') }).strict(),
   z.object({ kind: z.literal('claimed'), consumerSubject: z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/), claimedAt: timestamp }).strict(),
@@ -85,6 +148,8 @@ export const programOrder = z.object({
   subject: orderSubject,
   state: z.enum(ORDER_STATES),
   revision: z.number().int().min(1),
+  /** The exact creation request, recorded before the processor was contacted; null only while `admitted` or `refused` before it. */
+  creation: checkoutCreation.nullable(),
   processor: processorBinding.nullable(),
   verification: paymentVerification.nullable(),
   createdAt: timestamp,
@@ -95,7 +160,8 @@ export type ProgramOrder = z.infer<typeof programOrder>;
 /* ------------------------------------------------------------------ intake */
 
 export const HANDLED_EVENT_TYPES = ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed'] as const;
-export const INTAKE_STATES = ['pending', 'processed', 'unhandled', 'refused', 'failed_retryable', 'exhausted'] as const;
+/** `conflict`: an authoritative observation contradicts a decided order; held for an operator, never applied. */
+export const INTAKE_STATES = ['pending', 'processed', 'unhandled', 'refused', 'failed_retryable', 'exhausted', 'conflict'] as const;
 export type IntakeState = (typeof INTAKE_STATES)[number];
 export const MAX_INTAKE_ATTEMPTS = 8;
 
@@ -120,7 +186,7 @@ export type IntakeRecord = z.infer<typeof intakeRecord>;
 /** What a browser may send to start a checkout: which program page. Nothing else is read. */
 export const checkoutStartRequest = z.object({ funnelSlug: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/) }).strict();
 
-export const CHECKOUT_HOLD_REASONS = ['checkout_unconfigured', 'return_origin_unconfigured', 'processor_unavailable', 'processor_refused', 'order_store_unavailable', 'attempt_in_progress'] as const;
+export const CHECKOUT_HOLD_REASONS = ['checkout_unconfigured', 'return_origin_unconfigured', 'processor_unavailable', 'processor_refused', 'order_store_unavailable', 'attempt_in_progress', 'checkout_unconfirmed'] as const;
 export type CheckoutHoldReason = (typeof CHECKOUT_HOLD_REASONS)[number];
 export const CHECKOUT_HOLD_EXPLANATIONS: Record<CheckoutHoldReason, string> = {
   checkout_unconfigured: 'Online payment is not set up for this site.',
@@ -129,6 +195,7 @@ export const CHECKOUT_HOLD_EXPLANATIONS: Record<CheckoutHoldReason, string> = {
   processor_refused: 'The payment service did not accept the request. Nothing was charged.',
   order_store_unavailable: 'The purchase could not be recorded. Nothing was charged. Please try again later.',
   attempt_in_progress: 'A checkout you already started is still open. Please finish or wait for it to expire.',
+  checkout_unconfirmed: 'A checkout you started could not be confirmed by the payment service. It has been held for review and cannot take a payment.',
 };
 
 /* --------------------------------------------------------- return addresses */
@@ -157,24 +224,21 @@ export function allowedReturnUrl(candidate: string, origin: string): boolean {
   return url.searchParams.get('returned') === 'success' || url.searchParams.get('returned') === 'cancel';
 }
 
-/** The whole of what the processor is told about an order. */
-export type ProcessorSessionRequest = {
-  orderId: string;
-  providerPriceRef: string;
-  pricing: OfferPricing;
-  successUrl: string;
-  cancelUrl: string;
-  /** The idempotency key the processor deduplicates on, derived from the order and nothing else. */
-  idempotencyKey: string;
-  expiresAt: string;
-};
+/** The whole of what the processor is told about an order: the saved creation, sent as recorded. */
+export type ProcessorSessionRequest = CheckoutCreation;
 
+/** Payment intent statuses as the processor reports them for a payment-mode session; null where the processor returned none. */
+export const PAYMENT_INTENT_STATUSES = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing', 'requires_capture', 'canceled', 'succeeded'] as const;
 export const processorSession = z.object({
   sessionRef,
-  url: z.string().url().refine(value => value.startsWith('https://'), 'checkout url is https'),
+  /** The hosted page address; null when the processor returned none (a completed or expired session has none). Never filled in here. */
+  url: z.string().url().refine(value => value.startsWith('https://'), 'checkout url is https').nullable(),
   expiresAt: timestamp,
   status: z.enum(['open', 'complete', 'expired']),
   paymentStatus: z.enum(['paid', 'unpaid', 'no_payment_required']),
+  paymentIntentStatus: z.enum(PAYMENT_INTENT_STATUSES).nullable(),
+  successUrl: z.string().nullable(),
+  cancelUrl: z.string().nullable(),
   mode: z.enum(['payment', 'subscription']),
   livemode: z.boolean(),
   amountTotal: z.number().int().min(0).nullable(),
@@ -187,19 +251,57 @@ export const processorSession = z.object({
 export type ProcessorSession = z.infer<typeof processorSession>;
 
 /** The reasons an order fails verification against the retrieved object: each is a binding the handoff names. */
-export const VERIFICATION_REFUSALS = ['session_mismatch', 'order_mismatch', 'amount_mismatch', 'currency_mismatch', 'mode_mismatch', 'livemode', 'account_mismatch', 'price_mismatch', 'return_mismatch', 'unknown_payment_status'] as const;
+export const VERIFICATION_REFUSALS = ['session_mismatch', 'order_mismatch', 'amount_mismatch', 'currency_mismatch', 'mode_mismatch', 'livemode', 'account_mismatch', 'price_mismatch', 'return_mismatch', 'expiry_mismatch', 'unknown_payment_status', 'no_creation_record'] as const;
 export type VerificationRefusal = (typeof VERIFICATION_REFUSALS)[number];
 
-export function verifySessionAgainstOrder(session: ProcessorSession, order: ProgramOrder, expectedAccount: string): { ok: true } | { ok: false; refusal: VerificationRefusal } {
-  if (!order.processor || session.sessionRef !== order.processor.sessionRef) return { ok: false, refusal: 'session_mismatch' };
+/**
+ * The one binding every session must pass before it is recorded, redirected to or believed: the
+ * account the processor credential proved (not a configured label), test mode, the saved order and
+ * session identity, exactly one line of the saved price, the snapshot's amount, currency and billing
+ * mode, and the return addresses and expiry the saved creation request named. `sessionRef` is null
+ * when a new session is being bound to an order that has none yet.
+ */
+export function verifySessionAgainstOrder(session: ProcessorSession, order: ProgramOrder, provenAccount: string): { ok: true } | { ok: false; refusal: VerificationRefusal } {
+  if (!order.creation) return { ok: false, refusal: 'no_creation_record' };
+  if (order.processor && session.sessionRef !== order.processor.sessionRef) return { ok: false, refusal: 'session_mismatch' };
   if (session.clientReferenceId !== order.orderId || session.metadata.order_id !== order.orderId || Object.keys(session.metadata).some(key => key !== 'order_id')) return { ok: false, refusal: 'order_mismatch' };
   if (session.livemode) return { ok: false, refusal: 'livemode' };
-  if (session.accountRef !== expectedAccount) return { ok: false, refusal: 'account_mismatch' };
+  if (session.accountRef !== provenAccount) return { ok: false, refusal: 'account_mismatch' };
   const expectedMode = order.pricing.billing.kind === 'one_time' ? 'payment' : 'subscription';
-  if (session.mode !== expectedMode) return { ok: false, refusal: 'mode_mismatch' };
+  if (session.mode !== expectedMode || order.creation.request.mode !== expectedMode) return { ok: false, refusal: 'mode_mismatch' };
   if (session.currency !== order.pricing.currency.toLowerCase()) return { ok: false, refusal: 'currency_mismatch' };
   if (session.amountTotal !== order.pricing.amountMinor) return { ok: false, refusal: 'amount_mismatch' };
   if (session.priceRefs.length !== 1 || session.priceRefs[0] !== order.providerPriceRef) return { ok: false, refusal: 'price_mismatch' };
+  if (session.successUrl !== order.creation.request.successUrl || session.cancelUrl !== order.creation.request.cancelUrl) return { ok: false, refusal: 'return_mismatch' };
+  if (Math.floor(Date.parse(session.expiresAt) / 1000) !== order.creation.request.expiresAtUnix) return { ok: false, refusal: 'expiry_mismatch' };
   if (!['paid', 'unpaid'].includes(session.paymentStatus)) return { ok: false, refusal: 'unknown_payment_status' };
   return { ok: true };
+}
+
+/** A session a browser may be sent to: bound, open, unexpired, with an address on one of the processor's own checkout hosts. */
+export function redirectableCheckout(session: ProcessorSession, order: ProgramOrder, provenAccount: string, checkoutHosts: readonly string[], now: Date): { ok: true; url: string; expiresAt: string } | { ok: false; refusal: VerificationRefusal | 'not_open' | 'expired' | 'no_address' | 'foreign_address' } {
+  const bound = verifySessionAgainstOrder(session, order, provenAccount);
+  if (!bound.ok) return bound;
+  if (session.status !== 'open') return { ok: false, refusal: 'not_open' };
+  if (Date.parse(session.expiresAt) <= now.getTime()) return { ok: false, refusal: 'expired' };
+  if (!session.url) return { ok: false, refusal: 'no_address' };
+  let url: URL;
+  try { url = new URL(session.url); } catch { return { ok: false, refusal: 'foreign_address' }; }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || !checkoutHosts.includes(url.hostname)) return { ok: false, refusal: 'foreign_address' };
+  return { ok: true, url: url.toString(), expiresAt: session.expiresAt };
+}
+
+/**
+ * What the retrieved object says happened, independent of which event asked: open, expired,
+ * verified (complete and paid), processing (complete, unpaid, the payment not decided), or failed
+ * (complete, unpaid, and the payment intent says it will not succeed). A generic unpaid status is
+ * never a grant and never, on its own, a failure.
+ */
+export type PaymentObservation = 'open' | 'expired' | 'verified' | 'processing' | 'failed';
+export function observePayment(session: ProcessorSession): PaymentObservation {
+  if (session.status === 'open') return 'open';
+  if (session.status === 'expired') return 'expired';
+  if (session.paymentStatus === 'paid') return session.paymentIntentStatus === null || session.paymentIntentStatus === 'succeeded' ? 'verified' : 'processing';
+  if (session.paymentIntentStatus === 'requires_payment_method' || session.paymentIntentStatus === 'canceled') return 'failed';
+  return 'processing';
 }

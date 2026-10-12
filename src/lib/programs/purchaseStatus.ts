@@ -9,7 +9,7 @@ import { formatAmount } from '@/contracts/programOffers';
  * is a failure and not an empty list (the panel decides that from the read, not from here).
  */
 export type PurchaseRowKind =
-  | 'checkout_open' | 'checkout_unresolved' | 'checkout_closed' | 'payment_failed' | 'order_refused'
+  | 'checkout_open' | 'checkout_unresolved' | 'checkout_unconfirmed' | 'checkout_closed' | 'payment_processing' | 'payment_failed' | 'order_refused'
   | 'paid_not_fulfilled' | 'pending_account' | 'claim_expired' | 'access_active' | 'access_expired'
   | 'held_refund' | 'held_dispute' | 'held_policy' | 'revoked';
 
@@ -30,7 +30,9 @@ export type PurchaseRow = {
 export const PURCHASE_ROW_WORDS: Record<PurchaseRowKind, string> = {
   checkout_open: 'Checkout started; no payment confirmed yet.',
   checkout_unresolved: 'Checkout could not be completed cleanly; nothing was charged here, and the next start reconciles it.',
+  checkout_unconfirmed: 'The processor could not confirm whether this checkout was opened, and its idempotency record has lapsed; held for an operator. It cannot take a payment.',
   checkout_closed: 'Checkout expired or was cancelled; nothing was charged.',
+  payment_processing: 'The purchaser completed the checkout and the payment is still processing (a delayed payment method). Nothing is granted until the processor confirms it.',
   payment_failed: 'The processor reported the payment as not completed; nothing was granted.',
   order_refused: 'The checkout was refused before any charge.',
   paid_not_fulfilled: 'Payment verified by the processor, but no access has been prepared yet. The settlement worker retries this; if it stays here, the store or the account binding is the problem.',
@@ -55,8 +57,10 @@ export function purchaseRows(input: { orders: ProgramOrder[]; entitlements: Prog
     });
     if (!entitlement) {
       switch (order.state) {
-        case 'admitted': case 'checkout_open': return row('checkout_open', order.updatedAt);
+        case 'admitted': case 'creation_pending': case 'checkout_open': return row('checkout_open', order.updatedAt);
         case 'creation_unresolved': return row('checkout_unresolved', order.updatedAt);
+        case 'creation_unreconciled': return row('checkout_unconfirmed', order.updatedAt);
+        case 'payment_processing': return row('payment_processing', order.updatedAt);
         case 'checkout_expired': case 'checkout_cancelled': return row('checkout_closed', order.updatedAt);
         case 'payment_failed': return row('payment_failed', order.updatedAt);
         case 'refused': return row('order_refused', order.updatedAt);

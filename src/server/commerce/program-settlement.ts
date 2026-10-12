@@ -35,9 +35,18 @@ export type SettlementDependencies = {
   now?: () => Date;
 };
 
+/**
+ * What happened to the hand-off of a new claim to delivery: `none` when this call created nothing
+ * (the receipt existed), `not_configured` when no delivery exists in this process, `handed_off`
+ * when the delivery dependency accepted it, `failed` when it threw. A hand-off is not a delivery:
+ * nothing here may say a code was sent. Durable delivery and recovery are work package 2.
+ */
+export type DeliveryHandOff = 'none' | 'not_configured' | 'handed_off' | 'failed';
 export type SettlementOutcome =
-  | { settled: true; receipt: SettlementReceipt; /** Present only when this call created the entitlement; the one copy of the token that ever exists. */ claimToken: string | null }
+  | { settled: true; receipt: SettlementReceipt; /** Present only when this call created the entitlement; the one copy of the token that ever exists. */ claimToken: string | null; delivery: DeliveryHandOff }
   | { settled: false; reason: 'order_not_verified' | 'payment_not_paid' | 'account_mismatch' | 'mode_mismatch' | 'store_unavailable' };
+/** The worker's view of one settlement pass: the outcomes, or the plain fact that the backlog could not be read. */
+export type SettlementPass = { ok: true; outcomes: SettlementOutcome[] } | { ok: false; reason: 'backlog_unavailable' };
 
 export const hashClaimToken = (token: string) => createHash('sha256').update('claim:' + token).digest('hex');
 export const newClaimToken = () => randomBytes(32).toString('base64url');
@@ -51,19 +60,24 @@ export function createProgramSettlement(deps: SettlementDependencies) {
       const expiresAt = new Date(now().getTime() + CLAIM_VALIDITY_DAYS * 86_400_000).toISOString();
       try {
         const receipt = await deps.ledger.settle(order as never, hashClaimToken(token), expiresAt, deps.expectedAccountRef);
-        if (receipt.created && deps.deliver) await deps.deliver({ orderId: receipt.entitlement.orderId, entitlementId: receipt.entitlement.entitlementId, claimToken: token, expiresAt }).catch(() => undefined);
-        return { settled: true, receipt, claimToken: receipt.created ? token : null };
+        let delivery: DeliveryHandOff = 'none';
+        if (receipt.created) {
+          if (!deps.deliver) delivery = 'not_configured';
+          else delivery = await deps.deliver({ orderId: receipt.entitlement.orderId, entitlementId: receipt.entitlement.entitlementId, claimToken: token, expiresAt }).then(() => 'handed_off' as const, () => 'failed' as const);
+        }
+        return { settled: true, receipt, claimToken: receipt.created ? token : null, delivery };
       } catch (error) {
         if (error instanceof EducationLedgerError && error.category === 'settlement_refused') return { settled: false, reason: (error.detail as Exclude<Extract<SettlementOutcome, { settled: false }>['reason'], 'store_unavailable'>) ?? 'order_not_verified' };
         return { settled: false, reason: 'store_unavailable' };
       }
     },
-    /** The recovery worker: every verified, unsettled order gets one settlement attempt. */
-    async settleDue(limit = 25): Promise<SettlementOutcome[]> {
-      const due = await deps.ledger.unsettledOrders(limit).catch(() => []);
+    /** The recovery worker: every verified, unsettled order gets one settlement attempt. An unreadable backlog is said, never "no work". */
+    async settleDue(limit = 25): Promise<SettlementPass> {
+      let due: { orderId: string }[];
+      try { due = await deps.ledger.unsettledOrders(limit); } catch { return { ok: false, reason: 'backlog_unavailable' }; }
       const outcomes: SettlementOutcome[] = [];
       for (const order of due) outcomes.push(await api.settleOrder(order));
-      return outcomes;
+      return { ok: true, outcomes };
     },
     /** A verified consumer presents the one-time token. The subject comes from the verified identity, never from the body. */
     async claim(consumerSubject: string, token: string): Promise<{ outcome: 'claimed'; entitlement: ProgramEntitlement } | { outcome: 'refused'; reason: ClaimRefusal }> {

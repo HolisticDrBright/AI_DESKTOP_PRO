@@ -7,7 +7,7 @@ import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from '../cli
 import { classifyDatabaseRejection } from '../clinical-core/rds-data-database';
 import { PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256 } from './program-commerce-activation';
 import { createSqlProgramOfferLedger } from './program-offer-ledger-sql';
-import { PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, createSqlCheckoutLedger } from './program-checkout-ledger-sql';
+import { PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256, PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, createSqlCheckoutLedger } from './program-checkout-ledger-sql';
 import { PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256, createSqlEducationLedger } from './program-education-ledger-sql';
 import { EducationLedgerError } from './program-education-ledger';
 import { createProgramCheckout } from './program-checkout';
@@ -27,6 +27,7 @@ import { educationAccessView } from '../../contracts/programEducationAccess';
  */
 const OFFER = 'infra/aws-clinical-core/source-candidates/program-offer-revisions.sql';
 const CHECKOUT = 'infra/aws-clinical-core/source-candidates/program-checkout-orders.sql';
+const CHECKOUT_RECOVERY = 'infra/aws-clinical-core/source-candidates/program-checkout-recovery.sql';
 const CANDIDATE = 'infra/aws-clinical-core/source-candidates/program-education-access.sql';
 const sha = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const id = (n: number) => '62000000-0000-4000-8000-' + String(n).padStart(12, '0');
@@ -46,7 +47,7 @@ const database: ClinicalCoreDatabase = { transaction: work => db.transaction(asy
 }) };
 const evidence = () => ({ contract: 'program-commerce-activation/1', enabled: true, target: 'synthetic-staging', schemaCandidateSha256: PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256, evidenceSha256: 'e'.repeat(64), reviewedBy: 'FICTIONAL REVIEW FIXTURE', reviewedAt: '2026-10-11T00:00:00Z' });
 const offers = createSqlProgramOfferLedger({ database, activation: evidence(), identity: (actor: OfferActor) => ({ identityPool: 'workforce', identitySubject: 'wf:' + actor.personId }) });
-const orders = createSqlCheckoutLedger({ database, activation: evidence(), checkoutCandidateSha256: PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 });
+const orders = createSqlCheckoutLedger({ database, activation: evidence(), checkoutCandidateSha256: PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, checkoutRecoveryCandidateSha256: PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256 });
 const education = (educationSha = PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256, activation: unknown = evidence()) => createSqlEducationLedger({ database, activation, checkoutCandidateSha256: PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, educationCandidateSha256: educationSha });
 const me: OfferActor = { personId: staff, organizationId: org };
 const expected = { accountRef: 'acct_FictionalAccount1', apiVersion: '2025-08-27.basil' };
@@ -84,6 +85,8 @@ beforeAll(async () => {
   for (const { file } of manifest.migrations) await db.exec(readFileSync('infra/aws-clinical-core/migrations/' + file, 'utf8'));
   await db.exec(readFileSync(OFFER, 'utf8'));
   await db.exec(readFileSync(CHECKOUT, 'utf8'));
+  expect(sha(CHECKOUT_RECOVERY)).toBe(PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256);
+  await db.exec(readFileSync(CHECKOUT_RECOVERY, 'utf8'));
   await db.exec(candidate);
   await db.query('insert into clinical_core.organizations(id,synthetic_label) values($1,$2)', [org, 'Fictional A']);
   await db.query('insert into clinical_core.persons(id,synthetic_subject_key) values($1,$2)', [staff, 'syn_' + staff.replaceAll('-', '')]);

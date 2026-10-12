@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  MAX_INTAKE_ATTEMPTS, ORDER_TRANSITIONS, PROGRAM_CHECKOUT_CONTRACT, intakeRecord, programOrder,
+  INTAKE_STATES, MAX_INTAKE_ATTEMPTS, OPEN_ORDER_STATES, ORDER_STATES, ORDER_TRANSITIONS, PROGRAM_CHECKOUT_CONTRACT, intakeRecord, programOrder,
   type IntakeRecord, type IntakeState, type OrderState, type ProgramOrder,
 } from '../../contracts/programCheckout';
 import type { PurchaseAvailability } from '../../contracts/programOffers';
@@ -15,6 +15,7 @@ import type { PurchaseAvailability } from '../../contracts/programOffers';
  *     repeated start from the same browser finds the same order;
  *   - every change raises the order revision and follows ORDER_TRANSITIONS; the snapshot, the
  *     subject binding and the identity columns are immutable;
+ *   - the complete creation request is recorded once, before anything is sent, and never changes;
  *   - a processor binding is recorded once, with the return destinations the server chose;
  *   - verification is recorded once, from the authoritative object, with the event that caused it;
  *   - intake is deduplicated by event id, admitted before acknowledgement, and processed under a
@@ -37,13 +38,25 @@ export type OrderAdmission = {
 
 export type IntakeAdmission = Pick<IntakeRecord, 'eventId' | 'eventType' | 'bodySha256' | 'accountRef' | 'apiVersion' | 'sessionRef'>;
 
+/** What an operator (and the worker) sees of the work this ledger holds: counts by state, and the oldest unresolved item. */
+export type CheckoutWorkStatus = {
+  orders: Record<OrderState, number>;
+  intake: Record<IntakeState, number>;
+  oldestUnresolvedAt: string | null;
+};
+export type OrderCarry = { creation?: ProgramOrder['creation']; processor?: ProgramOrder['processor']; verification?: ProgramOrder['verification'] };
+
 export interface ProgramCheckoutLedger {
   /** Admit a new order, or return the still-open order the same attempt key already admitted for this offer revision. */
   admitOrder(admission: OrderAdmission): Promise<{ order: ProgramOrder; reused: boolean }>;
   readOrder(orderId: string): Promise<ProgramOrder | null>;
   findOrderBySession(sessionRef: string): Promise<ProgramOrder | null>;
   /** Move an order to a new state at an expected revision, recording the processor binding or verification the step carries. */
-  transition(orderId: string, expectedRevision: number, next: OrderState, carry?: { processor?: ProgramOrder['processor']; verification?: ProgramOrder['verification'] }): Promise<ProgramOrder>;
+  transition(orderId: string, expectedRevision: number, next: OrderState, carry?: OrderCarry): Promise<ProgramOrder>;
+  /** Orders in the given states, oldest change first, bounded; the worker's reconciliation list. */
+  ordersInStates(states: readonly OrderState[], limit: number): Promise<ProgramOrder[]>;
+  /** Counts for the operator status. A failure to read is an error, never zeros. */
+  workStatus(): Promise<CheckoutWorkStatus>;
   /** Durable intake before acknowledgement; a repeated event id is a recorded duplicate. */
   admitIntake(admission: IntakeAdmission): Promise<{ record: IntakeRecord; duplicate: boolean }>;
   readIntake(eventId: string): Promise<IntakeRecord | null>;
@@ -67,14 +80,14 @@ export function createFictionalCheckoutLedger(options: FictionalCheckoutLedgerOp
     reset() { orders.clear(); intake.clear(); history.length = 0; },
     async admitOrder(admission) {
       fault('admitOrder');
-      const open = [...orders.values()].find(o => o.attemptKeyHash === admission.attemptKeyHash && o.offerId === admission.offer.offerId && o.offerRevision === admission.offer.revision && ['admitted', 'checkout_open', 'creation_unresolved'].includes(o.state));
+      const open = [...orders.values()].find(o => o.attemptKeyHash === admission.attemptKeyHash && o.offerId === admission.offer.offerId && o.offerRevision === admission.offer.revision && (OPEN_ORDER_STATES as readonly string[]).includes(o.state));
       if (open) return { order: structuredClone(open), reused: true };
       const at = stamp();
       const order = programOrder.parse({
         contract: PROGRAM_CHECKOUT_CONTRACT, orderId: randomUUID(), organizationId: admission.organizationId, programId: admission.programId,
         offerId: admission.offer.offerId, offerRevision: admission.offer.revision, funnelSlug: admission.funnelSlug, curriculum: admission.offer.curriculum, pricing: admission.offer.pricing,
         providerPriceRef: admission.providerPriceRef, accessTermsVersion: admission.offer.accessTermsVersion, accessDurationDays: admission.offer.accessDurationDays,
-        attemptKeyHash: admission.attemptKeyHash, subject: { kind: 'unclaimed' }, state: 'admitted', revision: 1, processor: null, verification: null, createdAt: at, updatedAt: at,
+        attemptKeyHash: admission.attemptKeyHash, subject: { kind: 'unclaimed' }, state: 'admitted', revision: 1, creation: null, processor: null, verification: null, createdAt: at, updatedAt: at,
       });
       orders.set(order.orderId, order); history.push(structuredClone(order));
       return { order: structuredClone(order), reused: false };
@@ -87,13 +100,32 @@ export function createFictionalCheckoutLedger(options: FictionalCheckoutLedgerOp
       if (!order) throw new CheckoutLedgerError('order_not_found');
       if (order.revision !== expectedRevision) throw new CheckoutLedgerError('revision_stale');
       if (!ORDER_TRANSITIONS[order.state].includes(next)) throw new CheckoutLedgerError('transition_refused');
+      if (carry.creation && (order.creation || next !== 'creation_pending')) throw new CheckoutLedgerError('transition_refused');
+      if (next === 'creation_pending' && !carry.creation) throw new CheckoutLedgerError('transition_refused');
       if (carry.processor && order.processor) throw new CheckoutLedgerError('transition_refused');
       if (carry.verification && order.verification) throw new CheckoutLedgerError('transition_refused');
       if (next === 'checkout_open' && !(carry.processor ?? order.processor)) throw new CheckoutLedgerError('transition_refused');
       if ((next === 'payment_verified' || next === 'payment_failed') && !carry.verification) throw new CheckoutLedgerError('transition_refused');
-      const updated = programOrder.parse({ ...order, state: next, revision: order.revision + 1, processor: carry.processor ?? order.processor, verification: carry.verification ?? order.verification, updatedAt: stamp() });
+      if (carry.verification && next !== 'payment_verified' && next !== 'payment_failed') throw new CheckoutLedgerError('transition_refused');
+      const updated = programOrder.parse({ ...order, state: next, revision: order.revision + 1, creation: carry.creation ?? order.creation, processor: carry.processor ?? order.processor, verification: carry.verification ?? order.verification, updatedAt: stamp() });
       orders.set(orderId, updated); history.push(structuredClone(updated));
       return structuredClone(updated);
+    },
+    async ordersInStates(states, limit) {
+      fault('ordersInStates');
+      return [...orders.values()].filter(o => states.includes(o.state)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(0, Math.max(1, Math.min(limit, 100))).map(o => structuredClone(o));
+    },
+    async workStatus() {
+      fault('workStatus');
+      const orderCounts = Object.fromEntries(ORDER_STATES.map(state => [state, 0])) as Record<OrderState, number>;
+      for (const order of orders.values()) orderCounts[order.state] += 1;
+      const intakeCounts = Object.fromEntries(INTAKE_STATES.map(state => [state, 0])) as Record<IntakeState, number>;
+      for (const record of intake.values()) intakeCounts[record.state] += 1;
+      const unresolved = [
+        ...[...orders.values()].filter(o => ['creation_pending', 'creation_unresolved', 'creation_unreconciled', 'payment_processing'].includes(o.state)).map(o => o.updatedAt),
+        ...[...intake.values()].filter(r => ['pending', 'failed_retryable', 'exhausted', 'conflict'].includes(r.state)).map(r => r.receivedAt),
+      ].sort();
+      return { orders: orderCounts, intake: intakeCounts, oldestUnresolvedAt: unresolved[0] ?? null };
     },
     async admitIntake(admission) {
       fault('admitIntake');

@@ -77,11 +77,13 @@ describe('a consultation and a purchase racing', () => {
       requestConsultation(),
     ]);
     await Promise.all([checkout.processEvent('evt_b'), checkout.processEvent('evt_a')]);
-    const outcomes = await Promise.all([settlement.settleDue(), settlement.settleOrder(order), settlement.settleDue(), settlement.settleOrder(order)]);
+    const passes = await Promise.all([settlement.settleDue(), settlement.settleOrder(order), settlement.settleDue(), settlement.settleOrder(order)]);
+    // A worker pass is its outcomes, or the fact that the backlog could not be read; here it always could.
+    const outcomes = passes.flatMap(pass => ('ok' in pass ? (pass.ok ? pass.outcomes : [expect.fail('backlog unreadable')]) : [pass]));
     expect(ledger.orders.get(order.orderId)!.state).toBe('payment_verified');
     expect(education.entitlements.size).toBe(1);
     expect(education.enrollments.size).toBe(0);
-    expect(outcomes.flat().filter(o => o.settled && o.claimToken).length).toBe(1);
+    expect(outcomes.filter(o => o.settled && o.claimToken).length).toBe(1);
     expect(consultRequests).toEqual(['requested', 'requested']);
     // Nothing in the commercial stores names a consultation, a clinic connection, a patient or a protocol.
     const everything = JSON.stringify({ orders: [...ledger.orders.values()], entitlements: [...education.entitlements.values()], events: education.events });

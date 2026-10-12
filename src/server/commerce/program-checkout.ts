@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
-  CHECKOUT_HOLD_EXPLANATIONS, HANDLED_EVENT_TYPES, allowedReturnUrl, returnDestinations, verifySessionAgainstOrder,
-  type CheckoutHoldReason, type IntakeRecord, type ProcessorSession, type ProgramOrder,
+  CHECKOUT_HOLD_EXPLANATIONS, HANDLED_EVENT_TYPES, OPEN_ORDER_STATES, ORDER_TRANSITIONS, checkoutCreation, encodeCreationRequest, observePayment, redirectableCheckout, returnDestinations, verifySessionAgainstOrder,
+  type CheckoutCreation, type CheckoutHoldReason, type IntakeRecord, type OrderState, type ProcessorSession, type ProgramOrder,
 } from '../../contracts/programCheckout';
 import { PURCHASE_HOLD_EXPLANATIONS, type PurchaseHoldReason } from '../../contracts/programOffers';
 import type { VerifiedEvent } from '../stripe-boundary';
-import { CheckoutLedgerError, type ProgramCheckoutLedger } from './program-checkout-ledger';
-import { ProcessorError, type ProgramCheckoutProcessor } from './program-checkout-processor';
+import { CheckoutLedgerError, type OrderCarry, type ProgramCheckoutLedger } from './program-checkout-ledger';
+import { ProcessorError, creationOutcomeKnown, type ProgramCheckoutProcessor } from './program-checkout-processor';
 import type { ProgramOfferLedger } from './program-offer-ledger';
 
 /**
@@ -15,17 +15,22 @@ import type { ProgramOfferLedger } from './program-offer-ledger';
  *
  * Start: the server resolves the offer and its terms itself (the browser named a page, nothing
  * more); refuses while the offer is unavailable, the public origin is unconfigured or the processor
- * is disabled; admits the order durably with its terms snapshot BEFORE creating anything outbound;
- * creates the hosted session under an idempotency key derived from the order; records the binding;
- * and answers the processor's URL. A repeated start from the same browser reuses the open order and
- * its session; a lost creation reply leaves the order `creation_unresolved`, which the next start
- * reconciles by the idempotency key rather than creating a second charge.
+ * is disabled; admits the order durably with its terms snapshot; records the COMPLETE creation
+ * request (parameters, digest, destinations, expiry, key) durably; and only then sends exactly that
+ * request. Every later attempt for the same order sends the same saved bytes under the same key, so
+ * the processor answers the first session; a fresh clock never re-derives a field. An outcome the
+ * processor cannot prove after its idempotency retention is a visible operator hold, never a second
+ * key. Every session, new, reused, concurrent or reconciled, passes one binding against the saved
+ * order (proven account, test mode, identity, price, amount, currency, billing mode, return
+ * addresses, expiry) before it is recorded or a browser is sent anywhere.
  *
- * Intake: an event is admitted durably by id, and acknowledged only then; processing runs after,
- * bounded, retryable and visible. Unknown event shapes are recorded `unhandled`, never fulfilled.
- * A handled event names a session; the AUTHORITATIVE session is retrieved from the processor and
- * bound to the saved order, offer, amount, currency, mode, account and price before the order moves.
- * A browser redirect never moves an order at all.
+ * Intake: an event is admitted durably by id and acknowledged; nothing is processed in the request.
+ * A bounded worker (program-commerce-worker.ts) processes admitted intake: the AUTHORITATIVE session
+ * is retrieved and bound, and what it says (open, expired, processing, verified, failed) decides the
+ * order, never which event arrived first. A duplicate or reversed event converges on the same
+ * receipt; an observation that contradicts a decided order is a visible `conflict`, never applied.
+ * Processor calls happen between ledger calls, never inside a ledger transaction. A browser
+ * redirect never moves an order at all.
  */
 export type CheckoutDependencies = {
   offers: ProgramOfferLedger;
@@ -48,92 +53,228 @@ const hold = (reason: PurchaseHoldReason | CheckoutHoldReason): CheckoutStart =>
 export const hashAttemptKey = (attemptKey: string) => createHash('sha256').update('attempt:' + attemptKey).digest('hex');
 export const idempotencyKeyFor = (orderId: string) => `program-order:${orderId}`;
 
+/** The complete creation request for an order, computed ONCE from the clock and the origin at the moment it is recorded. */
+export function buildCreation(order: ProgramOrder, origin: string, now: Date, sessionMinutes: number): CheckoutCreation | null {
+  const destinations = returnDestinations(origin, order.orderId);
+  if (!destinations) return null;
+  const request = {
+    mode: order.pricing.billing.kind === 'one_time' ? 'payment' as const : 'subscription' as const,
+    priceRef: order.providerPriceRef, quantity: 1 as const,
+    successUrl: destinations.success, cancelUrl: destinations.cancel,
+    clientReferenceId: order.orderId, metadataOrderId: order.orderId,
+    expiresAtUnix: Math.floor(now.getTime() / 1000) + sessionMinutes * 60,
+  };
+  return checkoutCreation.parse({ idempotencyKey: idempotencyKeyFor(order.orderId), request, requestSha256: createHash('sha256').update(encodeCreationRequest(request)).digest('hex'), recordedAt: now.toISOString() });
+}
+
+/** What one reconciliation of an order did; the worker reports these, and nothing is swallowed. */
+export type OrderReconciliation =
+  | { orderId: string; outcome: 'open' | 'expired' | 'processing' | 'verified' | 'failed' | 'unchanged' | 'unreconciled' | 'refused' }
+  | { orderId: string; outcome: 'retry'; detail: string };
+
 export function createProgramCheckout(deps: CheckoutDependencies) {
   const now = deps.now ?? (() => new Date());
   const minutes = deps.sessionMinutes ?? 30;
+  /** How many times one start may restart after a decided order (expired, refused) before it says so instead. */
+  const MAX_RESTARTS = 1;
 
-  async function bindSession(order: ProgramOrder, session: ProcessorSession, origin: string): Promise<ProgramOrder> {
-    const destinations = returnDestinations(origin, order.orderId)!;
-    const processor = { provider: 'stripe' as const, mode: 'test' as const, sessionRef: session.sessionRef, expiresAt: session.expiresAt, returnSuccess: destinations.success, returnCancel: destinations.cancel };
-    return deps.ledger.transition(order.orderId, order.revision, 'checkout_open', { processor });
+  /** The account the processor credential proves, or null when it cannot be proven or is not the configured one. */
+  async function provenAccount(): Promise<string | null> {
+    try {
+      const authority = await deps.processor!.authority();
+      return authority.livemode === false && authority.accountRef === deps.processor!.accountRef ? authority.accountRef : null;
+    } catch { return null; }
   }
 
-  /** Another start for the same browser may have opened this order meanwhile; answer with its session rather than a second one. */
-  async function openedMeanwhile(orderId: string): Promise<CheckoutStart | null> {
-    const current = await deps.ledger.readOrder(orderId).catch(() => null);
-    if (!current || current.state !== 'checkout_open' || !current.processor) return null;
-    try { const session = await deps.processor!.retrieveSession(current.processor.sessionRef); return { started: true, orderId, checkoutUrl: session.url, expiresAt: session.expiresAt, reused: true }; }
-    catch { return hold('processor_unavailable'); }
-  }
-
-  async function createOrReconcile(order: ProgramOrder, origin: string): Promise<CheckoutStart> {
-    const processor = deps.processor!;
-    const destinations = returnDestinations(origin, order.orderId)!;
-    const key = idempotencyKeyFor(order.orderId);
-    let session: ProcessorSession | null = null;
-    if (order.state === 'creation_unresolved') {
-      try { session = await processor.findSessionByIdempotencyKey(key); } catch { return hold('processor_unavailable'); }
+  /**
+   * One transition that is never swallowed: the order it produced, or the order a peer produced first
+   * when that peer already reached the same state, or a typed failure the caller turns into a hold.
+   */
+  async function move(order: ProgramOrder, next: OrderState, carry: OrderCarry = {}): Promise<{ ok: true; order: ProgramOrder; converged: boolean } | { ok: false; reason: 'store' | 'conflict'; current: ProgramOrder | null }> {
+    try { return { ok: true, order: await deps.ledger.transition(order.orderId, order.revision, next, carry), converged: false }; }
+    catch (error) {
+      if (!(error instanceof CheckoutLedgerError) || (error.category !== 'revision_stale' && error.category !== 'transition_refused')) return { ok: false, reason: 'store', current: null };
+      let current: ProgramOrder | null;
+      try { current = await deps.ledger.readOrder(order.orderId); } catch { return { ok: false, reason: 'store', current: null }; }
+      if (current && current.state === next) return { ok: true, order: current, converged: true };
+      return { ok: false, reason: 'conflict', current };
     }
-    if (!session) {
-      try {
-        session = await processor.createSession({ orderId: order.orderId, providerPriceRef: order.providerPriceRef, pricing: order.pricing, successUrl: destinations.success, cancelUrl: destinations.cancel, idempotencyKey: key, expiresAt: new Date(now().getTime() + minutes * 60_000).toISOString() });
-      } catch (error) {
-        const failure = error instanceof ProcessorError ? error.failure : 'unavailable';
-        if (failure === 'lost_response' || failure === 'timeout') {
-          // The processor may hold a session for this key now; the order says so and the next start reconciles it.
-          if (order.state === 'admitted') await deps.ledger.transition(order.orderId, order.revision, 'creation_unresolved').catch(() => undefined);
-          return hold('processor_unavailable');
-        }
-        if (failure === 'refused') {
-          if (order.state === 'admitted') await deps.ledger.transition(order.orderId, order.revision, 'refused').catch(() => undefined);
-          return hold('processor_refused');
-        }
-        return hold('processor_unavailable');
+  }
+
+  /** Send the saved creation request (first time or replay), bind what comes back, and answer a redirect or a hold. */
+  async function sendSaved(order: ProgramOrder, account: string): Promise<{ result: CheckoutStart; order: ProgramOrder | null }> {
+    const creation = order.creation!;
+    const sentLongAgo = now().getTime() - Date.parse(creation.recordedAt) > deps.processor!.idempotencyRetentionHours * 3_600_000;
+    if (order.state === 'creation_unresolved' || order.state === 'creation_unreconciled') {
+      if (Date.parse(new Date(creation.request.expiresAtUnix * 1000).toISOString()) <= now().getTime()) {
+        // Whatever the processor may hold for this request has expired: it can take no payment, so the order closes.
+        const closed = await move(order, 'checkout_expired');
+        return { result: closed.ok ? hold('attempt_in_progress') : hold('order_store_unavailable'), order: closed.ok ? closed.order : null };
+      }
+      if (sentLongAgo) {
+        // Beyond the processor's retention a replay could create a second session; nobody can prove whether the first exists.
+        if (order.state === 'creation_unresolved') { const held = await move(order, 'creation_unreconciled'); if (!held.ok) return { result: hold('order_store_unavailable'), order: null }; }
+        return { result: hold('checkout_unconfirmed'), order: null };
       }
     }
-    // The reply is checked before it is trusted: not live, our account, our order, our price, our destinations.
-    if (session.livemode || session.accountRef !== processor.accountRef || session.clientReferenceId !== order.orderId || session.metadata.order_id !== order.orderId || Object.keys(session.metadata).length !== 1
-      || session.priceRefs.length !== 1 || session.priceRefs[0] !== order.providerPriceRef || !allowedReturnUrl(destinations.success, origin) || !allowedReturnUrl(destinations.cancel, origin)) {
-      await deps.ledger.transition(order.orderId, order.revision, 'refused').catch(() => undefined);
-      return hold('processor_refused');
+    let session: ProcessorSession;
+    try { session = await deps.processor!.createSession(creation); }
+    catch (error) {
+      const failure = error instanceof ProcessorError ? error.failure : 'unavailable';
+      if (creationOutcomeKnown(failure)) {
+        const refused = await move(order, 'refused');
+        return { result: refused.ok ? hold('processor_refused') : hold('order_store_unavailable'), order: null };
+      }
+      if (failure === 'idempotency_mismatch') {
+        // This source only ever sends the saved bytes; a mismatch means the key's history is not ours to explain. Held, never re-keyed.
+        let current = order;
+        if (current.state === 'creation_pending') { const unresolved = await move(current, 'creation_unresolved'); if (!unresolved.ok) return { result: hold('order_store_unavailable'), order: null }; current = unresolved.order; }
+        if (current.state === 'creation_unresolved') { const held = await move(current, 'creation_unreconciled'); if (!held.ok) return { result: hold('order_store_unavailable'), order: null }; }
+        return { result: hold('checkout_unconfirmed'), order: null };
+      }
+      if (order.state === 'creation_pending') { const unresolved = await move(order, 'creation_unresolved'); if (!unresolved.ok) return { result: hold('order_store_unavailable'), order: null }; }
+      return { result: hold('processor_unavailable'), order: null };
     }
+    const bound = verifySessionAgainstOrder(session, order, account);
+    if (!bound.ok) {
+      const refused = await move(order, 'refused');
+      return { result: refused.ok ? hold('processor_refused') : hold('order_store_unavailable'), order: null };
+    }
+    const processor = { provider: 'stripe' as const, mode: 'test' as const, sessionRef: session.sessionRef, expiresAt: session.expiresAt, returnSuccess: creation.request.successUrl, returnCancel: creation.request.cancelUrl };
+    const opened = await move(order, 'checkout_open', { processor });
+    if (!opened.ok) {
+      // A peer bound a session first: answer with it only if it is the same session (same key, same request).
+      if (opened.reason === 'conflict' && opened.current?.state === 'checkout_open' && opened.current.processor?.sessionRef === session.sessionRef) return redirectTo(opened.current, session, account, true);
+      return { result: opened.reason === 'store' ? hold('order_store_unavailable') : hold('attempt_in_progress'), order: null };
+    }
+    return redirectTo(opened.order, session, account, opened.converged);
+  }
+
+  function redirectTo(order: ProgramOrder, session: ProcessorSession, account: string, reused: boolean): { result: CheckoutStart; order: ProgramOrder } {
+    const checked = redirectableCheckout(session, order, account, deps.processor!.checkoutHosts, now());
+    if (!checked.ok) return { result: checked.refusal === 'not_open' ? hold('attempt_in_progress') : hold('processor_refused'), order };
+    return { result: { started: true, orderId: order.orderId, checkoutUrl: checked.url, expiresAt: checked.expiresAt, reused }, order };
+  }
+
+  /** One step for an order the visitor's attempt key owns; `restarts` bounds how often a decided order leads to a new admission. */
+  async function proceed(input: StartInput, order: ProgramOrder, reused: boolean, restarts: number): Promise<CheckoutStart> {
+    const account = await provenAccount();
+    if (!account) return hold('processor_refused');
+    switch (order.state) {
+      case 'admitted': {
+        const creation = buildCreation(order, deps.publicOrigin!, now(), minutes);
+        if (!creation) return hold('return_origin_unconfigured');
+        const recorded = await move(order, 'creation_pending', { creation });
+        if (!recorded.ok) {
+          // A peer recorded the creation first: send ITS saved request, not ours.
+          if (recorded.reason === 'conflict' && recorded.current && (OPEN_ORDER_STATES as readonly string[]).includes(recorded.current.state)) return proceed(input, recorded.current, true, restarts);
+          return hold('order_store_unavailable');
+        }
+        return (await sendSaved(recorded.order, account)).result;
+      }
+      case 'creation_pending': case 'creation_unresolved': case 'creation_unreconciled': {
+        const sent = await sendSaved(order, account);
+        if (sent.order?.state === 'checkout_expired' && restarts < MAX_RESTARTS) return restart(input, restarts + 1);
+        return sent.result;
+      }
+      case 'checkout_open': {
+        if (!order.processor) return hold('order_store_unavailable');
+        let session: ProcessorSession;
+        try { session = await deps.processor!.retrieveSession(order.processor.sessionRef); } catch { return hold('processor_unavailable'); }
+        const bound = verifySessionAgainstOrder(session, order, account);
+        if (!bound.ok) return hold('processor_refused');
+        if (session.status === 'expired' || Date.parse(session.expiresAt) <= now().getTime()) {
+          const expired = await move(order, 'checkout_expired');
+          if (!expired.ok) return expired.reason === 'store' ? hold('order_store_unavailable') : hold('attempt_in_progress');
+          return restarts < MAX_RESTARTS ? restart(input, restarts + 1) : hold('attempt_in_progress');
+        }
+        if (session.status !== 'open') return hold('attempt_in_progress');
+        return redirectTo(order, session, account, reused).result;
+      }
+      default:
+        return restarts < MAX_RESTARTS ? restart(input, restarts + 1) : hold('attempt_in_progress');
+    }
+  }
+
+  type StartInput = { funnelSlug: string; programBinding: { organizationId: string; programId: string } | null; attemptKey: string };
+  async function admit(input: StartInput): Promise<{ hold: CheckoutStart } | { admitted: { order: ProgramOrder; reused: boolean } }> {
+    const availability = await deps.offers.availability(input.programBinding!.organizationId, input.programBinding!.programId);
+    if (!availability.available) return { hold: hold(availability.reason) };
     try {
-      const bound = await bindSession(order, session, origin);
-      return { started: true, orderId: bound.orderId, checkoutUrl: session.url, expiresAt: session.expiresAt, reused: false };
-    } catch (error) {
-      if (error instanceof CheckoutLedgerError && (error.category === 'revision_stale' || error.category === 'transition_refused')) return (await openedMeanwhile(order.orderId)) ?? hold('attempt_in_progress');
-      throw error;
+      return { admitted: await deps.ledger.admitOrder({ attemptKeyHash: hashAttemptKey(input.attemptKey), funnelSlug: input.funnelSlug, organizationId: input.programBinding!.organizationId, programId: input.programBinding!.programId, offer: availability, providerPriceRef: availability.providerPriceRef }) };
+    } catch { return { hold: hold('order_store_unavailable') }; }
+  }
+  async function restart(input: StartInput, restarts: number): Promise<CheckoutStart> {
+    const next = await admit(input);
+    if ('hold' in next) return next.hold;
+    return proceed(input, next.admitted.order, next.admitted.reused, restarts);
+  }
+
+  /** Bring an order the worker found unresolved forward by exactly one bounded step; no browser is involved. */
+  async function reconcileOrder(order: ProgramOrder): Promise<OrderReconciliation> {
+    if (!deps.processor) return { orderId: order.orderId, outcome: 'retry', detail: 'processor unavailable' };
+    const account = await provenAccount();
+    if (!account) return { orderId: order.orderId, outcome: 'retry', detail: 'processor authority unproven' };
+    if (order.state === 'creation_pending' || order.state === 'creation_unresolved' || order.state === 'creation_unreconciled') {
+      const sent = await sendSaved(order, account);
+      const after = sent.order ?? await deps.ledger.readOrder(order.orderId).catch(() => null);
+      if (!after) return { orderId: order.orderId, outcome: 'retry', detail: 'order unreadable after reconciliation' };
+      return { orderId: order.orderId, outcome: after.state === 'checkout_open' ? 'open' : after.state === 'checkout_expired' ? 'expired' : after.state === 'creation_unreconciled' ? 'unreconciled' : after.state === 'refused' ? 'refused' : 'unchanged' };
     }
+    if (order.state === 'checkout_open' || order.state === 'payment_processing') {
+      let session: ProcessorSession;
+      try { session = await deps.processor.retrieveSession(order.processor!.sessionRef); } catch (error) { return { orderId: order.orderId, outcome: 'retry', detail: `retrieve: ${error instanceof ProcessorError ? error.failure : 'unavailable'}` }; }
+      const applied = await applyObservation(order, session, account, null);
+      return applied.kind === 'applied' ? { orderId: order.orderId, outcome: applied.observation === 'open' ? 'open' : applied.observation } : applied.kind === 'retry' ? { orderId: order.orderId, outcome: 'retry', detail: applied.detail } : { orderId: order.orderId, outcome: 'refused' };
+    }
+    return { orderId: order.orderId, outcome: 'unchanged' };
+  }
+
+  /**
+   * Apply what the retrieved object says to the order. The observation decides; the event that asked
+   * does not. Already there, or a peer got there first with the same evidence: the same receipt.
+   * A decided order the observation contradicts: a conflict, visible and unapplied.
+   */
+  async function applyObservation(order: ProgramOrder, session: ProcessorSession, account: string, eventId: string | null):
+    Promise<{ kind: 'applied'; observation: 'open' | 'expired' | 'processing' | 'verified' | 'failed'; detail: string } | { kind: 'refused'; detail: string } | { kind: 'conflict'; detail: string } | { kind: 'retry'; detail: string }> {
+    const bound = verifySessionAgainstOrder(session, order, account);
+    if (!bound.ok) return { kind: 'refused', detail: `binding: ${bound.refusal}` };
+    const observation = observePayment(session);
+    const target: OrderState | null = observation === 'expired' ? 'checkout_expired' : observation === 'processing' ? 'payment_processing' : observation === 'verified' ? 'payment_verified' : observation === 'failed' ? 'payment_failed' : null;
+    if (target === null) return { kind: 'applied', observation: 'open', detail: 'session still open' };
+    if (order.state === target) return { kind: 'applied', observation, detail: 'already recorded' };
+    // A weaker observation than what is decided is a stale view of the same history, not a contradiction.
+    if (target === 'payment_processing' && (order.state === 'payment_verified' || order.state === 'payment_failed')) return { kind: 'applied', observation, detail: `already decided: ${order.state}` };
+    if (!ORDER_TRANSITIONS[order.state].includes(target)) return { kind: 'conflict', detail: `observed ${observation} while the order is ${order.state}` };
+    const carry: OrderCarry = target === 'payment_verified' || target === 'payment_failed'
+      ? { verification: { eventId, sessionRef: session.sessionRef, amountMinor: session.amountTotal ?? 0, currency: 'USD', paymentStatus: session.paymentStatus, accountRef: session.accountRef, verifiedAt: now().toISOString() } }
+      : {};
+    const moved = await move(order, target, carry);
+    if (moved.ok) return { kind: 'applied', observation, detail: moved.converged ? `converged: ${target}` : target };
+    if (moved.reason === 'store') return { kind: 'retry', detail: 'store: transition not recorded' };
+    // A peer moved the order meanwhile: try once more from what it recorded, and otherwise say what disagrees.
+    if (moved.current && ORDER_TRANSITIONS[moved.current.state].includes(target)) {
+      const again = await move(moved.current, target, carry);
+      if (again.ok) return { kind: 'applied', observation, detail: `after peer: ${target}` };
+      if (again.reason === 'store') return { kind: 'retry', detail: 'store: transition not recorded' };
+    }
+    if (moved.current && target === 'payment_processing' && (moved.current.state === 'payment_verified' || moved.current.state === 'payment_failed')) return { kind: 'applied', observation, detail: `already decided: ${moved.current.state}` };
+    return { kind: 'conflict', detail: `observed ${observation} while the order is ${moved.current?.state ?? 'unreadable'}` };
   }
 
   const api = {
     /** The visitor's start: the page they are on and their browser's attempt key; everything else is the server's. */
-    start: async function start(input: { funnelSlug: string; programBinding: { organizationId: string; programId: string } | null; attemptKey: string }): Promise<CheckoutStart> {
+    async start(input: StartInput): Promise<CheckoutStart> {
       if (!input.programBinding) return hold('program_unbound');
       if (!deps.publicOrigin) return hold('return_origin_unconfigured');
       if (!deps.processor) return hold('checkout_unconfigured');
-      const availability = await deps.offers.availability(input.programBinding.organizationId, input.programBinding.programId);
-      if (!availability.available) return hold(availability.reason);
-      let admitted: { order: ProgramOrder; reused: boolean };
-      try {
-        admitted = await deps.ledger.admitOrder({ attemptKeyHash: hashAttemptKey(input.attemptKey), funnelSlug: input.funnelSlug, organizationId: input.programBinding.organizationId, programId: input.programBinding.programId, offer: availability, providerPriceRef: availability.providerPriceRef });
-      } catch { return hold('order_store_unavailable'); }
-      const { order, reused } = admitted;
-      if (reused && order.state === 'checkout_open' && order.processor) {
-        if (Date.parse(order.processor.expiresAt) <= now().getTime()) {
-          await deps.ledger.transition(order.orderId, order.revision, 'checkout_expired').catch(() => undefined);
-          return api.start(input);
-        }
-        try {
-          const session = await deps.processor.retrieveSession(order.processor.sessionRef);
-          if (session.status === 'open') return { started: true, orderId: order.orderId, checkoutUrl: session.url, expiresAt: session.expiresAt, reused: true };
-          if (session.status === 'expired') { await deps.ledger.transition(order.orderId, order.revision, 'checkout_expired').catch(() => undefined); return api.start(input); }
-          return hold('attempt_in_progress');
-        } catch { return hold('processor_unavailable'); }
-      }
-      try { return await createOrReconcile(order, deps.publicOrigin); }
+      const admitted = await admit(input);
+      if ('hold' in admitted) return admitted.hold;
+      try { return await proceed(input, admitted.admitted.order, admitted.admitted.reused, 0); }
       catch (error) { return error instanceof CheckoutLedgerError ? hold('order_store_unavailable') : hold('processor_unavailable'); }
     },
+
+    reconcileOrder,
 
     /** What a returning browser is told. State only; the redirect proves nothing and changes nothing. */
     async returnStatus(orderId: string): Promise<{ state: ProgramOrder['state'] | 'unknown' }> {
@@ -141,7 +282,7 @@ export function createProgramCheckout(deps: CheckoutDependencies) {
     },
 
     /** Durable intake of a verified event. Returns what the webhook route answers; the route acknowledges only `admitted` or `duplicate`. */
-    async admitEvent(event: VerifiedEvent & { account?: unknown; api_version?: unknown }, rawBody: string, expected: { accountRef: string; apiVersion: string }): Promise<{ outcome: 'admitted' | 'duplicate' | 'refused' | 'store_unavailable'; detail: string }> {
+    async admitEvent(event: VerifiedEvent & { account?: unknown; api_version?: unknown }, rawBody: string | Uint8Array, expected: { accountRef: string; apiVersion: string }): Promise<{ outcome: 'admitted' | 'duplicate' | 'refused' | 'store_unavailable'; detail: string }> {
       const accountRef = typeof event.account === 'string' ? event.account : null;
       const apiVersion = typeof event.api_version === 'string' ? event.api_version : null;
       if (accountRef !== null && accountRef !== expected.accountRef) return { outcome: 'refused', detail: 'account_mismatch' };
@@ -149,7 +290,7 @@ export function createProgramCheckout(deps: CheckoutDependencies) {
       const object = event.data?.object ?? {};
       const sessionRef = typeof object.id === 'string' && /^cs_test_[A-Za-z0-9]{8,200}$/.test(object.id) ? object.id : null;
       try {
-        const { record, duplicate } = await deps.ledger.admitIntake({ eventId: event.id, eventType: event.type, bodySha256: createHash('sha256').update(rawBody, 'utf8').digest('hex'), accountRef, apiVersion, sessionRef });
+        const { record, duplicate } = await deps.ledger.admitIntake({ eventId: event.id, eventType: event.type, bodySha256: createHash('sha256').update(typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : rawBody).digest('hex'), accountRef, apiVersion, sessionRef });
         return { outcome: duplicate ? 'duplicate' : 'admitted', detail: record.state };
       } catch (error) {
         if (error instanceof CheckoutLedgerError && error.category === 'request_invalid') return { outcome: 'refused', detail: 'event_shape' };
@@ -157,7 +298,7 @@ export function createProgramCheckout(deps: CheckoutDependencies) {
       }
     },
 
-    /** One bounded processing attempt for an admitted event; never called before the acknowledgement. */
+    /** One bounded processing attempt for an admitted event; called by the worker, never inside the webhook request. */
     async processEvent(eventId: string): Promise<IntakeRecord> {
       const record = await deps.ledger.readIntake(eventId);
       if (!record) throw new CheckoutLedgerError('order_not_found');
@@ -168,27 +309,19 @@ export function createProgramCheckout(deps: CheckoutDependencies) {
       if (!deps.processor) return deps.ledger.settleIntake(eventId, { state: 'failed_retryable', detail: 'processor unavailable', nextAttemptAt: retryAt() });
       const order = await deps.ledger.findOrderBySession(record.sessionRef);
       if (!order) return deps.ledger.settleIntake(eventId, { state: 'refused', detail: 'no order for session' });
+      const account = await provenAccount();
+      if (!account) return deps.ledger.settleIntake(eventId, { state: 'failed_retryable', detail: 'processor authority unproven', orderId: order.orderId, nextAttemptAt: retryAt() });
       let session: ProcessorSession;
       try { session = await deps.processor.retrieveSession(record.sessionRef); }
       catch (error) {
         const failure = error instanceof ProcessorError ? error.failure : 'unavailable';
         return deps.ledger.settleIntake(eventId, { state: failure === 'refused' ? 'refused' : 'failed_retryable', detail: `retrieve: ${failure}`, orderId: order.orderId, nextAttemptAt: failure === 'refused' ? null : retryAt() });
       }
-      const bound = verifySessionAgainstOrder(session, order, deps.processor.accountRef);
-      if (!bound.ok) return deps.ledger.settleIntake(eventId, { state: 'refused', detail: `binding: ${bound.refusal}`, orderId: order.orderId });
-      const verification = { eventId: record.eventId, sessionRef: session.sessionRef, amountMinor: session.amountTotal ?? 0, currency: 'USD' as const, paymentStatus: session.paymentStatus, accountRef: session.accountRef, verifiedAt: now().toISOString() };
-      const target: ProgramOrder['state'] | null = session.status === 'expired' ? 'checkout_expired' : session.status === 'complete' && session.paymentStatus === 'paid' ? 'payment_verified' : session.status === 'complete' ? 'payment_failed' : null;
-      if (target === null) return deps.ledger.settleIntake(eventId, { state: 'failed_retryable', detail: 'session still open', orderId: order.orderId, nextAttemptAt: retryAt() });
-      if (order.state === target) return deps.ledger.settleIntake(eventId, { state: 'processed', detail: 'already settled by an earlier event', orderId: order.orderId });
-      try {
-        await deps.ledger.transition(order.orderId, order.revision, target, target === 'checkout_expired' ? {} : { verification });
-        return deps.ledger.settleIntake(eventId, { state: 'processed', detail: target, orderId: order.orderId });
-      } catch (error) {
-        const category = error instanceof CheckoutLedgerError ? error.category : 'store_unavailable';
-        // A terminal order that disagrees with the event is a decided conflict, recorded and visible; a store fault is retried.
-        if (category === 'transition_refused' || category === 'revision_stale') return deps.ledger.settleIntake(eventId, { state: 'refused', detail: `transition: ${category} from ${order.state} to ${target}`, orderId: order.orderId });
-        return deps.ledger.settleIntake(eventId, { state: 'failed_retryable', detail: `store: ${category}`, orderId: order.orderId, nextAttemptAt: retryAt() });
-      }
+      const applied = await applyObservation(order, session, account, record.eventId);
+      if (applied.kind === 'refused') return deps.ledger.settleIntake(eventId, { state: 'refused', detail: applied.detail, orderId: order.orderId });
+      if (applied.kind === 'conflict') return deps.ledger.settleIntake(eventId, { state: 'conflict', detail: applied.detail, orderId: order.orderId });
+      if (applied.kind === 'retry' || applied.observation === 'open') return deps.ledger.settleIntake(eventId, { state: 'failed_retryable', detail: applied.kind === 'retry' ? applied.detail : 'session still open', orderId: order.orderId, nextAttemptAt: retryAt() });
+      return deps.ledger.settleIntake(eventId, { state: 'processed', detail: applied.detail, orderId: order.orderId });
     },
 
     /** The retry worker: every due intake gets one attempt. */

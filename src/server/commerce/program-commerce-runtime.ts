@@ -10,6 +10,7 @@ import { createFictionalCheckoutProcessor } from "./program-checkout-processor";
 import { createProgramCheckout } from "./program-checkout";
 import { createFictionalEducationLedger } from "./program-education-ledger";
 import { createProgramSettlement } from "./program-settlement";
+import { createCommerceWorker } from "./program-commerce-worker";
 import { publicSiteOrigin } from "../../lib/publicSite";
 
 /**
@@ -87,7 +88,7 @@ export function fictionalPersonId(email: string): string {
  */
 export type ProgramCheckoutSelection =
   | { kind: "disabled"; reason: "checkout_unconfigured" }
-  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's stand-in for claim delivery: what an email would have carried. */ deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] };
+  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; worker: ReturnType<typeof createCommerceWorker>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's stand-in for claim delivery: what an email would have carried. */ deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] };
 
 let fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null = null;
 /** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
@@ -102,7 +103,9 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
     const education = createFictionalEducationLedger({ orders: ledger, content: async binding => contents.get(binding.versionId) ?? null });
     const deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] = [];
     const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => contents.get(binding.versionId) ?? null, expectedAccountRef: processor.accountRef, deliver: async delivery => { deliveries.push(delivery); } });
-    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, education, settlement, deliveries };
+    // The webhook only admits; this worker is what processes admitted work. Under the fixture a test or a local operator runs its pass; a host schedules it in production.
+    const worker = createCommerceWorker({ ledger, checkout, settlement });
+    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, worker, education, settlement, deliveries };
   }
   return fictionalCheckout;
 }

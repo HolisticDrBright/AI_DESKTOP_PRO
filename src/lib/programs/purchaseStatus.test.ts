@@ -12,10 +12,11 @@ const id = (n: number) => '91000000-0000-4000-8000-' + String(n).padStart(12, '0
 const curriculum = { versionId: id(4), version: 2, sourceDigest: 'a'.repeat(64) };
 const now = new Date('2026-10-12T00:00:00Z');
 const order = (n: number, state: ProgramOrder['state']): ProgramOrder => programOrder.parse({
-  contract: 'program-checkout/1', orderId: id(n), organizationId: id(1), programId: id(2), offerId: id(3), offerRevision: 3, funnelSlug: 'longevity-program', curriculum,
+  contract: 'program-checkout/2', orderId: id(n), organizationId: id(1), programId: id(2), offerId: id(3), offerRevision: 3, funnelSlug: 'longevity-program', curriculum,
   pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/1', accessDurationDays: 30,
   attemptKeyHash: 'b'.repeat(64), subject: { kind: 'unclaimed' }, state, revision: 2,
-  processor: state === 'admitted' ? null : { provider: 'stripe', mode: 'test', sessionRef: 'cs_test_fictional' + String(n).padStart(8, '0'), expiresAt: '2026-10-11T12:30:00Z', returnSuccess: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=success`, returnCancel: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=cancel` },
+  creation: state === 'admitted' || state === 'refused' ? null : { idempotencyKey: `program-order:${id(n)}`, request: { mode: 'payment', priceRef: 'price_FictionalAbc123', quantity: 1, successUrl: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=success`, cancelUrl: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=cancel`, clientReferenceId: id(n), metadataOrderId: id(n), expiresAtUnix: 1_791_800_000 }, requestSha256: 'd'.repeat(64), recordedAt: '2026-10-11T12:00:00Z' },
+  processor: ['admitted', 'creation_pending', 'creation_unresolved', 'creation_unreconciled', 'refused'].includes(state) ? null : { provider: 'stripe', mode: 'test', sessionRef: 'cs_test_fictional' + String(n).padStart(8, '0'), expiresAt: '2026-10-11T12:30:00Z', returnSuccess: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=success`, returnCancel: `https://clinic.fictional.example/buy/return?order=${id(n)}&returned=cancel` },
   verification: ['payment_verified', 'payment_failed'].includes(state) ? { eventId: 'evt_' + n, sessionRef: 'cs_test_fictional' + String(n).padStart(8, '0'), amountMinor: 1999, currency: 'USD', paymentStatus: state === 'payment_verified' ? 'paid' : 'unpaid', accountRef: 'acct_FictionalAccount1', verifiedAt: '2026-10-11T12:10:00Z' } : null,
   createdAt: '2026-10-11T12:00:00Z', updatedAt: `2026-10-11T12:${String(n).padStart(2, '0')}:00Z`,
 });
@@ -29,7 +30,8 @@ const claim = (n: number, state: ProgramClaim['state'], expiresAt = '2026-10-18T
 describe('purchase rows', () => {
   it('lands every order in exactly one distinct kind', () => {
     const orders = [order(1, 'checkout_open'), order(2, 'creation_unresolved'), order(3, 'checkout_expired'), order(4, 'checkout_cancelled'), order(5, 'payment_failed'), order(6, 'refused'), order(7, 'payment_verified'),
-      order(8, 'payment_verified'), order(9, 'payment_verified'), order(10, 'payment_verified'), order(11, 'payment_verified'), order(12, 'payment_verified'), order(13, 'payment_verified'), order(14, 'payment_verified'), order(15, 'payment_verified')];
+      order(8, 'payment_verified'), order(9, 'payment_verified'), order(10, 'payment_verified'), order(11, 'payment_verified'), order(12, 'payment_verified'), order(13, 'payment_verified'), order(14, 'payment_verified'), order(15, 'payment_verified'),
+      order(16, 'creation_pending'), order(17, 'creation_unreconciled'), order(18, 'payment_processing')];
     const entitlements = [entitlement(8, 'awaiting_claim'), entitlement(9, 'awaiting_claim'), entitlement(10, 'active'), entitlement(11, 'active', true, '2026-10-11T23:00:00Z'), entitlement(12, 'held_refund'), entitlement(13, 'held_dispute'), entitlement(14, 'revoked'), entitlement(15, 'held_policy')];
     const claims = [claim(8, 'issued'), claim(9, 'issued', '2026-10-11T23:00:00Z')];
     const rows = purchaseRows({ orders, entitlements, claims, enrollments: [] }, now);
@@ -37,7 +39,12 @@ describe('purchase rows', () => {
     expect(kinds).toEqual({
       [id(1)]: 'checkout_open', [id(2)]: 'checkout_unresolved', [id(3)]: 'checkout_closed', [id(4)]: 'checkout_closed', [id(5)]: 'payment_failed', [id(6)]: 'order_refused', [id(7)]: 'paid_not_fulfilled',
       [id(8)]: 'pending_account', [id(9)]: 'claim_expired', [id(10)]: 'access_active', [id(11)]: 'access_expired', [id(12)]: 'held_refund', [id(13)]: 'held_dispute', [id(14)]: 'revoked', [id(15)]: 'held_policy',
+      [id(16)]: 'checkout_open', [id(17)]: 'checkout_unconfirmed', [id(18)]: 'payment_processing',
     });
+    // A delayed payment is neither failed nor granted; an unconfirmed checkout cannot take a payment.
+    expect(PURCHASE_ROW_WORDS.payment_processing).toMatch(/still processing/);
+    expect(PURCHASE_ROW_WORDS.payment_processing).toMatch(/Nothing is granted/);
+    expect(PURCHASE_ROW_WORDS.checkout_unconfirmed).toMatch(/cannot take a payment/);
     for (const row of rows) { expect(row.summary).toBe(PURCHASE_ROW_WORDS[row.kind]); expect(row.terms).toContain('19.99 USD, one payment; 30 days of access; offer revision 3'); }
     expect(rows.find(r => r.orderId === id(7))).toMatchObject({ entitlementId: null, clinicalDelivery: 'not_applicable', curriculumVersion: 2 });
     expect(rows.find(r => r.orderId === id(10))).toMatchObject({ entitlementId: id(110), clinicalDelivery: 'pending_review' });

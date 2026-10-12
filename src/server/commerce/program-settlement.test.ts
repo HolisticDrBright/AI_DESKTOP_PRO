@@ -84,7 +84,7 @@ describe('settlement', () => {
     expect(await other.settleOrder(order)).toEqual({ settled: false, reason: 'account_mismatch' });
     const failed = await h.checkout.start({ funnelSlug: 'longevity-program', programBinding: { organizationId: org, programId: program }, attemptKey: 'browser-f' });
     const failedOrder = h.ledger.orders.get(failed.started ? failed.orderId : '')!;
-    h.processor.settle(failedOrder.processor!.sessionRef, 'failed');
+    h.processor.settle(failedOrder.processor!.sessionRef, 'failed_async');
     await h.checkout.admitEvent(event('evt_f', failedOrder.processor!.sessionRef, 'checkout.session.async_payment_failed'), 'raw', expected);
     await h.checkout.processEvent('evt_f');
     expect(h.ledger.orders.get(failedOrder.orderId)!.state).toBe('payment_failed');

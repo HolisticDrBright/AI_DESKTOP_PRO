@@ -133,7 +133,8 @@ export interface VerifiedEvent {
  * why the route reads `await req.text()` before any JSON parsing.
  */
 export function verifyWebhookSignature(
-  rawBody: string,
+  /** The exact received payload. Bytes are verified as received; a string is verified as its UTF-8 encoding (the existing callers). */
+  rawBody: string | Uint8Array,
   signatureHeader: string | null,
   options: { toleranceSeconds?: number; nowSeconds?: number } = {},
 ): VerifiedEvent {
@@ -163,8 +164,10 @@ export function verifyWebhookSignature(
     throw new StripeRefusedError("Signature timestamp outside the tolerance window.");
   }
 
+  const payload = typeof rawBody === "string" ? Buffer.from(rawBody, "utf8") : Buffer.from(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
   const expected = createHmac("sha256", env(WEBHOOK_SECRET))
-    .update(`${timestamp}.${rawBody}`, "utf8")
+    .update(Buffer.from(`${timestamp}.`, "utf8"))
+    .update(payload)
     .digest("hex");
 
   const expectedBuf = Buffer.from(expected, "utf8");
@@ -180,7 +183,8 @@ export function verifyWebhookSignature(
 
   let parsed: VerifiedEvent;
   try {
-    parsed = JSON.parse(rawBody) as VerifiedEvent;
+    // Only after the signature matched the exact bytes is the payload decoded; invalid UTF-8 is refused, never repaired.
+    parsed = JSON.parse(typeof rawBody === "string" ? rawBody : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(rawBody)) as VerifiedEvent;
   } catch {
     throw new StripeRefusedError("Event body is not valid JSON.");
   }

@@ -2,12 +2,18 @@ import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './route';
 import { __resetProgramCommerceRuntime, selectProgramCheckout } from '@/server/commerce/program-commerce-runtime';
+import { createProgramCheckout } from '@/server/commerce/program-checkout';
+import { createProgramSettlement } from '@/server/commerce/program-settlement';
+import { createCommerceWorker } from '@/server/commerce/program-commerce-worker';
+import { createFictionalCheckoutProcessor } from '@/server/commerce/program-checkout-processor';
 
 /**
  * The program-checkout webhook receiver: provider authentication over the raw bytes, no fixture
  * fallback, 503 when nothing is configured, 400 for a signature, tolerance, livemode, account or API
  * version refusal, 200 only after durable admission (a replay is a recorded duplicate), 500 when the
- * store cannot record. Settlement never happens in this route.
+ * store cannot record. Nothing is processed in this route: the intake stays pending after the reply,
+ * and a worker constructed independently afterwards (as after a process exit) finishes it. Bodies
+ * are bounded by BYTES whatever Content-Length claims, and the signature covers the exact bytes.
  */
 const SECRET = 'whsec_fictional_secret_for_program_checkout';
 function sign(rawBody: string, secret = SECRET, timestamp = Math.floor(Date.now() / 1000)) {
@@ -50,6 +56,33 @@ describe('refusals before any intake', () => {
     fixture(); configure();
     expect((await post('{"pad":"' + 'x'.repeat(300_000) + '"}')).status).toBe(400);
   });
+  it('bounds the body by bytes with no Content-Length or a dishonest one, stops reading, and never reaches the signature', async () => {
+    fixture(); configure();
+    // Multi-byte characters: under the byte bound in characters, over it in bytes.
+    const wide = '{"pad":"' + '€'.repeat(100_000) + '"}';
+    expect(wide.length).toBeLessThan(262_144);
+    let pulled = 0;
+    const encoder = new TextEncoder();
+    const chunks = Array.from({ length: 40 }, () => encoder.encode('x'.repeat(16_384)));
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) { const next = chunks.shift(); if (!next) { controller.close(); return; } pulled += next.byteLength; controller.enqueue(next); } });
+    const responses = await Promise.all([
+      POST(new Request('http://127.0.0.1:3000/api/live/commerce/webhook', { method: 'POST', headers: { 'stripe-signature': sign(wide) }, body: wide })),
+      POST(new Request('http://127.0.0.1:3000/api/live/commerce/webhook', { method: 'POST', headers: { 'stripe-signature': 't=1,v1=00' }, body: stream, duplex: 'half' } as RequestInit)),
+      POST(new Request('http://127.0.0.1:3000/api/live/commerce/webhook', { method: 'POST', headers: { 'content-length': '10', 'stripe-signature': sign(event()) }, body: event() })),
+    ]);
+    expect(responses.map(r => r.status)).toEqual([400, 400, 400]);
+    // The reader stops at the bound; the stream itself may have queued one chunk ahead (its high-water mark). Not 640 KiB.
+    expect(pulled).toBeLessThanOrEqual(262_144 + 2 * 16_384);
+    const selection = selectProgramCheckout();
+    expect(selection.kind === 'fictional' && selection.ledger.intake.size).toBe(0);
+  });
+  it('verifies the signature over the exact received bytes, and a body altered after signing by re-encoding is refused', async () => {
+    fixture(); configure();
+    const body = event({ id: 'evt_fictional_bytes_1' }).replace('"created":1', '"created":1,"note":"café"');
+    expect((await post(body)).status).toBe(200);
+    const nfd = body.replace('café', 'cafe\u0301');
+    expect((await post(nfd, { 'stripe-signature': sign(body) })).status).toBe(400);
+  });
 });
 
 describe('durable intake', () => {
@@ -60,15 +93,24 @@ describe('durable intake', () => {
     expect(await first.json()).toEqual({ received: true, outcome: 'admitted' });
     const selection = selectProgramCheckout();
     if (selection.kind !== 'fictional') throw new Error('fixture expected');
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(selection.ledger.intake.get('evt_fictional_webhook_1')).toMatchObject({ eventType: 'checkout.session.completed', sessionRef: 'cs_test_fictionalSession1', apiVersion: '2025-08-27.basil', state: 'refused', lastOutcome: 'no order for session' });
+    // Nothing ran after the reply: the intake is exactly as admitted.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(selection.ledger.intake.get('evt_fictional_webhook_1')).toMatchObject({ eventType: 'checkout.session.completed', sessionRef: 'cs_test_fictionalSession1', apiVersion: '2025-08-27.basil', state: 'pending', attempts: 0 });
     const replay = await post(event());
     expect(await replay.json()).toEqual({ received: true, outcome: 'duplicate' });
     expect(selection.ledger.intake.size).toBe(1);
     const unknown = await post(event({ id: 'evt_fictional_webhook_2', type: 'customer.created' }, { id: 'cus_fictional' }));
     expect(await unknown.json()).toEqual({ received: true, outcome: 'admitted' });
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(selection.ledger.intake.get('evt_fictional_webhook_2')).toMatchObject({ state: 'unhandled' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(selection.ledger.intake.get('evt_fictional_webhook_2')).toMatchObject({ state: 'pending' });
+    // The request's process is gone. A worker built afterwards over the same durable ledger, with its own
+    // processor client and no visitor, finishes the admitted work.
+    const processor = createFictionalCheckoutProcessor();
+    const checkout = createProgramCheckout({ offers: { availability: async () => { throw new Error('the worker never admits'); } } as never, ledger: selection.ledger, processor, publicOrigin: null });
+    const settlement = createProgramSettlement({ ledger: selection.education, curriculumContent: async () => null, expectedAccountRef: processor.accountRef });
+    const report = await createCommerceWorker({ ledger: selection.ledger, checkout, settlement }).runOnce();
+    expect(report.intake).toMatchObject({ ok: true, results: [{ eventId: 'evt_fictional_webhook_1', state: 'refused', detail: 'no order for session' }, { eventId: 'evt_fictional_webhook_2', state: 'unhandled' }] });
+    expect(report.status).toMatchObject({ ok: true, checkout: { intake: { refused: 1, unhandled: 1, pending: 0 } } });
     expect(selection.ledger.orders.size).toBe(0);
   });
   it('answers 500 when the event cannot be recorded, so the processor retries', async () => {

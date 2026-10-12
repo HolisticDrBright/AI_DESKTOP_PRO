@@ -59,13 +59,20 @@ describe('starting a checkout', () => {
     expect(result).toMatchObject({ started: true, reused: false });
     const orderId = result.started ? result.orderId : '';
     const order = h.ledger.orders.get(orderId)!;
-    expect(order).toMatchObject({ state: 'checkout_open', revision: 2, offerRevision: 3, funnelSlug: 'longevity-program', pricing: { amountMinor: 1999 }, providerPriceRef: 'price_FictionalAbc123', curriculum, subject: { kind: 'unclaimed' }, attemptKeyHash: hashAttemptKey('browser-a') });
-    expect(h.ledger.history.map(o => o.state)).toEqual(['admitted', 'checkout_open']);
+    expect(order).toMatchObject({ state: 'checkout_open', revision: 3, offerRevision: 3, funnelSlug: 'longevity-program', pricing: { amountMinor: 1999 }, providerPriceRef: 'price_FictionalAbc123', curriculum, subject: { kind: 'unclaimed' }, attemptKeyHash: hashAttemptKey('browser-a') });
+    // The creation request is recorded durably BEFORE it is sent, and what is sent is exactly what was recorded.
+    expect(h.ledger.history.map(o => o.state)).toEqual(['admitted', 'creation_pending', 'checkout_open']);
+    expect(h.ledger.history[1]!.creation).toEqual(order.creation);
     expect(h.processor.requests).toHaveLength(1);
     const request = h.processor.requests[0]!;
-    expect(request).toEqual({ orderId, providerPriceRef: 'price_FictionalAbc123', pricing: order.pricing, successUrl: `${origin}/buy/return?order=${orderId}&returned=success`, cancelUrl: `${origin}/buy/return?order=${orderId}&returned=cancel`, idempotencyKey: idempotencyKeyFor(orderId), expiresAt: '2026-10-11T12:30:00.000Z' });
-    expect(JSON.stringify(request)).not.toMatch(/Fictional program|longevity|health|diagnos/i);
-    expect(order.processor).toMatchObject({ provider: 'stripe', mode: 'test', returnSuccess: request.successUrl, returnCancel: request.cancelUrl });
+    expect(request).toEqual({
+      idempotencyKey: idempotencyKeyFor(orderId),
+      request: { mode: 'payment', priceRef: 'price_FictionalAbc123', quantity: 1, successUrl: `${origin}/buy/return?order=${orderId}&returned=success`, cancelUrl: `${origin}/buy/return?order=${orderId}&returned=cancel`, clientReferenceId: orderId, metadataOrderId: orderId, expiresAtUnix: Date.parse('2026-10-11T12:30:00Z') / 1000 },
+      requestSha256: expect.stringMatching(/^[a-f0-9]{64}$/), recordedAt: '2026-10-11T12:00:00.000Z',
+    });
+    expect(order.creation).toEqual(request);
+    expect(JSON.stringify(request)).not.toMatch(/Fictional program|longevity|health|diagnos|1999/i);
+    expect(order.processor).toMatchObject({ provider: 'stripe', mode: 'test', returnSuccess: request.request.successUrl, returnCancel: request.request.cancelUrl });
     expect(result.started && result.checkoutUrl).toMatch(/^https:\/\/checkout\.fictional\.example\//);
   });
   it('a repeated start from the same browser reuses the open checkout; another browser gets its own order', async () => {
@@ -91,14 +98,15 @@ describe('starting a checkout', () => {
     h.processor.settle(h.ledger.orders.get(second.started ? second.orderId : '')!.processor!.sessionRef, 'paid');
     expect(await h.start()).toMatchObject({ started: false, reason: 'attempt_in_progress' });
   });
-  it.each(['unavailable', 'timeout', 'refused', 'malformed_reply', 'redirect_reply'] as const)('a %s reply from the processor is a named hold with nothing charged and the order not open', async failure => {
+  it.each(['unavailable', 'timeout', 'refused', 'malformed_reply', 'redirect_reply'] as const)('a %s reply from the processor is a named hold with nothing charged and the order not open; only a definitive refusal closes it, anything else is an unknown outcome kept for replay', async failure => {
     const h = await harness();
     h.processor.faults.createSession = failure;
     const result = await h.start();
     expect(result.started).toBe(false);
     expect(result.started ? '' : result.reason).toBe(failure === 'refused' ? 'processor_refused' : 'processor_unavailable');
     const order = [...h.ledger.orders.values()][0]!;
-    expect(order.state).toBe(failure === 'refused' ? 'refused' : failure === 'timeout' ? 'creation_unresolved' : 'admitted');
+    expect(order.state).toBe(failure === 'refused' ? 'refused' : 'creation_unresolved');
+    expect(order.creation).not.toBeNull();
     expect(order.processor).toBeNull();
   });
   it('a lost creation reply is reconciled by the idempotency key on the next start: one session, one order, no second charge', async () => {
@@ -179,12 +187,12 @@ describe('intake and verification', () => {
     await h.checkout.admitEvent(event({}, { id: order.processor!.sessionRef }), 'raw', expected);
     const processed = await h.checkout.processEvent('evt_fictional_1');
     expect(processed).toMatchObject({ state: 'processed', orderId: order.orderId, lastOutcome: 'payment_verified' });
-    expect(h.ledger.orders.get(order.orderId)!).toMatchObject({ state: 'payment_verified', revision: 3, verification: { eventId: 'evt_fictional_1', amountMinor: 1999, currency: 'USD', paymentStatus: 'paid', accountRef: 'acct_FictionalAccount1', sessionRef: order.processor!.sessionRef } });
+    expect(h.ledger.orders.get(order.orderId)!).toMatchObject({ state: 'payment_verified', revision: 4, verification: { eventId: 'evt_fictional_1', amountMinor: 1999, currency: 'USD', paymentStatus: 'paid', accountRef: 'acct_FictionalAccount1', sessionRef: order.processor!.sessionRef } });
     // Processing again does nothing more; a second, distinct event for the same payment is processed as already settled.
     expect(await h.checkout.processEvent('evt_fictional_1')).toMatchObject({ state: 'processed', attempts: 1 });
     await h.checkout.admitEvent(event({ id: 'evt_async', type: 'checkout.session.async_payment_succeeded' }, { id: order.processor!.sessionRef }), 'raw', expected);
-    expect(await h.checkout.processEvent('evt_async')).toMatchObject({ state: 'processed', lastOutcome: 'already settled by an earlier event' });
-    expect(h.ledger.orders.get(order.orderId)!.revision).toBe(3);
+    expect(await h.checkout.processEvent('evt_async')).toMatchObject({ state: 'processed', lastOutcome: 'already recorded' });
+    expect(h.ledger.orders.get(order.orderId)!.revision).toBe(4);
   });
   it.each(['amount_drift', 'other_account', 'live_object', 'wrong_order', 'extra_metadata'] as const)('a retrieved object that is %s is refused and the order does not move', async fault => {
     const h = await harness();
@@ -223,12 +231,12 @@ describe('intake and verification', () => {
     expect((await h.checkout.processDue())[0]).toMatchObject({ state: 'processed', attempts: 2 });
     expect(h.ledger.orders.get(order.orderId)!.state).toBe('payment_verified');
   });
-  it('out-of-order and delayed outcomes: expired then paid is a recorded conflict, failed payment settles failed, expiry settles expired', async () => {
+  it('out-of-order and delayed outcomes: expired then paid is a recorded conflict, an explicit failure settles failed, expiry settles expired', async () => {
     const h = await harness();
     const started = await h.start();
     const order = h.ledger.orders.get(started.started ? started.orderId : '')!;
     const ref = order.processor!.sessionRef;
-    // Expiry first, then a late completed event: the order is terminal, the late event is refused and visible.
+    // Expiry first, then a late completed event: the order is terminal, the contradicting observation is a visible conflict, never applied.
     h.processor.settle(ref, 'expired');
     await h.checkout.admitEvent(event({ id: 'evt_expired', type: 'checkout.session.expired' }, { id: ref }), 'raw', expected);
     expect(await h.checkout.processEvent('evt_expired')).toMatchObject({ state: 'processed', lastOutcome: 'checkout_expired' });
@@ -236,12 +244,12 @@ describe('intake and verification', () => {
     h.processor.settle(ref, 'paid');
     await h.checkout.admitEvent(event({ id: 'evt_late' }, { id: ref }), 'raw', expected);
     const late = await h.checkout.processEvent('evt_late');
-    expect(late).toMatchObject({ state: 'refused' });
-    expect(late.lastOutcome).toContain('transition: transition_refused from checkout_expired to payment_verified');
-    // A failed payment on another order settles failed with the verification recorded.
+    expect(late).toMatchObject({ state: 'conflict', lastOutcome: 'observed verified while the order is checkout_expired' });
+    expect(h.ledger.orders.get(order.orderId)!.state).toBe('checkout_expired');
+    // An explicit asynchronous failure on another order settles failed with the verification recorded.
     const failed = await h.start('browser-f');
     const failedOrder = h.ledger.orders.get(failed.started ? failed.orderId : '')!;
-    h.processor.settle(failedOrder.processor!.sessionRef, 'failed');
+    h.processor.settle(failedOrder.processor!.sessionRef, 'failed_async');
     await h.checkout.admitEvent(event({ id: 'evt_failed', type: 'checkout.session.async_payment_failed' }, { id: failedOrder.processor!.sessionRef }), 'raw', expected);
     expect(await h.checkout.processEvent('evt_failed')).toMatchObject({ state: 'processed', lastOutcome: 'payment_failed' });
     expect(h.ledger.orders.get(failedOrder.orderId)!).toMatchObject({ state: 'payment_failed', verification: { paymentStatus: 'unpaid' } });
@@ -257,7 +265,7 @@ describe('intake and verification', () => {
     const started = await h.start();
     const orderId = started.started ? started.orderId : '';
     expect(await h.checkout.returnStatus(orderId)).toEqual({ state: 'checkout_open' });
-    expect(h.ledger.history).toHaveLength(2);
+    expect(h.ledger.history).toHaveLength(3);
     expect(h.ledger.orders.get(orderId)!.verification).toBeNull();
   });
 });
