@@ -400,18 +400,41 @@ end $$;
 revoke all on function commercial_education.expire_program_entitlements(timestamptz) from public;
 grant execute on function commercial_education.expire_program_entitlements(timestamptz) to clinical_core_api;
 
--- The staff status view for one clinic's program: every state, claims by state, enrollments; the subject only in its opaque form.
+-- The staff status view for one clinic's program: every order and entitlement state, claims by state, enrollments; the subject only in its opaque form.
 create function commercial_education.program_education_status(_organization uuid,_program uuid) returns jsonb
 language plpgsql stable security definer set search_path='' as $$
-declare _entitlements jsonb; _enrollments jsonb; _claims jsonb;
+declare _entitlements jsonb; _enrollments jsonb; _claims jsonb; _orders jsonb;
 begin
  perform commercial_education.require_activation();
+ select coalesce(jsonb_agg(commercial_education.order_json(o) order by o.created_at),'[]'::jsonb) into _orders from commercial_education.program_orders o where o.organization_id=_organization and o.program_id=_program;
  select coalesce(jsonb_agg(commercial_education.entitlement_json(e) order by e.created_at),'[]'::jsonb) into _entitlements from commercial_education.program_entitlements e where e.organization_id=_organization and e.program_id=_program;
  select coalesce(jsonb_agg(commercial_education.enrollment_json(n) order by n.started_at),'[]'::jsonb) into _enrollments from commercial_education.program_education_enrollments n
   join commercial_education.program_entitlements e on e.id=n.entitlement_id where e.organization_id=_organization and e.program_id=_program;
  select coalesce(jsonb_agg(commercial_education.claim_json(c) order by c.issued_at),'[]'::jsonb) into _claims from commercial_education.program_claims c
   join commercial_education.program_entitlements e on e.id=c.entitlement_id where e.organization_id=_organization and e.program_id=_program;
- return jsonb_build_object('entitlements',_entitlements,'enrollments',_enrollments,'claims',_claims);
+ return jsonb_build_object('orders',_orders,'entitlements',_entitlements,'enrollments',_enrollments,'claims',_claims);
 end $$;
 revoke all on function commercial_education.program_education_status(uuid,uuid) from public;
 grant execute on function commercial_education.program_education_status(uuid,uuid) to clinical_core_api;
+
+-- The staff read of the exact purchased version: what the learner was sold, pinned by id, number and digest; withheld when the stored content moved.
+create function commercial_education.education_curriculum_staff(_organization uuid,_entitlement uuid) returns jsonb
+language plpgsql stable security definer set search_path='' as $$
+declare _e commercial_education.program_entitlements%rowtype; _v clinical_core.synthetic_desktop_program_versions%rowtype; _items jsonb; _digest text;
+begin
+ perform commercial_education.require_activation();
+ if clinical_private.organization_id() is distinct from _organization or not clinical_private.has_clinical_role(_organization) then raise exception using errcode='42501',message='program_entitlement_identity_refused'; end if;
+ select * into _e from commercial_education.program_entitlements where id=_entitlement and organization_id=_organization;
+ if not found then return jsonb_build_object('outcome','withheld','entitlementId',_entitlement,'reason','not_owner'); end if;
+ select * into _v from clinical_core.synthetic_desktop_program_versions where id=_e.curriculum_version_id and version=_e.curriculum_version and organization_id=_organization;
+ if not found then return jsonb_build_object('outcome','withheld','entitlementId',_entitlement,'reason','version_missing'); end if;
+ _items:=clinical_private.program_consumer_content(_v.content);
+ if _items is null then return jsonb_build_object('outcome','withheld','entitlementId',_entitlement,'reason','version_missing'); end if;
+ _digest:=encode(public.digest(convert_to((_items->'phases')::text,'UTF8'),'sha256'),'hex');
+ if _digest<>_e.curriculum_source_digest then return jsonb_build_object('outcome','withheld','entitlementId',_entitlement,'reason','digest_mismatch'); end if;
+ return jsonb_build_object('outcome','served','entitlementId',_entitlement,
+  'curriculum',jsonb_build_object('versionId',_e.curriculum_version_id,'version',_e.curriculum_version,'sourceDigest',_e.curriculum_source_digest),
+  'title',_items->>'title','phases',_items->'phases');
+end $$;
+revoke all on function commercial_education.education_curriculum_staff(uuid,uuid) from public;
+grant execute on function commercial_education.education_curriculum_staff(uuid,uuid) to clinical_core_api;

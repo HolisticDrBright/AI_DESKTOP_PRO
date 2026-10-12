@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { curriculumBinding, type CurriculumBinding } from './programOffers';
 
 /**
  * Education access (program-education-access/1): what a verified program purchase becomes, and
@@ -24,6 +23,9 @@ import { curriculumBinding, type CurriculumBinding } from './programOffers';
  */
 export const PROGRAM_EDUCATION_ACCESS_CONTRACT = 'program-education-access/1' as const;
 const uuid = z.string().uuid();
+/** The exact published curriculum an entitlement covers: the same binding the offer and the order carry (program-offer/1). This file is mirrored byte for byte into the consumer app, so the binding is spelled here rather than imported. */
+export const curriculumBinding = z.object({ versionId: uuid, version: z.number().int().min(1), sourceDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export type CurriculumBinding = z.infer<typeof curriculumBinding>;
 const timestamp = z.string().datetime({ offset: true });
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** The consumer identity subject as the identity API verifies it: opaque, never contact information. */
@@ -130,6 +132,16 @@ export const educationCurriculumRead = z.discriminatedUnion('outcome', [
 ]);
 export type EducationCurriculumRead = z.infer<typeof educationCurriculumRead>;
 
+/** The clinic's commercial status for one program, under its own key: orders (program-checkout/1, parsed by the reader that holds that contract), entitlements, claims, enrollments. Nothing clinical. */
+export const commercialStatus = z.object({
+  orders: z.array(z.unknown()),
+  entitlements: z.array(programEntitlement),
+  claims: z.array(programClaim),
+  enrollments: z.array(educationEnrollment),
+  readAt: timestamp,
+}).strict();
+export type CommercialStatus = z.infer<typeof commercialStatus>;
+
 export const educationAccessRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('access') }).strict(),
   z.object({ action: z.literal('claim'), token: z.string().regex(/^[A-Za-z0-9_-]{43,64}$/) }).strict(),
@@ -150,4 +162,3 @@ export function isAccessActive(entitlement: Pick<ProgramEntitlement, 'state' | '
   return entitlement.window.endsAt === null || Date.parse(entitlement.window.endsAt) > at.getTime();
 }
 
-export type { CurriculumBinding };

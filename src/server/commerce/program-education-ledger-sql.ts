@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { educationEnrollment, programClaim, programEntitlement, type EducationEnrollment, type ProgramClaim, type ProgramEntitlement } from '../../contracts/programEducationAccess';
-import { programOrder } from '../../contracts/programCheckout';
+import { educationCurriculumRead, educationEnrollment, programClaim, programEntitlement, type EducationEnrollment, type ProgramClaim, type ProgramEntitlement } from '../../contracts/programEducationAccess';
+import { programOrder, type ProgramOrder } from '../../contracts/programCheckout';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from '../clinical-core/database';
 import { PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256, programCommerceActivationState } from './program-commerce-activation';
 import { PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 } from './program-checkout-ledger-sql';
@@ -13,7 +13,7 @@ import { EducationLedgerError, type ClaimOutcome, type EducationLedgerCategory, 
  * function re-checks the activation row. Refusals are categories; no SQL text leaves this module.
  */
 /** SHA-256 of infra/aws-clinical-core/source-candidates/program-education-access.sql, held equal to the file by its test. */
-export const PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 = '5086de3b990394a47244bda96617e8bbb4f4f979b8aca7cfbccab7d35d343dc1';
+export const PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 = 'e4f11e29f1b6a68f1478dbc112aaac1ea2bbf72adf86f9458dd5a20c8151df93';
 
 export type SqlEducationLedgerDependencies = { database: ClinicalCoreDatabase; activation?: unknown; checkoutCandidateSha256?: string; educationCandidateSha256?: string };
 
@@ -23,7 +23,7 @@ const claimed = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('refused'), reason: z.enum(['claim_invalid', 'claim_expired', 'claim_used', 'claim_superseded', 'entitlement_not_claimable', 'already_claimed_by_other']) }).strict(),
 ]);
 const access = z.object({ entitlements: z.array(programEntitlement), enrollments: z.array(educationEnrollment) }).strict();
-const status = access.extend({ claims: z.array(programClaim) }).strict();
+const status = access.extend({ claims: z.array(programClaim), orders: z.array(programOrder) }).strict();
 const CATEGORY: Record<string, EducationLedgerCategory> = {
   program_entitlement_not_found: 'not_found', program_entitlement_revision_stale: 'revision_stale', program_entitlement_transition_refused: 'transition_refused',
   program_entitlement_settlement_refused: 'settlement_refused', program_entitlement_request_invalid: 'request_invalid', program_entitlement_snapshot_mismatch: 'settlement_refused',
@@ -73,8 +73,17 @@ export function createSqlEducationLedger(deps: SqlEducationLedgerDependencies): 
     async recordPolicy(orderId, kind, reference, at) { return one(programEntitlement, 'select commercial_education.record_entitlement_policy($1,$2,$3,$4::timestamptz) as data', [clinicalUuid(orderId), kind, reference, at]); },
     async transition(entitlementId, expectedRevision, next) { return one(programEntitlement, 'select commercial_education.transition_program_entitlement($1,$2,$3) as data', [clinicalUuid(entitlementId), expectedRevision, next]); },
     async expireDue(at) { return one(z.array(programEntitlement), 'select commercial_education.expire_program_entitlements($1::timestamptz) as data', [at]); },
-    async listForProgram(organizationId, programId): Promise<{ entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }> {
+    async listForProgram(organizationId, programId): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }> {
       return one(status, 'select commercial_education.program_education_status($1,$2) as data', [clinicalUuid(organizationId), clinicalUuid(programId)]);
+    },
+    async staffCurriculum(actor, entitlementId) {
+      guard();
+      try {
+        return await deps.database.transaction(async tx => {
+          await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', [clinicalUuid(actor.personId), clinicalUuid(actor.organizationId), 'workforce', actor.identitySubject, 'clinical_data', 'synthetic-staging', 'synthetic_only']);
+          return decode(educationCurriculumRead, (await tx.query<{ data: unknown }>('select commercial_education.education_curriculum_staff($1,$2) as data', [clinicalUuid(actor.organizationId), clinicalUuid(entitlementId)])).rows[0]?.data);
+        });
+      } catch (error) { return rethrow(error); }
     },
   };
 }

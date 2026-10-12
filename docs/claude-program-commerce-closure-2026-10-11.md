@@ -407,7 +407,7 @@ Delivery of the claim token to the processor-verified address is a named depende
 
 ### BLOCKED candidate: `infra/aws-clinical-core/source-candidates/program-education-access.sql`
 
-- SHA-256 `5086de3b990394a47244bda96617e8bbb4f4f979b8aca7cfbccab7d35d343dc1`, pinned in
+- SHA-256 `e4f11e29f1b6a68f1478dbc112aaac1ea2bbf72adf86f9458dd5a20c8151df93`, pinned in
   `PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256`. Parents: the identity migration (`c4ca9673…`) and
   the checkout candidate (`767ac13b…`), applied after the offer candidate.
 - Tables: `program_entitlements` (snapshot checked against the order by the protect trigger on
@@ -419,7 +419,9 @@ Delivery of the claim token to the processor-verified address is a named depende
   `claim_program_entitlement`, `read_program_entitlement`, `entitlement_for_order`,
   `education_access`, `education_curriculum` (reads the published version table for the pinned
   version and re-digests it), `record_entitlement_policy`, `transition_program_entitlement`,
-  `expire_program_entitlements`, `program_education_status`; all refuse until the activation row is
+  `expire_program_entitlements`, `program_education_status` (orders, entitlements, claims, enrollments),
+  `education_curriculum_staff` (the clinic's own read of the exact purchased version, under a
+  workforce request context with a clinical role); all refuse until the activation row is
   enabled. `rds-data-database.ts` classifies `program_entitlement_*` and `program_claim_*` tokens.
 
 ### Tests (after)
@@ -448,3 +450,37 @@ an enrollment/link change is unit 4's clinical bridge (not built: a purchaser is
    identity is required by the bridge).
 4. **Whether education access needs ALP Core** (unit 4): the bridge does not check Core; the
    access read is not a Core surface unless Brandon says so.
+
+## Unit 4 — Desktop and V2 course access
+
+### Desktop (this commit)
+
+- `POST /api/live/commerce/status` (`src/app/api/live/commerce/status/route.ts`): same-origin,
+  cookie session, the clinic from the session; `status` returns the program's orders,
+  entitlements, claims and enrollments under the `commercial` key (program-education-access/1
+  `commercialStatus`); `curriculum` returns the clinic's own read of the exact version a purchaser
+  was sold (`education_curriculum_staff`, workforce context with a clinical role; another clinic
+  is `not_owner`). 503 `commerce_disabled` outside the fixture; never an empty list for a failure.
+  No claim token or token hash is ever returned.
+- `src/lib/programs/purchaseStatus.ts`: every order lands in exactly one kind:
+  `checkout_open | checkout_unresolved | checkout_closed | payment_failed | order_refused |
+  paid_not_fulfilled | pending_account | claim_expired | access_active | access_expired |
+  held_refund | held_dispute | held_policy | revoked`, each with one sentence that says what it
+  means; a verified payment without an entitlement is "paid, not fulfilled" and never enrolled;
+  `clinicalDelivery` is `pending_review` for every claimed purchase, because a purchase never
+  starts it.
+- `src/components/programs/ProgramPurchasesPanel.tsx` beside the offer editor in the Studio:
+  "not connected", "could not be read" and "no purchases" are three screens; rows carry
+  `data-kind` and `data-clinical-delivery`; the exact purchased version opens read-only or says why
+  it is withheld (`digest_mismatch`, `version_missing`, `not_owner`). The panel imports nothing
+  clinical.
+- The contract `programEducationAccess.ts` is now self-contained (the curriculum binding spelled
+  inline) so it mirrors byte for byte into V2; digest after this commit:
+  `dc7cd8b0fcf5f5b534b9c8f907404e6362b0b0d020d3c0d993cd7f3f079b2303`.
+
+Tests: `src/lib/programs/purchaseStatus.test.ts` (1, every kind), `ProgramPurchasesPanel.render.test.ts`
+(4), `src/app/api/live/commerce/status/route.test.ts` (3).
+
+### V2 (next commit, in the V2 repository)
+
+See the V2 summary `expo/docs/claude-program-commerce-closure-2026-10-11.md`.

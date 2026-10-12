@@ -444,6 +444,9 @@ export const api = {
      * reviewed for this process; nothing here prices, charges or enrolls.
      */
     offers: async (command: ProgramOfferCommand) => liveClient.programOffers(command),
+    /** LIVE: commercial status (orders, entitlements, claims, enrollments) for one program, and the exact version a purchaser was sold. */
+    purchaseStatus: async (programId: string) => liveClient.programPurchaseStatus(programId),
+    purchasedCurriculum: async (entitlementId: string) => liveClient.programPurchasedCurriculum(entitlementId),
     /**
      * LIVE: enroll, pinned to the exact published version. Eligibility,
      * tenant agreement, comp reason + authorization, and the Stripe refusal

@@ -33,6 +33,7 @@ import { useFeedback } from "@/lib/feedback";
 import { patientPath } from "@/lib/routes";
 import { ConsumerProgramEditor, ConsumerProgramPreview } from "@/components/programs/ConsumerProgramEditor";
 import { ProgramOfferEditor } from "@/components/programs/ProgramOfferEditor";
+import { ProgramPurchasesPanel } from "@/components/programs/ProgramPurchasesPanel";
 import {
   consumerProgramFromDetail,
   validateConsumerProgram,
@@ -1223,6 +1224,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
 
       {/* ------------------------------------------------------------ offers */}
       <ProgramOfferEditor programId={studio.program.id} session={String(studioSession)} />
+      <ProgramPurchasesPanel programId={studio.program.id} session={String(studioSession)} />
       <OffersPanel studio={studio} onChanged={load} />
 
       {/* ------------------------------------------------------------ roster */}

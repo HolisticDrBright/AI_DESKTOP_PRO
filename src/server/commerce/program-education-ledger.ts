@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ENTITLEMENT_TRANSITIONS, PROGRAM_EDUCATION_ACCESS_CONTRACT, accessWindow, educationEnrollment, programClaim, programEntitlement,
-  type EducationEnrollment, type EntitlementState, type PolicyEventKind, type ProgramClaim, type ProgramEntitlement,
+  type EducationCurriculumRead, type EducationEnrollment, type EntitlementState, type PolicyEventKind, type ProgramClaim, type ProgramEntitlement,
 } from '../../contracts/programEducationAccess';
 import type { ProgramOrder } from '../../contracts/programCheckout';
 import type { ProgramCheckoutLedger } from './program-checkout-ledger';
@@ -47,11 +47,13 @@ export interface ProgramEducationLedger {
   recordPolicy(orderId: string, kind: PolicyEventKind, reference: string, at: string): Promise<ProgramEntitlement>;
   transition(entitlementId: string, expectedRevision: number, next: EntitlementState): Promise<ProgramEntitlement>;
   expireDue(at: string): Promise<ProgramEntitlement[]>;
-  /** Everything about one clinic's program, for the staff status view: every state, never a subject's identity beyond its opaque form. */
-  listForProgram(organizationId: string, programId: string): Promise<{ entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
+  /** Everything about one clinic's program, for the staff status view: every order and entitlement state, never a subject's identity beyond its opaque form. */
+  listForProgram(organizationId: string, programId: string): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
+  /** The staff read of the exact purchased version for one of the clinic's entitlements. */
+  staffCurriculum(actor: { personId: string; organizationId: string; identitySubject: string }, entitlementId: string): Promise<EducationCurriculumRead>;
 }
 
-export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; faults?: { before?: (operation: string) => void } };
+export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; faults?: { before?: (operation: string) => void }; /** The fixture's published content by version id, for the staff read. */ content?: (binding: ProgramEntitlement['curriculum']) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null> };
 
 export function createFictionalEducationLedger(options: FictionalEducationLedgerOptions) {
   const now = options.now ?? (() => new Date());
@@ -163,7 +165,17 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       fault('listForProgram');
       const mine = [...entitlements.values()].filter(e => e.organizationId === organizationId && e.programId === programId);
       const ids = new Set(mine.map(e => e.entitlementId));
-      return { entitlements: mine.map(e => structuredClone(e)), enrollments: [...enrollments.values()].filter(n => ids.has(n.entitlementId)).map(n => structuredClone(n)), claims: [...claims.values()].filter(c => ids.has(c.entitlementId)).map(c => structuredClone(c)) };
+      const orders = [...options.orders.orders.values()].filter(o => o.organizationId === organizationId && o.programId === programId).map(o => structuredClone(o));
+      return { orders, entitlements: mine.map(e => structuredClone(e)), enrollments: [...enrollments.values()].filter(n => ids.has(n.entitlementId)).map(n => structuredClone(n)), claims: [...claims.values()].filter(c => ids.has(c.entitlementId)).map(c => structuredClone(c)) };
+    },
+    async staffCurriculum(actor, entitlementId) {
+      fault('staffCurriculum');
+      const entitlement = entitlements.get(entitlementId);
+      if (!entitlement || entitlement.organizationId !== actor.organizationId) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };
+      const content = options.content ? await options.content(entitlement.curriculum).catch(() => null) : null;
+      if (!content) return { outcome: 'withheld', entitlementId, reason: 'version_missing' };
+      if (content.sourceDigest !== entitlement.curriculum.sourceDigest) return { outcome: 'withheld', entitlementId, reason: 'digest_mismatch' };
+      return { outcome: 'served', entitlementId, curriculum: entitlement.curriculum, title: content.title, phases: content.phases };
     },
   };
   return ledger;

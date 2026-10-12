@@ -99,7 +99,7 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
     const ledger = createFictionalCheckoutLedger();
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers: fictionalLedger(), ledger, processor, publicOrigin: publicSiteOrigin(env) ?? FIXTURE_RETURN_ORIGIN });
-    const education = createFictionalEducationLedger({ orders: ledger });
+    const education = createFictionalEducationLedger({ orders: ledger, content: async binding => contents.get(binding.versionId) ?? null });
     const deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] = [];
     const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => contents.get(binding.versionId) ?? null, expectedAccountRef: processor.accountRef, deliver: async delivery => { deliveries.push(delivery); } });
     fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, education, settlement, deliveries };

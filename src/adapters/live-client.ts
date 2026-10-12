@@ -7,6 +7,8 @@
  * AdapterError with a safe message.
  */
 import type { ProgramOfferCommand, ProgramOfferResult } from "@/contracts/programOffers";
+import type { CommercialStatus, EducationCurriculumRead } from "@/contracts/programEducationAccess";
+import { programOrder, type ProgramOrder } from "@/contracts/programCheckout";
 import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
 import type { LabWorkspace } from "./labs.types";
 import type { KnowledgeImportBatch, KnowledgeImportSourceItem } from "./clinical-import.types";
@@ -496,6 +498,14 @@ export const liveClient = {
   /** program-offer/1 authoring: the command is the whole body; the server names the actor and the clinic. */
   programOffers: (command: ProgramOfferCommand) =>
     liveFetch<ProgramOfferResult>("commerce/offers", { method: "POST", body: command }),
+  /** The commercial status of one program, under its own key, and the clinic's read of an exact purchased version. */
+  programPurchaseStatus: async (programId: string): Promise<Omit<CommercialStatus, "orders"> & { orders: ProgramOrder[] }> => {
+    const commercial = (await liveFetch<{ commercial: CommercialStatus }>("commerce/status", { method: "POST", body: { action: "status", programId } })).commercial;
+    // The orders are held to their own contract here, where that contract lives; a malformed row is a malformed reply.
+    return { ...commercial, orders: commercial.orders.map((order) => programOrder.parse(order)) };
+  },
+  programPurchasedCurriculum: async (entitlementId: string) =>
+    (await liveFetch<{ commercial: { curriculum: EducationCurriculumRead } }>("commerce/status", { method: "POST", body: { action: "curriculum", entitlementId } })).commercial.curriculum,
 
   programEnroll: (input: {
     programId: string;

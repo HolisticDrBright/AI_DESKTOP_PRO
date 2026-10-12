@@ -191,7 +191,11 @@ describe('enabled in this embedded database only', () => {
     expect(expired.map(e => e.state)).toEqual(['expired']);
     expect((await settlement().access(bob))?.entitlements[0]).toMatchObject({ state: 'expired' });
     const status = await education().listForProgram(org, program);
+    expect(status.orders.map(o => o.state).sort()).toEqual(['checkout_open', 'payment_verified', 'payment_verified']);
     expect(status.entitlements.map(e => e.state).sort()).toEqual(['expired', 'revoked']);
+    // The clinic's own read of the exact purchased version needs a workforce context with a clinical role; a stranger clinic gets nothing.
+    expect(await education().staffCurriculum({ personId: staff, organizationId: org, identitySubject: 'wf:' + staff }, entitlementId)).toMatchObject({ outcome: 'served', title: 'Fictional guide', curriculum: { versionId: version1 } });
+    expect((await refusal(() => education().staffCurriculum({ personId: staff, organizationId: id(2), identitySubject: 'wf:' + staff }, entitlementId))).category).toBe('store_unavailable');
     expect(status.claims.map(c => c.state).sort()).toEqual(['used', 'used']);
     expect(status.enrollments).toHaveLength(2);
     // An unclaimed entitlement whose claim expired is still awaiting claim and visible, never deleted.
