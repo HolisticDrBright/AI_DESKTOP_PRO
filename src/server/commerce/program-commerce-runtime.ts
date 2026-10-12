@@ -8,6 +8,8 @@ import { createFictionalProgramOfferLedger, type ProgramOfferLedger } from "./pr
 import { createFictionalCheckoutLedger } from "./program-checkout-ledger";
 import { createFictionalCheckoutProcessor } from "./program-checkout-processor";
 import { createProgramCheckout } from "./program-checkout";
+import { createFictionalEducationLedger } from "./program-education-ledger";
+import { createProgramSettlement } from "./program-settlement";
 import { publicSiteOrigin } from "../../lib/publicSite";
 
 /**
@@ -27,9 +29,11 @@ import { publicSiteOrigin } from "../../lib/publicSite";
  */
 export type ProgramOfferLedgerSelection =
   | { kind: "disabled"; reason: "commerce_disabled" }
-  | { kind: "fictional"; ledger: ProgramOfferLedger; registerCurriculum: (organizationId: string, programId: string, current: CurriculumBinding | null) => void };
+  | { kind: "fictional"; ledger: ProgramOfferLedger; registerCurriculum: (organizationId: string, programId: string, current: CurriculumBinding | null, content?: { title: string; phases: unknown[] } | null) => void };
 
 const registry = new Map<string, { programId: string; current: CurriculumBinding | null }>();
+/** The published content behind a registered binding, by version id, for the fixture's exact-version curriculum read. */
+const contents = new Map<string, { title: string; phases: unknown[]; sourceDigest: string }>();
 const key = (organizationId: string, programId: string) => `${organizationId}\u0000${programId}`;
 let fictional: ReturnType<typeof createFictionalProgramOfferLedger> | null = null;
 
@@ -43,7 +47,10 @@ export function selectProgramOfferLedger(env: Record<string, string | undefined>
   return {
     kind: "fictional",
     ledger: fictionalLedger(),
-    registerCurriculum: (organizationId, programId, current) => { registry.set(key(organizationId, programId), { programId, current }); },
+    registerCurriculum: (organizationId, programId, current, content) => {
+      registry.set(key(organizationId, programId), { programId, current });
+      if (current && content) contents.set(current.versionId, { title: content.title, phases: content.phases, sourceDigest: current.sourceDigest });
+    },
   };
 }
 
@@ -52,7 +59,9 @@ export function __resetProgramCommerceRuntime(): void {
   fictional?.reset();
   registry.clear();
   fictionalCheckout?.ledger.reset();
+  fictionalCheckout?.education.reset();
   fictionalCheckout = null;
+  contents.clear();
 }
 
 /** The fictional digest of a published patient-facing program: canonical JSON of its phases, or null when none is authored. */
@@ -78,7 +87,7 @@ export function fictionalPersonId(email: string): string {
  */
 export type ProgramCheckoutSelection =
   | { kind: "disabled"; reason: "checkout_unconfigured" }
-  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger> };
+  | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's stand-in for claim delivery: what an email would have carried. */ deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] };
 
 let fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null = null;
 /** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
@@ -90,7 +99,10 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
     const ledger = createFictionalCheckoutLedger();
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers: fictionalLedger(), ledger, processor, publicOrigin: publicSiteOrigin(env) ?? FIXTURE_RETURN_ORIGIN });
-    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger };
+    const education = createFictionalEducationLedger({ orders: ledger });
+    const deliveries: { orderId: string; entitlementId: string; claimToken: string; expiresAt: string }[] = [];
+    const settlement = createProgramSettlement({ ledger: education, curriculumContent: async binding => contents.get(binding.versionId) ?? null, expectedAccountRef: processor.accountRef, deliver: async delivery => { deliveries.push(delivery); } });
+    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, education, settlement, deliveries };
   }
   return fictionalCheckout;
 }

@@ -347,3 +347,104 @@ unknown replies each covered.
 3. **Session lifetime** (30 minutes in source) and **attempt cookie lifetime** (24 hours).
 4. **Whether a recurring (subscription-mode) purchase is offered at all** before the refund,
    cancellation and renewal policies exist; the boundary supports the mode, nothing publishes one.
+
+## Unit 3 — account access and enrollment settlement
+
+### The contract: `program-education-access/1` (`src/contracts/programEducationAccess.ts`)
+
+- **Entitlement**: one per order (unique), the right of one subject to the exact purchased
+  curriculum on the saved terms, copied from the order (offer revision, curriculum id/number/digest,
+  access terms version, duration) and immutable; `subject` `unclaimed` or `claimed` (the identity
+  API's opaque consumer subject, bound once, never transferred); `state`
+  `awaiting_claim | active | expired | held_refund | held_dispute | held_policy | revoked`;
+  `revision`; `window` opened at claim from the saved duration (null end = no end decided);
+  `settlement` (the verification event id); the last `policy` event.
+- **Transitions** (`ENTITLEMENT_TRANSITIONS`): nothing returns to `awaiting_claim` (the SQL allows
+  an operator release of a never-claimed hold back to it); `expired` and `revoked` are final.
+- **Claim**: a token HASH with an expiry (`CLAIM_VALIDITY_DAYS` = 7, a bound not a policy),
+  single-use; using it binds the subject, opens the window and creates the one enrollment in one
+  step. The token exists once, in the settlement reply, and goes to the delivery dependency.
+- **Enrollment** (education, standalone): the learner's own progress through the purchased lessons
+  and habits; separate from the clinical `program_assignments`; never a patient record, membership,
+  consent or practitioner assignment.
+- **Policy events**: `refund | dispute | chargeback | renewal_cancelled | renewal_payment_failed`
+  put the entitlement in a HELD state; `operator_release | operator_revoke` are recorded operator
+  decisions. No automatic refund, revocation, renewal charge or deletion.
+- **Reads**: the owner's own `access` view; the `curriculum` read serves the EXACT purchased version
+  (re-digested against the pinned digest) only to the active owner, else `withheld` with a reason;
+  the staff status view lists every state with subjects only in opaque form.
+
+### Settlement (`src/server/commerce/program-settlement.ts`)
+
+Durable admitted work = the order row in `payment_verified`; receipt = the entitlement row that
+references it. `settleOrder` is idempotent per order (whichever of a concurrent webhook, a second
+distinct event or a poll arrives first creates it; the rest find it and receive no token);
+`settleDue` recovers a crash between verification and settlement; settlement refuses an order that
+is not verified-and-paid, or whose verification names another processor account or mode, and the
+refusal is visible (`settlement_refused:<reason>`). `claim` binds the verified subject (from the
+identity context, never the body); `access` applies expiry on read so a cached positive is never
+served past its window; `curriculum` withholds for a non-owner, an inactive entitlement, a missing
+version or a digest that no longer matches; `recordPolicy` holds; `expireDue` is the worker.
+Delivery of the claim token to the processor-verified address is a named dependency
+(`deliver`); the fixture records deliveries, and no email provider exists in this source.
+
+### Ledgers and the bridge
+
+- `program-education-ledger.ts` (fictional, reading the fictional checkout ledger's orders) and
+  `program-education-ledger-sql.ts` (over the BLOCKED candidate through the API role; disabled unless
+  evidence names all three candidates).
+- `education-access-service.ts`: the narrowly admitted server bridge, shaped for the identity API's
+  dispatch (`context + body`): consumer pool only, synthetic boundary only, `clinical_data` purpose,
+  the subject from the verified context, three actions (`access`, `claim`, `curriculum`), and
+  `activation_refused` without exact evidence. Its route seam is named
+  (`POST /clinical-core/consumer/education`, `EDUCATION_ACCESS_ROUTE_SEAM`) and **registered
+  nowhere** in this source (the Lambda route table, the API template and the route inventory are
+  untouched; the test asserts it). Registration is in Codex's lane.
+- Runtime (`program-commerce-runtime.ts`): under the fixture, the webhook route settles verified
+  orders after processing (`settleDue`), the offers route registers the published content behind
+  the binding so the fixture's curriculum read serves the exact version, and deliveries are recorded.
+  Outside the fixture nothing settles, because nothing is verified.
+
+### BLOCKED candidate: `infra/aws-clinical-core/source-candidates/program-education-access.sql`
+
+- SHA-256 `5086de3b990394a47244bda96617e8bbb4f4f979b8aca7cfbccab7d35d343dc1`, pinned in
+  `PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256`. Parents: the identity migration (`c4ca9673…`) and
+  the checkout candidate (`767ac13b…`), applied after the offer candidate.
+- Tables: `program_entitlements` (snapshot checked against the order by the protect trigger on
+  insert; order verified-and-paid; identity and subject immutable; revision +1; the transition
+  table; one per order), `program_claims` (token hash unique, one issued per entitlement, settled
+  rows cannot reopen), `program_education_enrollments` (one per entitlement),
+  `program_entitlement_events` (append-only).
+- Functions executed by the API role: `settle_program_order`, `unsettled_program_orders`,
+  `claim_program_entitlement`, `read_program_entitlement`, `entitlement_for_order`,
+  `education_access`, `education_curriculum` (reads the published version table for the pinned
+  version and re-digests it), `record_entitlement_policy`, `transition_program_entitlement`,
+  `expire_program_entitlements`, `program_education_status`; all refuse until the activation row is
+  enabled. `rds-data-database.ts` classifies `program_entitlement_*` and `program_claim_*` tokens.
+
+### Tests (after)
+
+| File | Cases |
+| --- | --- |
+| `src/server/commerce/program-settlement.test.ts` (fictional: idempotent settlement, crash recovery, concurrent convergence, account/mode refusal, single-use claim, cross-owner isolation, receipt substitution, expired token, exact-version read, policy holds, expiry, store failure) | 9 |
+| `src/server/commerce/program-education-access-candidate.database.test.ts` (PGlite, manifest + three candidates, API role, through the same settlement boundary) | 5 |
+| `src/server/commerce/education-access-service.test.ts` (activation, identity, body shape, subject binding, no route registration) | 3 |
+
+Handoff outcomes, where proven: cross-owner and cross-clinic isolation (`not_owner`,
+`already_claimed_by_other`, empty access for a stranger); receipt substitution (an order id, a
+session reference or a forged token is `claim_invalid`); a different provider account or mode
+refuses settlement; revoked authority withholds the curriculum and is final; both event orders
+(settle first vs. claim-expired first) and duplicate settlement produce one entitlement; partial
+persistence and retry after restart (`settleDue`, `unsettled_program_orders`); withholding after
+an enrollment/link change is unit 4's clinical bridge (not built: a purchaser is a learner only).
+
+### Decisions named for Brandon
+
+1. **Claim delivery**: which provider sends the claim to the processor-verified address, and the
+   7-day validity.
+2. **Refund, dispute, chargeback and renewal policy**: every such event holds; what releases or
+   revokes, and whether a refund ever follows automatically, are not decided here.
+3. **Whether a purchaser may claim before holding a consumer account** (no: a verified consumer
+   identity is required by the bridge).
+4. **Whether education access needs ALP Core** (unit 4): the bridge does not check Core; the
+   access read is not a Core surface unless Brandon says so.

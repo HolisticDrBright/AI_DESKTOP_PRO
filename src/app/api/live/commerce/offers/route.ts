@@ -42,7 +42,9 @@ export async function POST(request: Request) {
     try {
       const studio = await programsLive.getStudio(command.programId, session.token);
       const digest = studio.published ? fictionalCurriculumDigest(studio.published.consumerProgram) : null;
-      selection.registerCurriculum(actor.organizationId, command.programId, studio.published && digest ? { versionId: studio.published.id, version: studio.published.version, sourceDigest: digest } : null);
+      const consumerProgram = studio.published?.consumerProgram as { title?: unknown; phases?: unknown } | null | undefined;
+      const content = consumerProgram && typeof consumerProgram.title === 'string' && Array.isArray(consumerProgram.phases) ? { title: consumerProgram.title, phases: consumerProgram.phases } : null;
+      selection.registerCurriculum(actor.organizationId, command.programId, studio.published && digest ? { versionId: studio.published.id, version: studio.published.version, sourceDigest: digest } : null, content);
     } catch {
       return json(503, { error: { code: 'unavailable', message: 'commerce_unverifiable' } });
     }

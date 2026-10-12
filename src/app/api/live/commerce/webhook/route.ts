@@ -40,6 +40,7 @@ export async function POST(request: Request) {
   if (admission.outcome === "refused") return json(400, { error: { code: "refused", message: admission.detail } });
   if (admission.outcome === "store_unavailable") return json(500, { error: { code: "unavailable", message: "Could not record the event." } });
   // Acknowledged. Processing is bounded and retryable; its outcome is visible in the intake record, never in this reply.
-  void selection.checkout.processEvent(event.id).catch(() => undefined);
+  // Settlement of whatever is verified follows the same way: idempotent per order, recoverable by the worker.
+  void selection.checkout.processEvent(event.id).then(() => selection.settlement.settleDue(5)).catch(() => undefined);
   return json(200, { received: true, outcome: admission.outcome });
 }
