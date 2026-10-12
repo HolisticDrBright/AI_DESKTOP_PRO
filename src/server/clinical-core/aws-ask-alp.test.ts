@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAwsAskAlpApiHandler } from "./aws-ask-alp-api";
+import { createAwsAskAlpApiHandler, parseAskAlpRuntimeMode } from "./aws-ask-alp-api";
 import { ASK_ALP_CONTEXT_VERSION, ASK_ALP_CONTRACT_VERSION, AskAlpError, promptSha256, validateAskAlpRequest, validateAskAlpResult } from "./aws-ask-alp";
 import { buildAskAlpOpenAIRequest, parseAskAlpOpenAIResponse } from "./aws-ask-alp-openai";
 
@@ -73,5 +73,34 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body).data.provider).toBe("openai");
+  });
+
+  it("refuses production generation until context comes from a trusted server snapshot", async () => {
+    let providerCalls = 0;
+    const handler = createAwsAskAlpApiHandler({
+      configuration: {
+        consumerIssuer: ISSUER, consumerAudience: AUDIENCE, runtimeMode: "production", phiAllowed: true,
+        model: MODEL, openAiSecretArn: "arn:aws:secretsmanager:us-east-2:173535830222:secret:test-openai",
+        approvedPromptSha256: promptSha256(PROMPT),
+      },
+      provider: async () => { providerCalls += 1; return { ...result(), provider: "openai", model: MODEL }; },
+    });
+    const response = await handler({
+      routeKey: "POST /clinical-core/consumer/ask-alp/generate", headers: { "content-type": "application/json" }, body: JSON.stringify(request()),
+      requestContext: { authorizer: { jwt: { claims: {
+        iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "production-user-123",
+        "custom:person_id": "22222222-2222-4222-8222-222222222222", "custom:organization_id": "33333333-3333-4333-8333-333333333333",
+        "custom:production_bound": "true",
+      } } } },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.body)).toEqual({ error: "trusted_context_not_configured" });
+    expect(providerCalls).toBe(0);
+  });
+
+  it("refuses misspelled runtime modes instead of treating them as synthetic", () => {
+    expect(parseAskAlpRuntimeMode("synthetic")).toBe("synthetic");
+    expect(parseAskAlpRuntimeMode("production")).toBe("production");
+    expect(() => parseAskAlpRuntimeMode("prodution")).toThrow("ask_alp_configuration_invalid");
   });
 });

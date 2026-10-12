@@ -17,6 +17,11 @@ export type AskAlpApiConfiguration = {
 
 export type AskAlpProvider = (request: AskAlpGenerationRequest) => Promise<AskAlpGenerationResult>;
 
+export function parseAskAlpRuntimeMode(value: string): "synthetic" | "production" {
+  if (value !== "synthetic" && value !== "production") throw new Error("ask_alp_configuration_invalid");
+  return value;
+}
+
 export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfiguration; provider?: AskAlpProvider }) {
   validateConfiguration(input.configuration);
   const provider = input.provider ?? ((request) => generateAskAlpWithOpenAI({ request, model: input.configuration.model, secretArn: input.configuration.openAiSecretArn }));
@@ -25,8 +30,12 @@ export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfi
     if (input.configuration.runtimeMode === "production" && !input.configuration.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
     try {
       assertIdentity(event, input.configuration);
+      // Production must replace the caller body with an independently authorized,
+      // consented server snapshot. The current client body is never that authority.
+      const request = input.configuration.runtimeMode === "production"
+        ? loadTrustedGenerationRequest()
+        : validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
       if (input.configuration.runtimeMode === "production") await requireConsumerCore(event.headers ?? {});
-      const request = validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
       return response(200, { data: await provider(request) });
     } catch (error) {
       if (error instanceof CoreSubscriptionError) return response(402, { error: "core_subscription_required" });
@@ -35,6 +44,7 @@ export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfi
         return response(status, { error: error.category });
       }
       if (error instanceof AskAlpApiIdentityError) return response(403, { error: "identity_refused" });
+      if (error instanceof TrustedContextNotConfiguredError) return response(503, { error: "trusted_context_not_configured" });
       return response(503, { error: "service_unavailable" });
     }
   };
@@ -67,6 +77,13 @@ function validateConfiguration(config: AskAlpApiConfiguration) {
 }
 
 class AskAlpApiIdentityError extends Error {}
+class TrustedContextNotConfiguredError extends Error {}
+
+function loadTrustedGenerationRequest(): AskAlpGenerationRequest {
+  // No production Ask ALP snapshot binding exists yet. Fail closed even if
+  // PHI_ALLOWED is accidentally enabled on a future stack.
+  throw new TrustedContextNotConfiguredError();
+}
 
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response {
   return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) };
