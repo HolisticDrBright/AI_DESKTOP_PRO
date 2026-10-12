@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {CareObservationError,inspectCareMessagingQualification,inspectCareConnectionsQualification,canonical} from './care-messaging-qualification-observer.mjs';
 import {inspectionAwsReader,inspectionCodeReader,inspectionLedgerReader} from './care-messaging-inspection-io.mjs';
-import {qualificationConsentArtifact} from './qualification-consent-ledger.mjs';
+import {qualificationConsentArtifact,qualificationCare112Artifact,QUALIFICATION_CARE_112_LEDGER} from './qualification-consent-ledger.mjs';
 
 const local=(program,args,maxBuffer=8*1024*1024)=>execFileSync(program,args,{encoding:'utf8',timeout:30000,maxBuffer,windowsHide:true,stdio:['ignore','pipe','pipe']});
 const source=()=>({head:local('git',['rev-parse','HEAD']).trim(),dirty:local('git',['status','--porcelain','--untracked-files=all']).trim()});
@@ -21,13 +21,17 @@ export async function runCareInspection(candidate){
  let temporary;
 try{
  const args=process.argv.slice(2),options={};
- for(const arg of args){const match=/^--(artifact-dir|binding)=(.+)$/.exec(arg);
+ for(const arg of args){const match=/^--(artifact-dir|binding|release)=(.+)$/.exec(arg);
   if(!match||Object.hasOwn(options,match[1]))throw new CareObservationError('argument_refused');options[match[1]]=match[2];}
+ const successor=options.release==='112';
+ if(options.release!==undefined&&(!successor||candidate!=='care-messaging'))throw new CareObservationError('argument_refused');
  const first=source();if(first.dirty)throw new CareObservationError('dirty_source_refused');
- const expected=qualificationConsentArtifact(JSON.parse(local(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'])));
+ const expected=successor
+  ? qualificationCare112Artifact(JSON.parse(local(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'])))
+  : qualificationConsentArtifact(JSON.parse(local(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'])));
  // Rebuild from this clean checkout; a caller-supplied manifest cannot self-certify.
  temporary=mkdtempSync(join(tmpdir(),'alp-care-rebuild-'));
- local(process.execPath,[`scripts/build-aws-${candidate}.mjs`,'--out-dir='+temporary]);
+ local(process.execPath,[`scripts/build-aws-${candidate}.mjs`,...(successor?['--release=112']:[]),'--out-dir='+temporary]);
  const artifact=load(temporary);
  if(options['artifact-dir']){
   const supplied=load(resolve(options['artifact-dir']));
@@ -37,7 +41,7 @@ try{
  let binding;
  if(options.binding){const path=resolve(options.binding);if(statSync(path).size>32768)throw new CareObservationError('binding_refused');binding=JSON.parse(readFileSync(path,'utf8'));}
  const readAws=inspectionAwsReader(undefined,candidate);
- const inspectLedger=inspectionLedgerReader(expected);
+ const inspectLedger=inspectionLedgerReader(expected,undefined,successor?QUALIFICATION_CARE_112_LEDGER:undefined);
  const report=await inspector({artifact,head:first.head,binding,readAws,readCodeVersion:inspectionCodeReader(readAws),inspectLedger});
  const last=source();if(last.dirty||last.head!==first.head)throw new CareObservationError('source_changed');
  console.log(JSON.stringify(report));

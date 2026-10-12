@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {careMessagingZip} from './care-messaging-zip.mjs';
-import {QUALIFICATION_CONSENT_LEDGER} from './qualification-consent-ledger.mjs';
+import {QUALIFICATION_CONSENT_LEDGER,QUALIFICATION_CARE_112_LEDGER} from './qualification-consent-ledger.mjs';
 
 export const CARE_OBSERVER=Object.freeze({account:'588966314750',region:'us-east-2',database:'clinical_core_qualification',
  foundation:'ai-clinical-core-qualification-foundation',stack:'ai-clinical-core-qualification-care-messaging'});
@@ -26,9 +26,12 @@ export function assertCareArtifact({manifest,code,templateBytes,zip},head){
 }
 export function assertCareConnectionsArtifact(artifact,head){return assertArtifact(artifact,head,'care-connections');}
 function assertArtifact({manifest,code,templateBytes,zip},head,candidate){
+ const successor=candidate==='care-messaging'&&manifest?.migrationCount===112;
+ const expectedCount=successor?112:106,expectedRelease=successor?QUALIFICATION_CARE_112_LEDGER:QUALIFICATION_CONSENT_LEDGER;
  if(!record(manifest)||manifest.contract!==candidate+'-deployment/1'||manifest.sourceClean!==true
-  ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==106
-  ||manifest.migrationReleaseSha256!==QUALIFICATION_CONSENT_LEDGER||manifest.deploymentPerformed!==false
+  ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==expectedCount
+  ||manifest.migrationReleaseSha256!==expectedRelease||manifest.deploymentPerformed!==false
+  ||candidate==='care-messaging'&&manifest.qualificationOnly!==successor
   ||!Buffer.isBuffer(code)||!Buffer.isBuffer(templateBytes)||!Buffer.isBuffer(zip)
   ||manifest.codeSha256!==sha(code)||manifest.templateSha256!==sha(templateBytes)
   ||manifest.deploymentZipSha256!==sha(zip)||manifest.deploymentZipBytes!==zip.length)refuse('artifact_refused');
@@ -39,7 +42,9 @@ function assertArtifact({manifest,code,templateBytes,zip},head,candidate){
   ||!Array.isArray(manifest.claimFunctions)||manifest.claimFunctions.length!==2))refuse('artifact_refused');
  let template;try{template=JSON.parse(templateBytes.toString('utf8'));}catch{refuse('artifact_refused');}
  same(template.Parameters?.SourceCommit?.AllowedValues,[head],'artifact_refused');
- same(template.Parameters?.MigrationReleaseSha256?.AllowedValues,[QUALIFICATION_CONSENT_LEDGER],'artifact_refused');
+ same(template.Parameters?.MigrationReleaseSha256?.AllowedValues,[expectedRelease],'artifact_refused');
+ if(successor){same(template.Parameters?.PhiAllowed?.AllowedValues,['false'],'artifact_refused');
+  same(template.Parameters?.Activation?.AllowedValues,['blocked'],'artifact_refused');}
  return {manifest,code,template,zip};
 }
 export function assertCareFoundation(stack){
@@ -66,7 +71,7 @@ function assertBinding(binding,artifact,foundation,candidate){
  if(candidate==='care-connections')keys.push('claimRecoveryEnabled','enabledConsentScopes');
  if(!record(binding)||Object.keys(binding).length!==keys.length||keys.some(k=>!Object.hasOwn(binding,k))
   ||binding.contract!==candidate+'-qualification-binding/1'||binding.sourceCommit!==artifact.manifest.sourceCommit
-  ||binding.migrationReleaseSha256!==QUALIFICATION_CONSENT_LEDGER||binding.apiId!==foundation.ApiId||!uuid.test(binding.organizationId??''))refuse('binding_refused');
+  ||binding.migrationReleaseSha256!==artifact.manifest.migrationReleaseSha256||binding.apiId!==foundation.ApiId||!uuid.test(binding.organizationId??''))refuse('binding_refused');
  for(const pool of ['consumer','workforce']){
   if(!/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(binding[pool+'Issuer']??'')
    ||!/^[a-zA-Z0-9]{20,128}$/.test(binding[pool+'Audience']??''))refuse('binding_refused');
@@ -157,7 +162,8 @@ async function inspectCareQualification({artifact,head,binding,readAws,readCodeV
  if(startFoundation?.Stacks?.length!==1)refuse('foundation_refused');const f=assertCareFoundation(startFoundation.Stacks[0]);
  if(binding)assertBinding(binding,a,f,candidate);
  const ledger=await inspectLedger(f);
- if(ledger?.database!==c.database||ledger?.release!==QUALIFICATION_CONSENT_LEDGER||ledger?.rolledBack!==true||ledger?.rows!==106)refuse('ledger_refused');
+ if(ledger?.database!==c.database||ledger?.release!==a.manifest.migrationReleaseSha256
+  ||ledger?.rolledBack!==true||ledger?.rows!==a.manifest.migrationCount)refuse('ledger_refused');
  const api=await readAws('apigatewayv2','get-api',{ApiId:f.ApiId});
  if(api?.ApiId!==f.ApiId||api.ApiEndpoint!==f.ApiOrigin||api.ProtocolType!=='HTTP'||api.DisableExecuteApiEndpoint===true)refuse('api_refused');
  let start;
@@ -167,14 +173,14 @@ async function inspectCareQualification({artifact,head,binding,readAws,readCodeV
   try{await transport('cloudformation','describe-stacks',{StackName:c.stack});refuse('observation_changed');}
   catch(final){if(!(final instanceof CareObservationError)||final.category!=='stack_missing')throw final;}
   return {status:'not_deployed',mutations:false,acceptance:false,phiAllowed:false,account:c.account,database:c.database,
-   sourceCommit:head,migrationReleaseSha256:QUALIFICATION_CONSENT_LEDGER,wholeLedgerVerified:true,codeUploadedVerified:false};
+   sourceCommit:head,migrationReleaseSha256:a.manifest.migrationReleaseSha256,wholeLedgerVerified:true,codeUploadedVerified:false};
  }throw e;}
  if(!binding)refuse('reviewed_binding_required');
  if(start?.Stacks?.length!==1)refuse('stack_refused');const stack=start.Stacks[0];
  if(!['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(stack.StackStatus)||!stack.StackId?.startsWith(`arn:aws:cloudformation:${c.region}:${c.account}:stack/${c.stack}/`))refuse('stack_refused');
  const p=expectedParameters(binding,f,candidate);same(pairs(stack.Parameters,'ParameterKey','ParameterValue'),p,'parameters_refused');
  const output=pairs(stack.Outputs,'OutputKey','OutputValue');
- same(output,{PhiAllowed:'false',Activation:'blocked',SourceCommit:head,MigrationReleaseSha256:QUALIFICATION_CONSENT_LEDGER,
+ same(output,{PhiAllowed:'false',Activation:'blocked',SourceCommit:head,MigrationReleaseSha256:a.manifest.migrationReleaseSha256,
   DatabaseName:c.database,QualificationExecution:'enabled',FunctionName:f.ApiId+'-'+candidate,
   ...(candidate==='care-connections'?{ClaimRecoveryEnabled:String(binding.claimRecoveryEnabled)}:{})},'outputs_refused');
  const template=await readAws('cloudformation','get-template',{StackName:c.stack,TemplateStage:'Original'});
@@ -252,7 +258,7 @@ async function inspectCareQualification({artifact,head,binding,readAws,readCodeV
  const finalStored=await readCodeVersion({Bucket:p.CodeBucket,Key:p.CodeKey,VersionId:p.CodeVersion,ExpectedBucketOwner:c.account},a.zip.length);
  if(!Buffer.isBuffer(finalStored)||!finalStored.equals(stored))refuse('observation_changed');
  return {status:'deployment_bindings_verified',mutations:false,acceptance:false,humanReviewsVerified:false,phiAllowed:false,
-  account:c.account,database:c.database,sourceCommit:head,migrationReleaseSha256:QUALIFICATION_CONSENT_LEDGER,
+  account:c.account,database:c.database,sourceCommit:head,migrationReleaseSha256:a.manifest.migrationReleaseSha256,
   wholeLedgerVerified:true,uploadedVersionVerified:true,deploymentZipSha256:a.manifest.deploymentZipSha256,
   remaining:['human evidence review','actual positive/negative API acceptance','matched fleet and device acceptance']};
 }

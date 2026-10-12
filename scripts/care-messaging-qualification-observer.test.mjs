@@ -1,23 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdtempSync,readFileSync,readdirSync,writeFileSync,existsSync,unlinkSync,rmdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {CARE_OBSERVER as c,CareObservationError,assertCareArtifact,inspectCareMessagingQualification} from './care-messaging-qualification-observer.mjs';
 import {inspectionArguments,inspectionAwsReader,inspectionCodeReader,inspectionLedgerReader} from './care-messaging-inspection-io.mjs';
-import {qualificationConsentArtifact} from './qualification-consent-ledger.mjs';
+import {qualificationConsentArtifact,qualificationCare112Artifact,QUALIFICATION_CARE_112_LEDGER} from './qualification-consent-ledger.mjs';
 import {crc32,careMessagingZip} from './care-messaging-zip.mjs';
 
 // All transports below are fictional. No AWS credentials or provider requests.
 const dir=mkdtempSync(join(tmpdir(),'alp-care-observer-test-'));
-let artifact;
+let artifact,successorArtifact;
 try{
  execFileSync(process.execPath,['scripts/build-aws-care-messaging.mjs','--out-dir='+dir],{timeout:30000,windowsHide:true});
  artifact={manifest:JSON.parse(readFileSync(join(dir,'artifact-manifest.json'),'utf8')),code:readFileSync(join(dir,'index.js')),
   templateBytes:readFileSync(join(dir,'template.json')),zip:readFileSync(join(dir,'deployment.zip'))};
  // The unit fixture deliberately models a clean build, independent of local edits.
  artifact.manifest.sourceClean=true;
+ execFileSync(process.execPath,['scripts/build-aws-care-messaging.mjs','--release=112','--out-dir='+dir],{timeout:30000,windowsHide:true});
+ successorArtifact={manifest:JSON.parse(readFileSync(join(dir,'artifact-manifest.json'),'utf8')),code:readFileSync(join(dir,'index.js')),
+  templateBytes:readFileSync(join(dir,'template.json')),zip:readFileSync(join(dir,'deployment.zip'))};
+ successorArtifact.manifest.sourceClean=true;
 }finally{for(const name of readdirSync(dir))unlinkSync(join(dir,name));rmdirSync(dir);}
 const hash='a'.repeat(64),uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const pairs=(object,key,value)=>Object.entries(object).map(([k,v])=>({[key]:k,[value]:v}));
@@ -98,6 +103,40 @@ function fixture(){
  return {responses,calls,counts,options:{artifact,head:artifact.manifest.sourceCommit,binding:structuredClone(binding),readAws,
   readCodeVersion:async()=>artifact.zip,inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:106,rolledBack:true})}};
 }
+function fixture112(){
+ const f=fixture(),release=QUALIFICATION_CARE_112_LEDGER;
+ f.options.artifact=successorArtifact;
+ f.options.binding.migrationReleaseSha256=release;
+ f.options.readCodeVersion=async()=>successorArtifact.zip;
+ f.options.inspectLedger=async()=>({database:c.database,release,rows:112,rolledBack:true});
+ const candidate=f.responses['cloudformation/describe-stacks/candidate'].Stacks[0];
+ candidate.Parameters.find(p=>p.ParameterKey==='MigrationReleaseSha256').ParameterValue=release;
+ candidate.Outputs.find(o=>o.OutputKey==='MigrationReleaseSha256').OutputValue=release;
+ f.responses['cloudformation/get-template'].TemplateBody=JSON.parse(successorArtifact.templateBytes.toString('utf8'));
+ const functionConfiguration=f.responses['lambda/get-function-configuration'];
+ functionConfiguration.CodeSize=successorArtifact.zip.length;
+ functionConfiguration.CodeSha256=Buffer.from(successorArtifact.manifest.deploymentZipSha256,'hex').toString('base64');
+ functionConfiguration.Environment.Variables.MIGRATION_RELEASE_SHA256=release;
+ return f;
+}
+test('fictional 112 artifact and hosted bindings are distinct from the historical 106 release',async()=>{
+ const f=fixture112(),result=await inspectCareMessagingQualification(f.options);
+ assert.equal(result.status,'deployment_bindings_verified');
+ assert.equal(result.migrationReleaseSha256,QUALIFICATION_CARE_112_LEDGER);
+ assert.equal(result.acceptance,false);assert.equal(result.phiAllowed,false);
+ for(const count of f.counts.values())assert.equal(count,2);
+});
+test('fictional 112 inspection refuses a 106 ledger or a widened activation template',async()=>{
+ const oldLedger=fixture112();oldLedger.options.inspectLedger=async()=>({database:c.database,
+  release:artifact.manifest.migrationReleaseSha256,rows:106,rolledBack:true});
+ await assert.rejects(()=>inspectCareMessagingQualification(oldLedger.options),/ledger_refused/);
+ const widened={...successorArtifact,manifest:structuredClone(successorArtifact.manifest)};
+ const template=JSON.parse(widened.templateBytes.toString('utf8'));
+ template.Parameters.PhiAllowed.AllowedValues.push('true');
+ widened.templateBytes=Buffer.from(JSON.stringify(template));
+ widened.manifest.templateSha256=createHash('sha256').update(widened.templateBytes).digest('hex');
+ assert.throws(()=>assertCareArtifact(widened,widened.manifest.sourceCommit),/artifact_refused/);
+});
 test('ZIP is deterministic with correct CRC and a single exact stored UTF-8 entry',()=>{
  assert.equal(crc32(Buffer.from('123456789')),0xcbf43926);
  const code=Buffer.from('exports.handler=async()=>"fictional";'),zip=careMessagingZip(code);
@@ -209,8 +248,43 @@ test('inspection entrypoint has rollback-only whole-ledger queries and no write 
  assert.match(text,/new RollbackTransactionCommand/);assert.doesNotMatch(text,/CommitTransactionCommand|INSERT INTO|UPDATE clinical|PhiAllowed=true/);
  assert.match(text,/dirty_source_refused/);assert.match(text,/rebuilt_artifact_mismatch/);
 });
+test('read-only entrypoint requires an explicit 112 choice and refuses it for care connections',()=>{
+ for(const [script,argument] of [['inspect-care-messaging-qualification.mjs','--release=113'],
+  ['inspect-care-connections-qualification.mjs','--release=112']]){
+  const result=spawnSync(process.execPath,['scripts/'+script,argument],{encoding:'utf8',timeout:15000,windowsHide:true});
+  assert.equal(result.status,1);assert.match(result.stderr,/"category":"argument_refused"/);
+ }
+});
 const expectedLedger=qualificationConsentArtifact(JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],
  {encoding:'utf8',timeout:15000,maxBuffer:8*1024*1024,windowsHide:true})));
+const expected112Ledger=qualificationCare112Artifact(JSON.parse(execFileSync(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'],
+ {encoding:'utf8',timeout:15000,maxBuffer:8*1024*1024,windowsHide:true})));
+test('read-only 112 ledger adapter checks every applied row under rollback',async()=>{
+ const commands=[];let destroyed=false;
+ const inspect=inspectionLedgerReader(expected112Ledger,()=>({destroy(){destroyed=true;},async send(command){
+  const type=command.constructor.name;commands.push(type);
+  if(type==='BeginTransactionCommand')return {transactionId:'fictional-112-transaction'};
+  assert.equal(command.input.transactionId,'fictional-112-transaction');
+  if(type==='RollbackTransactionCommand')return {};
+  if(command.input.sql==='select current_database()')return {records:[[{stringValue:c.database}]]};
+  if(command.input.sql==='select version,sha256 from clinical_core.schema_migrations order by version')
+   return {records:expected112Ledger.map(row=>[{stringValue:row.version},{stringValue:row.sha256}])};
+  assert.equal(command.input.sql,'set transaction isolation level repeatable read read only');return {};
+ }}),QUALIFICATION_CARE_112_LEDGER);
+ assert.deepEqual(await inspect(foundation),{database:c.database,release:QUALIFICATION_CARE_112_LEDGER,rows:112,rolledBack:true});
+ assert.equal(destroyed,true);assert.equal(commands.at(-1),'RollbackTransactionCommand');
+ assert.equal(commands.includes('CommitTransactionCommand'),false);
+ const mismatched=inspectionLedgerReader(expected112Ledger,()=>({destroy(){},async send(command){
+  if(command.constructor.name==='BeginTransactionCommand')return {transactionId:'fictional-112-transaction'};
+  if(command.constructor.name==='RollbackTransactionCommand')return {};
+  if(command.input.sql==='select current_database()')return {records:[[{stringValue:c.database}]]};
+  if(command.input.sql==='select version,sha256 from clinical_core.schema_migrations order by version')
+   return {records:expected112Ledger.slice(0,111).map(row=>[{stringValue:row.version},{stringValue:row.sha256}])};
+  return {};
+ }}),QUALIFICATION_CARE_112_LEDGER);
+ await assert.rejects(()=>mismatched(foundation),/ledger_refused/);
+ assert.throws(()=>inspectionLedgerReader(expectedLedger,undefined,QUALIFICATION_CARE_112_LEDGER),/ledger_refused/);
+});
 for(const [scenario,category] of [['good',null],['wrong database','ledger_refused'],['changed digest','ledger_refused'],
  ['no transaction','ledger_refused'],['resuming','database_resuming'],['query denied','ledger_refused'],['rollback denied','rollback_unverified']])
  test('read-only ledger adapter: '+scenario,async()=>{

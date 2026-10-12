@@ -43,6 +43,23 @@ report is not authorization or evidence that the new stack is installed.
 Independent security, MFA, retention, messaging, alarm and identity reviews
 must be authentic; test placeholders in unit tests are never review evidence.
 
+The read-only inspector now requires an **explicit** successor choice:
+
+```powershell
+node scripts/inspect-care-messaging-qualification.mjs --release=112
+```
+
+It rebuilds the 112 artifact from the clean checkout, compares all 112
+database migration rows in a repeatable-read, read-only transaction that is
+rolled back, and checks the exact template, uploaded ZIP version, stack,
+authorizers, IAM, alarms and routes if a candidate stack exists. An optional
+`--artifact-dir=<directory>` must match the rebuilt bytes, and
+`--binding=<reviewed-file>` is required to inspect an existing stack. The
+historical no-argument mode remains pinned to 106; the care-connections
+inspector cannot borrow the 112 switch. `not_deployed` or an inspection
+refusal is not hosted acceptance, and syntactically valid review hashes are
+not evidence of independent reviews.
+
 Hosted positive and negative care-messaging, receipt/settlement, export,
 consent-withdrawal and cross-owner/clinic tests remain unexecuted for this
 candidate. No physical-device or production/PHI readiness claim follows from

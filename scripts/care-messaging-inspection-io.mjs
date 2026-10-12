@@ -6,7 +6,8 @@ import {CareObservationError,CARE_OBSERVER,CARE_CONNECTION_OBSERVER} from './car
 import {SYNTHETIC_MEMBER_PROFILE} from './synthetic-aws-principal.mjs';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {RDSDataClient,BeginTransactionCommand,ExecuteStatementCommand,RollbackTransactionCommand} from '@aws-sdk/client-rds-data';
-import {assertQualificationConsentLedger,QUALIFICATION_CONSENT_LEDGER} from './qualification-consent-ledger.mjs';
+import {assertQualificationConsentLedger,assertQualificationCare112Ledger,
+ QUALIFICATION_CONSENT_LEDGER,QUALIFICATION_CARE_112_LEDGER} from './qualification-consent-ledger.mjs';
 
 // No mutation operation or arbitrary CLI arguments can pass this adapter.
 const operations={
@@ -80,7 +81,9 @@ export function inspectionCodeReader(readAws){
  };
 }
 export function inspectionLedgerReader(expected,makeClient=()=>new RDSDataClient({region:CARE_OBSERVER.region,
- credentials:fromIni({profile:SYNTHETIC_MEMBER_PROFILE}),maxAttempts:1})){
+ credentials:fromIni({profile:SYNTHETIC_MEMBER_PROFILE}),maxAttempts:1}),release=QUALIFICATION_CONSENT_LEDGER){
+ if(![QUALIFICATION_CONSENT_LEDGER,QUALIFICATION_CARE_112_LEDGER].includes(release)
+  ||expected?.length!==(release===QUALIFICATION_CARE_112_LEDGER?112:106))throw new CareObservationError('ledger_refused');
  return async foundation=>{
   if(foundation?.DatabaseName!==CARE_OBSERVER.database
    ||!/^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(foundation.DatabaseClusterArn??'')
@@ -96,7 +99,9 @@ export function inspectionLedgerReader(expected,makeClient=()=>new RDSDataClient
    await query('set transaction isolation level repeatable read read only');
    const database=await query('select current_database()');
    const ledger=await query('select version,sha256 from clinical_core.schema_migrations order by version');
-   assertQualificationConsentLedger(field(database.records?.[0],0),(ledger.records??[]).map(row=>({version:field(row,0),sha256:field(row,1)})),expected);
+   const actual=(ledger.records??[]).map(row=>({version:field(row,0),sha256:field(row,1)}));
+   if(release===QUALIFICATION_CARE_112_LEDGER)assertQualificationCare112Ledger(field(database.records?.[0],0),actual,expected);
+   else assertQualificationConsentLedger(field(database.records?.[0],0),actual,expected);
    verified=true;
   }catch(error){throw new CareObservationError(error?.name==='DatabaseResumingException'?'database_resuming':'ledger_refused');}
   finally{
@@ -104,6 +109,6 @@ export function inspectionLedgerReader(expected,makeClient=()=>new RDSDataClient
    catch{throw new CareObservationError('rollback_unverified');}finally{client.destroy();}
   }
   if(!verified||!rolledBack)throw new CareObservationError('ledger_refused');
-  return {database:CARE_OBSERVER.database,release:QUALIFICATION_CONSENT_LEDGER,rows:expected.length,rolledBack:true};
+  return {database:CARE_OBSERVER.database,release,rows:expected.length,rolledBack:true};
  };
 }
