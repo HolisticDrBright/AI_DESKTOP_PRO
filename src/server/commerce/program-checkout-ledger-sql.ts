@@ -89,7 +89,8 @@ export function createSqlCheckoutLedger(deps: SqlCheckoutLedgerDependencies): Pr
     async transition(orderId, expectedRevision, next, carry = {}): Promise<ProgramOrder> {
       return one(programOrder, `select commercial_education.${transitionFunction}($1,$2,$3,$4::jsonb) as data`, [clinicalUuid(orderId), expectedRevision, next, JSON.stringify({ creation: carry.creation ?? null, processor: carry.processor ?? null, verification: carry.verification ?? null })]);
     },
-    async ordersInStates(states, limit) { return one(z.array(programOrder), 'select commercial_education.program_orders_in_states($1::text[],$2) as data', [states, limit]); },
+    // The state list travels as JSON text: the RDS Data API carries no array parameter, so a JS array here never reached the database hosted.
+    async ordersInStates(states, limit) { return one(z.array(programOrder), 'select commercial_education.program_orders_in_states(array(select jsonb_array_elements_text($1::jsonb)),$2) as data', [JSON.stringify(states), limit]); },
     async workStatus(): Promise<CheckoutWorkStatus> {
       const status = await one(workStatus, 'select commercial_education.checkout_work_status() as data', []);
       return { orders: status.orders as CheckoutWorkStatus['orders'], intake: status.intake as CheckoutWorkStatus['intake'], oldestUnresolvedAt: status.oldestUnresolvedAt };

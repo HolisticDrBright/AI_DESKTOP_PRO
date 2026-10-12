@@ -92,11 +92,9 @@ export function createClaimDelivery(deps: { ledger: ProgramEducationLedger; seal
 /* ------------------------------------------------------------ fictional seams, fixture only */
 
 /** AES-256-GCM under a key that lives only in this process; the claim id is bound as associated data. Fixture only: the hosted sealer is a reviewed KMS key. */
-export function createFictionalClaimSealer(fixed?: { key: Buffer; keyRef: string }): ClaimSealer & { keyRef: string } {
-  // A fixed key exists only so a fixture host restarted on the same embedded database can open what it sealed before; the hosted key is a reviewed KMS key.
-  if (fixed && (fixed.key.byteLength !== 32 || !/^fictional-sealer:[a-z0-9-]{1,64}$/.test(fixed.keyRef))) throw new Error('fictional sealer key must be 32 bytes under a fictional-sealer: reference');
-  const key = fixed?.key ?? randomBytes(32);
-  const keyRef = fixed?.keyRef ?? 'fictional-sealer:' + randomBytes(6).toString('hex');
+/** AES-256-GCM sealing under one key, the claim id bound as associated data; the key reference names which key sealed it. */
+export function createAesGcmClaimSealer(key: Buffer, keyRef: string): ClaimSealer & { keyRef: string } {
+  if (key.byteLength !== 32) throw new Error('claim sealing key must be 32 bytes');
   return {
     keyRef,
     async seal(code, claimId) {
@@ -114,6 +112,13 @@ export function createFictionalClaimSealer(fixed?: { key: Buffer; keyRef: string
       return Buffer.concat([decipher.update(Buffer.from(sealed.ciphertext, 'base64url')), decipher.final()]).toString('utf8');
     },
   };
+}
+
+/** AES-256-GCM under a key that lives only in this process; the claim id is bound as associated data. Fixture only: the reviewed runtime seals under the host's injected key (reviewed/commerce-connectors.ts). */
+export function createFictionalClaimSealer(fixed?: { key: Buffer; keyRef: string }): ClaimSealer & { keyRef: string } {
+  // A fixed key exists only so a fixture host restarted on the same embedded database can open what it sealed before.
+  if (fixed && (fixed.key.byteLength !== 32 || !/^fictional-sealer:[a-z0-9-]{1,64}$/.test(fixed.keyRef))) throw new Error('fictional sealer key must be 32 bytes under a fictional-sealer: reference');
+  return createAesGcmClaimSealer(fixed?.key ?? randomBytes(32), fixed?.keyRef ?? 'fictional-sealer:' + randomBytes(6).toString('hex'));
 }
 
 /** The fixture's purchaser contacts: what the fictional hosted page collected, by order. */

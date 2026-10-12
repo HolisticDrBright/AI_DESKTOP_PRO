@@ -31,6 +31,8 @@ export type SettlementDependencies = {
   /** Seals each new code for the delivery queue. Without it nothing can be delivered, so nothing is issued. */
   sealer: ClaimSealer | null;
   now?: () => Date;
+  /** How long a new code stays valid, in days: the recorded decision in the reviewed runtime; the source bound otherwise. */
+  claimValidityDays?: number;
 };
 
 /** `queued`: this call created the entitlement and its sealed delivery; `none`: the receipt already existed. Nothing here says a code was sent. */
@@ -47,13 +49,15 @@ export const newClaimToken = () => randomBytes(32).toString('base64url');
 
 export function createProgramSettlement(deps: SettlementDependencies) {
   const now = deps.now ?? (() => new Date());
+  const validityDays = deps.claimValidityDays ?? CLAIM_VALIDITY_DAYS;
+  if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > 30) throw new Error('claim_validity_days_invalid');
   const api = {
     /** Settle one verified order. Idempotent: a second call returns the existing receipt and queues nothing. */
     async settleOrder(order: { orderId: string }): Promise<SettlementOutcome> {
       if (!deps.sealer) return { settled: false, reason: 'sealer_unavailable' };
       const claimId = randomUUID();
       const token = newClaimToken();
-      const expiresAt = new Date(now().getTime() + CLAIM_VALIDITY_DAYS * 86_400_000).toISOString();
+      const expiresAt = new Date(now().getTime() + validityDays * 86_400_000).toISOString();
       let sealed;
       try { sealed = await deps.sealer.seal(token, claimId); } catch { return { settled: false, reason: 'sealer_unavailable' }; }
       try {
@@ -81,7 +85,7 @@ export function createProgramSettlement(deps: SettlementDependencies) {
       let sealed;
       try { sealed = await deps.sealer.seal(token, claimId); } catch { return { reissued: false, reason: 'sealer_unavailable' }; }
       try {
-        const result = await deps.ledger.reissueClaim(operator, entitlementId, { claimId, tokenHash: hashClaimToken(token), claimExpiresAt: new Date(now().getTime() + CLAIM_VALIDITY_DAYS * 86_400_000).toISOString(), sealed });
+        const result = await deps.ledger.reissueClaim(operator, entitlementId, { claimId, tokenHash: hashClaimToken(token), claimExpiresAt: new Date(now().getTime() + validityDays * 86_400_000).toISOString(), sealed });
         return { reissued: true, claimId: result.claim.claimId, superseded: result.superseded };
       } catch (error) {
         if (error instanceof EducationLedgerError && error.category === 'not_found') return { reissued: false, reason: 'not_found' };

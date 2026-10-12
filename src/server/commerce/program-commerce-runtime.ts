@@ -149,3 +149,52 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
   }
   return state.fictionalCheckout;
 }
+
+/* ------------------------------------------------------------ the reviewed runtime */
+
+/**
+ * The reviewed purchase runtime (reviewed/reviewed-commerce-runtime.ts): the real services over the
+ * candidate SQL through four reduced sessions and the test-mode processor, opened only by the
+ * deployment's reviewed bootstrap (reviewed/reviewed-bootstrap.ts) and re-resolved on every request
+ * from the pinned target. It has no staff identity, so the Studio's status read never selects it.
+ */
+export type ReviewedPurchasing = {
+  kind: "reviewed";
+  checkout: ReturnType<typeof createProgramCheckout>;
+  expected: { accountRef: string; apiVersion: string };
+  ledger: ProgramCheckoutLedger;
+  offers: ProgramOfferLedger;
+};
+type ReviewedResolver = () => Promise<ReviewedPurchasing | null>;
+const REVIEWED_KEY = Symbol.for("alp.commerce.reviewed-runtime");
+const reviewedHolder = globalThis as unknown as Record<symbol, { resolve: ReviewedResolver } | undefined>;
+
+/** For the reviewed bootstrap only, once per process, and never under the local contract fixture. */
+export function installReviewedPurchasing(resolve: ReviewedResolver, env: Record<string, string | undefined> = process.env): void {
+  if (isContractFixtureAllowed(env as never) || env.CLINICAL_CONTRACT_FIXTURE === "1") throw new Error("reviewed_runtime_not_under_fixture");
+  if (reviewedHolder[REVIEWED_KEY]) throw new Error("reviewed_runtime_already_installed");
+  reviewedHolder[REVIEWED_KEY] = { resolve };
+}
+export function __resetReviewedPurchasing(): void { reviewedHolder[REVIEWED_KEY] = undefined; }
+
+/**
+ * What the purchase routes and pages use: the fixture or acceptance selection where the contract
+ * fixture admits it; otherwise the reviewed runtime when the bootstrap installed one AND it resolves
+ * for this request (flags still on, target still verified, purchasing ready); otherwise disabled.
+ * A resolver that throws is disabled, never a fallback.
+ */
+export async function resolvePurchaseRuntime(env: Record<string, string | undefined> = process.env): Promise<ProgramCheckoutSelection | ReviewedPurchasing> {
+  const local = selectProgramCheckout(env);
+  if (local.kind !== "disabled") return local;
+  const reviewed = reviewedHolder[REVIEWED_KEY];
+  if (!reviewed) return local;
+  try { return (await reviewed.resolve()) ?? local; } catch { return local; }
+}
+
+/** The funnel buy choice's offer ledger: the local selection, or the reviewed runtime's availability-only ledger. */
+export async function resolveOfferAvailabilityLedger(env: Record<string, string | undefined> = process.env): Promise<ProgramOfferLedgerSelection | { kind: "reviewed"; ledger: ProgramOfferLedger }> {
+  const local = selectProgramOfferLedger(env);
+  if (local.kind !== "disabled") return local;
+  const purchase = await resolvePurchaseRuntime(env);
+  return purchase.kind === "reviewed" ? { kind: "reviewed", ledger: purchase.offers } : local;
+}
