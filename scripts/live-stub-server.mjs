@@ -1315,8 +1315,11 @@ const programEnrollments = new Map();
 const programProgressRows = new Map();
 const programEvents = [];
 let programSeq = 0;
+// RFC 4122 layout (version nibble 4, variant nibble 8): the clinical service mints real v4 ids and
+// the commerce contracts check the layout, so a fixture id that only looks like a uuid would be
+// refused as "invalid" before any route logic ran.
 const pgid = (tag) =>
-  `${tag === "prog" ? "d1d1d1d1" : tag === "ptpl" ? "d2d2d2d2" : tag === "pver" ? "d3d3d3d3" : tag === "penr" ? "d4d4d4d4" : "d5d5d5d5"}-1111-2222-3333-${String(
+  `${tag === "prog" ? "d1d1d1d1" : tag === "ptpl" ? "d2d2d2d2" : tag === "pver" ? "d3d3d3d3" : tag === "penr" ? "d4d4d4d4" : "d5d5d5d5"}-1111-4222-8333-${String(
     600000000000 + ++programSeq,
   )}`;
 

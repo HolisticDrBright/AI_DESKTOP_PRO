@@ -40,7 +40,7 @@ describe('the guard', () => {
     expect((await POST(req({ action: 'list', programId: PROGRAM }, headers))).status).toBe(403);
     expect(session).not.toHaveBeenCalled();
   });
-  it.each([['no token', { token: null, orgId: 'x', email: 'a@b' }], ['no clinic', { token: 't', orgId: null, email: 'a@b' }], ['no identity', { token: 't', orgId: 'x', email: null }]])('requires the workforce cookie: %s', async (_name, value) => {
+  it.each([['no token', { token: null, orgId: 'x', email: 'a@b' }], ['no clinic', { token: 't', orgId: null, email: 'a@b' }]])('requires the workforce cookie: %s', async (_name, value) => {
     session.mockResolvedValue(value);
     expect((await POST(req({ action: 'list', programId: PROGRAM }))).status).toBe(401);
   });

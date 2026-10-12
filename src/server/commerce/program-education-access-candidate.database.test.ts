@@ -205,4 +205,12 @@ describe('enabled in this embedded database only', () => {
     expect(await settlement().claim(alice, thirdSettled.settled ? thirdSettled.claimToken! : '')).toEqual({ outcome: 'refused', reason: 'claim_expired' });
     expect((await education().entitlementForOrder(third.orderId))!.state).toBe('awaiting_claim');
   });
+  it('a card being charged created nothing clinical: no patient record, membership, consent, assignment or consult request', async () => {
+    for (const table of ['patient_records', 'organization_memberships', 'consent_grants', 'program_assignments', 'public_consult_requests']) {
+      const exists = await db.query<{ n: string }>("select count(*)::text as n from information_schema.tables where table_schema='clinical_core' and table_name=$1", [table]);
+      if (exists.rows[0]!.n === '0') continue;
+      const count = await db.query<{ n: string }>(`select count(*)::text as n from clinical_core.${table}`);
+      expect(count.rows[0]!.n, table).toBe(table === 'organization_memberships' ? '1' : '0');
+    }
+  });
 });

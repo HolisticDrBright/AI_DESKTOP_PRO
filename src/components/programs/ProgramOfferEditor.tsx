@@ -95,7 +95,7 @@ export function ProgramOfferEditorView(props: {
   const { read, form, onForm } = props;
   const set = <K extends keyof OfferForm>(key: K) => (value: OfferForm[K]) => onForm({ ...form, [key]: value });
   return (
-    <Card className="px-4 py-3" data-testid="program-offer-editor" data-state={read.state}>
+    <div data-testid="program-offer-editor" data-state={read.state}><Card className="px-4 py-3">
       <CardTitle className="mb-1">Program offer</CardTitle>
       <p className="m-0 mb-2 text-[12px] text-subtle">
         What this program is sold for, bound to the exact published version. Every term is explicit: no price, billing mode, duration or terms version is assumed. A draft can be saved incomplete and cannot be bought.
@@ -164,7 +164,7 @@ export function ProgramOfferEditorView(props: {
         <ul role="alert" className="m-0 mt-2 list-disc pl-5 text-[12.5px] text-critical" data-testid="offer-problems">{props.problems.map(problem => <li key={problem}>{problem}</li>)}</ul>
       )}
       {props.notice && <p role="status" className="m-0 mt-2 text-[12.5px] text-body" data-testid="offer-notice">{props.notice}</p>}
-    </Card>
+    </Card></div>
   );
 }
 

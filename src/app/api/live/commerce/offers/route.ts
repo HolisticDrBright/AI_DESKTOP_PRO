@@ -4,7 +4,8 @@ import { getRequestSession } from '@/server/session';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { sameBrowserOrigin } from '@/server/same-browser-origin';
 import { programOfferCommand } from '@/contracts/programOffers';
-import { fictionalCurriculumDigest, fictionalPersonId, selectProgramOfferLedger } from '@/server/commerce/program-commerce-runtime';
+import { fictionalCurriculumDigest, selectProgramOfferLedger } from '@/server/commerce/program-commerce-runtime';
+import { resolveWorkforceIdentity } from '@/server/commerce/workforce-identity';
 import { ProgramOfferError, type OfferLedgerCategory } from '@/server/commerce/program-offer-ledger';
 import { liveGuard } from '../../route-helpers';
 
@@ -25,8 +26,8 @@ const CODE: Record<number, string> = { 400: 'invalid', 403: 'forbidden', 404: 'n
 export async function POST(request: Request) {
   const blocked = liveGuard(); if (blocked) return blocked;
   if (!sameBrowserOrigin(request)) return json(403, { error: { code: 'forbidden', message: 'identity_refused' } });
-  const session = await getRequestSession();
-  if (!session.token || !session.orgId || !session.email) return json(401, { error: { code: 'unauthenticated', message: 'reauth_required' } });
+  const identity = await resolveWorkforceIdentity(await getRequestSession());
+  if (!identity) return json(401, { error: { code: 'unauthenticated', message: 'reauth_required' } });
   let command: ReturnType<typeof programOfferCommand.parse>;
   try {
     command = programOfferCommand.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request, 8192, 5000))));
@@ -36,11 +37,11 @@ export async function POST(request: Request) {
   const selection = selectProgramOfferLedger();
   if (selection.kind === 'disabled') return json(503, { error: { code: 'unavailable', message: selection.reason } });
   // The clinical service derives the real actor from the token; the fictional ledger needs a stable stand-in for this session's person.
-  const actor = { personId: fictionalPersonId(session.email), organizationId: session.orgId };
+  const actor = { personId: identity.personId, organizationId: identity.organizationId };
   if (command.action === 'create' || command.action === 'list') {
     // The fictional ledger binds to what the Studio can read now, through the same authenticated read the Studio uses.
     try {
-      const studio = await programsLive.getStudio(command.programId, session.token);
+      const studio = await programsLive.getStudio(command.programId, identity.token);
       const digest = studio.published ? fictionalCurriculumDigest(studio.published.consumerProgram) : null;
       const consumerProgram = studio.published?.consumerProgram as { title?: unknown; phases?: unknown } | null | undefined;
       const content = consumerProgram && typeof consumerProgram.title === 'string' && Array.isArray(consumerProgram.phases) ? { title: consumerProgram.title, phases: consumerProgram.phases } : null;

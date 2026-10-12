@@ -79,7 +79,12 @@ export const programEntitlement = z.object({
   policy: z.object({ kind: z.enum(POLICY_EVENT_KINDS), reference: z.string().regex(/^[A-Za-z0-9_.:-]{1,255}$/), recordedAt: timestamp }).strict().nullable(),
   createdAt: timestamp,
   updatedAt: timestamp,
-}).strict();
+}).strict().superRefine((row, context) => {
+  // The state machine binds the subject and opens the window at claim; an "active" row with neither is not a row of this contract.
+  if (row.state === 'active' && (row.subject.kind !== 'claimed' || row.window === null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'active_requires_claimed_subject_and_window', path: ['state'] });
+  }
+});
 export type ProgramEntitlement = z.infer<typeof programEntitlement>;
 
 export const CLAIM_STATES = ['issued', 'used', 'expired', 'superseded'] as const;

@@ -46,7 +46,7 @@ export function ProgramPurchasesPanel({ programId, session }: { programId: strin
 
 export function ProgramPurchasesView({ read, curriculum, onRetry, onOpen }: { read: PurchasesRead; curriculum: { entitlementId: string; read: EducationCurriculumRead | "loading" | "failed" } | null; onRetry: () => void; onOpen: (entitlementId: string) => void }) {
   return (
-    <Card className="px-4 py-3" data-testid="program-purchases" data-state={read.state}>
+    <div data-testid="program-purchases" data-state={read.state}><Card className="px-4 py-3">
       <CardTitle className="mb-1">Purchases</CardTitle>
       <p className="m-0 mb-2 text-[12px] text-subtle">
         Commercial facts only: who bought what, on which terms, and whether access was claimed. A purchase is education access; it is not clinic membership, a chart, a consent or a protocol step, and clinical delivery stays a separate, reviewed decision.
@@ -90,7 +90,7 @@ export function ProgramPurchasesView({ read, curriculum, onRetry, onOpen }: { re
           </ul>
         </>
       )}
-    </Card>
+    </Card></div>
   );
 }
 

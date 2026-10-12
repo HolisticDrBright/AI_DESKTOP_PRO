@@ -476,7 +476,7 @@ an enrollment/link change is unit 4's clinical bridge (not built: a purchaser is
   clinical.
 - The contract `programEducationAccess.ts` is now self-contained (the curriculum binding spelled
   inline) so it mirrors byte for byte into V2; digest after this commit:
-  `dc7cd8b0fcf5f5b534b9c8f907404e6362b0b0d020d3c0d993cd7f3f079b2303`.
+  `af2af740c349e8b1344e870ba8b0bb2426558b6ef2defbb6e4b60d66aa474a4f`.
 
 Tests: `src/lib/programs/purchaseStatus.test.ts` (1, every kind), `ProgramPurchasesPanel.render.test.ts`
 (4), `src/app/api/live/commerce/status/route.test.ts` (3).
@@ -484,3 +484,58 @@ Tests: `src/lib/programs/purchaseStatus.test.ts` (1, every kind), `ProgramPurcha
 ### V2 (next commit, in the V2 repository)
 
 See the V2 summary `expo/docs/claude-program-commerce-closure-2026-10-11.md`.
+
+## Unit 5 — the consultation dual path: acceptance and failure tests
+
+### The two choices, and what convergence means
+
+| Choice | Authority | Record it makes | Record it never makes |
+| --- | --- | --- | --- |
+| Request a consultation | the consult domain (`src/server/consult`, `src/app/api/public/consult`) | a consult request, "requested", in the clinic's inbox | an order, an entitlement, a claim, an enrollment |
+| Buy the program | the commercial domain (`src/server/commerce`, `/buy/<slug>`, `/api/live/commerce/*`) | an order → a verified payment → an entitlement → a claim → an enrollment (account read) | a consult request, a clinic connection, a patient record, a membership, a consent grant, a program assignment |
+
+A person who does both holds one record of each kind. Clinical adoption of a purchased program is the existing reviewed path (the Desktop assignments inbox, V2 "My programs") and is not started by a purchase: `src/server/commerce/program-education-access-candidate.database.test.ts` counts every clinical table before and after a settled purchase and finds them unchanged, and `src/server/commerce/dual-path.test.ts` proves the two module trees do not import one another and that a consult request racing a purchase (both webhook orders, four concurrent settlements) yields exactly one entitlement, one claim token, two consult requests and no clinical word in any commercial store.
+
+### The mounted browser (`e2e/live-program-commerce.spec.ts`)
+
+Five serial cases under the CI recipe (contract fixture, stub backend, dev server, 375 px for the preview). They run in the ordered battery like every other live spec and call `resetBackend()` first.
+
+| # | What it proves |
+| --- | --- |
+| 1 | The Studio's offer editor and purchases panel open in their honest first states: `data-state="read"`, "an offer cannot be written until it does" (nothing published), no offer form, "no purchases" as a state distinct from "could not be read" and from "disabled". |
+| 2 | The staff preview of a draft funnel shows both choices; the buy choice carries `data-available="false"` and the exact reason (`program_unbound`); the consult choice is a same-origin link; the funnel itself holds no form, field or button; no `/buy/` link, no price, no horizontal overflow at a phone width. |
+| 3 | From a fresh browser: `/buy/longevity-program` is 404 (not a login redirect); `/buy/return?order=…` for an order nobody opened says "We do not recognise this order" with the "not proof of purchase" sentence; the checkout route answers 404 for a draft funnel, 403 cross-site and 400 oversized. |
+| 4 | The webhook answers 503 `not_configured` to an unsigned and to a signed-looking event while the Stripe boundary is unconfigured, so nothing is ever recorded from a stray post. |
+| 5 | The commercial status read for a program with nothing sold is 200 with empty `orders`, `entitlements`, `claims`, `enrollments` under `commercial` and no other top-level key; the same read cross-site is 403. |
+
+No purchase can be made in the mounted run: every funnel is a draft and no program is bound. That is the posture of this branch, not a gap in the test; the purchase journey itself is proven at the module boundary (`program-checkout.test.ts`, `program-settlement.test.ts`) and in the candidate databases.
+
+### Repairs the mounted run found (none visible from the unit tests alone)
+
+1. **The Studio commerce routes refused the fixture session.** They required the cookie session's clinic and email; the contract-fixture suite, like every other live route, runs on the env fallback (demo credentials, `CLINICAL_ORG_ID`) inside the fixture boundary. `src/server/commerce/workforce-identity.ts` now resolves the identity cookie-first, env-fallback only inside the boundary, and null otherwise (a deployed process with no cookie answers `reauth_required`, never a guessed clinic). Four unit cases.
+2. **`data-state` never reached the DOM.** `Card` forwards only `data-testid`; the offer editor and the purchases panel now wrap it in an element that carries both, so the state the e2e asserts on is the state on screen.
+3. **The stub's program ids were refused as "invalid".** `scripts/live-stub-server.mjs` minted uuid-shaped ids outside the RFC 4122 layout (`-1111-2222-3333-`); the commerce contracts check the layout (the clinical service mints v4), so every offer list for a fixture program was a 400. The stub now mints `-1111-4222-8333-`. The programs spec ran alongside unchanged (14 passed).
+
+### Hostile-input coverage inventory
+
+| Handoff item | Where it is refused | Test |
+| --- | --- | --- |
+| Body limits | every commerce route reads a bounded body before parsing; V2 bounds replies at 1 MB and checks `content-length` | `offers/route.test.ts` "an oversized body"; `status/route.test.ts`; `checkout/route.test.ts` "an oversized body"; `webhook/route.test.ts` "refuses an oversized body before verifying anything"; e2e case 3; V2 `education-access-client.test.ts` "bounds the reply size", `education-dual-path.test.ts` "an oversized or non-JSON reply" |
+| Hostile return URLs | the return page treats the address as a claim and the ledger as the fact; a redirect never moves an order; a forged attempt cookie is replaced | `ReturnPage.render.test.ts`; `program-checkout.test.ts` "a browser redirect … never moves an order"; `checkout/route.test.ts` "a forged attempt cookie"; e2e case 3 |
+| Unsigned or tampered webhooks | signature over the raw bytes, tolerance, livemode, account and API version at the boundary; 503 when unconfigured | `webhook/route.test.ts`; `program-checkout.test.ts` "refuses the wrong account or API version"; `program-checkout-stripe.test.ts` "refuses a live key, a missing account, and an unpinned API version"; e2e case 4 |
+| Duplicate, delayed, out-of-order events | durable intake deduplicated by event id; expired-then-paid is a recorded conflict; the retry worker | `program-checkout.test.ts` "admits an event durably …", "out-of-order and delayed outcomes", "the retry worker"; `program-checkout-orders-candidate.database.test.ts` "intake is durable, deduplicated and bounded"; `dual-path.test.ts` race |
+| Replay and claim theft | one token, one subject, single use; an order number, a receipt, a forged, expired or malformed token change nothing; a view carrying somebody else's claimed entitlement is not this owner's view | `program-settlement.test.ts` "binds the first verified subject …", "refuses a forged, expired or malformed token …"; `program-education-access-candidate.database.test.ts` "the claim is single-use …"; V2 `education-dual-path.test.ts` (order number, path, under/oversized token refused before leaving; receipt-shaped strings reach the service and the refusal is reported; another subject's entitlement inside the view, or answering a claim, refused) |
+| Stale price revisions | published terms immutable; a stale revision cannot overwrite; the order snapshot must equal the published offer; a verification whose amount disagrees cannot be written | `program-offer-ledger.test.ts`; `program-offer-revisions-candidate.database.test.ts` "a stale revision …"; `program-checkout.test.ts` "a retired or changed offer cannot start a checkout"; `program-checkout-orders-candidate.database.test.ts` "the snapshot must equal …", "a verification whose amount disagrees …"; `offers/route.test.ts` "stale revisions refused" |
+| Wrong targets | a session we never opened; another processor account; another clinic (not found, never forbidden); another subject; a foreign origin | `program-checkout.test.ts` "a session the event names that we never opened"; `program-settlement.test.ts` "another processor account"; `offers/route.test.ts` "another clinic"; `status/route.test.ts` "unsafe origin"; V2 client "a reply for another subject", "a foreign origin"; e2e cases 3 and 5 |
+| Live-mode events in synthetic execution | `livemode: true` refused at the Stripe boundary and again at the binding check; a live key refused at configuration | `src/server/stripe-boundary.test.ts`; `program-checkout.test.ts` binding outcome `livemode`; `program-checkout-stripe.test.ts`; V2 production channel refused |
+| Missing activation | no ledger outside the fixture; the SQL ledgers refuse without exact evidence, with another candidate's digest, and while the row is off; the education bridge is disabled without activation evidence | `funnel-purchase.test.ts`; all three candidate database tests; `education-access-service.test.ts`; e2e cases 3 to 5 (503 and 404, never a saved-looking state) |
+
+### No simulated purchase satisfies live access
+
+- On the Desktop the fictional ledgers and the fictional processor exist only inside the contract-fixture boundary (`selectProgramCheckout`), and even there settlement requires the retrieved, bound processor object: `processor.settle(...)` in a test is the fixture's stand-in for the processor's own record, not a shortcut past verification.
+- In V2 there is no stored, mocked, fixture, simulated or flag-driven source of access anywhere in the education tree, and the client can post to exactly one path on the configured origin (`education-dual-path.test.ts` scans for all of it).
+- The mirrored contract now carries the state machine's invariant: an entitlement that says `active` without a claimed subject and an open window is not a row of the contract (`programEntitlement.superRefine`). A hand-made "active" row therefore fails to parse on both sides. This changed the mirror digest to `af2af740c349e8b1344e870ba8b0bb2426558b6ef2defbb6e4b60d66aa474a4f`; both repositories carry the same bytes and the V2 pin test holds.
+
+### Decisions
+
+None new. The verified-account-first versus anonymous-plus-claim question (unit 3) still decides which of the two convergence journeys the hosted service will offer first; both are implemented as the safe state.

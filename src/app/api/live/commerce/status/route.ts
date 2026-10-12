@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { getRequestSession } from '@/server/session';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { sameBrowserOrigin } from '@/server/same-browser-origin';
-import { fictionalPersonId, selectProgramCheckout } from '@/server/commerce/program-commerce-runtime';
+import { selectProgramCheckout } from '@/server/commerce/program-commerce-runtime';
+import { resolveWorkforceIdentity } from '@/server/commerce/workforce-identity';
 import { liveGuard } from '../../route-helpers';
 
 /**
@@ -23,8 +24,8 @@ const request = z.discriminatedUnion('action', [
 export async function POST(req: Request) {
   const blocked = liveGuard(); if (blocked) return blocked;
   if (!sameBrowserOrigin(req)) return json(403, { error: { code: 'forbidden', message: 'identity_refused' } });
-  const session = await getRequestSession();
-  if (!session.token || !session.orgId || !session.email) return json(401, { error: { code: 'unauthenticated', message: 'reauth_required' } });
+  const identity = await resolveWorkforceIdentity(await getRequestSession());
+  if (!identity) return json(401, { error: { code: 'unauthenticated', message: 'reauth_required' } });
   let body: z.infer<typeof request>;
   try { body = request.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(req, 1024, 5000)))); }
   catch { return json(400, { error: { code: 'invalid', message: 'request_invalid' } }); }
@@ -32,10 +33,10 @@ export async function POST(req: Request) {
   if (selection.kind === 'disabled') return json(503, { error: { code: 'unavailable', message: 'commerce_disabled' } });
   try {
     if (body.action === 'status') {
-      const commercial = await selection.education.listForProgram(session.orgId, body.programId);
+      const commercial = await selection.education.listForProgram(identity.organizationId, body.programId);
       return json(200, { data: { commercial: { ...commercial, readAt: new Date().toISOString() } } });
     }
-    const read = await selection.education.staffCurriculum({ personId: fictionalPersonId(session.email), organizationId: session.orgId, identitySubject: 'wf:' + fictionalPersonId(session.email) }, body.entitlementId);
+    const read = await selection.education.staffCurriculum({ personId: identity.personId, organizationId: identity.organizationId, identitySubject: 'wf:' + identity.personId }, body.entitlementId);
     return json(200, { data: { commercial: { curriculum: read } } });
   } catch {
     return json(503, { error: { code: 'unavailable', message: 'commerce_unverifiable' } });
