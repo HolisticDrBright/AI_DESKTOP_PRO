@@ -30,6 +30,19 @@ const REQUEST_LIFETIME_MS = 30_000, MAX_PAGES = 20, MAX_VERSIONS = 1000;
 const version = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024 && value !== 'null';
 const invalid = () => new ProgramMediaError('storage_unverified');
 
+/** Resource reads must finish at withdrawal/deadline even if a transport ignores
+ * its abort signal. Promise.race retains the late rejection observer. */
+async function resourceRead<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void work.catch(() => undefined); throw invalid(); }
+  let abort: (() => void) | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      abort = () => reject(invalid()); signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    })]);
+  } finally { if (abort) signal.removeEventListener('abort', abort); }
+}
+
 function validDenialPolicy(raw: string | undefined, bucket: string, kms: string): boolean {
   try {
     const doc: unknown = JSON.parse(raw ?? '');
@@ -50,11 +63,47 @@ function validDenialPolicy(raw: string | undefined, bucket: string, kms: string)
   } catch { return false; }
 }
 
-export async function createAwsProgramMediaStoreSource(input: AwsProgramMediaStoreConfiguration, requestSignal: AbortSignal):
-Promise<{ store: ProgramMediaObjectStore; close(): void }> {
+/** Multipart review is distinct from the single-PUT encryption-header policy.
+ * The exact observed policy bytes must match the separately reviewed hash.
+ * Missing encryption headers on parts inherit the independently checked bucket
+ * default; an explicit override is denied. Completed objects must be create-only.
+ * This minimum policy check is NOT verification of the role's effective IAM. */
+export type ProgramMediaMultipartPolicyReview = { contract: 'program-media-multipart-resource-review/1'; policySha256: string; evidenceSha256: string };
+function validMultipartPolicy(raw: string | undefined, bucket: string, kms: string, review: ProgramMediaMultipartPolicyReview): boolean {
+  try {
+    if (!z.object({ contract: z.literal('program-media-multipart-resource-review/1'), policySha256: z.string().regex(/^[a-f0-9]{64}$/),
+      evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().safeParse(review).success
+      || !raw || Buffer.byteLength(raw) > 262144 || createHash('sha256').update(raw, 'utf8').digest('hex') !== review.policySha256) return false;
+    const statements = z.object({ Statement: z.array(z.record(z.string(), z.unknown())).min(1) }).passthrough().parse(JSON.parse(raw)).Statement;
+    const arn = `arn:aws:s3:::${bucket}`, objects = `${arn}/*`;
+    const list = (v: unknown) => typeof v === 'string' ? [v] : z.array(z.string()).parse(v);
+    const deny = (r: Record<string, unknown>, action: string, resources: string[], condition: unknown) => r.Effect === 'Deny'
+      && (r.Principal === '*' || JSON.stringify(r.Principal) === JSON.stringify({ AWS: '*' }))
+      && (list(r.Action).includes(action) || list(r.Action).includes('s3:*')) && resources.every(v => list(r.Resource).includes(v))
+      && JSON.stringify(r.Condition) === JSON.stringify(condition) && !['NotAction', 'NotResource', 'NotPrincipal'].some(k => k in r);
+    return statements.some(r => deny(r, 's3:*', [arn, objects], { Bool: { 'aws:SecureTransport': 'false' } }))
+      && [['s3:x-amz-server-side-encryption', 'aws:kms'], ['s3:x-amz-server-side-encryption-aws-kms-key-id', kms]].every(([key, value]) =>
+        statements.some(r => deny(r, 's3:PutObject', [objects], { StringNotEquals: { [key]: value }, Null: { [key]: 'false' } })))
+      && statements.some(r => deny(r, 's3:PutObject', [objects], { StringNotEquals: { 's3:if-none-match': '*' }, Bool: { 's3:ObjectCreationOperation': 'true' } }))
+      // Blanket missing-header denial would make UploadPart/Complete unusable.
+      && !statements.some(r => ['s3:x-amz-server-side-encryption', 's3:x-amz-server-side-encryption-aws-kms-key-id'].some(key =>
+        deny(r, 's3:PutObject', [objects], { StringNotEquals: { [key]: key.endsWith('key-id') ? kms : 'aws:kms' } })));
+  } catch { return false; }
+}
+
+/** Shared server-only resource opener. No ambient credentials, installed host,
+ * activation or patient authority is supplied by this helper. New multipart
+ * callers must provide their separately reviewed policy identity. */
+export async function openAwsProgramMediaResourceSource(input: AwsProgramMediaStoreConfiguration, requestSignal: AbortSignal,
+  multipartReview?: ProgramMediaMultipartPolicyReview) {
   let config: AwsProgramMediaStoreConfiguration;
+  let reviewedPolicy: ProgramMediaMultipartPolicyReview | undefined;
   try {
     config = configurationSchema.parse(input);
+    reviewedPolicy = multipartReview === undefined ? undefined : Object.freeze(z.object({
+      contract: z.literal('program-media-multipart-resource-review/1'), policySha256: z.string().regex(/^[a-f0-9]{64}$/),
+      evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict().parse(multipartReview));
     if (!(requestSignal instanceof AbortSignal) || requestSignal.aborted
       || config.storage.expectedBucketOwner !== '588966314750' || config.storage.region !== 'us-east-2'
       || config.forbiddenBuckets.includes(config.storage.bucket) || config.forbiddenKmsKeyArns.includes(config.storage.kmsKeyArn)
@@ -91,15 +140,15 @@ Promise<{ store: ProgramMediaObjectStore; close(): void }> {
   const bucket = { Bucket: storage.bucket, ExpectedBucketOwner: storage.expectedBucketOwner };
   try {
     const initial = bounded(requestSignal);
-    const caller = await sts.send(new GetCallerIdentityCommand({}), { abortSignal: initial }); live();
+    const caller = await resourceRead(sts.send(new GetCallerIdentityCommand({}), { abortSignal: initial }), initial); live();
     if (caller.Account !== storage.expectedBucketOwner
       || typeof caller.Arn !== 'string' || !callerPattern.test(caller.Arn)) throw invalid();
-    const versioning = await s3.send(new GetBucketVersioningCommand(bucket), { abortSignal: initial }); live();
-    const encryption = await s3.send(new GetBucketEncryptionCommand(bucket), { abortSignal: initial }); live();
-    const access = await s3.send(new GetPublicAccessBlockCommand(bucket), { abortSignal: initial }); live();
-    const ownership = await s3.send(new GetBucketOwnershipControlsCommand(bucket), { abortSignal: initial }); live();
-    const tags = await s3.send(new GetBucketTaggingCommand(bucket), { abortSignal: initial }); live();
-    const policy = await s3.send(new GetBucketPolicyCommand(bucket), { abortSignal: initial }); live();
+    const versioning = await resourceRead(s3.send(new GetBucketVersioningCommand(bucket), { abortSignal: initial }), initial); live();
+    const encryption = await resourceRead(s3.send(new GetBucketEncryptionCommand(bucket), { abortSignal: initial }), initial); live();
+    const access = await resourceRead(s3.send(new GetPublicAccessBlockCommand(bucket), { abortSignal: initial }), initial); live();
+    const ownership = await resourceRead(s3.send(new GetBucketOwnershipControlsCommand(bucket), { abortSignal: initial }), initial); live();
+    const tags = await resourceRead(s3.send(new GetBucketTaggingCommand(bucket), { abortSignal: initial }), initial); live();
+    const policy = await resourceRead(s3.send(new GetBucketPolicyCommand(bucket), { abortSignal: initial }), initial); live();
     const rule = encryption.ServerSideEncryptionConfiguration?.Rules;
     const block = access.PublicAccessBlockConfiguration;
     const tag = (key: string, value: string) => tags.TagSet?.filter(t => t.Key === key).length === 1 && tags.TagSet?.some(t => t.Key === key && t.Value === value);
@@ -108,8 +157,16 @@ Promise<{ store: ProgramMediaObjectStore; close(): void }> {
       || !block || [block.BlockPublicAcls, block.IgnorePublicAcls, block.BlockPublicPolicy, block.RestrictPublicBuckets].some(v => v !== true)
       || ownership.OwnershipControls?.Rules?.length !== 1 || ownership.OwnershipControls.Rules[0].ObjectOwnership !== 'BucketOwnerEnforced'
       || !tag('alp:purpose', 'educational_media') || !tag('alp:classification', 'synthetic_only') || !tag('alp:phi-allowed', 'false') || !tag('alp:dedicated', 'true')
-      || !validDenialPolicy(policy.Policy, storage.bucket, storage.kmsKeyArn)) throw invalid();
+      || !(reviewedPolicy ? validMultipartPolicy(policy.Policy, storage.bucket, storage.kmsKeyArn, reviewedPolicy)
+        : validDenialPolicy(policy.Policy, storage.bucket, storage.kmsKeyArn))) throw invalid();
   } catch { close(); throw invalid(); }
+
+  return Object.freeze({ storage, scope, s3, bucket: Object.freeze(bucket), live, after, bounded, close });
+}
+
+export async function createAwsProgramMediaStoreSource(input: AwsProgramMediaStoreConfiguration, requestSignal: AbortSignal):
+Promise<{ store: ProgramMediaObjectStore; close(): void }> {
+  const { storage, scope, s3, bucket, live, after, bounded, close } = await openAwsProgramMediaResourceSource(input, requestSignal);
 
   function checked(value: ProgramMediaReservation | ProgramMediaArtifact) {
     live();

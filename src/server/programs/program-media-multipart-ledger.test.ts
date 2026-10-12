@@ -23,6 +23,11 @@ function setup(result:unknown={session,admitted:false}){
  return {query,committed,database,ledger:createProgramMediaMultipartLedger(database,{evidenceSha256:'a'.repeat(64),storage},{enabled:true,evidenceSha256:'b'.repeat(64)})};
 }
 describe('multipart source admission and transactional reply binding',()=>{
+ it('accepts the WebM format already admitted by the governed media contract',async()=>{
+  const s=setup({session:{...session,contentType:'video/webm',objectKey:session.objectKey.replace(/\.mp4$/,'.webm')},admitted:false});
+  expect((await s.ledger.execute(context,{operation:'status',parameters:{artifactId:session.artifactId}})).session.contentType).toBe('video/webm');
+  expect(s.committed).toHaveBeenCalledTimes(1);
+ });
  it('refuses activation, PHI, consumer context and browser authority before database access',async()=>{
   const s=setup();
   await expect(createProgramMediaMultipartLedger(s.database).execute(context,{operation:'status',parameters:{artifactId:session.artifactId}})).rejects.toThrow('program_media_disabled');

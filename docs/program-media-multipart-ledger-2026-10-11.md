@@ -76,6 +76,8 @@ The full 256 MiB case validates an immutable 32-part recipe, not an actual 256 M
 
 ## Remaining work in dependency order
 
+An actual SDK multipart source now exists separately; its current scope and evidence are in `docs/program-media-multipart-store-2026-10-11.md`. It supplies storage observations, not the complete native host or a hosted qualification pass. The ordered dependencies below remain integration and release requirements.
+
 1. Extend the qualified S3/STS source with exact initiation, part upload, bounded upload/part/version listings, conditional completion, reconciliation and abort. Persist each admitted attempt before external work. An unknown creation/completion must never be blindly reissued or certified absent while a writer may still act.
 2. Review multipart-specific encryption policy and KMS/IAM behavior. The existing single-PUT policy and FULL_OBJECT readback are not approval or proof for multipart. Bind each observation to reviewed account/region/bucket/key/upload/version and permit no alternate destination.
 3. Stream the exact completed version under a byte/time bound and verify whole-file SHA256 and size independently of the composite checksum. Preserve missing/ambiguous versions as holds. Connect actual listing observations to post-settlement abort proof; real provider cancellation and late-write behavior remain hosted negatives.

@@ -27,17 +27,17 @@ export const programMediaMultipartCommand=z.discriminatedUnion('operation',[
  command('commit',ref.extend({proof:wholeProof})),command('certifyAbort',ref.extend({proof:absenceProof})),
 ]);
 export type ProgramMediaMultipartCommand=z.infer<typeof programMediaMultipartCommand>;
-const sessionSchema=z.object({
+export const programMediaMultipartSessionSchema=z.object({
  artifactId:uuid,clinic:uuid,programId:uuid,actorId:uuid,writerClaimId:uuid,kind:z.literal('video'),
- contentType:z.enum(['video/mp4','video/quicktime']),sha256:digest,totalBytes:bytes,objectKey:z.string().min(1).max(512),
+ contentType:z.enum(['video/mp4','video/webm']),sha256:digest,totalBytes:bytes,objectKey:z.string().min(1).max(512),
  acceptBefore:z.string().datetime({offset:true}),manifest:programMediaPartManifest,checksum:wholeProof.shape.checksum,
  uploadId:providerId.nullable(),objectVersion:objectVersion.nullable(),
  state:z.enum(['prepared','creation_admitted','uploading','completion_admitted','verifying','abort_requested','committed','aborted']),
  parts:z.array(partReceipt.extend({partNumber,sha256:digest})).max(32),
  pending:z.array(z.object({claimId:uuid,kind:z.enum(['creation','part','completion']),partNumber:partNumber.nullable(),state:z.enum(['open','uncertain'])}).strict()).max(34),
 }).strict();
-export type ProgramMediaMultipartSession=z.infer<typeof sessionSchema>;
-const response=z.object({session:sessionSchema,admitted:z.boolean()}).strict();
+export type ProgramMediaMultipartSession=z.infer<typeof programMediaMultipartSessionSchema>;
+const response=z.object({session:programMediaMultipartSessionSchema,admitted:z.boolean()}).strict();
 const envelope=z.discriminatedUnion('ok',[
  z.object({contractVersion:z.literal(PROGRAM_MEDIA_MULTIPART_LEDGER_CONTRACT),ok:z.literal(true),data:z.unknown()}).strict(),
  z.object({contractVersion:z.literal(PROGRAM_MEDIA_MULTIPART_LEDGER_CONTRACT),ok:z.literal(false),error:z.enum(PROGRAM_MEDIA_FAILURES)}).strict(),
