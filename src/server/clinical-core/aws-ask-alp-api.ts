@@ -4,6 +4,9 @@ import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api
 import { AskAlpError, validateAskAlpRequest, type AskAlpGenerationRequest, type AskAlpGenerationResult } from "./aws-ask-alp";
 import { generateAskAlpWithOpenAI } from "./aws-ask-alp-openai";
 import { CoreSubscriptionError, requireConsumerCore } from "./core-subscription-guard";
+import { ownedConsumerIdentity } from "./owned-consumer-api";
+import { OwnedStorageError } from "./owned-consumer-records";
+import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 
 const ROUTE = "POST /clinical-core/consumer/ask-alp/generate";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -13,30 +16,51 @@ const MAX_BODY_BYTES = 98_304;
 export type AskAlpApiConfiguration = {
   consumerIssuer: string; consumerAudience: string; runtimeMode: "synthetic" | "production"; phiAllowed: boolean;
   model: string; openAiSecretArn: string; approvedPromptSha256: string;
+  productionActivation?: { status: "approved"; evidenceSha256: string };
 };
 
 export type AskAlpProvider = (request: AskAlpGenerationRequest) => Promise<AskAlpGenerationResult>;
+export type TrustedAskAlpContextLease = { context: Record<string, unknown>; assertCurrent: () => Promise<void> };
+export type TrustedAskAlpContextLoader = (identity: ProductionClinicalRequestContext) => Promise<TrustedAskAlpContextLease>;
 
 export function parseAskAlpRuntimeMode(value: string): "synthetic" | "production" {
   if (value !== "synthetic" && value !== "production") throw new Error("ask_alp_configuration_invalid");
   return value;
 }
 
-export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfiguration; provider?: AskAlpProvider }) {
+export function createAwsAskAlpApiHandler(input: {
+  configuration: AskAlpApiConfiguration; provider?: AskAlpProvider;
+  trustedContextLoader?: TrustedAskAlpContextLoader;
+  trustedCallerVerifier?: (event: ApiGatewayV2Event) => Promise<void>;
+  coreGuard?: typeof requireConsumerCore;
+}) {
   validateConfiguration(input.configuration);
   const provider = input.provider ?? ((request) => generateAskAlpWithOpenAI({ request, model: input.configuration.model, secretArn: input.configuration.openAiSecretArn }));
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (event.routeKey !== ROUTE) return response(404, { error: "route_not_found" });
     if (input.configuration.runtimeMode === "production" && !input.configuration.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
+    if (input.configuration.runtimeMode === "production" && !input.trustedContextLoader) return response(503, { error: "trusted_context_not_configured" });
+    if (input.configuration.runtimeMode === "production" && !input.trustedCallerVerifier) return response(503, { error: "trusted_caller_not_configured" });
     try {
-      assertIdentity(event, input.configuration);
-      // Production must replace the caller body with an independently authorized,
-      // consented server snapshot. The current client body is never that authority.
-      const request = input.configuration.runtimeMode === "production"
-        ? loadTrustedGenerationRequest()
-        : validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
-      if (input.configuration.runtimeMode === "production") await requireConsumerCore(event.headers ?? {});
-      return response(200, { data: await provider(request) });
+      const production = input.configuration.runtimeMode === "production";
+      const identity = production
+        ? ownedConsumerIdentity(event, input.configuration, "clinical_data", Date.now())
+        : assertIdentity(event, input.configuration);
+      const callerRequest = validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
+      if (production) {
+        // The V2 server runs deterministic pre-generation safety screening.
+        // A direct consumer call must not bypass it merely by carrying a JWT.
+        await input.trustedCallerVerifier!(event);
+        await (input.coreGuard ?? requireConsumerCore)(event.headers ?? {});
+        // The entire caller context is discarded. Only owner-scoped server data
+        // may reach the provider; a mid-generation change withholds the answer.
+        const lease = await input.trustedContextLoader!(identity as ProductionClinicalRequestContext);
+        const request = validateAskAlpRequest({ ...callerRequest, context: lease.context }, input.configuration.approvedPromptSha256);
+        const answer = await provider(request);
+        await lease.assertCurrent();
+        return response(200, { data: answer });
+      }
+      return response(200, { data: await provider(callerRequest) });
     } catch (error) {
       if (error instanceof CoreSubscriptionError) return response(402, { error: "core_subscription_required" });
       if (error instanceof AskAlpError) {
@@ -44,13 +68,14 @@ export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfi
         return response(status, { error: error.category });
       }
       if (error instanceof AskAlpApiIdentityError) return response(403, { error: "identity_refused" });
-      if (error instanceof TrustedContextNotConfiguredError) return response(503, { error: "trusted_context_not_configured" });
+      if (error instanceof OwnedStorageError) return response(error.code === "consent_required" ? 403 : error.code === "owner_required" ? 403 : 503,
+        { error: error.code === "consent_required" ? "consent_required" : error.code === "owner_required" ? "identity_refused" : "trusted_context_unavailable" });
       return response(503, { error: "service_unavailable" });
     }
   };
 }
 
-function assertIdentity(event: ApiGatewayV2Event, config: AskAlpApiConfiguration) {
+function assertIdentity(event: ApiGatewayV2Event, config: AskAlpApiConfiguration): undefined {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const claim = (name: string) => typeof claims?.[name] === "string" ? claims[name] as string : "";
   const synthetic = config.runtimeMode === "synthetic";
@@ -72,18 +97,13 @@ function validateConfiguration(config: AskAlpApiConfiguration) {
   if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(config.consumerIssuer)
     || !/^[A-Za-z0-9]{20,128}$/.test(config.consumerAudience) || !["synthetic", "production"].includes(config.runtimeMode)
     || (config.runtimeMode === "synthetic" && config.phiAllowed) || config.model.length < 3 || config.model.length > 100
+    || (config.runtimeMode === "production" && config.phiAllowed
+      && (config.productionActivation?.status !== "approved" || !/^[0-9a-f]{64}$/.test(config.productionActivation.evidenceSha256)))
     || !/^[0-9a-f]{64}$/.test(config.approvedPromptSha256)
     || !/^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/.test(config.openAiSecretArn)) throw new Error("ask_alp_configuration_invalid");
 }
 
 class AskAlpApiIdentityError extends Error {}
-class TrustedContextNotConfiguredError extends Error {}
-
-function loadTrustedGenerationRequest(): AskAlpGenerationRequest {
-  // No production Ask ALP snapshot binding exists yet. Fail closed even if
-  // PHI_ALLOWED is accidentally enabled on a future stack.
-  throw new TrustedContextNotConfiguredError();
-}
 
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response {
   return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) };
