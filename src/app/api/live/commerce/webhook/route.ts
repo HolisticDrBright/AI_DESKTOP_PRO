@@ -21,8 +21,8 @@ import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtim
  */
 export const dynamic = "force-dynamic";
 const json = (status: number, value: unknown) => NextResponse.json(value, { status, headers: { "Cache-Control": "no-store" } });
-export const MAX_BODY_BYTES = 262_144;
-export const BODY_DEADLINE_MS = 10_000;
+const MAX_BODY_BYTES = 262_144;
+const BODY_DEADLINE_MS = 10_000;
 
 export async function POST(request: Request) {
   let bytes: Uint8Array;
