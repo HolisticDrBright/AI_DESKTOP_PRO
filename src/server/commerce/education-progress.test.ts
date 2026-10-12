@@ -9,7 +9,7 @@ import { createProgramSettlement } from './program-settlement';
 import { createEducationProgressService, EducationProgressError } from './education-progress-service';
 import { fictionalDelivery } from '../../test-support/commerceDelivery';
 import { FICTIONAL_COURSE_TITLE, fictionalCoursePhases } from '../../test-support/commerceCourse';
-import { courseLessons, isCompleted, neighbours, resumeLesson, type EducationProgressRequest } from '../../contracts/programEducationProgress';
+import { courseLessons, educationProgress, isCompleted, neighbours, resumeLesson, type EducationProgressRequest } from '../../contracts/programEducationProgress';
 import type { ConsumerCaller } from './program-commerce-authority';
 import type { VerifiedEvent } from '../stripe-boundary';
 import type { ClinicalRequestContext } from '../clinical-core/aws-identity-consent';
@@ -65,6 +65,14 @@ const lessonA = { phaseId: 'phase-1', itemId: 'lesson-a' }, habitB = { phaseId: 
 const lessonD = { phaseId: 'phase-1', itemId: 'lesson-d' }, lessonE = { phaseId: 'phase-2', itemId: 'lesson-e' };
 
 describe('the course, read from the served phases only', () => {
+  it('names why an outline is not the whole course, and never aliases a lesson (mirrored contract, hardening WP1)', () => {
+    expect(courseLessons(fictionalCoursePhases)).toMatchObject({ complete: true, problem: null });
+    const reused = courseLessons([fictionalCoursePhases[0], { ...fictionalCoursePhases[1], items: [{ ...(fictionalCoursePhases[1] as { items: object[] }).items[0], id: 'lesson-a' }] }]);
+    expect(reused).toEqual({ lessons: [], complete: false, problem: 'ambiguous' });
+    expect(courseLessons(Array.from({ length: 53 }, (_, i) => ({ id: `phase-${i}`, title: 'x', items: [] }))).problem).toBe('oversized');
+    const twice = { lesson: lessonA, completedAt: '2026-10-11T12:00:00Z', requestId: randomUUID() };
+    expect(educationProgress.safeParse({ contract: 'program-education-progress/1', entitlementId: randomUUID(), enrollmentId: randomUUID(), curriculum, revision: 2, completed: [twice, { ...twice, requestId: randomUUID() }], position: null, updatedAt: null }).success).toBe(false);
+  });
   it('lists every lesson in order, marks what may be completed, and says when part of the course could not be read', () => {
     const { lessons, complete } = courseLessons(fictionalCoursePhases);
     expect(complete).toBe(true);

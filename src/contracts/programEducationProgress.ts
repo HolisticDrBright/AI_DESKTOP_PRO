@@ -33,7 +33,9 @@ export type LessonRef = z.infer<typeof lessonRef>;
 /** The item kinds a learner may mark complete. A supplement step is never one of them. */
 export const COMPLETABLE_KINDS = ['lesson', 'diet', 'habit'] as const;
 /** Upper bounds: the published content allows 52 phases of 100 items. */
-export const MAX_LESSONS = 5200;
+export const MAX_PHASES = 52;
+export const MAX_PHASE_ITEMS = 100;
+export const MAX_LESSONS = MAX_PHASES * MAX_PHASE_ITEMS;
 
 export const lessonCompletion = z.object({ lesson: lessonRef, completedAt: timestamp, requestId: uuid }).strict();
 export type LessonCompletion = z.infer<typeof lessonCompletion>;
@@ -49,7 +51,15 @@ export const educationProgress = z.object({
   /** Where the learner last was, as recorded; null until a position is recorded. */
   position: lessonRef.nullable(),
   updatedAt: timestamp.nullable(),
-}).strict();
+}).strict().superRefine((row, context) => {
+  // A lesson is completed once; a second completion of the same lesson is not a count of anything.
+  const seen = new Set<string>();
+  row.completed.forEach((entry, index) => {
+    const key = entry.lesson.phaseId + '\u0000' + entry.lesson.itemId;
+    if (seen.has(key)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'duplicate_completion', path: ['completed', index] });
+    seen.add(key);
+  });
+});
 export type EducationProgress = z.infer<typeof educationProgress>;
 
 const write = { entitlementId: uuid, enrollmentId: uuid, curriculum: curriculumPin, lesson: lessonRef, expectedRevision: z.number().int().min(0), requestId: uuid };
@@ -87,7 +97,7 @@ export type EducationProgressOutcome = z.infer<typeof educationProgressOutcome>;
 /* ------------------------------------------------------- course navigation */
 
 const servedItem = z.object({ id: stableId, title: z.string().min(1).max(240), kind: z.enum(['lesson', 'diet', 'habit', 'supplement']), instructions: z.string().max(4000), released: z.boolean() }).passthrough();
-const servedPhase = z.object({ id: stableId, title: z.string().min(1).max(240), items: z.array(z.unknown()).max(100) }).passthrough();
+const servedPhase = z.object({ id: stableId, title: z.string().min(1).max(240), items: z.array(z.unknown()) }).passthrough();
 
 export type CourseLesson = {
   ref: LessonRef; phaseIndex: number; itemIndex: number; phaseTitle: string;
@@ -95,19 +105,39 @@ export type CourseLesson = {
 };
 
 /**
- * The lessons of a served curriculum, in order. Anything that does not have the published shape is
- * left out rather than guessed at; `complete` says whether everything was readable, so a screen can
- * say a part of the course could not be shown instead of presenting a shorter course as the whole.
+ * Why an outline is not the whole course. `partial`: a phase or item does not have the published
+ * shape, so the readable lessons are shown and the screen says that a part could not be; `ambiguous`:
+ * two phases or two items share an id, so a lesson reference could name either and no position,
+ * completion or count is trustworthy; `oversized`: more phases or items than the published content
+ * admits, which is not truncated into a shorter course. Ambiguous and oversized outlines carry no
+ * lessons at all.
  */
-export function courseLessons(phases: readonly unknown[]): { lessons: CourseLesson[]; complete: boolean } {
+export type OutlineProblem = 'partial' | 'ambiguous' | 'oversized';
+
+/**
+ * The lessons of a served curriculum, in order. Anything that does not have the published shape is
+ * left out rather than guessed at; `complete` says whether everything was readable, and `problem`
+ * says why not, so a screen can explain that a part of the course could not be shown instead of
+ * presenting a shorter course as the whole.
+ */
+export function courseLessons(phases: readonly unknown[]): { lessons: CourseLesson[]; complete: boolean; problem: OutlineProblem | null } {
+  const refused = (problem: OutlineProblem) => ({ lessons: [] as CourseLesson[], complete: false, problem });
+  if (phases.length > MAX_PHASES) return refused('oversized');
   const lessons: CourseLesson[] = [];
-  let complete = true;
+  const phaseIds = new Set<string>(), itemIds = new Set<string>();
+  let partial = false, ambiguous = false, oversized = false;
   phases.forEach((rawPhase, phaseIndex) => {
     const phase = servedPhase.safeParse(rawPhase);
-    if (!phase.success) { complete = false; return; }
+    if (!phase.success) { partial = true; return; }
+    if (phase.data.items.length > MAX_PHASE_ITEMS) { oversized = true; return; }
+    if (phaseIds.has(phase.data.id)) ambiguous = true;
+    phaseIds.add(phase.data.id);
     phase.data.items.forEach((rawItem, itemIndex) => {
       const item = servedItem.safeParse(rawItem);
-      if (!item.success) { complete = false; return; }
+      if (!item.success) { partial = true; return; }
+      // The published content keeps item ids unique across the whole curriculum, not only within a phase.
+      if (itemIds.has(item.data.id)) ambiguous = true;
+      itemIds.add(item.data.id);
       const kind = item.data.kind;
       lessons.push({
         ref: { phaseId: phase.data.id, itemId: item.data.id }, phaseIndex, itemIndex, phaseTitle: phase.data.title,
@@ -116,7 +146,9 @@ export function courseLessons(phases: readonly unknown[]): { lessons: CourseLess
       });
     });
   });
-  return { lessons, complete };
+  if (oversized) return refused('oversized');
+  if (ambiguous) return refused('ambiguous');
+  return { lessons, complete: !partial, problem: partial ? 'partial' : null };
 }
 
 export const sameLesson = (a: LessonRef | null | undefined, b: LessonRef | null | undefined) => !!a && !!b && a.phaseId === b.phaseId && a.itemId === b.itemId;
