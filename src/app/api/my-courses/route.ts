@@ -34,7 +34,17 @@ const request = z.discriminatedUnion('service', [
   ]) }).strict(),
   z.object({ service: z.literal('progress'), body: z.unknown() }).strict(),
 ]);
-const same = (a: ClinicalRequestContext, b: ClinicalRequestContext | null) => !!b && a.actorPersonId === b.actorPersonId && a.identitySubject === b.identitySubject && a.identityPool === b.identityPool;
+const same = (a: ClinicalRequestContext, b: ClinicalRequestContext | null) => !!b
+  && a.actorPersonId === b.actorPersonId
+  && a.organizationId === b.organizationId
+  && a.identitySubject === b.identitySubject
+  && a.identityPool === b.identityPool
+  && a.purpose === b.purpose
+  && a.environment === b.environment
+  && a.dataClassification === b.dataClassification
+  && a.containsPhi === b.containsPhi
+  && a.realPatientData === b.realPatientData
+  && ('productionBound' in a ? a.productionBound : false) === ('productionBound' in b ? b.productionBound : false);
 
 export async function POST(req: Request) {
   if (!sameBrowserOrigin(req)) return refuse(403, 'origin_refused');

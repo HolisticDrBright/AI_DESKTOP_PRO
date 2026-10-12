@@ -149,6 +149,26 @@ describe('a reviewed host: identity is re-checked after every service call', () 
       host.progress.mockClear();
     }
   });
+  it('discards an in-flight reply when the same learner changes clinic or data boundary', async () => {
+    const host = reviewedHost();
+    for (const changed of [
+      { ...context('sub:fictional-reviewed-a'), organizationId: '7e1a0000-0000-4000-8000-0000000000f1' },
+      { ...context('sub:fictional-reviewed-a'), purpose: 'consent_management' as const },
+      { ...context('sub:fictional-reviewed-a'), environment: 'production-clinical' as const, dataClassification: 'clinical_phi' as const, containsPhi: true as const, realPatientData: true as const, productionBound: true as const },
+    ]) {
+      host.set(context('sub:fictional-reviewed-a'));
+      const gate = host.barrier();
+      host.progress.mockImplementationOnce(async () => { await gate; return { action: 'read', read: { outcome: 'refused', reason: 'not_active' } }; });
+      const pending = learner(read);
+      await vi.waitFor(() => expect(host.progress).toHaveBeenCalled());
+      host.set(changed);
+      host.release();
+      const reply = await pending;
+      expect(reply).toMatchObject({ status: 401, cache: 'no-store, private', json: { error: { code: 'learner_signin_required' } } });
+      expect(reply.json.data).toBeUndefined();
+      host.progress.mockClear();
+    }
+  });
   it('a service refusal is reported as itself while the learner is still verified, and as sign-in when not', async () => {
     const host = reviewedHost();
     host.progress.mockRejectedValueOnce(new EducationProgressError('request_invalid'));
