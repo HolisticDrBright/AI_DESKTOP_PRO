@@ -13,6 +13,8 @@ import { installAcceptanceLearnerHost, __resetLearnerHost } from '../learner/lea
 import { ACCEPTANCE_FIXTURE, ACCEPTANCE_LEARNER_COOKIE, createFictionalIdentityIssuer, openSqlAcceptanceHost, publishAcceptanceOffer, type AcceptanceBoundaries, type SqlAcceptanceHost } from './sql-acceptance-host';
 import { JOURNEY_COURSE_TITLE } from './journey-fixture';
 import { createProgramSettlement } from './program-settlement';
+import { createLearnerController, type LearnerSnapshot } from '../../lib/learner/learnerController';
+import { createLearnerTransport } from '../../lib/learner/learnerTransport';
 
 /**
  * Hardening WP3: the purchase-to-learning path through the actual BLOCKED candidate chain, the SQL
@@ -195,6 +197,33 @@ describe('purchase to learning, recovered from the database after every acknowle
     expect((await myCourses('a', { service: 'progress', body: write('complete', habitB, 2) })).json.data).toMatchObject({ outcome: { outcome: 'refused', reason: 'not_active' } });
     await host.settlement.recordPolicy(operator, orderA, 'operator_release', 'acceptance-release-1');
     expect((await myCourses('a', { service: 'education', body: { action: 'curriculum', entitlementId: entitlementA } })).json.data).toMatchObject({ read: { outcome: 'served' } });
+  });
+});
+
+describe('the My courses page logic on the SQL host', () => {
+  it('the browser transport and lifecycle controller, through the real route, read the bought course, save a completion with its receipt, and drop everything when the session is revoked', async () => {
+    const token = boundaries.identity.signIn('a');
+    // The browser's fetch, as this page would make it: same origin, the learner's session cookie, the real route handler.
+    const browserFetch = (async (input: RequestInfo | URL, init?: RequestInit) => myCoursesRoute(new Request(`${origin}${String(input)}`, { ...init, headers: { ...(init?.headers as Record<string, string>), host: '127.0.0.1:3000', origin, 'sec-fetch-site': 'same-origin', cookie: `${ACCEPTANCE_LEARNER_COOKIE}=${token}` } }))) as typeof fetch;
+    let snapshot: LearnerSnapshot | null = null;
+    const controller = createLearnerController({ transport: createLearnerTransport({ fetch: browserFetch }), requestId: randomUUID, onChange: next => { snapshot = next; } });
+    const state = () => snapshot!;
+    await controller.start();
+    expect(state()).toMatchObject({ phase: 'ready', host: 'fictional_sql_fixture' });
+    expect(state().view!.entitlements.map(e => e.entitlementId)).toContain(entitlementA);
+    await controller.open(entitlementA);
+    expect(state().course?.read).toMatchObject({ outcome: 'served', title: JOURNEY_COURSE_TITLE });
+    expect(state().outline).toMatchObject({ complete: true, problem: null });
+    expect(state().progress).toMatchObject({ state: 'ready', progress: { revision: 2 } });
+    await controller.goTo(habitB);
+    await controller.complete(habitB);
+    expect(state().notice).toContain('Saved for this account');
+    expect(state().progress).toMatchObject({ state: 'ready', progress: { completed: [{ lesson: lessonA }, { lesson: habitB }] } });
+    // Saved in the database, not in the page: a fresh read through the route agrees.
+    expect((await myCourses('a', { service: 'progress', body: { action: 'read', entitlementId: entitlementA } })).json.data).toMatchObject({ read: { progress: { completed: [{ lesson: lessonA }, { lesson: habitB }] } } });
+    boundaries.identity.revoke('a');
+    await controller.goTo(lessonC);
+    expect(state()).toMatchObject({ phase: 'signin', view: null, course: null, outline: null, lesson: null });
   });
 });
 
