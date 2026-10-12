@@ -5,6 +5,8 @@ import {
 } from '../../contracts/programEducationAccess';
 import type { ProgramOrder } from '../../contracts/programCheckout';
 import type { ProgramCheckoutLedger } from './program-checkout-ledger';
+import { accessTermsHolds } from '../../contracts/programOffers';
+import { FICTIONAL_ACCESS_TERMS, accessTermsRegistry, isConsumerCaller, isStaffCaller, type AccessTermsRegistry, type ConsumerCaller, type StaffCaller } from './program-commerce-authority';
 
 /**
  * The education access ledger: entitlements, claims and enrollments, in whichever store backs it.
@@ -28,7 +30,11 @@ import type { ProgramCheckoutLedger } from './program-checkout-ledger';
  *     its delivery withdrawn in the same step the new claim and its delivery are created;
  *   - every change raises the revision and follows ENTITLEMENT_TRANSITIONS; the order, offer and
  *     curriculum columns are immutable; policy events are appended, never edited;
- *   - the access read returns the subject's own rows only; an unclaimed entitlement belongs to nobody.
+ *   - the access read returns the subject's own rows only; an unclaimed entitlement belongs to nobody;
+ *   - the consumer methods take the verified caller, never a subject string; the staff read takes a
+ *     clinician of that clinic; policy, transitions and replacement codes take an operator context;
+ *   - a claim of an entitlement whose access terms are held (unreviewed, duration undecided, Core
+ *     dependency, refund or renewal undecided) is refused `terms_undecided` and binds nothing.
  */
 export type EducationLedgerCategory = 'store_unavailable' | 'not_found' | 'transition_refused' | 'revision_stale' | 'settlement_refused' | 'request_invalid';
 export class EducationLedgerError extends Error {
@@ -51,25 +57,30 @@ export type OperatorContext = { kind: 'operator'; operatorId: string };
 export const MAX_DELIVERY_ATTEMPTS = 6;
 export type ClaimOutcome =
   | { outcome: 'claimed'; entitlement: ProgramEntitlement; enrollment: EducationEnrollment }
-  | { outcome: 'refused'; reason: 'claim_invalid' | 'claim_expired' | 'claim_used' | 'claim_superseded' | 'entitlement_not_claimable' | 'already_claimed_by_other' };
+  | { outcome: 'refused'; reason: 'claim_invalid' | 'claim_expired' | 'claim_used' | 'claim_superseded' | 'entitlement_not_claimable' | 'already_claimed_by_other' | 'terms_undecided' };
 
 export interface ProgramEducationLedger {
   /** Create the entitlement and its first claim for a verified order, or return the ones that exist. The token hash is the caller's; a fresh hash is issued only when nothing existed. */
   settle(order: ProgramOrder, issue: ClaimIssue, expectedAccountRef: string): Promise<SettlementReceipt>;
   /** Verified, paid orders with no entitlement yet: the durable admitted work a crashed settlement left behind. */
   unsettledOrders(limit: number): Promise<ProgramOrder[]>;
-  claim(tokenHash: string, consumerSubject: string, at: string): Promise<ClaimOutcome>;
+  /** The verified caller presents a code's digest; the ledger's clock decides expiry. */
+  claim(tokenHash: string, caller: ConsumerCaller): Promise<ClaimOutcome>;
+  /** Worker reads (settlement and status of one order); no request path reaches them. */
   readEntitlement(entitlementId: string): Promise<ProgramEntitlement | null>;
   entitlementForOrder(orderId: string): Promise<ProgramEntitlement | null>;
-  /** The subject's own entitlements and enrollments. */
-  access(consumerSubject: string): Promise<{ entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[] }>;
-  recordPolicy(orderId: string, kind: PolicyEventKind, reference: string, at: string): Promise<ProgramEntitlement>;
-  transition(entitlementId: string, expectedRevision: number, next: EntitlementState): Promise<ProgramEntitlement>;
-  expireDue(at: string): Promise<ProgramEntitlement[]>;
-  /** Everything about one clinic's program, for the staff status view: every order and entitlement state, never a subject's identity beyond its opaque form. */
-  listForProgram(organizationId: string, programId: string): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
+  /** The caller's own entitlements and enrollments, with the caller's own ended windows expired first. */
+  access(caller: ConsumerCaller): Promise<{ entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[] }>;
+  /** One entitlement, only when the caller owns it; null otherwise. */
+  ownEntitlement(caller: ConsumerCaller, entitlementId: string): Promise<ProgramEntitlement | null>;
+  recordPolicy(operator: OperatorContext, orderId: string, kind: PolicyEventKind, reference: string, at: string): Promise<ProgramEntitlement>;
+  transition(operator: OperatorContext, entitlementId: string, expectedRevision: number, next: EntitlementState): Promise<ProgramEntitlement>;
+  /** The worker's sweep: at most `limit` ended windows, by the ledger's own clock. */
+  expireDue(limit: number): Promise<ProgramEntitlement[]>;
+  /** Everything about the staff caller's clinic's program, for the status view: every order and entitlement state, never a subject's identity beyond its opaque form. */
+  listForProgram(staff: StaffCaller, programId: string): Promise<{ orders: ProgramOrder[]; entitlements: ProgramEntitlement[]; enrollments: EducationEnrollment[]; claims: ProgramClaim[] }>;
   /** The staff read of the exact purchased version for one of the clinic's entitlements. */
-  staffCurriculum(actor: { personId: string; organizationId: string; identitySubject: string }, entitlementId: string): Promise<EducationCurriculumRead>;
+  staffCurriculum(staff: StaffCaller, entitlementId: string): Promise<EducationCurriculumRead>;
   /** Deliveries due now: pending or outcome-unknown, still usable, oldest first, bounded. Unusable ones are withdrawn on the way. */
   dueDeliveries(at: string, limit: number): Promise<DeliveryRecord[]>;
   /** Record one delivery attempt at the attempt count the caller read; a stale count is refused. */
@@ -78,11 +89,15 @@ export interface ProgramEducationLedger {
   reissueClaim(operator: OperatorContext, entitlementId: string, issue: ClaimIssue): Promise<{ claim: ProgramClaim; superseded: number }>;
 }
 
-export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; faults?: { before?: (operation: string) => void }; /** The fixture's published content by version id, for the staff read. */ content?: (binding: ProgramEntitlement['curriculum']) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null> };
+export type FictionalEducationLedgerOptions = { orders: ProgramCheckoutLedger & { orders: Map<string, ProgramOrder> }; now?: () => Date; /** Reviewed access terms; the fixture entries by default, which read as fixtures. */ reviewedTerms?: AccessTermsRegistry; faults?: { before?: (operation: string) => void }; /** The fixture's published content by version id, for the staff read. */ content?: (binding: ProgramEntitlement['curriculum']) => Promise<{ title: string; phases: unknown[]; sourceDigest: string } | null> };
 
 export function createFictionalEducationLedger(options: FictionalEducationLedgerOptions) {
   const now = options.now ?? (() => new Date());
   const stamp = () => now().toISOString();
+  const reviewedTerms = options.reviewedTerms ?? accessTermsRegistry(FICTIONAL_ACCESS_TERMS);
+  const operatorOnly = (operator: OperatorContext) => { if (operator?.kind !== 'operator' || !operator.operatorId) throw new EducationLedgerError('request_invalid'); };
+  const consumerOnly = (caller: ConsumerCaller) => { if (!isConsumerCaller(caller)) throw new EducationLedgerError('request_invalid'); return caller.identitySubject; };
+  const staffOnly = (staff: StaffCaller) => { if (!isStaffCaller(staff)) throw new EducationLedgerError('request_invalid'); };
   const entitlements = new Map<string, ProgramEntitlement>();
   const claims = new Map<string, Omit<ProgramClaim, 'delivery'> & { tokenHash: string }>();
   const deliveries = new Map<string, DeliveryRecord>();
@@ -150,8 +165,10 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       fault('unsettledOrders');
       return [...options.orders.orders.values()].filter(o => o.state === 'payment_verified' && o.verification?.paymentStatus === 'paid' && !byOrder(o.orderId)).slice(0, limit).map(o => structuredClone(o));
     },
-    async claim(tokenHash, consumerSubject, at) {
+    async claim(tokenHash, caller) {
       fault('claim');
+      const consumerSubject = consumerOnly(caller);
+      const at = stamp();
       const claim = [...claims.values()].find(c => c.tokenHash === tokenHash);
       if (!claim) return { outcome: 'refused', reason: 'claim_invalid' };
       const entitlement = entitlements.get(claim.entitlementId)!;
@@ -169,6 +186,9 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
         return { outcome: 'refused', reason: 'claim_expired' };
       }
       if (entitlement.state !== 'awaiting_claim' || entitlement.subject.kind !== 'unclaimed') return { outcome: 'refused', reason: entitlement.subject.kind === 'claimed' && entitlement.subject.consumerSubject !== consumerSubject ? 'already_claimed_by_other' : 'entitlement_not_claimable' };
+      // Activation holds the same terms publication holds: whatever an older, looser artifact let through, nothing binds on undecided terms.
+      const pricing = options.orders.orders.get(entitlement.orderId)?.pricing ?? null;
+      if (accessTermsHolds({ accessTermsVersion: entitlement.accessTermsVersion, accessDurationDays: entitlement.accessDurationDays, pricing }, reviewedTerms(entitlement.accessTermsVersion)).length) return { outcome: 'refused', reason: 'terms_undecided' };
       const window = accessWindow(entitlement.accessDurationDays, new Date(at));
       const claimed = move(entitlement, entitlement.revision, 'active', { subject: { kind: 'claimed', consumerSubject, claimedAt: at }, window });
       claims.set(claim.claimId, { ...claim, state: 'used', usedAt: at, usedBy: consumerSubject });
@@ -180,13 +200,24 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
     },
     async readEntitlement(entitlementId) { fault('readEntitlement'); const e = entitlements.get(entitlementId); return e ? structuredClone(e) : null; },
     async entitlementForOrder(orderId) { fault('entitlementForOrder'); const e = byOrder(orderId); return e ? structuredClone(e) : null; },
-    async access(consumerSubject) {
+    async access(caller) {
       fault('access');
+      const consumerSubject = consumerOnly(caller);
+      for (const e of [...entitlements.values()]) {
+        if (e.state === 'active' && e.subject.kind === 'claimed' && e.subject.consumerSubject === consumerSubject && e.window?.endsAt && Date.parse(e.window.endsAt) <= now().getTime()) move(e, e.revision, 'expired');
+      }
       const mine = [...entitlements.values()].filter(e => e.subject.kind === 'claimed' && e.subject.consumerSubject === consumerSubject);
       return { entitlements: mine.map(e => structuredClone(e)), enrollments: [...enrollments.values()].filter(n => n.consumerSubject === consumerSubject).map(n => structuredClone(n)) };
     },
-    async recordPolicy(orderId, kind, reference, at) {
+    async ownEntitlement(caller, entitlementId) {
+      fault('ownEntitlement');
+      const consumerSubject = consumerOnly(caller);
+      const e = entitlements.get(entitlementId);
+      return e && e.subject.kind === 'claimed' && e.subject.consumerSubject === consumerSubject ? structuredClone(e) : null;
+    },
+    async recordPolicy(operator, orderId, kind, reference, at) {
       fault('recordPolicy');
+      operatorOnly(operator);
       const entitlement = byOrder(orderId);
       if (!entitlement) throw new EducationLedgerError('not_found');
       const target = kind === 'operator_release' ? 'active' : kind === 'operator_revoke' ? 'revoked' : kind === 'refund' ? 'held_refund' : kind === 'dispute' || kind === 'chargeback' ? 'held_dispute' : 'held_policy';
@@ -205,19 +236,24 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       record();
       return moved;
     },
-    async transition(entitlementId, expectedRevision, next) {
+    async transition(operator, entitlementId, expectedRevision, next) {
       fault('transition');
+      operatorOnly(operator);
       const entitlement = entitlements.get(entitlementId);
       if (!entitlement) throw new EducationLedgerError('not_found');
       return move(entitlement, expectedRevision, next);
     },
-    async expireDue(at) {
+    async expireDue(limit) {
       fault('expireDue');
-      const due = [...entitlements.values()].filter(e => e.state === 'active' && e.window?.endsAt !== null && e.window !== null && Date.parse(e.window.endsAt!) <= Date.parse(at));
+      const at = now().getTime();
+      const due = [...entitlements.values()].filter(e => e.state === 'active' && e.window?.endsAt !== null && e.window !== null && Date.parse(e.window.endsAt!) <= at)
+        .sort((a, b) => a.window!.endsAt!.localeCompare(b.window!.endsAt!)).slice(0, Math.max(1, Math.min(limit, 100)));
       return due.map(e => move(e, e.revision, 'expired'));
     },
-    async listForProgram(organizationId, programId) {
+    async listForProgram(staff, programId) {
       fault('listForProgram');
+      staffOnly(staff);
+      const organizationId = staff.organizationId;
       const mine = [...entitlements.values()].filter(e => e.organizationId === organizationId && e.programId === programId);
       const ids = new Set(mine.map(e => e.entitlementId));
       const orders = [...options.orders.orders.values()].filter(o => o.organizationId === organizationId && o.programId === programId).map(o => structuredClone(o));
@@ -253,7 +289,7 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
     },
     async reissueClaim(operator, entitlementId, issue) {
       fault('reissueClaim');
-      if (operator?.kind !== 'operator' || !operator.operatorId) throw new EducationLedgerError('request_invalid');
+      operatorOnly(operator);
       const entitlement = entitlements.get(entitlementId);
       if (!entitlement) throw new EducationLedgerError('not_found');
       if (entitlement.state !== 'awaiting_claim' || entitlement.subject.kind !== 'unclaimed') throw new EducationLedgerError('transition_refused', 'entitlement_not_claimable');
@@ -269,10 +305,11 @@ export function createFictionalEducationLedger(options: FictionalEducationLedger
       events.push({ entitlementId, kind: 'transition', reference: 'claim reissued by operator', at });
       return { claim: claimView(claim), superseded };
     },
-    async staffCurriculum(actor, entitlementId) {
+    async staffCurriculum(staff, entitlementId) {
       fault('staffCurriculum');
+      staffOnly(staff);
       const entitlement = entitlements.get(entitlementId);
-      if (!entitlement || entitlement.organizationId !== actor.organizationId) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };
+      if (!entitlement || entitlement.organizationId !== staff.organizationId) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };
       const content = options.content ? await options.content(entitlement.curriculum).catch(() => null) : null;
       if (!content) return { outcome: 'withheld', entitlementId, reason: 'version_missing' };
       if (content.sourceDigest !== entitlement.curriculum.sourceDigest) return { outcome: 'withheld', entitlementId, reason: 'digest_mismatch' };

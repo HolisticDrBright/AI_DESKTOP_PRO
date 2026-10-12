@@ -9,6 +9,7 @@ import { ENTITLEMENT_TRANSITIONS, ENTITLEMENT_STATES, isAccessActive } from '../
 import type { VerifiedEvent } from '../stripe-boundary';
 import { createFictionalClaimSealer } from './program-claim-delivery';
 import { fictionalDelivery } from '../../test-support/commerceDelivery';
+import type { ConsumerCaller } from './program-commerce-authority';
 
 /**
  * Settlement over the fictional ledgers: one entitlement per verified order whichever path arrives
@@ -20,6 +21,9 @@ const org = '11111111-1111-4111-8111-111111111111', program = '22222222-2222-422
 const curriculum = { versionId: '44444444-4444-4444-8444-444444444444', version: 1, sourceDigest: 'a'.repeat(64) };
 const me: OfferActor = { personId: staff, organizationId: org };
 const alice = 'sub:fictional-alice-0001', bob = 'sub:fictional-bob-00002';
+/** The verified caller the consumer bridge builds from the request context; the subject is never a body field. */
+const caller = (subject: string): ConsumerCaller => ({ kind: 'consumer', personId: subject === alice ? '66666666-6666-4666-8666-000000000001' : '66666666-6666-4666-8666-000000000002', identitySubject: subject });
+const operator = { kind: 'operator' as const, operatorId: 'fictional-operator-1' };
 const expected = { accountRef: 'acct_FictionalAccount1', apiVersion: '2025-08-27.basil' };
 const event = (id: string, sessionRef: string, type = 'checkout.session.completed'): VerifiedEvent => ({ id, type, livemode: false, created: 1, data: { object: { object: 'checkout.session', id: sessionRef } } });
 
@@ -29,7 +33,7 @@ async function harness(accessDurationDays: number | null = 30) {
   const tick = (ms: number) => { clock += ms; };
   const content = { title: 'Fictional guide', phases: [{ id: 'phase-1', title: 'Phase one', days: 1, transition: 'scheduled', items: [] }], sourceDigest: curriculum.sourceDigest };
   const offers = createFictionalProgramOfferLedger({ curriculum: async (o, p) => o === org && p === program ? { programId: p, current: curriculum } : null, now });
-  const created = await offers.execute(me, { action: 'create', programId: program, terms: { mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/1', accessDurationDays } });
+  const created = await offers.execute(me, { action: 'create', programId: program, terms: { mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: accessDurationDays === null ? 'education-access-terms/2' : 'education-access-terms/1', accessDurationDays } });
   const offerId = created.action === 'create' ? created.offer.offerId : '';
   await offers.execute(me, { action: 'approve_provider_mapping', offerId, expectedRevision: 1 });
   await offers.execute(me, { action: 'publish', offerId, expectedRevision: 2 });
@@ -106,17 +110,17 @@ describe('the claim', () => {
     const order = await h.verifiedOrder();
     await h.settlement.settleOrder(order);
     const token = await h.codeFor(order.orderId);
-    expect(await h.settlement.access(alice)).toMatchObject({ entitlements: [], enrollments: [] });
-    const claimed = await h.settlement.claim(alice, token);
+    expect(await h.settlement.access(caller(alice))).toMatchObject({ entitlements: [], enrollments: [] });
+    const claimed = await h.settlement.claim(caller(alice), token);
     expect(claimed).toMatchObject({ outcome: 'claimed', entitlement: { state: 'active', subject: { kind: 'claimed', consumerSubject: alice }, window: { startsAt: '2026-10-11T12:00:00.000Z', endsAt: '2026-11-10T12:00:00.000Z' } } });
-    const access = await h.settlement.access(alice);
+    const access = await h.settlement.access(caller(alice));
     expect(access?.entitlements).toHaveLength(1);
     expect(access?.enrollments).toHaveLength(1);
     expect(access?.enrollments[0]).toMatchObject({ consumerSubject: alice, state: 'active', phaseIndex: 0, curriculum });
     // The winner retrying after a lost reply gets the same receipt; anyone else is refused.
-    expect(await h.settlement.claim(alice, token)).toEqual(claimed);
-    expect(await h.settlement.claim(bob, token)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
-    expect(await h.settlement.access(bob)).toMatchObject({ entitlements: [], enrollments: [] });
+    expect(await h.settlement.claim(caller(alice), token)).toEqual(claimed);
+    expect(await h.settlement.claim(caller(bob), token)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
+    expect(await h.settlement.access(caller(bob))).toMatchObject({ entitlements: [], enrollments: [] });
     expect(h.education.enrollments.size).toBe(1);
   });
   it('refuses a forged, expired or malformed token, and an order number or receipt is not a claim', async () => {
@@ -124,12 +128,12 @@ describe('the claim', () => {
     const order = await h.verifiedOrder();
     await h.settlement.settleOrder(order);
     const token = await h.codeFor(order.orderId);
-    expect(await h.settlement.claim(bob, newClaimToken())).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
-    expect(await h.settlement.claim(bob, order.orderId)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
-    expect(await h.settlement.claim(bob, order.processor!.sessionRef)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
-    expect(await h.settlement.claim(bob, 'x'.repeat(100))).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
+    expect(await h.settlement.claim(caller(bob), newClaimToken())).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
+    expect(await h.settlement.claim(caller(bob), order.orderId)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
+    expect(await h.settlement.claim(caller(bob), order.processor!.sessionRef)).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
+    expect(await h.settlement.claim(caller(bob), 'x'.repeat(100))).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
     h.tick(8 * 86_400_000);
-    expect(await h.settlement.claim(alice, token)).toEqual({ outcome: 'refused', reason: 'claim_expired' });
+    expect(await h.settlement.claim(caller(alice), token)).toEqual({ outcome: 'refused', reason: 'claim_expired' });
     expect((await h.education.entitlementForOrder(order.orderId))!.state).toBe('awaiting_claim');
     expect(h.education.enrollments.size).toBe(0);
   });
@@ -138,16 +142,16 @@ describe('the claim', () => {
     const order = await h.verifiedOrder();
     const settled = await h.settlement.settleOrder(order);
     const entitlementId = settled.settled ? settled.receipt.entitlement.entitlementId : '';
-    expect(await h.settlement.curriculum(alice, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
-    await h.settlement.claim(alice, await h.codeFor(order.orderId));
-    expect(await h.settlement.curriculum(alice, entitlementId)).toMatchObject({ outcome: 'served', curriculum, title: 'Fictional guide' });
-    expect(await h.settlement.curriculum(bob, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
+    expect(await h.settlement.curriculum(caller(alice), entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
+    await h.settlement.claim(caller(alice), await h.codeFor(order.orderId));
+    expect(await h.settlement.curriculum(caller(alice), entitlementId)).toMatchObject({ outcome: 'served', curriculum, title: 'Fictional guide' });
+    expect(await h.settlement.curriculum(caller(bob), entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_owner' });
     h.content.sourceDigest = 'b'.repeat(64);
-    expect(await h.settlement.curriculum(alice, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'digest_mismatch' });
+    expect(await h.settlement.curriculum(caller(alice), entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'digest_mismatch' });
     h.content.sourceDigest = curriculum.sourceDigest;
     h.tick(31 * 86_400_000);
-    expect(await h.settlement.curriculum(alice, entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_active' });
-    const access = await h.settlement.access(alice);
+    expect(await h.settlement.curriculum(caller(alice), entitlementId)).toEqual({ outcome: 'withheld', entitlementId, reason: 'not_active' });
+    const access = await h.settlement.access(caller(alice));
     expect(access?.entitlements[0]).toMatchObject({ state: 'expired' });
   });
 });
@@ -157,25 +161,25 @@ describe('policy, expiry and the table', () => {
     const h = await harness(null);
     const order = await h.verifiedOrder();
     await h.settlement.settleOrder(order);
-    await h.settlement.claim(alice, await h.codeFor(order.orderId));
-    const held = await h.settlement.recordPolicy(order.orderId, 'refund', 're_fictional_1');
+    await h.settlement.claim(caller(alice), await h.codeFor(order.orderId));
+    const held = await h.settlement.recordPolicy(operator, order.orderId, 'refund', 're_fictional_1');
     expect(held).toMatchObject({ state: 'held_refund', policy: { kind: 'refund', reference: 're_fictional_1' } });
     expect(isAccessActive(held!, h.now())).toBe(false);
-    expect(await h.settlement.curriculum(alice, held!.entitlementId)).toMatchObject({ outcome: 'withheld', reason: 'not_active' });
-    expect((await h.settlement.access(alice))?.entitlements[0]).toMatchObject({ state: 'held_refund' });
-    const released = await h.settlement.recordPolicy(order.orderId, 'operator_release', 'review-fictional-1');
+    expect(await h.settlement.curriculum(caller(alice), held!.entitlementId)).toMatchObject({ outcome: 'withheld', reason: 'not_active' });
+    expect((await h.settlement.access(caller(alice)))?.entitlements[0]).toMatchObject({ state: 'held_refund' });
+    const released = await h.settlement.recordPolicy(operator, order.orderId, 'operator_release', 'review-fictional-1');
     expect(released).toMatchObject({ state: 'active' });
-    expect(await h.settlement.recordPolicy(order.orderId, 'dispute', 'dp_fictional_1')).toMatchObject({ state: 'held_dispute' });
-    expect(await h.settlement.recordPolicy(order.orderId, 'operator_revoke', 'review-fictional-2')).toMatchObject({ state: 'revoked' });
-    expect(await h.settlement.recordPolicy(order.orderId, 'operator_release', 'review-fictional-3')).toBeNull();
+    expect(await h.settlement.recordPolicy(operator, order.orderId, 'dispute', 'dp_fictional_1')).toMatchObject({ state: 'held_dispute' });
+    expect(await h.settlement.recordPolicy(operator, order.orderId, 'operator_revoke', 'review-fictional-2')).toMatchObject({ state: 'revoked' });
+    expect(await h.settlement.recordPolicy(operator, order.orderId, 'operator_release', 'review-fictional-3')).toBeNull();
     expect(h.education.events.map(e => e.kind)).toEqual(['settled', 'transition', 'claimed', 'transition', 'refund', 'transition', 'operator_release', 'transition', 'dispute', 'transition', 'operator_revoke']);
     expect(h.education.entitlements.size).toBe(1);
-    // An entitlement with no decided duration never expires on its own.
+    // An entitlement whose reviewed terms state that access has no end never expires on its own.
     const open = await h.verifiedOrder('browser-b');
     await h.settlement.settleOrder(open);
-    await h.settlement.claim(bob, await h.codeFor(open.orderId));
+    await h.settlement.claim(caller(bob), await h.codeFor(open.orderId));
     h.tick(400 * 86_400_000);
-    expect((await h.settlement.access(bob))?.entitlements[0]).toMatchObject({ state: 'active', window: { endsAt: null } });
+    expect((await h.settlement.access(caller(bob)))?.entitlements[0]).toMatchObject({ state: 'active', window: { endsAt: null } });
   });
   it('the transition table is monotonic: nothing returns to awaiting_claim, expired and revoked are final', () => {
     for (const state of ENTITLEMENT_STATES) expect(ENTITLEMENT_TRANSITIONS[state]).not.toContain('awaiting_claim');
@@ -188,8 +192,8 @@ describe('policy, expiry and the table', () => {
     const broken = createFictionalEducationLedger({ orders: h.ledger, faults: { before: () => { throw new Error('fictional outage'); } } });
     const settlement = createProgramSettlement({ ledger: broken, curriculumContent: async () => null, expectedAccountRef: expected.accountRef, sealer: createFictionalClaimSealer() });
     expect(await settlement.settleOrder(order)).toEqual({ settled: false, reason: 'store_unavailable' });
-    expect(await settlement.access(alice)).toBeNull();
-    expect(await settlement.claim(alice, newClaimToken())).toEqual({ outcome: 'refused', reason: 'service_unavailable' });
-    expect(await settlement.curriculum(alice, '55555555-5555-4555-8555-555555555555')).toMatchObject({ outcome: 'withheld', reason: 'service_unavailable' });
+    expect(await settlement.access(caller(alice))).toBeNull();
+    expect(await settlement.claim(caller(alice), newClaimToken())).toEqual({ outcome: 'refused', reason: 'service_unavailable' });
+    expect(await settlement.curriculum(caller(alice), '55555555-5555-4555-8555-555555555555')).toMatchObject({ outcome: 'withheld', reason: 'service_unavailable' });
   });
 });

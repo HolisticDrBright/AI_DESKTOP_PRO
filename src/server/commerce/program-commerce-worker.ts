@@ -16,7 +16,11 @@ import type { DeliveryPass, createClaimDelivery } from './program-claim-delivery
  *   3. settlement of verified orders into entitlements (idempotent per order), each with its sealed
  *      code queued for delivery in the same step;
  *   4. delivery of due codes (program-claim-delivery.ts): bounded attempts, outcome recorded;
- *   5. the operator status: counts by state and the oldest unresolved item.
+ *   5. expiry of ended access windows, bounded by count and decided by the store's own clock;
+ *   6. the operator status: counts by state and the oldest unresolved item.
+ *
+ * Its ledgers are the WORKER instances (program-commerce-authority.sql): the request path's role
+ * cannot read the intake queue, record a payment outcome, settle or sweep expiry.
  *
  * Every step reports its own failure: an unreadable list is `unavailable`, never "no work"; an item
  * that throws is reported with its id, never dropped. Processor calls are made by the boundary
@@ -25,12 +29,13 @@ import type { DeliveryPass, createClaimDelivery } from './program-claim-delivery
  * lease expiry would not prove a processor call had stopped anyway. Scheduling this pass (how often,
  * where, with which alarms) is the host's decision and is not made here.
  */
-export type WorkerLimits = { intake: number; reconcile: number; settle: number; deliver: number };
+export type WorkerLimits = { intake: number; reconcile: number; settle: number; deliver: number; expire: number };
 export type WorkerReport = {
   intake: { ok: true; results: { eventId: string; state: IntakeRecord['state'] | 'error'; detail: string | null }[] } | { ok: false; reason: 'intake_unavailable' };
   reconcile: { ok: true; results: (OrderReconciliation | { orderId: string; outcome: 'error'; detail: string })[] } | { ok: false; reason: 'orders_unavailable' };
   settlement: SettlementPass;
   delivery: DeliveryPass | { ok: false; reason: 'delivery_unconfigured' };
+  expiry: Awaited<ReturnType<ReturnType<typeof createProgramSettlement>['expireDue']>>;
   status: { ok: true; checkout: CheckoutWorkStatus } | { ok: false; reason: 'status_unavailable' };
 };
 
@@ -49,7 +54,7 @@ export function createCommerceWorker(deps: {
   reconcileOpenAfterExpiry?: boolean;
 }) {
   const now = deps.now ?? (() => new Date());
-  const limits: WorkerLimits = { intake: 25, reconcile: 25, settle: 25, deliver: 25, ...deps.limits };
+  const limits: WorkerLimits = { intake: 25, reconcile: 25, settle: 25, deliver: 25, expire: 50, ...deps.limits };
   const errorText = (error: unknown) => (error instanceof Error ? error.name + ': ' + error.message : 'unknown').slice(0, 200);
   return {
     async runOnce(): Promise<WorkerReport> {
@@ -79,9 +84,11 @@ export function createCommerceWorker(deps: {
       const settlement = await deps.settlement.settleDue(limits.settle);
       const delivery: WorkerReport['delivery'] = deps.delivery ? await deps.delivery.deliverDue(limits.deliver) : { ok: false, reason: 'delivery_unconfigured' };
 
+      const expiry = await deps.settlement.expireDue(limits.expire);
+
       let status: WorkerReport['status'];
       try { status = { ok: true, checkout: await deps.ledger.workStatus() }; } catch { status = { ok: false, reason: 'status_unavailable' }; }
-      return { intake, reconcile, settlement, delivery, status };
+      return { intake, reconcile, settlement, delivery, expiry, status };
     },
     /** The operator's view without doing any work. */
     async status(): Promise<WorkerReport['status']> {

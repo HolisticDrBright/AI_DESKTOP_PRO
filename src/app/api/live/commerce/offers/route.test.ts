@@ -21,7 +21,7 @@ const studio = (published: unknown = { id: VERSION, version: 2, consumerProgram:
 function req(body: unknown, headers: Record<string, string> = {}) {
   return new Request('http://127.0.0.1:3000/api/live/commerce/offers', { method: 'POST', headers: { host, origin: 'https://' + host, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
 }
-const paid = (over: Record<string, unknown> = {}) => ({ mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/1', accessDurationDays: null, ...over });
+const paid = (over: Record<string, unknown> = {}) => ({ mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/2', accessDurationDays: null, ...over });
 const fixture = () => {
   vi.stubEnv('CLINICAL_CONTRACT_FIXTURE', '1'); vi.stubEnv('NODE_ENV', 'test'); vi.stubEnv('CLINICAL_SUPABASE_URL', 'http://127.0.0.1:3999');
   vi.stubEnv('APP_RUNTIME_ENV', ''); vi.stubEnv('CLINICAL_AWS_RUNTIME_MODE', '');

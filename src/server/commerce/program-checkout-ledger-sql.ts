@@ -2,12 +2,21 @@ import { z } from 'zod';
 import { INTAKE_STATES, ORDER_STATES, intakeRecord, programOrder, type IntakeRecord, type ProgramOrder } from '../../contracts/programCheckout';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from '../clinical-core/database';
 import { PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256, programCommerceActivationState } from './program-commerce-activation';
+import { PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256 } from './program-commerce-authority';
 import { CheckoutLedgerError, type CheckoutWorkStatus, type LedgerCategory, type ProgramCheckoutLedger } from './program-checkout-ledger';
 
 /**
  * The SQL-backed checkout ledger over the BLOCKED candidate
  * (infra/aws-clinical-core/source-candidates/program-checkout-orders.sql) and its BLOCKED successor
- * (program-checkout-recovery.sql, program-checkout/2) through the API role. It is constructed
+ * (program-checkout-recovery.sql, program-checkout/2), under the authority split of
+ * program-commerce-authority.sql. Two instances, one per authority, each over a session of its own
+ * role that the host constructs (this source constructs none):
+ *   `request`  the API role: the visitor's admission, the creation-side order transitions (through
+ *              advance_program_checkout, which can never record a payment outcome), the order read
+ *              behind the return page, and webhook admission;
+ *   `worker`   commercial_education_worker: intake processing, every order transition including the
+ *              observed payment outcomes, the reconciliation list and the counts.
+ * A call the instance's role may not make is refused by the database and surfaces as unavailable. It is constructed
  * disabled unless activation evidence names EVERY candidate it was built against (the offer
  * candidate the evidence contract pins, and the two checkout digests pinned here), and every
  * function it calls re-checks the database's own activation row. Visitors have no request context, and none of these
@@ -19,7 +28,7 @@ export const PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 = '767ac13bc111a15b98bdc29
 /** SHA-256 of infra/aws-clinical-core/source-candidates/program-checkout-recovery.sql (successor; parent above), held equal to the file by its test. */
 export const PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256 = '29d85d75da43176b1a6d007afc5a0a892f99a08994f44bb459a4a756e2e2efc0';
 
-export type SqlCheckoutLedgerDependencies = { database: ClinicalCoreDatabase; activation?: unknown; checkoutCandidateSha256?: string; checkoutRecoveryCandidateSha256?: string };
+export type SqlCheckoutLedgerDependencies = { database: ClinicalCoreDatabase; authority?: 'request' | 'worker'; activation?: unknown; checkoutCandidateSha256?: string; checkoutRecoveryCandidateSha256?: string; commerceAuthorityCandidateSha256?: string };
 
 const admitted = z.object({ reused: z.boolean(), order: programOrder }).strict();
 const intakeAdmitted = z.object({ duplicate: z.boolean(), record: intakeRecord }).strict();
@@ -55,7 +64,9 @@ const decode = <T>(schema: z.ZodType<T>, value: unknown): T => {
 export function createSqlCheckoutLedger(deps: SqlCheckoutLedgerDependencies): ProgramCheckoutLedger {
   const activation = programCommerceActivationState(deps.activation);
   const enabled = activation.enabled && activation.schemaCandidateSha256 === PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256 && deps.checkoutCandidateSha256 === PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256
-    && deps.checkoutRecoveryCandidateSha256 === PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256;
+    && deps.checkoutRecoveryCandidateSha256 === PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256 && deps.commerceAuthorityCandidateSha256 === PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256;
+  /** The request path records creation-side transitions only; the worker records every transition. */
+  const transitionFunction = (deps.authority ?? 'request') === 'worker' ? 'transition_program_order' : 'advance_program_checkout';
   const guard = () => { if (!enabled) throw new CheckoutLedgerError('store_unavailable'); };
   const one = async <T>(schema: z.ZodType<T>, sql: string, params: unknown[]): Promise<T> => {
     guard();
@@ -76,7 +87,7 @@ export function createSqlCheckoutLedger(deps: SqlCheckoutLedgerDependencies): Pr
     async readOrder(orderId) { return nullable(programOrder, 'select commercial_education.read_program_order($1) as data', [clinicalUuid(orderId)]); },
     async findOrderBySession(sessionRef) { return nullable(programOrder, 'select commercial_education.find_program_order_by_session($1) as data', [sessionRef]); },
     async transition(orderId, expectedRevision, next, carry = {}): Promise<ProgramOrder> {
-      return one(programOrder, 'select commercial_education.transition_program_order($1,$2,$3,$4::jsonb) as data', [clinicalUuid(orderId), expectedRevision, next, JSON.stringify({ creation: carry.creation ?? null, processor: carry.processor ?? null, verification: carry.verification ?? null })]);
+      return one(programOrder, `select commercial_education.${transitionFunction}($1,$2,$3,$4::jsonb) as data`, [clinicalUuid(orderId), expectedRevision, next, JSON.stringify({ creation: carry.creation ?? null, processor: carry.processor ?? null, verification: carry.verification ?? null })]);
     },
     async ordersInStates(states, limit) { return one(z.array(programOrder), 'select commercial_education.program_orders_in_states($1::text[],$2) as data', [states, limit]); },
     async workStatus(): Promise<CheckoutWorkStatus> {

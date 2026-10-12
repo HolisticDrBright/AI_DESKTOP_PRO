@@ -151,6 +151,7 @@ export type ProgramOfferResult =
 export const PURCHASE_HOLD_REASONS = [
   'offer_absent', 'offer_draft', 'offer_retired', 'complimentary_mode', 'no_pricing', 'provider_mapping_missing', 'provider_mapping_unapproved',
   'no_access_terms', 'curriculum_unpublished', 'curriculum_changed', 'commerce_disabled', 'commerce_unverifiable', 'checkout_unconfigured', 'program_unbound',
+  'access_terms_unreviewed', 'access_duration_undecided', 'core_dependency_unresolved', 'refund_terms_undecided', 'renewal_terms_undecided',
 ] as const;
 export type PurchaseHoldReason = (typeof PURCHASE_HOLD_REASONS)[number];
 
@@ -170,7 +171,52 @@ export const PURCHASE_HOLD_EXPLANATIONS: Record<PurchaseHoldReason, string> = {
   commerce_unverifiable: 'Direct purchase could not be checked just now. Please try again later.',
   checkout_unconfigured: 'Online payment is not set up for this site.',
   program_unbound: 'This page is not linked to a program that can be bought yet.',
+  access_terms_unreviewed: 'The terms of access for this program have not been reviewed yet.',
+  access_duration_undecided: 'How long access to this program lasts has not been decided yet.',
+  core_dependency_unresolved: 'Whether this program needs a separate membership has not been settled yet.',
+  refund_terms_undecided: 'The refund terms for this program have not been decided yet.',
+  renewal_terms_undecided: 'The renewal terms for this program have not been decided yet.',
 };
+
+/* ------------------------------------------------- reviewed access terms */
+
+/**
+ * An access-terms version is a NAME until someone reviews what it says. A reviewed entry states, as
+ * decisions: how long access lasts (`fixed_days`, with the days on the offer; or `indefinite`, which
+ * is the only way a null duration is ever "no end"), whether the program depends on a separately
+ * held Core membership (`required` stays a hold: a purchase never grants Core, and nothing here can
+ * check that a buyer holds it), and which refund and renewal policies apply (null is undecided).
+ * The registry the source ships is EMPTY; the fictional ledgers carry fixture entries whose reviewer
+ * reads as a fixture. Nothing infers a term from a name, a price or a missing value.
+ */
+export const reviewedAccessTerms = z.object({
+  version: z.string().regex(/^education-access-terms\/[1-9][0-9]{0,3}$/),
+  durationPolicy: z.enum(['fixed_days', 'indefinite']),
+  corePolicy: z.enum(['not_required', 'required']),
+  refundPolicyRef: z.string().regex(/^[A-Za-z0-9_.:\/-]{1,120}$/).nullable(),
+  renewalPolicyRef: z.string().regex(/^[A-Za-z0-9_.:\/-]{1,120}$/).nullable(),
+  reviewedBy: text(120),
+  evidenceSha256: digest,
+}).strict();
+export type ReviewedAccessTerms = z.infer<typeof reviewedAccessTerms>;
+export const ACCESS_TERMS_HOLDS = ['access_terms_unreviewed', 'access_duration_undecided', 'core_dependency_unresolved', 'refund_terms_undecided', 'renewal_terms_undecided'] as const;
+export type AccessTermsHold = (typeof ACCESS_TERMS_HOLDS)[number];
+
+/**
+ * The holds an offer's access terms raise against the reviewed entry for its version. `reviewed` is
+ * required: a caller that has not looked the version up passes null and gets the hold, never a default.
+ */
+export function accessTermsHolds(offer: { accessTermsVersion: string | null; accessDurationDays: number | null; pricing?: OfferPricing | null }, reviewed: ReviewedAccessTerms | null): AccessTermsHold[] {
+  if (!offer.accessTermsVersion) return [];
+  if (!reviewed || reviewed.version !== offer.accessTermsVersion) return ['access_terms_unreviewed'];
+  const holds: AccessTermsHold[] = [];
+  const durationDecided = reviewed.durationPolicy === 'indefinite' ? offer.accessDurationDays === null : offer.accessDurationDays !== null;
+  if (!durationDecided) holds.push('access_duration_undecided');
+  if (reviewed.corePolicy !== 'not_required') holds.push('core_dependency_unresolved');
+  if (reviewed.refundPolicyRef === null) holds.push('refund_terms_undecided');
+  if (offer.pricing?.billing.kind === 'recurring' && reviewed.renewalPolicyRef === null) holds.push('renewal_terms_undecided');
+  return holds;
+}
 
 export type PurchaseAvailability =
   | { available: true; offerId: string; revision: number; name: string; pricing: OfferPricing; curriculum: CurriculumBinding; accessTermsVersion: string; accessDurationDays: number | null; /** Server-side only: the approved processor price the checkout charges through. Never printed. */ providerPriceRef: string }
@@ -183,7 +229,7 @@ export const unavailable = (reason: PurchaseHoldReason): PurchaseAvailability =>
  * The current curriculum is supplied by the caller from the program, never from the offer: an offer that
  * still names an older published version is "changed", whatever its own state says.
  */
-export function purchaseAvailability(offer: ProgramOffer | null, currentCurriculum: CurriculumBinding | null): PurchaseAvailability {
+export function purchaseAvailability(offer: ProgramOffer | null, currentCurriculum: CurriculumBinding | null, reviewed: ReviewedAccessTerms | null): PurchaseAvailability {
   if (!offer) return unavailable('offer_absent');
   if (offer.state === 'retired') return unavailable('offer_retired');
   if (offer.state === 'draft') return unavailable('offer_draft');
@@ -192,6 +238,8 @@ export function purchaseAvailability(offer: ProgramOffer | null, currentCurricul
   if (!offer.providerPrice) return unavailable('provider_mapping_missing');
   if (!offer.providerPrice.approval) return unavailable('provider_mapping_unapproved');
   if (!offer.accessTermsVersion) return unavailable('no_access_terms');
+  const termsHold = accessTermsHolds(offer, reviewed)[0];
+  if (termsHold) return unavailable(termsHold);
   if (!currentCurriculum) return unavailable('curriculum_unpublished');
   if (currentCurriculum.versionId !== offer.curriculum.versionId || currentCurriculum.version !== offer.curriculum.version || currentCurriculum.sourceDigest !== offer.curriculum.sourceDigest) {
     return unavailable('curriculum_changed');

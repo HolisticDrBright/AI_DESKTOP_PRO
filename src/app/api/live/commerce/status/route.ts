@@ -32,11 +32,12 @@ export async function POST(req: Request) {
   const selection = selectProgramCheckout();
   if (selection.kind === 'disabled') return json(503, { error: { code: 'unavailable', message: 'commerce_disabled' } });
   try {
+    const staff = { kind: 'staff' as const, personId: identity.personId, organizationId: identity.organizationId, identitySubject: 'wf:' + identity.personId };
     if (body.action === 'status') {
-      const commercial = await selection.education.listForProgram(identity.organizationId, body.programId);
+      const commercial = await selection.education.listForProgram(staff, body.programId);
       return json(200, { data: { commercial: { ...commercial, readAt: new Date().toISOString() } } });
     }
-    const read = await selection.education.staffCurriculum({ personId: identity.personId, organizationId: identity.organizationId, identitySubject: 'wf:' + identity.personId }, body.entitlementId);
+    const read = await selection.education.staffCurriculum(staff, body.entitlementId);
     return json(200, { data: { commercial: { curriculum: read } } });
   } catch {
     return json(503, { error: { code: 'unavailable', message: 'commerce_unverifiable' } });

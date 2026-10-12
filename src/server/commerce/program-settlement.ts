@@ -6,6 +6,7 @@ import {
 import type { CurriculumBinding } from '../../contracts/programOffers';
 import { EducationLedgerError, type OperatorContext, type ProgramEducationLedger, type SettlementReceipt } from './program-education-ledger';
 import type { ClaimSealer } from './program-claim-delivery';
+import type { ConsumerCaller } from './program-commerce-authority';
 
 /**
  * Settlement: from a verified payment to one entitlement, one claim and, on claim, one enrollment.
@@ -88,40 +89,40 @@ export function createProgramSettlement(deps: SettlementDependencies) {
         return { reissued: false, reason: 'store_unavailable' };
       }
     },
-    /** A verified consumer presents the one-time token. The subject comes from the verified identity, never from the body. */
-    async claim(consumerSubject: string, token: string): Promise<{ outcome: 'claimed'; entitlement: ProgramEntitlement } | { outcome: 'refused'; reason: ClaimRefusal }> {
+    /** A verified consumer presents the one-time token. The caller is the verified identity, never the body. */
+    async claim(caller: ConsumerCaller, token: string): Promise<{ outcome: 'claimed'; entitlement: ProgramEntitlement } | { outcome: 'refused'; reason: ClaimRefusal }> {
       const parsed = educationAccessRequest.safeParse({ action: 'claim', token });
       if (!parsed.success) return { outcome: 'refused', reason: 'claim_invalid' };
       try {
-        const result = await deps.ledger.claim(hashClaimToken(token), consumerSubject, now().toISOString());
+        const result = await deps.ledger.claim(hashClaimToken(token), caller);
         return result.outcome === 'claimed' ? { outcome: 'claimed', entitlement: result.entitlement } : { outcome: 'refused', reason: result.reason };
       } catch { return { outcome: 'refused', reason: 'service_unavailable' }; }
     },
-    /** The owner's own access, as of now; expiry is applied on read so a cached positive is never served past its end. */
-    async access(consumerSubject: string): Promise<EducationAccessView | null> {
+    /** The caller's own access, as of now; the ledger expires the caller's own ended windows on read, so a cached positive is never served past its end. */
+    async access(caller: ConsumerCaller): Promise<EducationAccessView | null> {
       try {
-        await deps.ledger.expireDue(now().toISOString());
-        const { entitlements, enrollments } = await deps.ledger.access(consumerSubject);
-        return { contract: PROGRAM_EDUCATION_ACCESS_CONTRACT, consumerSubject, readAt: now().toISOString(), entitlements, enrollments };
+        const { entitlements, enrollments } = await deps.ledger.access(caller);
+        return { contract: PROGRAM_EDUCATION_ACCESS_CONTRACT, consumerSubject: caller.identitySubject, readAt: now().toISOString(), entitlements, enrollments };
       } catch { return null; }
     },
     /** The exact purchased curriculum for an active entitlement the subject owns; withheld otherwise, with the reason. */
-    async curriculum(consumerSubject: string, entitlementId: string): Promise<EducationCurriculumRead> {
+    async curriculum(caller: ConsumerCaller, entitlementId: string): Promise<EducationCurriculumRead> {
       let entitlement: ProgramEntitlement | null;
-      try { entitlement = await deps.ledger.readEntitlement(entitlementId); } catch { return { outcome: 'withheld', entitlementId, reason: 'service_unavailable' }; }
-      if (!entitlement || entitlement.subject.kind !== 'claimed' || entitlement.subject.consumerSubject !== consumerSubject) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };
+      try { entitlement = await deps.ledger.ownEntitlement(caller, entitlementId); } catch { return { outcome: 'withheld', entitlementId, reason: 'service_unavailable' }; }
+      if (!entitlement || entitlement.subject.kind !== 'claimed' || entitlement.subject.consumerSubject !== caller.identitySubject) return { outcome: 'withheld', entitlementId, reason: 'not_owner' };
       if (!isAccessActive(entitlement, now())) return { outcome: 'withheld', entitlementId, reason: 'not_active' };
       const content = await deps.curriculumContent(entitlement.curriculum).catch(() => null);
       if (!content) return { outcome: 'withheld', entitlementId, reason: 'version_missing' };
       if (content.sourceDigest !== entitlement.curriculum.sourceDigest) return { outcome: 'withheld', entitlementId, reason: 'digest_mismatch' };
       return { outcome: 'served', entitlementId, curriculum: entitlement.curriculum, title: content.title, phases: content.phases };
     },
-    /** A policy event from the processor or the operator: held and visible, never an automatic refund or deletion. */
-    async recordPolicy(orderId: string, kind: PolicyEventKind, reference: string): Promise<ProgramEntitlement | null> {
-      try { return await deps.ledger.recordPolicy(orderId, kind, reference, now().toISOString()); } catch { return null; }
+    /** An operator's policy decision: held and visible, never an automatic refund or deletion. No request path holds an operator context. */
+    async recordPolicy(operator: OperatorContext, orderId: string, kind: PolicyEventKind, reference: string): Promise<ProgramEntitlement | null> {
+      try { return await deps.ledger.recordPolicy(operator, orderId, kind, reference, now().toISOString()); } catch { return null; }
     },
-    async expireDue(): Promise<ProgramEntitlement[]> {
-      try { return await deps.ledger.expireDue(now().toISOString()); } catch { return []; }
+    /** The worker's bounded expiry sweep; an unreadable store is said, never "nothing expired". */
+    async expireDue(limit = 50): Promise<{ ok: true; expired: ProgramEntitlement[] } | { ok: false; reason: 'store_unavailable' }> {
+      try { return { ok: true, expired: await deps.ledger.expireDue(limit) }; } catch { return { ok: false, reason: 'store_unavailable' }; }
     },
   };
   return api;

@@ -27,7 +27,7 @@ const alice = 'sub:fictional-alice-0001', bob = 'sub:fictional-bob-00002';
 
 async function harness() {
   const offers = createFictionalProgramOfferLedger({ curriculum: async (o, p) => o === org && p === program ? { programId: p, current: curriculum } : null });
-  const created = await offers.execute(me, { action: 'create', programId: program, terms: { mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/1', accessDurationDays: null } });
+  const created = await offers.execute(me, { action: 'create', programId: program, terms: { mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/2', accessDurationDays: null } });
   const offerId = created.action === 'create' ? created.offer.offerId : '';
   await offers.execute(me, { action: 'approve_provider_mapping', offerId, expectedRevision: 1 });
   await offers.execute(me, { action: 'publish', offerId, expectedRevision: 2 });

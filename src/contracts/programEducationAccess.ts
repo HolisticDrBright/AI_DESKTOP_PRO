@@ -24,7 +24,8 @@ import { z } from 'zod';
  *
  * Policy events (refund, dispute, chargeback, renewal changes) move an entitlement to a HELD state
  * that is visible to the operator; no automatic refund, revocation, renewal charge or deletion is
- * decided by this contract. Expiry follows the saved access duration, or never when none was decided.
+ * decided by this contract. Expiry follows the saved access duration. A null duration is "no end"
+ * only when the reviewed terms state it; otherwise it is undecided and the claim is refused.
  */
 export const PROGRAM_EDUCATION_ACCESS_CONTRACT = 'program-education-access/1' as const;
 const uuid = z.string().uuid();
@@ -75,7 +76,7 @@ export const programEntitlement = z.object({
   subject: entitlementSubject,
   state: z.enum(ENTITLEMENT_STATES),
   revision: z.number().int().min(1),
-  /** Set at claim: when access started and, from the saved duration, when it ends; null end means no end was decided. */
+  /** Set at claim: when access started and, from the saved duration, when it ends; a null end exists only where the reviewed terms state that access has no end. */
   window: z.object({ startsAt: timestamp, endsAt: timestamp.nullable() }).strict().nullable(),
   /** The receipt this entitlement settled from. */
   settlement: z.object({ verificationEventId: z.string().nullable(), settledAt: timestamp }).strict(),
@@ -177,7 +178,8 @@ export const educationAccessRequest = z.discriminatedUnion('action', [
 ]);
 export type EducationAccessRequest = z.infer<typeof educationAccessRequest>;
 
-export const CLAIM_REFUSALS = ['claim_invalid', 'claim_expired', 'claim_used', 'claim_superseded', 'entitlement_not_claimable', 'already_claimed_by_other', 'service_unavailable'] as const;
+/** `terms_undecided`: the access terms this entitlement was sold under are not (or no longer) a reviewed decision; nothing binds until they are. */
+export const CLAIM_REFUSALS = ['claim_invalid', 'claim_expired', 'claim_used', 'claim_superseded', 'entitlement_not_claimable', 'already_claimed_by_other', 'terms_undecided', 'service_unavailable'] as const;
 export type ClaimRefusal = (typeof CLAIM_REFUSALS)[number];
 
 /** Whether the window this entitlement would open from `at` has an end, from the saved duration and nothing else. */

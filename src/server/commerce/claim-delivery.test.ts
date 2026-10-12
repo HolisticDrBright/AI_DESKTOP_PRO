@@ -11,6 +11,7 @@ import type { VerifiedEvent } from '../stripe-boundary';
 import { createClaimDelivery, deliveryKeyFor, DELIVERY_SUBJECT } from './program-claim-delivery';
 import { createCommerceWorker } from './program-commerce-worker';
 import { fictionalDelivery, purchaserAddress } from '../../test-support/commerceDelivery';
+import type { ConsumerCaller, StaffCaller } from './program-commerce-authority';
 
 /**
  * Work package 2: claim delivery and purchaser recovery. Each case first reproduces what the handoff
@@ -25,6 +26,8 @@ const terms = { mode: 'paid', name: 'Fictional program', pricing: { currency: 'U
 const ACCOUNT = 'acct_FictionalAccount1';
 const expected = { accountRef: ACCOUNT, apiVersion: '2025-08-27.basil' };
 const alice = 'sub:fictional-alice-0001', bob = 'sub:fictional-bob-00002';
+const caller = (subject: string): ConsumerCaller => ({ kind: 'consumer', personId: subject === alice ? '66666666-6666-4666-8666-000000000001' : '66666666-6666-4666-8666-000000000002', identitySubject: subject });
+const staffOf = (organizationId: string): StaffCaller => ({ kind: 'staff', personId: '66666666-6666-4666-8666-000000000009', organizationId, identitySubject: 'wf:66666666-6666-4666-8666-000000000009' });
 
 async function paidOrder() {
   let at = Date.parse('2026-10-11T12:00:00Z');
@@ -58,7 +61,7 @@ describe('reproduced on the WP1 head, and now held', () => {
     const h = await paidOrder();
     await h.settlement.settleOrder(h.order);
     await h.fd.delivery.deliverDue();
-    const status = JSON.stringify(await h.education.listForProgram(org, program));
+    const status = JSON.stringify(await h.education.listForProgram(staffOf(org), program));
     const hashes = [...h.education.claims.values()].map(c => c.tokenHash);
     expect(hashes.length).toBeGreaterThan(0);
     for (const hash of hashes) expect(status).not.toContain(hash);
@@ -87,22 +90,22 @@ describe('reproduced on the WP1 head, and now held', () => {
     const restarted = createClaimDelivery({ ledger: h.education, sealer: h.fd.sealer, contacts: h.fd.contacts, provider: h.fd.provider, now: h.now });
     expect(await restarted.deliverDue()).toMatchObject({ ok: true, results: [{ state: 'accepted' }] });
     expect(h.fd.provider.mailbox).toHaveLength(1);
-    expect((await h.settlement.claim(alice, codesIn(h.fd.provider.mailbox)[0]!)).outcome).toBe('claimed');
+    expect((await h.settlement.claim(caller(alice), codesIn(h.fd.provider.mailbox)[0]!)).outcome).toBe('claimed');
   });
   it('the winning owner retrying after a lost reply gets the same receipt, not a refusal and not a second enrollment', async () => {
     const h = await paidOrder();
     await h.settlement.settleOrder(h.order);
     const code = await h.fd.codeFor(h.order.orderId);
-    const first = await h.settlement.claim(alice, code);
+    const first = await h.settlement.claim(caller(alice), code);
     expect(first.outcome).toBe('claimed');
-    expect(await h.settlement.claim(alice, code)).toEqual(first);
+    expect(await h.settlement.claim(caller(alice), code)).toEqual(first);
     expect(h.education.enrollments.size).toBe(1);
-    expect(await h.settlement.claim(bob, code)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
+    expect(await h.settlement.claim(caller(bob), code)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
   });
   it('no staff row or return page says a code was sent while delivery has failed or is unknown', async () => {
     const h = await paidOrder();
     await h.settlement.settleOrder(h.order);
-    const kindNow = async () => purchaseRows((await h.education.listForProgram(org, program)) as never, h.now())[0]!;
+    const kindNow = async () => purchaseRows((await h.education.listForProgram(staffOf(org), program)) as never, h.now())[0]!;
     expect((await kindNow()).kind).toBe('code_delivery_pending');
     h.fd.provider.faults.next = 'unknown';
     await h.fd.delivery.deliverDue();
@@ -203,7 +206,7 @@ describe('claims, races and replacement', () => {
       const h = await paidOrder();
       await h.settlement.settleOrder(h.order);
       const code = await h.fd.codeFor(h.order.orderId);
-      const [first, second] = await Promise.all([h.settlement.claim(order[0], code), h.settlement.claim(order[1], code)]);
+      const [first, second] = await Promise.all([h.settlement.claim(caller(order[0]), code), h.settlement.claim(caller(order[1]), code)]);
       expect(first.outcome).toBe('claimed');
       expect(second).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
       expect(h.education.enrollments.size).toBe(1);
@@ -220,8 +223,8 @@ describe('claims, races and replacement', () => {
     expect(await h.settlement.reissue(operator, entitlementId)).toMatchObject({ reissued: true, superseded: 1 });
     const newCode = await h.fd.codeFor(h.order.orderId);
     expect(newCode).not.toBe(oldCode);
-    expect(await h.settlement.claim(alice, oldCode)).toEqual({ outcome: 'refused', reason: 'claim_superseded' });
-    expect((await h.settlement.claim(alice, newCode)).outcome).toBe('claimed');
+    expect(await h.settlement.claim(caller(alice), oldCode)).toEqual({ outcome: 'refused', reason: 'claim_superseded' });
+    expect((await h.settlement.claim(caller(alice), newCode)).outcome).toBe('claimed');
     // Once held, nobody can replace it.
     expect(await h.settlement.reissue(operator, entitlementId)).toEqual({ reissued: false, reason: 'not_claimable' });
   });
@@ -232,9 +235,9 @@ describe('claims, races and replacement', () => {
       const entitlementId = settled.settled ? settled.receipt.entitlement.entitlementId : '';
       const oldCode = await h.fd.codeFor(h.order.orderId);
       let reissue: Awaited<ReturnType<typeof h.settlement.reissue>>, claim: Awaited<ReturnType<typeof h.settlement.claim>>;
-      if (mode === 'race') [reissue, claim] = await Promise.all([h.settlement.reissue(operator, entitlementId), h.settlement.claim(alice, oldCode)]);
-      else if (mode === 'reissue_first') { reissue = await h.settlement.reissue(operator, entitlementId); claim = await h.settlement.claim(alice, oldCode); }
-      else { claim = await h.settlement.claim(alice, oldCode); reissue = await h.settlement.reissue(operator, entitlementId); }
+      if (mode === 'race') [reissue, claim] = await Promise.all([h.settlement.reissue(operator, entitlementId), h.settlement.claim(caller(alice), oldCode)]);
+      else if (mode === 'reissue_first') { reissue = await h.settlement.reissue(operator, entitlementId); claim = await h.settlement.claim(caller(alice), oldCode); }
+      else { claim = await h.settlement.claim(caller(alice), oldCode); reissue = await h.settlement.reissue(operator, entitlementId); }
       expect([...h.education.claims.values()].filter(c => c.state === 'issued' || c.state === 'used')).toHaveLength(1);
       return { reissue, claim };
     };

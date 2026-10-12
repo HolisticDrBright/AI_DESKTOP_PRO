@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
-  PROGRAM_OFFER_CONTRACT, programOffer, programOfferCommand, purchaseAvailability, unavailable,
-  type CurriculumBinding, type ProgramOffer, type ProgramOfferCommand, type ProgramOfferResult, type PurchaseAvailability,
+  PROGRAM_OFFER_CONTRACT, accessTermsHolds, programOffer, programOfferCommand, purchaseAvailability, unavailable,
+  type CurriculumBinding, type ProgramOffer, type ProgramOfferCommand, type ProgramOfferResult, type PurchaseAvailability, type ReviewedAccessTerms,
 } from '../../contracts/programOffers';
+import { FICTIONAL_ACCESS_TERMS, accessTermsRegistry, type AccessTermsRegistry } from './program-commerce-authority';
 export type { ProgramOfferResult } from '../../contracts/programOffers';
 
 /**
@@ -50,7 +51,7 @@ export interface ProgramOfferLedger {
 }
 
 /** The holds that keep a draft from publishing, in the words the editor shows. */
-export function publishHolds(offer: ProgramOffer, current: CurriculumBinding | null): string[] {
+export function publishHolds(offer: ProgramOffer, current: CurriculumBinding | null, reviewed: ReviewedAccessTerms | null): string[] {
   const holds: string[] = [];
   if (offer.mode === 'paid') {
     if (!offer.pricing) holds.push('no_pricing');
@@ -58,6 +59,7 @@ export function publishHolds(offer: ProgramOffer, current: CurriculumBinding | n
     else if (!offer.providerPrice.approval) holds.push('provider_mapping_unapproved');
   }
   if (!offer.accessTermsVersion) holds.push('no_access_terms');
+  holds.push(...accessTermsHolds(offer, reviewed));
   if (!current) holds.push('curriculum_unpublished');
   else if (current.versionId !== offer.curriculum.versionId || current.version !== offer.curriculum.version || current.sourceDigest !== offer.curriculum.sourceDigest) holds.push('curriculum_changed');
   return holds;
@@ -68,12 +70,16 @@ export type FictionalOfferLedgerOptions = {
   now?: () => Date;
   /** Fault injection for the routes' failure tests: throws before the named action runs. */
   faults?: { before?: (action: string) => void };
+  /** Reviewed access terms; the fixture entries by default, which read as fixtures. The source's own registry is empty. */
+  reviewedTerms?: AccessTermsRegistry;
 };
 
 export type OfferAuditEntry = { at: string; actor: string; organizationId: string; offerId: string; action: string; revision: number; detail?: string };
 
 export function createFictionalProgramOfferLedger(options: FictionalOfferLedgerOptions): ProgramOfferLedger & { revisions: readonly ProgramOffer[]; audit: readonly OfferAuditEntry[]; reset(): void } {
   const now = options.now ?? (() => new Date());
+  const reviewedTerms = options.reviewedTerms ?? accessTermsRegistry(FICTIONAL_ACCESS_TERMS);
+  const reviewedFor = (offer: ProgramOffer) => offer.accessTermsVersion ? reviewedTerms(offer.accessTermsVersion) : null;
   const offers = new Map<string, ProgramOffer>();
   const revisions: ProgramOffer[] = [];
   const audit: OfferAuditEntry[] = [];
@@ -143,7 +149,7 @@ export function createFictionalProgramOfferLedger(options: FictionalOfferLedgerO
           const offer = owned(actor, command.offerId, command.expectedRevision);
           if (offer.state !== 'draft') throw new ProgramOfferError('state_invalid');
           const read = await readCurriculum(actor.organizationId, offer.programId);
-          const holds = publishHolds(offer, read?.current ?? null);
+          const holds = publishHolds(offer, read?.current ?? null, reviewedFor(offer));
           if (holds.length) throw new ProgramOfferError('publish_refused', holds);
           if ([...offers.values()].some(o => o.organizationId === actor.organizationId && o.programId === offer.programId && o.state === 'published')) throw new ProgramOfferError('state_invalid', ['another_offer_published']);
           const next = programOffer.parse({ ...offer, revision: offer.revision + 1, state: 'published' });
@@ -169,7 +175,7 @@ export function createFictionalProgramOfferLedger(options: FictionalOfferLedgerO
         const mine = [...offers.values()].filter(o => o.organizationId === organizationId && o.programId === programId);
         const published = mine.find(o => o.state === 'published') ?? null;
         if (!published) return unavailable(mine.some(o => o.state === 'draft') ? 'offer_draft' : mine.length ? 'offer_retired' : 'offer_absent');
-        return purchaseAvailability(published, read.current);
+        return purchaseAvailability(published, read.current, reviewedFor(published));
       } catch {
         return unavailable('commerce_unverifiable');
       }

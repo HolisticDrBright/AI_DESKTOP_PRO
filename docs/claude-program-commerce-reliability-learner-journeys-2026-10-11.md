@@ -266,3 +266,129 @@ file changed; the media and telehealth lanes do not use that pattern.
 Code lifetime (7 days in source, a bound and not a policy), code format, whether the processor's
 collected email is sufficient purchaser authority, the operator role's holders, and account-first
 versus anonymous checkout.
+
+## WP3 — database authority separation and undecided-terms holds
+
+### Failing before, on the WP2 head `3a36047`
+
+Two new files reproduced the findings first, each failing for the stated reason.
+
+`program-commerce-authority.database.test.ts` (PGlite, the whole BLOCKED chain through the delivery
+successor, then DIRECT calls from a session whose **session user** is `clinical_core_api`):
+
+| Call from the API role | Result before |
+| --- | --- |
+| `transition_program_order(open order, …, 'payment_verified', forged verification)` | succeeded: the order became `payment_verified` with no processor involved |
+| `claim_program_entitlement(digest, 'sub:fictional-mallory-01', …)`, and `education_access('sub:fictional-alice-0001')` | the subject was an argument the caller chose; Alice's purchases were returned to a caller naming her |
+| `read_program_entitlement(id)`, `entitlement_for_order(id)`, and `program_education_status(clinic A, …)` under clinic B's workforce context | every entitlement was readable by id, and clinic B read clinic A's status |
+| `record_entitlement_policy(…, 'operator_revoke', …)`, `transition_program_entitlement(…, 'revoked')`, `expire_program_entitlements(now() + 4000 days)` | the API role could revoke, transition, and expire every active entitlement at an instant it chose |
+| `unsettled_program_orders`, `due_checkout_intake`, `find_program_order_by_session` | the worker's backlog and intake were readable from the request path |
+
+`settle_program_order_sealed` was also granted to the API role; the reproduction's call used a random
+order id and was refused as unverified, so that line proves nothing alone. The grant is the evidence.
+
+`commerce-terms-holds.test.ts` (fictional ledgers):
+
+| Observation | Result before |
+| --- | --- |
+| an offer naming `education-access-terms/42`, which nobody reviewed | published |
+| a null access duration | published, and read as "no end" |
+| an entitlement whose duration nobody decided | claimed, and still active in 2036 |
+
+### Repairs
+
+1. **Reviewed access terms.** A version is a name until a review records what it says
+   (`reviewedAccessTerms` in the offer contract): duration policy `fixed_days` or `indefinite`, Core
+   dependency `not_required` or `required`, and refund and renewal policy references (null is
+   undecided). The source registry is **empty**. The fictional ledgers carry two fixture entries whose
+   reviewer reads `FICTIONAL REVIEW FIXTURE`. Five holds, at publication and at availability:
+   `access_terms_unreviewed`, `access_duration_undecided` (null is "no end" only under `indefinite`,
+   and a number contradicts `indefinite`), `core_dependency_unresolved` (a purchase never grants Core,
+   and nothing here can check a buyer holds it), `refund_terms_undecided`, `renewal_terms_undecided`
+   (recurring offers only).
+2. **The same holds at activation.** A claim of an entitlement whose terms are held is refused
+   `terms_undecided` and binds nothing, whatever an older artifact let through. The refusal is in
+   the mirrored contract, with words on the V2 claim screen.
+3. **Caller contexts.** The consumer methods take a `ConsumerCaller` built from the verified request
+   context, never a subject string. The staff methods take a `StaffCaller`. Policy, transitions and
+   replacement codes take an `OperatorContext`. Expiry is the worker's bounded sweep by the store's
+   own clock. The consumer's access read expires only the caller's own ended windows.
+4. **SQL authority successor** (below): a worker role, consumer functions whose subject is the
+   verified request context, staff status bound to a clinician of that clinic, operator-only policy,
+   and the API role's grants removed for every function it no longer needs.
+5. **Ledgers per authority.** The SQL checkout ledger has a request-path instance (admission,
+   creation-side transitions through `advance_program_checkout`, webhook admission, the return-page
+   read) and a worker instance (intake, observed payment outcomes, reconciliation, counts). The SQL
+   education ledger takes four handles: API, worker, delivery, operator. Both pin every digest in the
+   chain, the authority successor included.
+6. **The worker** gains a fifth step, the bounded expiry sweep, and reports `store_unavailable`
+   rather than "nothing expired" when it cannot read.
+
+### After
+
+| Check | Result |
+| --- | --- |
+| `program-commerce-authority.database.test.ts` | 8 passed: the five reproductions refused; the API role cannot assume the worker, delivery or operator role; the legitimate paths still work through their own roles; an unreviewed version is held at publication in SQL, and the reviewed registry is append-only and closed to the API role |
+| `commerce-terms-holds.test.ts` | 3 passed |
+| `program-education-access-candidate.database.test.ts`, `program-checkout-orders-candidate.database.test.ts` | 7 and 6 passed, now on the whole chain with each call through its owning role |
+| All commerce-related files | 23 files, 276 passed (`src/server/commerce`, the commerce routes, `src/lib/programs`) |
+| Full unit suite (`npm run test:unit`, Pacific zone) | 497 files passed; 7751 tests passed, 11 skipped |
+| `tsc`, `eslint` on the changed areas | clean |
+| V2 education tests with the mirrored contract | 45 passed; V2 `tsc` and `eslint` clean |
+
+Three existing tests changed in setup only, never in what they assert:
+
+- The database tests now let days pass by shifting stored instants back with triggers suspended for
+  one statement. They can no longer pass a future instant, because the database clock decides now.
+- Two fixtures paired a null duration with fixed-day terms. They now name the fixture `indefinite`
+  terms, so the policy test and the "no end" test keep asserting what they did.
+- The checkout candidate's person-shaped-column check is scoped to the five offer and checkout
+  tables it always covered, now that the full chain is applied. The education test keeps its own
+  column check.
+
+### BLOCKED successor
+
+`infra/aws-clinical-core/source-candidates/program-commerce-authority.sql`, sha256
+`11e53bc2e7ff13d1aa66c219fc9da1c4e768faef8ea42e1ebc44ed375a8c6c62`
+(`PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256` in `program-commerce-authority.ts`, held equal
+by three database tests). Parent: `program-education-delivery.sql`
+`653965ff19f1d522067a6b636ac4ed5a4d2f9f1696cbb692c9545e3fc2046ae6`, and through it every earlier
+candidate. It replaces `publish_holds` and `program_education_status` in place, and it changes no
+migration, shared identity function or privilege outside `commercial_education`.
+
+| Role | May call |
+| --- | --- |
+| `clinical_core_api` | `admit_program_order`, `advance_program_checkout` (never a payment outcome), `read_program_order`, `admit_checkout_intake`, the offer command and availability, `claim_program_entitlement_for_caller`, `education_access_for_caller`, `own_program_entitlement_for_caller`, `education_curriculum_for_caller`, `program_education_status` and `education_curriculum_staff` under a clinician's workforce context |
+| `commercial_education_worker` (new, NOLOGIN) | order transitions, intake read, settle and due list, session lookup, reconciliation list and counts, sealed settlement, settlement backlog, per-order entitlement reads, `expire_program_entitlements_due(limit)` by the database clock |
+| `commercial_education_delivery` | unchanged from WP2 |
+| `commercial_education_operator` | `record_entitlement_policy`, `transition_program_entitlement`, `record_reviewed_access_terms`, and the WP2 replacement |
+
+Revoked from the API role: `transition_program_order`, `find_program_order_by_session`,
+`program_orders_in_states`, `checkout_work_status`, `read_checkout_intake`, `settle_checkout_intake`,
+`due_checkout_intake`, `settle_program_order_sealed`, `unsettled_program_orders`,
+`claim_program_entitlement`, `read_program_entitlement`, `entitlement_for_order`, `education_access`,
+`education_curriculum`, `record_entitlement_policy`, `transition_program_entitlement`,
+`expire_program_entitlements`.
+
+### Host inputs (names only)
+
+- A database session per role: the API pool for request handlers, a worker session for the commerce
+  worker, and the delivery and operator sessions from WP2.
+- The consumer bridge's verified request context (person and identity subject) for every consumer
+  call, and the workforce context for staff calls.
+- An operator identity resolved into `OperatorContext`, and the operator's review evidence for each
+  access-terms entry.
+
+### Decisions named (unchanged policy, safe state built)
+
+What the access terms say: duration policy per version, whether a program depends on Core, the
+refund policy and the renewal policy. Until Brandon records a review, every paid offer stays held,
+and no claim activates.
+
+### Concerns still open after WP3
+
+- The return page reads an order by its id through the API role. The id is an unguessable value the
+  browser already holds, and the reply carries no entitlement or code. A bound on what that read
+  returns is a hosted review item.
+- Processor refund and dispute events are not handled by this build's intake. Policy holds are
+  operator decisions only until a reviewed intake mapping exists.

@@ -334,10 +334,10 @@ describe('the worker: admitted work finishes with no visitor, and every step say
     const ledger = createFictionalCheckoutLedger({ now: t.now, faults: { before: op => { if (['dueIntake', 'ordersInStates', 'workStatus'].includes(op)) throw new Error('down'); } } });
     const processor = createFictionalCheckoutProcessor({ now: t.now });
     const checkout = createProgramCheckout({ offers, ledger, processor, publicOrigin: origin, now: t.now });
-    const education = createFictionalEducationLedger({ orders: ledger, faults: { before: op => { if (op === 'unsettledOrders') throw new Error('down'); } } });
+    const education = createFictionalEducationLedger({ orders: ledger, faults: { before: op => { if (op === 'unsettledOrders' || op === 'expireDue') throw new Error('down'); } } });
     const settlement = createProgramSettlement({ ledger: education, curriculumContent: async () => null, expectedAccountRef: ACCOUNT, now: t.now, sealer: createFictionalClaimSealer() });
     expect(await createCommerceWorker({ ledger, checkout, settlement, now: t.now }).runOnce()).toEqual({
-      intake: { ok: false, reason: 'intake_unavailable' }, reconcile: { ok: false, reason: 'orders_unavailable' }, settlement: { ok: false, reason: 'backlog_unavailable' }, delivery: { ok: false, reason: 'delivery_unconfigured' }, status: { ok: false, reason: 'status_unavailable' },
+      intake: { ok: false, reason: 'intake_unavailable' }, reconcile: { ok: false, reason: 'orders_unavailable' }, settlement: { ok: false, reason: 'backlog_unavailable' }, delivery: { ok: false, reason: 'delivery_unconfigured' }, expiry: { ok: false, reason: 'store_unavailable' }, status: { ok: false, reason: 'status_unavailable' },
     });
   });
 });

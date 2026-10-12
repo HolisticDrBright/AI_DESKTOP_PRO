@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createFictionalProgramOfferLedger, ProgramOfferError, publishHolds, type CurriculumReader, type OfferActor } from './program-offer-ledger';
 import { formatAmount, parseMajorAmount, programOffer, purchaseAvailability, PURCHASE_HOLD_EXPLANATIONS, type CurriculumBinding, type ProgramOffer } from '../../contracts/programOffers';
 import { funnelTextIssue } from '../../funnels/schema';
+import { FICTIONAL_ACCESS_TERMS } from './program-commerce-authority';
 
 /**
  * The offer contract and the fictional ledger: the same invariants the candidate test proves in SQL,
@@ -12,7 +13,7 @@ const org = id(1), otherOrg = id(2), staff = id(3), program = id(4), unpublished
 const v1: CurriculumBinding = { versionId: id(10), version: 1, sourceDigest: 'a'.repeat(64) };
 const v2: CurriculumBinding = { versionId: id(11), version: 2, sourceDigest: 'b'.repeat(64) };
 const me: OfferActor = { personId: staff, organizationId: org };
-const paid = (over: Record<string, unknown> = {}) => ({ mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/1', accessDurationDays: null, ...over });
+const paid = (over: Record<string, unknown> = {}) => ({ mode: 'paid', name: 'Fictional program', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPriceRef: 'price_FictionalAbc123', accessTermsVersion: 'education-access-terms/2', accessDurationDays: null, ...over });
 function harness(current: Record<string, CurriculumBinding | null> = { [program]: v1, [unpublished]: null }) {
   const state = { current };
   const curriculum: CurriculumReader = async (organizationId, programId) => organizationId === org && programId in state.current ? { programId, current: state.current[programId]! } : null;
@@ -59,14 +60,19 @@ describe('the contract', () => {
     }
   });
   it('availability is a function of the stored offer and the program as it is now', () => {
-    const published: ProgramOffer = programOffer.parse({ contract: 'program-offer/1', offerId: id(20), organizationId: org, programId: program, curriculum: v1, revision: 3, state: 'published', name: 'x', accessTermsVersion: 'education-access-terms/1', accessDurationDays: null, authoredBy: staff, authoredAt: '2026-10-11T12:00:00Z', mode: 'paid', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPrice: { provider: 'stripe', mode: 'test', priceRef: 'price_FictionalAbc123', approval: { by: staff, at: '2026-10-11T12:00:00Z' } } });
-    expect(purchaseAvailability(published, v1)).toMatchObject({ available: true, offerId: id(20), revision: 3 });
-    expect(purchaseAvailability(published, v2)).toMatchObject({ available: false, reason: 'curriculum_changed' });
-    expect(purchaseAvailability(published, null)).toMatchObject({ available: false, reason: 'curriculum_unpublished' });
-    expect(purchaseAvailability(null, v1)).toMatchObject({ available: false, reason: 'offer_absent' });
-    expect(purchaseAvailability({ ...published, state: 'draft' }, v1)).toMatchObject({ available: false, reason: 'offer_draft' });
-    expect(purchaseAvailability({ ...published, state: 'retired' }, v1)).toMatchObject({ available: false, reason: 'offer_retired' });
-    expect(publishHolds({ ...published, state: 'draft', pricing: null, providerPrice: null, accessTermsVersion: null } as ProgramOffer, null)).toEqual(['no_pricing', 'provider_mapping_missing', 'no_access_terms', 'curriculum_unpublished']);
+    const published: ProgramOffer = programOffer.parse({ contract: 'program-offer/1', offerId: id(20), organizationId: org, programId: program, curriculum: v1, revision: 3, state: 'published', name: 'x', accessTermsVersion: 'education-access-terms/2', accessDurationDays: null, authoredBy: staff, authoredAt: '2026-10-11T12:00:00Z', mode: 'paid', pricing: { currency: 'USD', amountMinor: 1999, billing: { kind: 'one_time' } }, providerPrice: { provider: 'stripe', mode: 'test', priceRef: 'price_FictionalAbc123', approval: { by: staff, at: '2026-10-11T12:00:00Z' } } });
+    // Reviewed terms that state access has no end: the only way a null duration is a decision.
+    const reviewed = FICTIONAL_ACCESS_TERMS.find(t => t.version === 'education-access-terms/2')!;
+    expect(purchaseAvailability(published, v1, reviewed)).toMatchObject({ available: true, offerId: id(20), revision: 3 });
+    expect(purchaseAvailability(published, v2, reviewed)).toMatchObject({ available: false, reason: 'curriculum_changed' });
+    expect(purchaseAvailability(published, null, reviewed)).toMatchObject({ available: false, reason: 'curriculum_unpublished' });
+    expect(purchaseAvailability(null, v1, reviewed)).toMatchObject({ available: false, reason: 'offer_absent' });
+    expect(purchaseAvailability({ ...published, state: 'draft' }, v1, reviewed)).toMatchObject({ available: false, reason: 'offer_draft' });
+    expect(purchaseAvailability({ ...published, state: 'retired' }, v1, reviewed)).toMatchObject({ available: false, reason: 'offer_retired' });
+    expect(publishHolds({ ...published, state: 'draft', pricing: null, providerPrice: null, accessTermsVersion: null } as ProgramOffer, null, reviewed)).toEqual(['no_pricing', 'provider_mapping_missing', 'no_access_terms', 'curriculum_unpublished']);
+    // A version nobody reviewed, a duration the review contradicts: held, never purchasable on a default.
+    expect(purchaseAvailability(published, v1, null)).toMatchObject({ available: false, reason: 'access_terms_unreviewed' });
+    expect(purchaseAvailability({ ...published, accessDurationDays: 30 }, v1, reviewed)).toMatchObject({ available: false, reason: 'access_duration_undecided' });
   });
 });
 

@@ -2,6 +2,7 @@ import { educationAccessRequest, type EducationAccessView, type EducationCurricu
 import type { ClinicalRequestContext } from '../clinical-core/aws-identity-consent';
 import { programCommerceActivationState } from './program-commerce-activation';
 import type { createProgramSettlement } from './program-settlement';
+import type { ConsumerCaller } from './program-commerce-authority';
 
 /**
  * The narrowly admitted server bridge for a purchaser's own education access: the only way a
@@ -13,7 +14,7 @@ import type { createProgramSettlement } from './program-settlement';
  * Minimum fields and current authorization, and the tests hold each:
  *   - the consumer pool only, on the synthetic boundary only, with `clinical_data` purpose: a
  *     workforce identity, a production context or any other purpose is refused;
- *   - the subject is the context's verified identity subject, never a body field;
+ *   - the caller is the context's verified person and identity subject, never a body field;
  *   - the body is exactly one of: `access` (own entitlements and enrollments), `claim` (the one-time
  *     token), `curriculum` (one entitlement id); nothing else is read;
  *   - activation evidence must name the candidates this source was built against, or every call is
@@ -41,19 +42,19 @@ export function createEducationAccessService(deps: EducationAccessDependencies) 
     if (context.identityPool !== 'consumer' || context.purpose !== 'clinical_data' || context.environment !== 'synthetic-staging' || context.dataClassification !== 'synthetic_only') throw new EducationAccessError('identity_refused');
     const parsed = educationAccessRequest.safeParse(body);
     if (!parsed.success) throw new EducationAccessError('request_invalid');
-    const subject = context.identitySubject;
+    const caller: ConsumerCaller = { kind: 'consumer', personId: context.actorPersonId, identitySubject: context.identitySubject };
     const request = parsed.data;
     if (request.action === 'access') {
-      const view = await deps.settlement.access(subject);
+      const view = await deps.settlement.access(caller);
       if (!view) throw new EducationAccessError('service_unavailable');
       return { action: 'access', view };
     }
     if (request.action === 'claim') {
-      const result = await deps.settlement.claim(subject, request.token);
+      const result = await deps.settlement.claim(caller, request.token);
       if (result.outcome === 'refused' && result.reason === 'service_unavailable') throw new EducationAccessError('service_unavailable');
       return result.outcome === 'claimed' ? { action: 'claim', outcome: 'claimed', entitlement: result.entitlement } : { action: 'claim', outcome: 'refused', reason: result.reason };
     }
-    const read = await deps.settlement.curriculum(subject, request.entitlementId);
+    const read = await deps.settlement.curriculum(caller, request.entitlementId);
     if (read.outcome === 'withheld' && read.reason === 'service_unavailable') throw new EducationAccessError('service_unavailable');
     return { action: 'curriculum', read };
   };
