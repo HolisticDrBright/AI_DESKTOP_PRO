@@ -499,6 +499,31 @@ jobs:
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
           npm run test:e2e -- zoom-sdk-bootstrap
+      # The fully mounted fictional purchase-to-learning journey. Its fixture is
+      # configured SEPARATELY (COMMERCE_JOURNEY_FIXTURE=1 on top of the contract
+      # fixture), so it has its own step and is not part of the `live-` battery.
+      # The STRIPE_TEST_* values are fictional test values for this step only:
+      # they let the real webhook route verify a fictional signed event. No
+      # request reaches any payment processor, and nothing here is a secret.
+      - name: Fictional purchase-to-learning journey (separately configured fixture)
+        if: matrix.shard == 1
+        run: |
+          curl -fsS -X POST http://127.0.0.1:3999/__control/reset-all
+          E2E_LIVE=1 \
+          E2E_DEV_SERVER=1 \
+          APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
+          COMMERCE_JOURNEY_FIXTURE=1 \
+          STRIPE_TEST_MODE_ENABLED=1 \
+          STRIPE_TEST_SECRET_KEY=sk_test_fixture_journey_only \
+          STRIPE_TEST_WEBHOOK_SECRET=whsec_fixture_journey_only \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- commerce-journey
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server

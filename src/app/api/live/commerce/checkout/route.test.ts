@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const funnels = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('@/adapters/mode', () => ({ USE_LIVE_API: true }));
-vi.mock('@/funnels', () => ({ allFunnels: () => funnels.list }));
+vi.mock('@/funnels', async () => {
+  const actual = await vi.importActual<typeof import('@/funnels')>('@/funnels');
+  // The route resolves a public funnel by slug; the test's list stands in for the repository's.
+  return { ...actual, allFunnels: () => funnels.list, publishedFunnel: (slug: string) => (funnels.list as { slug: string; status: string }[]).find(f => f.slug === slug && f.status === 'published') ?? null };
+});
 import { POST } from './route';
 import { __resetProgramCommerceRuntime, selectProgramCheckout, selectProgramOfferLedger } from '@/server/commerce/program-commerce-runtime';
 import type { OfferActor } from '@/server/commerce/program-offer-ledger';
@@ -9,7 +13,7 @@ import type { OfferActor } from '@/server/commerce/program-offer-ledger';
 /**
  * The visitor's checkout start: same-origin only, a bounded body holding the funnel slug and nothing
  * else, a published funnel, an honest redirect back with the hold outside the fixture, and under
- * the fixture a 303 to the processor's page with a server-issued HttpOnly attempt cookie that makes
+ * the fixture a same-site page with one link to the processor's page with a server-issued HttpOnly attempt cookie that makes
  * a repeated post find the same checkout.
  */
 const host = '127.0.0.1:3000';
@@ -61,25 +65,32 @@ describe('under the local fixture', () => {
     funnels.list = [funnel({ programBinding: null })];
     expect((await POST(req({ funnelSlug: 'longevity-program' }))).headers.get('location')).toContain('hold=program_unbound');
   });
-  it('redirects to the processor page, issues an HttpOnly same-site attempt cookie, and a repeated post with it reuses the checkout', async () => {
+  it('answers a same-site page linking to the processor page, issues an HttpOnly same-site attempt cookie, and a repeated post with it reuses the checkout', async () => {
     await publishedOffer();
     const first = await POST(req({ funnelSlug: 'longevity-program' }));
-    expect(first.status).toBe(303);
-    expect(first.headers.get('location')).toMatch(/^https:\/\/checkout\.fictional\.example\//);
+    expect(first.status).toBe(200);
+    // Never a redirect off this site: the purchase page's form-action 'self' applies to the redirects after a submission, so a 303 to the processor is blocked in the browser.
+    expect(first.headers.get('location')).toBeNull();
+    expect(first.headers.get('content-security-policy')).toContain("form-action 'none'");
+    expect(first.headers.get('referrer-policy')).toBe('no-referrer');
+    const firstHtml = await first.text();
+    expect(firstHtml).not.toMatch(/<script|<form|<style|style=/i);
+    const firstHref = /data-testid="checkout-continue-link" href="([^"]+)"/.exec(firstHtml)?.[1] ?? '';
+    expect(firstHref).toMatch(/^https:\/\/checkout\.fictional\.example\//);
     const cookie = first.headers.get('set-cookie')!;
     expect(cookie).toMatch(/^alp_checkout_attempt=[a-f0-9]{48}; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400$/);
     const selection = selectProgramCheckout();
     expect(selection.kind === 'fictional' && selection.ledger.orders.size).toBe(1);
     const again = await POST(req({ funnelSlug: 'longevity-program' }, { cookie: cookie.split(';')[0]! }));
-    expect(again.headers.get('location')).toBe(first.headers.get('location'));
+    expect(/href="([^"]+)"/.exec(await again.text())?.[1]).toBe(firstHref);
     expect(again.headers.get('set-cookie')).toBeNull();
     expect(selection.kind === 'fictional' && selection.ledger.orders.size).toBe(1);
     const other = await POST(req({ funnelSlug: 'longevity-program' }));
-    expect(other.headers.get('location')).not.toBe(first.headers.get('location'));
+    expect(/href="([^"]+)"/.exec(await other.text())?.[1]).not.toBe(firstHref);
     expect(selection.kind === 'fictional' && selection.ledger.orders.size).toBe(2);
     // A JSON body is accepted on the same terms.
     const json = await POST(new Request('http://127.0.0.1:3000/api/live/commerce/checkout', { method: 'POST', headers: { host, origin: 'http://' + host, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' }, body: JSON.stringify({ funnelSlug: 'longevity-program' }) }));
-    expect(json.status).toBe(303);
+    expect(json.status).toBe(200);
   });
   it('a forged attempt cookie is replaced, never trusted', async () => {
     await publishedOffer();

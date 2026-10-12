@@ -33,15 +33,36 @@ export type ProgramOfferLedgerSelection =
   | { kind: "disabled"; reason: "commerce_disabled" }
   | { kind: "fictional"; ledger: ProgramOfferLedger; registerCurriculum: (organizationId: string, programId: string, current: CurriculumBinding | null, content?: { title: string; phases: unknown[] } | null) => void };
 
-const registry = new Map<string, { programId: string; current: CurriculumBinding | null }>();
-/** The published content behind a registered binding, by version id, for the fixture's exact-version curriculum read. */
-const contents = new Map<string, { title: string; phases: unknown[]; sourceDigest: string }>();
+/**
+ * The fixture's in-memory state, held once per PROCESS. Next builds pages and route handlers as
+ * separate module graphs, so a plain module-level singleton would give the purchase page, the return
+ * page and the checkout route three different fictional ledgers; the mounted journey found the
+ * return page unable to see an order the checkout route had just admitted. Nothing here exists
+ * outside the contract fixture: every accessor below is reached only after its boundary check.
+ */
+type FictionalRuntimeState = {
+  registry: Map<string, { programId: string; current: CurriculumBinding | null }>;
+  /** The published content behind a registered binding, by version id, for the fixture's exact-version curriculum read. */
+  contents: Map<string, { title: string; phases: unknown[]; sourceDigest: string }>;
+  fictional: ReturnType<typeof createFictionalProgramOfferLedger> | null;
+  fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null;
+  /** Fixture-only outage switch for the journey fixture's catalog-outage case; never set outside a test. */
+  fixtureFaults: { offers: boolean };
+};
+const STATE_KEY = Symbol.for("alp.commerce.fictional-runtime");
+const state: FictionalRuntimeState = ((globalThis as unknown as Record<symbol, FictionalRuntimeState | undefined>)[STATE_KEY] ??=
+  { registry: new Map(), contents: new Map(), fictional: null, fictionalCheckout: null, fixtureFaults: { offers: false } });
+const registry = state.registry;
+const contents = state.contents;
 const key = (organizationId: string, programId: string) => `${organizationId}\u0000${programId}`;
-let fictional: ReturnType<typeof createFictionalProgramOfferLedger> | null = null;
+export function __setFixtureOfferOutage(down: boolean): void { state.fixtureFaults.offers = down; }
 
 function fictionalLedger() {
-  fictional ??= createFictionalProgramOfferLedger({ curriculum: async (organizationId, programId) => registry.get(key(organizationId, programId)) ?? null });
-  return fictional;
+  state.fictional ??= createFictionalProgramOfferLedger({
+    curriculum: async (organizationId, programId) => registry.get(key(organizationId, programId)) ?? null,
+    faults: { before: () => { if (state.fixtureFaults.offers) throw new Error("fixture catalog outage"); } },
+  });
+  return state.fictional;
 }
 
 export function selectProgramOfferLedger(env: Record<string, string | undefined> = process.env): ProgramOfferLedgerSelection {
@@ -58,11 +79,12 @@ export function selectProgramOfferLedger(env: Record<string, string | undefined>
 
 /** Test-only: forget every fictional offer and registered curriculum. */
 export function __resetProgramCommerceRuntime(): void {
-  fictional?.reset();
+  state.fixtureFaults.offers = false;
+  state.fictional?.reset();
   registry.clear();
-  fictionalCheckout?.ledger.reset();
-  fictionalCheckout?.education.reset();
-  fictionalCheckout = null;
+  state.fictionalCheckout?.ledger.reset();
+  state.fictionalCheckout?.education.reset();
+  state.fictionalCheckout = null;
   contents.clear();
 }
 
@@ -91,13 +113,12 @@ export type ProgramCheckoutSelection =
   | { kind: "disabled"; reason: "checkout_unconfigured" }
   | { kind: "fictional"; checkout: ReturnType<typeof createProgramCheckout>; expected: { accountRef: string; apiVersion: string }; processor: ReturnType<typeof createFictionalCheckoutProcessor>; ledger: ReturnType<typeof createFictionalCheckoutLedger>; worker: ReturnType<typeof createCommerceWorker>; education: ReturnType<typeof createFictionalEducationLedger>; settlement: ReturnType<typeof createProgramSettlement>; /** The fixture's claim delivery, its purchaser contacts (what the fictional hosted page collected) and the mailbox a purchaser reads. */ delivery: ReturnType<typeof createClaimDelivery>; contacts: ReturnType<typeof createFictionalContactAuthority>; mailbox: ReturnType<typeof createFictionalDeliveryProvider>["mailbox"]; provider: ReturnType<typeof createFictionalDeliveryProvider> };
 
-let fictionalCheckout: Extract<ProgramCheckoutSelection, { kind: "fictional" }> | null = null;
 /** The fixture's return origin: the configured public origin, else a fictional https origin so the fixture can exercise returns. */
 export const FIXTURE_RETURN_ORIGIN = "https://clinic.fictional.example";
 
 export function selectProgramCheckout(env: Record<string, string | undefined> = process.env): ProgramCheckoutSelection {
   if (!isContractFixtureAllowed(env as never)) return { kind: "disabled", reason: "checkout_unconfigured" };
-  if (!fictionalCheckout) {
+  if (!state.fictionalCheckout) {
     const ledger = createFictionalCheckoutLedger();
     const processor = createFictionalCheckoutProcessor();
     const checkout = createProgramCheckout({ offers: fictionalLedger(), ledger, processor, publicOrigin: publicSiteOrigin(env) ?? FIXTURE_RETURN_ORIGIN });
@@ -110,7 +131,7 @@ export function selectProgramCheckout(env: Record<string, string | undefined> = 
     const delivery = createClaimDelivery({ ledger: education, sealer, contacts, provider });
     // The webhook only admits; this worker is what processes admitted work. Under the fixture a test or a local operator runs its pass; a host schedules it in production.
     const worker = createCommerceWorker({ ledger, checkout, settlement, delivery });
-    fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, worker, education, settlement, delivery, contacts, mailbox: provider.mailbox, provider };
+    state.fictionalCheckout = { kind: "fictional", checkout, expected: { accountRef: processor.accountRef, apiVersion: "2025-08-27.basil" }, processor, ledger, worker, education, settlement, delivery, contacts, mailbox: provider.mailbox, provider };
   }
-  return fictionalCheckout;
+  return state.fictionalCheckout;
 }

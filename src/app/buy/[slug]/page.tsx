@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { PurchasePage, holdWords } from "@/components/funnels/PurchasePage";
 import { PURCHASE_HOLD_EXPLANATIONS } from "@/contracts/programOffers";
 import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
-import { publishedFunnel } from "@/funnels";
+import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { funnelPageUrl, publicSiteOrigin } from "@/lib/publicSite";
 import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
@@ -19,14 +19,14 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const funnel = publishedFunnel(slug);
+  const funnel = await resolvePublicFunnel(slug);
   return { title: funnel ? `Buy the ${funnel.programLabel} — The Holistic Approach` : "Page not found", robots: { index: false, follow: false } };
 }
 
 export default async function BuyRoute({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { slug } = await params;
   const query = await searchParams;
-  const funnel = publishedFunnel(slug);
+  const funnel = await resolvePublicFunnel(slug);
   if (!funnel) notFound();
   const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
   const purchase = await funnelPurchaseAvailability(funnel);

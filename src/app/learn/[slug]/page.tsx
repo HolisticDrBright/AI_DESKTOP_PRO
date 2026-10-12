@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { FunnelPage } from "@/components/funnels/FunnelPage";
-import { publishedFunnel } from "@/funnels";
+import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { funnelPageUrl, indexingAllowed, publicSiteOrigin } from "@/lib/publicSite";
 import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const funnel = publishedFunnel(slug);
+  const funnel = await resolvePublicFunnel(slug);
   if (!funnel) return { title: "Page not found", robots: { index: false, follow: false } };
   const allowed = indexingAllowed() && funnel.indexable;
   const canonical = allowed ? funnelPageUrl(funnel.slug) : null;
@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function FunnelRoute({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const funnel = publishedFunnel(slug);
+  const funnel = await resolvePublicFunnel(slug);
   if (!funnel) notFound();
   const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
   const purchase = await funnelPurchaseAvailability(funnel);

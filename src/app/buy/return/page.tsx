@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ReturnPage } from "@/components/funnels/ReturnPage";
-import { allFunnels } from "@/funnels";
+import { knownFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { publicSiteOrigin } from "@/lib/publicSite";
 import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
@@ -24,7 +24,7 @@ export default async function BuyReturnRoute({ searchParams }: { searchParams: P
   const selection = selectProgramCheckout();
   const status = orderId && selection.kind === "fictional" ? await selection.checkout.returnStatus(orderId) : { state: "unknown" as const };
   const order = orderId && selection.kind === "fictional" ? await selection.ledger.readOrder(orderId).catch(() => null) : null;
-  const funnel = order ? allFunnels().find(item => item.slug === order.funnelSlug) ?? null : null;
+  const funnel = order ? knownFunnel(order.funnelSlug) : null;
   const consultHref = funnel ? consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}` : null;
   return <ReturnPage returned={returned} state={status.state} learnHref={funnel ? `/learn/${funnel.slug}` : null} consultHref={consultHref} />;
 }

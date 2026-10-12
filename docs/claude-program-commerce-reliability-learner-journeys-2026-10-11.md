@@ -488,3 +488,101 @@ hosted service is still owed.
 `src/server/clinical-core/rds-data-database.ts` line 275: the commerce refusal token family gains
 `progress` and `terms` beside WP2's `delivery`. It is one alternation in one existing pattern; no
 other line changed.
+
+## WP5 — the fully mounted fictional journey
+
+### The separately configured fixture
+
+`src/server/commerce/journey-fixture.ts`. It exists only when the local contract-fixture boundary
+admits the process (never in a deployment) **and** `COMMERCE_JOURNEY_FIXTURE=1`. It holds:
+
+- a fictional clinic and published program, with the fixture course
+  ("Fictional journey course (test fixture)");
+- a fictional offer at a fixture amount of 12.34 USD under `education-access-terms/1`, whose fixture
+  review reads `FICTIONAL REVIEW FIXTURE` wherever it appears;
+- a fixture funnel at its own slug, `fictional-journey-fixture`, approved by
+  `FICTIONAL REVIEW FIXTURE` and not indexable.
+
+The repository's funnel definitions are untouched: they stay drafts with no program bound, and a
+test asserts it. The public resolver used by the funnel page, purchase page, checkout route and
+return page answers the fixture slug only inside the fixture; anywhere else it is the same absence
+as an unknown slug. Nothing here is activation evidence. It lives in one process's memory, and the
+production resolver never sees it.
+
+The fixture route `POST /api/live/commerce/fixture` answers 404 outside the fixture. It stands in
+only for what lies outside this process, each named:
+
+- the processor's hosted page and its state;
+- the host scheduler (one pass of the real worker);
+- the purchaser's inbox;
+- the verified consumer session the identity API would build;
+- a clinician of the fixture clinic;
+- the operator.
+
+Payment events are not sent from there. The test signs each one and posts it to the real webhook
+route, which verifies the signature over the exact bytes.
+
+### Two defects the mounted journey found
+
+1. **No visitor could reach the processor's page.** The purchase page's policy is
+   `form-action 'self'` (held by `src/lib/funnel-headers.test.ts`). Browsers apply form-action to
+   every redirect that follows a form submission, so the checkout route's 303 to the processor's host
+   was blocked. The route test and the refusal-only browser spec could not see it. The safety test is
+   unchanged. The checkout route now answers a started checkout with a same-site page carrying one
+   link to the processor's page: no script, no form, no style, `form-action 'none'` and no referrer.
+   Following a link is a navigation, not a form submission. Holds still redirect back to the
+   purchase page with the reason.
+2. **The return page could not see an order the checkout route had admitted.** Next builds pages
+   and route handlers as separate module graphs, so the fixture's in-memory ledgers existed once per
+   graph. The fixture runtime's state is now held once per process under a symbol key. It is still
+   reached only after the contract-fixture boundary check.
+
+### The browser story (`e2e/commerce-journey.spec.ts`), 7 serial cases
+
+1. The funnel offers both choices and the fixture's terms. The real purchase form leaves through
+   the continue page for the processor's stand-in page. The same browser buying again finds the same
+   order.
+2. A delayed payment: the return page says the order is open until the processor's event is
+   processed, then processing. Another account's event, a forged signature and an oversized stream
+   are refused before admission. Success then arrives, a duplicate delivery of it is recorded as a
+   duplicate, and the page says confirmed. Staff status shows the order verified, the entitlement
+   awaiting claim and the delivery accepted.
+3. The code arrives once and never appears in staff status. Learner A claims it, and A's retry gets
+   the same receipt; learner B is refused. There is one enrollment, and the exact course is served to
+   A only.
+4. Two device contexts: a completion recorded on one is read on the other; the retry converges; the
+   device that is behind is refused with the saved record; a relaunched context resumes at the saved
+   position.
+5. A refund hold withholds the course and refuses progress until the operator releases it.
+6. A second purchase: events arriving in reverse order converge on one verified order and one
+   entitlement. An expired code is refused. The operator's replacement is delivered; the old code
+   stays refused and the new one claims. Each learner holds exactly one course.
+7. A catalog outage is said as unverifiable and the consult choice stays. A processor outage holds
+   the start with its reason. A later course version refuses new purchases while what was bought is
+   still served. Following the consult link changes no order, entitlement or enrollment.
+
+### Evidence classes, kept apart
+
+| Class | Where | What it proves |
+| --- | --- | --- |
+| Embedded database | the PGlite candidate tests | the BLOCKED SQL under its reduced roles, one connection at a time |
+| Fictional-provider browser | `e2e/commerce-journey.spec.ts` | the real pages, routes, webhook signature, worker, delivery and services, in one process, with named stand-ins |
+| Route level | `src/app/api/live/commerce/fixture/route.test.ts` | the same story through the route handlers, without a browser |
+| Device component | the V2 `education-*` tests | the V2 screen, contract and transport, with native, session and network boundaries substituted |
+| Hosted or device acceptance | none | not run; owed below |
+
+### How it runs
+
+`e2e/commerce-journey.spec.ts` is not part of the `live-` battery. Without the flag it skips by
+design, so it has its own CI step: shard 1 of the live job, with `COMMERCE_JOURNEY_FIXTURE=1` and
+fictional `STRIPE_TEST_*` values that exist only so the real webhook route can verify a fictional
+signed event. No request reaches a payment processor, and the values are not shaped like
+credentials (the provider-configuration gate's credential pattern does not match them).
+
+| Check | Result |
+| --- | --- |
+| `e2e/commerce-journey.spec.ts` with the journey flag | 7 passed (46.8 s) |
+| `e2e/live-program-commerce.spec.ts` + the journey spec without the flag | 5 passed, 7 skipped by design |
+| `fixture/route.test.ts` | 3 passed |
+| checkout, webhook, funnel-header, commerce server and funnel tests | 28 files, 238 passed |
+| `APP_EDITION=clinical` build, `check:clinical-bundle` | PASS; 318 client chunks clean |
