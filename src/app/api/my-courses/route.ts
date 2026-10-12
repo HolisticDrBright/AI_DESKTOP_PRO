@@ -55,7 +55,7 @@ export async function POST(req: Request) {
   catch { return refuse(400, 'request_invalid'); }
   let context: ClinicalRequestContext | null;
   try { context = await host.identify(req); } catch { return refuse(503, 'service_unavailable'); }
-  if (!context) return refuse(401, 'learner_signin_required');
+  if (!context || context.identityPool !== 'consumer' || context.purpose !== 'clinical_data') return refuse(401, 'learner_signin_required');
   let data: unknown;
   try {
     const services = host.services();

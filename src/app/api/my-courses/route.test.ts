@@ -178,6 +178,17 @@ describe('a reviewed host: identity is re-checked after every service call', () 
     host.progress.mockImplementationOnce(async () => { host.set(null); throw new EducationProgressError('service_unavailable'); });
     expect((await learner(read)).status).toBe(401);
   });
+  it('does not accept workforce or unrelated-purpose identity from a reviewed learner host', async () => {
+    const host = reviewedHost();
+    for (const invalid of [
+      { ...context('sub:fictional-reviewed-a'), identityPool: 'workforce' as const },
+      { ...context('sub:fictional-reviewed-a'), purpose: 'identity_link' as const },
+    ]) {
+      host.set(invalid);
+      expect(await learner(read)).toMatchObject({ status: 401, json: { error: { code: 'learner_signin_required' } } });
+    }
+    expect(host.progress).not.toHaveBeenCalled();
+  });
   it('only a reviewed host may be installed, once', () => {
     expect(() => installLearnerHost({ kind: 'fictional_fixture' } as LearnerHost)).toThrow('learner_host_must_be_reviewed');
     reviewedHost();
