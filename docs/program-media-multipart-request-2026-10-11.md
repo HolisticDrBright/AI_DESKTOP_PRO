@@ -71,7 +71,7 @@ Observed focused verification before final source freeze:
 - The parent SDK suites separately exercise actual SDK serialization and middleware with fictional transports. The request database suite replaces the SDK factory with a byte-measuring fictional store; it does not prove a combined real-SDK/SQL hosted flow.
 - Mock-import, identity/consent, authenticated API, compatibility, operation-inventory, production-core and stub-reset source gates passed. The artifact still has 106 migrations and zero seeded rows; the inventory still has 228 activation-blocked operations and zero enabled. These gates do not activate or hosted-verify any service.
 
-The normal full suite, full lint, clinical build, strict client scan and exact-head CI must be observed separately after the final freeze. No predecessor pass proves this successor. At this source checkpoint none of those final results is claimed.
+Final checks for this increment at exact committed head `1297022e40fbf4bac806a9315f6dc7b1d6e206d2` subsequently completed: the normal full suite passed 477 files and 7,717 tests with 11 existing skips; full lint, clinical build and strict client scan passed. The Windows standalone symlink warning remains, so no deployable standalone image is proven. [Exact-head CI 38198622656](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38198622656) succeeded. These results do not prove a later successor, hosted deployment, a secrets-gated provider positive or physical-device acceptance. The next preview source and its separate verification are documented in `docs/program-media-preview-delivery-2026-10-11.md`.
 
 ## Status and remaining engineering
 

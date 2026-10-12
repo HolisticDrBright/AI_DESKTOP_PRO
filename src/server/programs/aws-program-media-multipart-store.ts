@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand,
   ListMultipartUploadsCommand, ListPartsCommand, ListObjectVersionsCommand, HeadObjectCommand, GetObjectCommand,
   DeleteObjectCommand, S3ServiceException, type ListObjectVersionsCommandOutput } from '@aws-sdk/client-s3';
-import { programMediaExtension } from '@/contracts/programMedia';
+import { programMediaArtifact, programMediaExtension, type ProgramMediaArtifact } from '@/contracts/programMedia';
+import { issueAwsProgramMediaVersionPreview } from './aws-program-media-preview';
 import { ProgramMediaError, ProgramMediaWriteError } from './program-media-authoring';
 import { programMediaCompositeChecksum } from './program-media-parts';
 import { programMediaMultipartSessionSchema, type ProgramMediaMultipartSession } from './program-media-multipart-ledger';
@@ -205,8 +206,7 @@ export async function createAwsProgramMediaMultipartStoreSource(input: AwsProgra
       && out.ServerSideEncryption === 'aws:kms' && out.SSEKMSKeyId === storage.kmsKeyArn
       && observed && Object.entries(metadata(s)).every(([k, v]) => observed[k] === v);
   }
-  async function verify(value: ProgramMediaMultipartSession, signal: AbortSignal) {
-    const s = checked(value);
+  async function verifySession(s: ProgramMediaMultipartSession, signal: AbortSignal) {
     if (!objectVersion.safeParse(s.objectVersion).success || !['verifying', 'committed', 'abort_requested'].includes(s.state)) throw invalid();
     let stop: (() => void) | undefined;
     try {
@@ -297,7 +297,23 @@ export async function createAwsProgramMediaMultipartStoreSource(input: AwsProgra
         return { objectVersion: out.VersionId as string, checksum: s.checksum };
       }, signal);
     },
-    parts, inventory, verify,
+    parts, inventory,
+    verify: (value: ProgramMediaMultipartSession, signal: AbortSignal) => verifySession(checked(value), signal),
+    /** A trusted SQL reader must independently authorize the CURRENT original
+     * author and return the exact committed artifact/session. This preserves
+     * the ledger's writer restriction; team/learner reads need a distinct role.
+     * Stream-verify the whole file AND each part before signing its version. */
+    async preview(value: ProgramMediaMultipartSession, rawArtifact: ProgramMediaArtifact, signal: AbortSignal) {
+      const s = checked(value), artifact = programMediaArtifact.parse(rawArtifact);
+      if (s.state !== 'committed' || s.pending.length !== 0 || s.parts.length !== s.manifest.parts.length
+        || !['ready', 'retired'].includes(artifact.state) || artifact.objectVersion !== s.objectVersion
+        || artifact.artifactId !== s.artifactId || artifact.clinic !== s.clinic || artifact.programId !== s.programId
+        || artifact.kind !== s.kind || artifact.contentType !== s.contentType || artifact.objectKey !== s.objectKey
+        || artifact.bytes !== s.totalBytes || artifact.sha256 !== s.sha256) throw invalid();
+      await verifySession(s, signal); after(signal);
+      return issueAwsProgramMediaVersionPreview({ s3, bucket: storage.bucket, objectKey: s.objectKey,
+        objectVersion: s.objectVersion!, contentType: s.contentType, signal: bounded(signal), assertLive: () => after(signal) });
+    },
     async abort(value: ProgramMediaMultipartSession, uploadId: string, signal: AbortSignal) {
       const s = checked(value);
       if (s.state !== 'abort_requested' || !providerId.safeParse(uploadId).success) throw invalid();

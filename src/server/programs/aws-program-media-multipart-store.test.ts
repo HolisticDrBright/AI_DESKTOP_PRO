@@ -7,6 +7,7 @@ import { createAwsProgramMediaMultipartStoreSource, type ProgramMediaMultipartAd
 import { type AwsProgramMediaStoreConfiguration, type ProgramMediaMultipartPolicyReview } from './aws-program-media-store';
 import { type ProgramMediaMultipartSession } from './program-media-multipart-ledger';
 import { programMediaCompositeChecksum, PROGRAM_MEDIA_PART_BYTES } from './program-media-parts';
+import { programMediaPreview, type ProgramMediaArtifact } from '@/contracts/programMedia';
 
 // Actual SDK clients and command types; every network send is intercepted.
 // These are source/failure tests, not real S3/KMS/IAM qualification.
@@ -294,4 +295,50 @@ describe('qualified multipart SDK source with fictional network', () => {
     await expect(store.removeVersion(s, 'v1', signal())).rejects.toThrow('service_unavailable');
     await expect(store.removeVersion(s, 'null', signal())).rejects.toThrow('storage_unverified');
   });
+  function committed() {
+    const s = { ...session(), state: 'committed' as const, objectVersion: 'fictional-version', parts: [part()] };
+    const artifact: ProgramMediaArtifact = { artifactId: s.artifactId, clinic: s.clinic, programId: s.programId, kind: s.kind, contentType: s.contentType,
+      bytes: s.totalBytes, sha256: s.sha256, objectKey: s.objectKey, version: 1, state: 'ready', objectVersion: s.objectVersion,
+      failure: null, committedAt: NOW.toISOString(), retiredAt: null, caption: null, transcript: null };
+    return { s, artifact };
+  }
+  it('stream-verifies a committed multipart video before issuing its exact-version five-minute preview', async () => {
+    const store = await open(), { s, artifact } = committed(), preview = await store.preview(s, artifact, signal());
+    const url = new URL(preview.token);
+    expect(sent.map(c => c.name)).toEqual(['HeadObjectCommand', 'GetObjectCommand']);
+    expect(url.searchParams.get('versionId')).toBe(s.objectVersion); expect(url.searchParams.get('X-Amz-Expires')).toBe('300');
+    expect(programMediaPreview.safeParse({ artifactId: artifact.artifactId, version: 1, state: 'ready', kind: 'video', contentType: s.contentType,
+      bytes: s.totalBytes, sha256: s.sha256, previewToken: preview.token, previewUntil: preview.until, historical: false }).success).toBe(true);
+  });
+  it.each(['prepared', 'creation_admitted', 'uploading', 'completion_admitted', 'verifying', 'abort_requested', 'aborted'] as const)
+    ('never previews %s sessions', async state => {
+      const store = await open(), { s, artifact } = committed();
+      await expect(store.preview({ ...s, state }, artifact, signal())).rejects.toThrow(); expect(sent).toHaveLength(0);
+    });
+  it.each(['pending', 'missing part', 'other author', 'other version', 'other artifact', 'other digest', 'held'])
+    ('refuses preview of %s before the first object read', async kind => {
+      const store = await open(), { s, artifact } = committed();
+      if (kind === 'pending') s.pending = [{ claimId: id(8), kind: 'completion', partNumber: null, state: 'uncertain' }];
+      if (kind === 'missing part') s.parts = [];
+      if (kind === 'other author') s.actorId = id(88);
+      if (kind === 'other version') artifact.objectVersion = 'different';
+      if (kind === 'other artifact') artifact.artifactId = id(88);
+      if (kind === 'other digest') artifact.sha256 = 'd'.repeat(64);
+      if (kind === 'held') { artifact.state = 'held'; artifact.objectVersion = null; artifact.committedAt = null; }
+      await expect(store.preview(s, artifact, signal())).rejects.toThrow(); expect(sent).toHaveLength(0);
+    });
+  it.each(['writer metadata', 'whole bytes', 'part digest', 'FULL_OBJECT'])
+    ('refuses a preview when %s does not verify', async kind => {
+      const store = await open(), { s, artifact } = committed();
+      if (kind === 'part digest') {
+        s.manifest.parts[0].sha256 = sha('bad!'); s.parts = [{ ...part(), sha256: sha('bad!'), checksum: Buffer.from(sha('bad!'), 'hex').toString('base64') }];
+        s.checksum = programMediaCompositeChecksum(s.manifest);
+      }
+      respond = c => c.name === 'HeadObjectCommand' ? { ...stored(s),
+        ...(kind === 'writer metadata' ? { Metadata: { ...metadata(s), 'writer-claim-id': id(88) } } : {}),
+        ...(kind === 'FULL_OBJECT' ? { ChecksumType: 'FULL_OBJECT' } : {}) }
+        : c.name === 'GetObjectCommand' ? { ...stored(s), Body: Readable.from([kind === 'whole bytes' ? Buffer.from('bad!') : bytes]) } : ordinary(c);
+      await expect(store.preview(s, artifact, signal())).rejects.toThrow('service_unavailable');
+      expect(sent.every(c => ['HeadObjectCommand', 'GetObjectCommand'].includes(c.name))).toBe(true);
+    });
 });

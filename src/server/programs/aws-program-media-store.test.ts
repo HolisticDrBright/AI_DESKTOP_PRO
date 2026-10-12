@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { S3Client, S3ServiceException } from '@aws-sdk/client-s3';
 import { STSClient } from '@aws-sdk/client-sts';
-import type { ProgramMediaReservation } from '@/contracts/programMedia';
+import { programMediaPreview, type ProgramMediaReservation } from '@/contracts/programMedia';
 import { ProgramMediaWriteError } from './program-media-authoring';
 import { createAwsProgramMediaStoreSource, type AwsProgramMediaStoreConfiguration } from './aws-program-media-store';
 
@@ -208,8 +208,20 @@ describe('native program media source over fictional SDK sends', () => {
       version: 1, state: 'ready' as const, objectVersion: 'fictional-v1', failure: null,
       committedAt: NOW.toISOString(), retiredAt: null, caption: null, transcript: null };
     const preview = await value.preview(artifact, signal()); const url = new URL(preview.token);
+    expect(preview.token.length).toBeGreaterThan(512);
+    expect(programMediaPreview.safeParse({ artifactId: artifact.artifactId, version: artifact.version, state: artifact.state,
+      kind: artifact.kind, contentType: artifact.contentType, bytes: artifact.bytes, sha256: artifact.sha256,
+      previewToken: preview.token, previewUntil: preview.until, historical: false }).success).toBe(true);
     expect(url.hostname).toBe('alp-fictional-program-media.s3.us-east-2.amazonaws.com');
     expect(url.searchParams.get('versionId')).toBe('fictional-v1'); expect(url.searchParams.get('X-Amz-Expires')).toBe('300');
     expect(preview.until).toBe('2026-10-11T22:05:00.000Z'); expect(sent.every(c => c.name !== 'PutObjectCommand')).toBe(true);
+  });
+  it('keeps single-PUT preview unavailable for a composite object rather than accepting a multipart checksum as whole-file SHA', async () => {
+    const value = await store();
+    response = c => c.name === 'HeadObjectCommand' ? { ...head(), ChecksumType: 'COMPOSITE' } : ordinary(c);
+    await expect(value.preview({ artifactId: reservation.artifactId, clinic: CLINIC, programId: PROGRAM, kind: 'image', contentType: 'image/png',
+      bytes: bytes.length, sha256: digest, objectKey: reservation.objectKey, version: 1, state: 'ready', objectVersion: 'fictional-v1',
+      failure: null, committedAt: NOW.toISOString(), retiredAt: null, caption: null, transcript: null }, signal())).rejects.toThrow();
+    expect(sent.filter(c => c.name === 'HeadObjectCommand')).toHaveLength(1);
   });
 });

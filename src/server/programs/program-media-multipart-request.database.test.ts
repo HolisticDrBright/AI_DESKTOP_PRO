@@ -3,7 +3,11 @@ import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { S3Client } from '@aws-sdk/client-s3';
+import { STSClient } from '@aws-sdk/client-sts';
 import type { ClinicalCoreDatabase } from '@/server/clinical-core/database';
+import { classifyDatabaseRejection } from '@/server/clinical-core/rds-data-database';
 import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity-consent';
 import type { ProgramMediaMultipartSession } from './program-media-multipart-ledger';
 import type { ProgramMediaMultipartAdmission, AwsProgramMediaMultipartStore } from './aws-program-media-multipart-store';
@@ -13,6 +17,9 @@ import { createProgramMediaMultipartRequestSource } from './program-media-multip
 import { ProgramMediaError, ProgramMediaWriteError } from './program-media-authoring';
 import { PROGRAM_MEDIA_PART_BYTES, type ProgramMediaPartManifest } from './program-media-parts';
 import { createProgramMediaMultipartHandler } from './program-media-multipart-http';
+import { createProgramMediaMultipartPreviewRequestSource } from './program-media-multipart-preview-request';
+import { createProgramMediaMultipartLedger } from './program-media-multipart-ledger';
+import { createProgramMediaControlHandler } from './program-media-http';
 
 const seam = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('./aws-program-media-multipart-store', () => ({ createAwsProgramMediaMultipartStoreSource: seam.open }));
@@ -72,7 +79,10 @@ function fictionalStore() {
   });
   const abort = vi.fn(async (_s: ProgramMediaMultipartSession, uploadId: string) => { external(); uploads.delete(uploadId); });
   const removeVersion = vi.fn(async (_s: ProgramMediaMultipartSession, version: string) => { external(); versions.delete(version); });
-  const store = { create, part, complete, parts, inventory, verify, abort, removeVersion } satisfies AwsProgramMediaMultipartStore;
+  const preview = vi.fn(async (s: ProgramMediaMultipartSession) => {
+    await verify(s); return { token: 'fictional-preview-capability-' + s.objectVersion, until: new Date(Date.now() + 300000).toISOString() };
+  });
+  const store = { create, part, complete, parts, inventory, verify, preview, abort, removeVersion } satisfies AwsProgramMediaMultipartStore;
   const close = vi.fn(); seam.open.mockResolvedValue({ store, close });
   return { store, close, uploads, versions };
 }
@@ -138,7 +148,13 @@ beforeAll(async () => {
             currentOperation = JSON.parse(String(parameters?.[0])).operation; operations.push(currentOperation);
             if (failBefore.delete(currentOperation)) throw new Error('fictional receipt persistence failure');
           }
-          return await tx.query(sql, parameters?.map(p => typeof p === 'object' && p !== null && 'kind' in p && 'value' in p ? p.value : p) ?? []) as never;
+          try { return await tx.query(sql, parameters?.map(p => typeof p === 'object' && p !== null && 'kind' in p && 'value' in p ? p.value : p) ?? []) as never; }
+          catch (error) {
+            // The fictional RDS transport shapes an actual PostgreSQL message
+            // like Data API, then uses the unchanged production mapper.
+            const shaped = error instanceof Error ? { name: 'DatabaseErrorException', message: error.message } : error;
+            throw classifyDatabaseRejection(shaped) ?? error;
+          }
         } });
       } finally { insideTransaction = false; }
     }); } finally {
@@ -161,6 +177,155 @@ beforeEach(async () => {
     [activation.nativeEvidenceSha256, storage.bucket, storage.publicOrigin, storage.expectedBucketOwner, storage.region, storage.kmsKeyArn, storage.maxImageBytes, storage.maxVideoBytes, activation.multipartEvidenceSha256]);
 });
 afterAll(async () => { await db?.close(); });
+
+describe('original-author multipart preview with the actual restricted ledger', () => {
+  const source = (f: ReturnType<typeof fixture>) => createProgramMediaMultipartPreviewRequestSource(f.inputs);
+  const command = (artifactId: string) => ({ operation: 'preview', request: { artifactId } });
+  const preview = (f: ReturnType<typeof fixture>, artifactId: string) => source(f).execute(command(artifactId), new AbortController().signal);
+  async function ready(f: ReturnType<typeof fixture>) {
+    const r = await allParts(f); await f.run('complete', { artifactId: r.artifactId, commandId: randomUUID() }); return r;
+  }
+  it('is OFF by default before context, SQL or credentials', async () => {
+    const f = fixture();
+    await expect(createProgramMediaMultipartPreviewRequestSource({ ...f.inputs, activation: undefined }).execute(command(id(88)), new AbortController().signal))
+      .rejects.toThrow('program_media_disabled');
+    expect(operations).toEqual([]); expect(f.resolveContext).not.toHaveBeenCalled(); expect(f.credentialsForProgram).not.toHaveBeenCalled();
+  });
+  it('reads a committed artifact without mutation, then rechecks authority and closes the scoped store', async () => {
+    const f = fixture(), r = await ready(f); operations = []; f.close.mockClear();
+    const answer = await preview(f, r.artifactId);
+    expect(answer).toMatchObject({ artifactId: r.artifactId, version: 2, state: 'ready', bytes: small.length, sha256: hash(small), historical: false });
+    expect(operations).toEqual(['configuration', 'artifact', 'authorize', 'status', 'configuration', 'artifact', 'status']);
+    expect(f.store.preview).toHaveBeenCalledTimes(1); expect(f.close).toHaveBeenCalledTimes(1);
+  });
+  it('renders through the metadata HTTP handler without exposing object/provider identities', async () => {
+    const f = fixture(), r = await ready(f), handler = createProgramMediaControlHandler({ enabled: true, sourceForRequest: async () => source(f) });
+    const response = await handler(new Request('https://desktop.example.test/api/live/programs/media/control', { method: 'POST',
+      headers: { Origin: 'https://desktop.example.test', Host: 'desktop.example.test', 'Content-Type': 'application/json' }, body: JSON.stringify(command(r.artifactId)) }));
+    expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('private, no-store');
+    const body = await response.json(); expect(body.data.artifactId).toBe(r.artifactId);
+    expect(body.data).not.toHaveProperty('objectKey'); expect(body.data).not.toHaveProperty('objectVersion'); expect(body.data).not.toHaveProperty('writerClaimId');
+  });
+  it('does not turn an unfinished video into a preview', async () => {
+    const f = fixture(), r = await uploading(f); f.credentialsForProgram.mockClear(); seam.open.mockClear();
+    await expect(preview(f, r.artifactId)).rejects.toThrow('not_ready'); expect(f.credentialsForProgram).not.toHaveBeenCalled(); expect(seam.open).not.toHaveBeenCalled();
+  });
+  it('labels a retired original-author version as historical without publishing it', async () => {
+    const f = fixture(), r = await ready(f);
+    await createProgramMediaNativeLedger(database, { storage, evidenceSha256: activation.nativeEvidenceSha256 }).retire(context, r.artifactId, 2, new Date().toISOString());
+    const before = await db.query<{ count: number }>('select count(*)::integer as count from clinical_core.program_media_publications');
+    operations = [];
+    expect(await preview(f, r.artifactId)).toMatchObject({ artifactId: r.artifactId, state: 'retired', version: 3, historical: true });
+    expect(operations).not.toContain('recordPublication');
+    expect(await db.query('select count(*)::integer as count from clinical_core.program_media_publications')).toEqual(before);
+  });
+  it('rejects an ignored context deadline before SQL or credentials', async () => {
+    const f = fixture(); f.resolveContext.mockImplementationOnce(() => new Promise(() => undefined));
+    const short = createProgramMediaMultipartPreviewRequestSource({ ...f.inputs, timeoutMs: 5 });
+    await expect(short.execute(command(id(88)), new AbortController().signal)).rejects.toThrow('service_unavailable');
+    expect(operations).toEqual([]); expect(f.credentialsForProgram).not.toHaveBeenCalled();
+  });
+  it.each(['valid', 'changed writer', 'changed bytes'])('composes restricted SQL, actual SDK preview and HTTP with fictional transport: %s', async kind => {
+    const f = fixture(), r = await ready(f);
+    const multipart = createProgramMediaMultipartLedger(database, { storage, evidenceSha256: activation.nativeEvidenceSha256 },
+      { enabled: true, evidenceSha256: activation.multipartEvidenceSha256 });
+    const session = (await multipart.execute(context, { operation: 'status', parameters: { artifactId: r.artifactId } })).session;
+    const stored = f.versions.get(session.objectVersion!)!;
+    const bucketArn = `arn:aws:s3:::${storage.bucket}`, objects = bucketArn + '/*';
+    const resourcePolicy = JSON.stringify({ Statement: [
+      { Effect: 'Deny', Principal: '*', Action: 's3:*', Resource: [bucketArn, objects], Condition: { Bool: { 'aws:SecureTransport': 'false' } } },
+      ...[['s3:x-amz-server-side-encryption', 'aws:kms'], ['s3:x-amz-server-side-encryption-aws-kms-key-id', storage.kmsKeyArn]]
+        .map(([key, value]) => ({ Effect: 'Deny', Principal: '*', Action: 's3:PutObject', Resource: objects,
+          Condition: { StringNotEquals: { [key]: value }, Null: { [key]: 'false' } } })),
+      { Effect: 'Deny', Principal: '*', Action: 's3:PutObject', Resource: objects,
+        Condition: { StringNotEquals: { 's3:if-none-match': '*' }, Bool: { 's3:ObjectCreationOperation': 'true' } } },
+    ] });
+    const object = { VersionId: session.objectVersion!, ContentLength: stored.bytes.length, ContentType: session.contentType,
+      ChecksumType: 'COMPOSITE', ChecksumSHA256: session.checksum, ServerSideEncryption: 'aws:kms', SSEKMSKeyId: storage.kmsKeyArn,
+      Metadata: { 'artifact-id': session.artifactId, 'program-id': session.programId, clinic: session.clinic,
+        purpose: 'educational_media', 'writer-claim-id': kind === 'changed writer' ? id(88) : session.writerClaimId, 'whole-sha256': session.sha256 } };
+    const commands: string[] = [];
+    const s3 = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (command: { constructor: { name: string }; input: Record<string, unknown> }) => {
+      expect(insideTransaction).toBe(false); commands.push(command.constructor.name);
+      expect(command.input.Bucket).toBe(storage.bucket); expect(command.input.ExpectedBucketOwner).toBe('588966314750');
+      switch (command.constructor.name) {
+        case 'GetBucketVersioningCommand': return { Status: 'Enabled' };
+        case 'GetBucketEncryptionCommand': return { ServerSideEncryptionConfiguration: { Rules: [{ ApplyServerSideEncryptionByDefault:
+          { SSEAlgorithm: 'aws:kms', KMSMasterKeyID: storage.kmsKeyArn } }] } };
+        case 'GetPublicAccessBlockCommand': return { PublicAccessBlockConfiguration: { BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true } };
+        case 'GetBucketOwnershipControlsCommand': return { OwnershipControls: { Rules: [{ ObjectOwnership: 'BucketOwnerEnforced' }] } };
+        case 'GetBucketTaggingCommand': return { TagSet: [['alp:purpose', 'educational_media'], ['alp:classification', 'synthetic_only'], ['alp:phi-allowed', 'false'], ['alp:dedicated', 'true']].map(([Key, Value]) => ({ Key, Value })) };
+        case 'GetBucketPolicyCommand': return { Policy: resourcePolicy };
+        case 'HeadObjectCommand':
+        case 'GetObjectCommand': {
+          expect(command.input.Key).toBe(session.objectKey); expect(command.input.VersionId).toBe(session.objectVersion);
+          return command.constructor.name === 'HeadObjectCommand' ? object : { ...object,
+            Body: Readable.from([kind === 'changed bytes' ? new Uint8Array(stored.bytes.length).fill(9) : stored.bytes]) };
+        }
+        default: throw new Error('Unexpected fictional provider command; network is never used');
+      }
+    }) as never);
+    const sts = vi.spyOn(STSClient.prototype, 'send').mockImplementation((async () => {
+      expect(insideTransaction).toBe(false);
+      return { Account: '588966314750', Arn: 'arn:aws:sts::588966314750:assumed-role/alp-educational-media-worker/fictional-preview' };
+    }) as never);
+    try {
+      const actual = await vi.importActual<typeof import('./aws-program-media-multipart-store')>('./aws-program-media-multipart-store');
+      seam.open.mockImplementationOnce(actual.createAwsProgramMediaMultipartStoreSource);
+      const nativeSource = createProgramMediaMultipartPreviewRequestSource({ ...f.inputs,
+        policyReview: { ...policyReview, policySha256: hash(resourcePolicy) } });
+      const handler = createProgramMediaControlHandler({ enabled: true, sourceForRequest: async () => nativeSource });
+      const response = await handler(new Request('https://desktop.example.test/api/live/programs/media/control', { method: 'POST',
+        headers: { Origin: 'https://desktop.example.test', Host: 'desktop.example.test', 'Content-Type': 'application/json' }, body: JSON.stringify(command(r.artifactId)) }));
+      const body = await response.json();
+      if (kind !== 'valid') { expect(response.status).toBe(503); expect(body).not.toHaveProperty('data'); }
+      else {
+        expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('private, no-store');
+        const capability = new URL(body.data.previewToken);
+        expect(body.data.previewToken.length).toBeGreaterThan(512);
+        expect(capability.hostname).toBe(storage.bucket + '.s3.us-east-2.amazonaws.com');
+        expect(capability.searchParams.get('versionId')).toBe(session.objectVersion);
+        expect(capability.searchParams.get('X-Amz-Expires')).toBe('300');
+        expect(body.data).not.toHaveProperty('objectKey'); expect(body.data).not.toHaveProperty('writerClaimId');
+      }
+      expect(commands.filter(name => /Upload|Put|Delete|Abort|Complete/.test(name))).toEqual([]);
+    } finally { s3.mockRestore(); sts.mockRestore(); }
+  });
+  it.each(['membership', 'release', 'identity', 'artifact version'])('discards a late preview after %s changes', async kind => {
+    const f = fixture(), r = await ready(f); f.close.mockClear();
+    f.store.preview.mockImplementationOnce(async s => {
+      if (kind === 'membership') await db.query("update clinical_core.organization_memberships set status='suspended' where person_id=$1", [context.actorPersonId]);
+      if (kind === 'release') await db.query('update clinical_core.program_media_activation set multipart_enabled=false');
+      if (kind === 'identity') f.resolveContext.mockResolvedValueOnce({ ...context, identitySubject: 'syn_different_author' });
+      if (kind === 'artifact version') await createProgramMediaNativeLedger(database, { storage, evidenceSha256: activation.nativeEvidenceSha256 })
+        .attachText(context, r.artifactId, 2, 'caption', { text: 'Supplied fictional caption', source: 'supplied_by_author', format: 'plain', sha256: hash('Supplied fictional caption') });
+      return { token: 'fictional-preview-' + s.objectVersion, until: new Date(Date.now() + 300000).toISOString() };
+    });
+    await expect(preview(f, r.artifactId)).rejects.toThrow(kind === 'artifact version' ? 'conflict' : kind === 'release' ? 'program_media_disabled' : 'access_refused');
+    expect(f.close).toHaveBeenCalledTimes(1);
+  });
+  it('refuses a cross-program credential before opening the store', async () => {
+    const f = fixture(), r = await ready(f); seam.open.mockClear(); f.store.preview.mockClear();
+    const actual = f.credentialsForProgram.getMockImplementation()!;
+    f.credentialsForProgram.mockImplementationOnce(async (scope, signal) => ({ ...await actual(scope, signal), scope: { ...scope, programId: id(88) } }));
+    await expect(preview(f, r.artifactId)).rejects.toThrow('storage_unverified'); expect(seam.open).not.toHaveBeenCalled(); expect(f.store.preview).not.toHaveBeenCalled();
+  });
+  it('rejects internal provider/proof fields before context resolution', async () => {
+    const f = fixture();
+    await expect(source(f).execute({ operation: 'preview', request: { artifactId: id(88), objectVersion: 'forged', proof: {} } }, new AbortController().signal))
+      .rejects.toThrow('request_invalid'); expect(f.resolveContext).not.toHaveBeenCalled();
+  });
+  it('closes a preview that returns a deadline beyond the five-minute cap', async () => {
+    const f = fixture(), r = await ready(f); f.close.mockClear();
+    f.store.preview.mockResolvedValueOnce({ token: 'fictional-preview-capability', until: new Date(Date.now() + 3600000).toISOString() });
+    await expect(preview(f, r.artifactId)).rejects.toThrow('service_unavailable'); expect(f.close).toHaveBeenCalledTimes(1);
+  });
+  it('stops an ignored preview await on withdrawal and closes the resource', async () => {
+    const f = fixture(), r = await ready(f), stop = new AbortController(); f.close.mockClear();
+    f.store.preview.mockImplementationOnce(async () => { stop.abort(); return new Promise(() => undefined); });
+    await expect(source(f).execute(command(r.artifactId), stop.signal)).rejects.toThrow('access_refused'); expect(f.close).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('native multipart request composition with restricted SQL and fictional provider bytes', () => {
   it('is OFF by default and refuses invalid activation or policy before any authority or secret read', async () => {

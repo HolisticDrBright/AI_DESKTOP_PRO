@@ -2,10 +2,10 @@ if (typeof window !== 'undefined') throw new Error('aws-program-media-store is s
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { S3Client, S3ServiceException, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, ListObjectVersionsCommand,
-  GetObjectCommand, GetBucketVersioningCommand, GetBucketEncryptionCommand, GetBucketOwnershipControlsCommand,
+  GetBucketVersioningCommand, GetBucketEncryptionCommand, GetBucketOwnershipControlsCommand,
   GetPublicAccessBlockCommand, GetBucketTaggingCommand, GetBucketPolicyCommand } from '@aws-sdk/client-s3';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { issueAwsProgramMediaVersionPreview } from './aws-program-media-preview';
 import { programMediaArtifact, programMediaExtension, programMediaReservation, programMediaStorageSchema,
   type ProgramMediaReservation, type ProgramMediaArtifact } from '@/contracts/programMedia';
 import { ProgramMediaError, ProgramMediaWriteError, type ProgramMediaObjectStore, type ProgramMediaStoredObject } from './program-media-authoring';
@@ -271,17 +271,8 @@ Promise<{ store: ProgramMediaObjectStore; close(): void }> {
         || observed.encryption !== 'aws:kms' || observed.kmsKeyArn !== storage.kmsKeyArn
         || observed.metadata?.['artifact-id'] !== artifact.artifactId || observed.metadata?.['program-id'] !== artifact.programId
         || observed.metadata?.clinic !== artifact.clinic || observed.metadata?.purpose !== 'educational_media') throw invalid();
-      const issued = new Date();
-      try {
-        const token = await getSignedUrl(s3, new GetObjectCommand({ ...base(artifact), VersionId: artifact.objectVersion,
-          ResponseCacheControl: 'private, no-store', ResponseContentType: artifact.contentType }), { expiresIn: 300, signingDate: issued });
-        after(signal);
-        const url = new URL(token);
-        if (url.protocol !== 'https:' || url.hostname !== `${storage.bucket}.s3.us-east-2.amazonaws.com` || url.username || url.password || url.hash
-          || decodeURIComponent(url.pathname.slice(1)) !== artifact.objectKey || url.searchParams.get('versionId') !== artifact.objectVersion
-          || url.searchParams.get('X-Amz-Expires') !== '300' || url.searchParams.get('X-Amz-Algorithm') !== 'AWS4-HMAC-SHA256') throw invalid();
-        return { token, until: new Date(issued.getTime() + 300_000).toISOString() };
-      } catch { throw new ProgramMediaError('service_unavailable'); }
+      return issueAwsProgramMediaVersionPreview({ s3, bucket: storage.bucket, objectKey: artifact.objectKey,
+        objectVersion: artifact.objectVersion, contentType: artifact.contentType, signal: bounded(signal), assertLive: () => after(signal) });
     },
   };
   return Object.freeze({ store: Object.freeze(store), close });

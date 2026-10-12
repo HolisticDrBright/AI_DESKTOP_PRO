@@ -149,9 +149,14 @@ export const programMediaReferenceStatus = z.object({
 }).strict();
 
 /** A bounded, short-lived read of an artifact for the author's preview. Not the published address, not a write. */
+// An SDK-signed GET contains an encoded temporary STS token and exact version.
+// Keep its wire shape, but do not truncate that capability to 512 characters.
+// This ceiling permits the configured 3,000-character token and 1,024-character
+// version after URL encoding. It is not a relaxation of resource authorization.
+export const PROGRAM_MEDIA_PREVIEW_MAX_TOKEN_LENGTH = 16_384;
 export const programMediaPreview = z.object({
   artifactId: uuid, version: counter.min(1), state: programMediaState, kind: programMediaKind, contentType: programMediaContentType,
-  bytes: counter.min(1), sha256: hash, previewToken: z.string().min(16).max(512), previewUntil: date, historical: z.boolean(),
+  bytes: counter.min(1), sha256: hash, previewToken: z.string().min(16).max(PROGRAM_MEDIA_PREVIEW_MAX_TOKEN_LENGTH), previewUntil: date, historical: z.boolean(),
 }).strict();
 export type ProgramMediaPreview = z.infer<typeof programMediaPreview>;
 
