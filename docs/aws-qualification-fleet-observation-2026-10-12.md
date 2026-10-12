@@ -51,6 +51,11 @@ planned reserved executions for these candidates, but it does not assert their
 configuration or existence. No same-source hosted acceptance can be claimed
 from the existing mixed-source fleet.
 
+The qualification HTTP API currently lists 26 routes. None is a consumer
+education-access/progress, care-messaging, or care-connection route. Source
+service seams and local tests therefore do not mean V2 can reach those
+features on this API.
+
 ## Next controlled step
 
 Before a new stack update or creation, choose an exact reviewed source commit
