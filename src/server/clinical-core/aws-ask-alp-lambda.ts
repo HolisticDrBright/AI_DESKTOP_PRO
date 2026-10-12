@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("aws-ask-alp-lambda is server-only");
 import { createAwsAskAlpApiHandler, parseAskAlpRuntimeMode } from "./aws-ask-alp-api";
 import { createOwnedAskAlpContextLoader } from "./aws-ask-alp-trusted-context";
+import { createProductionAskAlpCallerVerifier } from "./aws-ask-alp-private-caller";
 import { createOwnedConsumerRecordsAdapter, type OwnedStorageScope } from "./owned-consumer-records";
 import { createRdsDataClinicalCoreDatabase } from "./rds-data-database";
 import { loadReviewedKnowledge } from "./aws-reviewed-knowledge";
@@ -31,10 +32,18 @@ const trustedContextLoader = runtimeMode === "production" && phiAllowed
     knowledgeLoader: loadReviewedKnowledge,
   })
   : undefined;
+const trustedCallerVerifier = runtimeMode === "production" && phiAllowed
+  ? createProductionAskAlpCallerVerifier({
+    apiId: required("ASK_ALP_API_ID"), accountId: required("ASK_ALP_ACCOUNT_ID"),
+    backendRoleArn: required("ASK_ALP_BACKEND_ROLE_ARN"),
+    consumerIssuer: required("CLINICAL_CONSUMER_ISSUER"), consumerAudience: required("CLINICAL_CONSUMER_AUDIENCE"),
+  })
+  : undefined;
 
 export const handler = createAwsAskAlpApiHandler({ configuration: {
   consumerIssuer: required("CLINICAL_CONSUMER_ISSUER"), consumerAudience: required("CLINICAL_CONSUMER_AUDIENCE"),
   runtimeMode, phiAllowed, ...(productionActivation ? { productionActivation } : {}),
   model: required("ASK_ALP_OPENAI_MODEL"), openAiSecretArn: required("ASK_ALP_OPENAI_SECRET_ARN"),
   approvedPromptSha256: required("ASK_ALP_APPROVED_PROMPT_SHA256"),
-}, ...(trustedContextLoader ? { trustedContextLoader } : {}) });
+}, ...(trustedContextLoader ? { trustedContextLoader } : {}),
+  ...(trustedCallerVerifier ? { trustedCallerVerifier } : {}) });

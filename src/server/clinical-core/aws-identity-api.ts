@@ -88,7 +88,12 @@ export type ApiGatewayV2Event = {
   isBase64Encoded?: boolean;
   queryStringParameters?: Record<string, string | undefined> | null;
   requestContext?: {
-    authorizer?: { jwt?: { claims?: Record<string, string | number | boolean | undefined> } };
+    apiId?: string;
+    accountId?: string;
+    authorizer?: {
+      jwt?: { claims?: Record<string, string | number | boolean | undefined> };
+      iam?: { userArn?: string; accountId?: string };
+    };
   };
 };
 

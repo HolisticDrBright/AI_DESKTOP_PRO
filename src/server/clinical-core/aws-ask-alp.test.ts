@@ -4,6 +4,8 @@ import { ASK_ALP_CONTEXT_VERSION, ASK_ALP_CONTRACT_VERSION, AskAlpError, promptS
 import { buildAskAlpOpenAIRequest, parseAskAlpOpenAIResponse } from "./aws-ask-alp-openai";
 import { OwnedStorageError } from "./owned-consumer-records";
 import { CoreSubscriptionError } from "./core-subscription-guard";
+import { ASK_ALP_PRIVATE_ROUTE, PrivateAskAlpCallerError, verifyPrivateAskAlpCaller } from "./aws-ask-alp-private-caller";
+import type { ApiGatewayV2Event } from "./aws-identity-api";
 
 const ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_example";
 const AUDIENCE = "72aksm2dm4nf03l8d9nrp2dbh0";
@@ -29,7 +31,7 @@ function result() {
 function productionEvent(body: unknown = request()) {
   const now = Math.floor(Date.now() / 1000);
   return {
-    routeKey: "POST /clinical-core/consumer/ask-alp/generate", headers: { "content-type": "application/json", authorization: `Bearer ${"x".repeat(64)}` }, body: JSON.stringify(body),
+    routeKey: ASK_ALP_PRIVATE_ROUTE, headers: { "content-type": "application/json", authorization: "AWS4-HMAC-SHA256 test" }, body: JSON.stringify(body),
     requestContext: { authorizer: { jwt: { claims: {
       iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "production-user-123", email_verified: "true",
       exp: String(now + 3600), iat: String(now - 60),
@@ -37,6 +39,10 @@ function productionEvent(body: unknown = request()) {
       "custom:production_bound": "true",
     } } } },
   };
+}
+
+async function mockTrustedCaller(event: ApiGatewayV2Event) {
+  return { claims: event.requestContext?.authorizer?.jwt?.claims ?? {}, consumerAuthorization: `Bearer ${"x".repeat(64)}` };
 }
 
 function productionConfiguration() {
@@ -117,7 +123,7 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     const handler = createAwsAskAlpApiHandler({
       configuration: productionConfiguration(),
       coreGuard: async () => undefined,
-      trustedCallerVerifier: async () => undefined,
+      trustedCallerVerifier: mockTrustedCaller,
       trustedContextLoader: async (identity) => {
         expect(identity.actorPersonId).toBe("22222222-2222-4222-8222-222222222222");
         expect(identity.organizationId).toBe("33333333-3333-4333-8333-333333333333");
@@ -138,7 +144,7 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     let providerCalls = 0;
     const handler = createAwsAskAlpApiHandler({
       configuration: productionConfiguration(), coreGuard: async () => undefined,
-      trustedCallerVerifier: async () => undefined,
+      trustedCallerVerifier: mockTrustedCaller,
       trustedContextLoader: async () => ({ context: { labs: [] }, assertCurrent: async () => { throw new OwnedStorageError("consent_required"); } }),
       provider: async () => { providerCalls += 1; return { ...result(), provider: "openai", model: MODEL }; },
     });
@@ -152,7 +158,7 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     let loads = 0;
     const handler = createAwsAskAlpApiHandler({
       configuration: productionConfiguration(), coreGuard: async () => undefined,
-      trustedCallerVerifier: async () => undefined,
+      trustedCallerVerifier: mockTrustedCaller,
       trustedContextLoader: async () => { loads += 1; throw new Error("must not load"); },
       provider: async () => { throw new Error("must not call provider"); },
     });
@@ -167,7 +173,7 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     let loads = 0;
     const handler = createAwsAskAlpApiHandler({
       configuration: productionConfiguration(), coreGuard: async () => { throw new CoreSubscriptionError(); },
-      trustedCallerVerifier: async () => undefined,
+      trustedCallerVerifier: mockTrustedCaller,
       trustedContextLoader: async () => { loads += 1; throw new Error("must not load"); },
       provider: async () => { throw new Error("must not call provider"); },
     });
@@ -179,7 +185,7 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     expect(() => createAwsAskAlpApiHandler({ configuration: { ...productionConfiguration(), productionActivation: undefined } })).toThrow("ask_alp_configuration_invalid");
   });
 
-  it("does not expose production generation on a direct JWT-only call", async () => {
+  it("does not expose production generation without a trusted backend-caller verifier", async () => {
     let providerCalls = 0;
     const handler = createAwsAskAlpApiHandler({
       configuration: productionConfiguration(), coreGuard: async () => undefined,
@@ -190,6 +196,56 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     expect(response.statusCode).toBe(503);
     expect(JSON.parse(response.body)).toEqual({ error: "trusted_caller_not_configured" });
     expect(providerCalls).toBe(0);
+  });
+
+  it("never exposes production generation on the public JWT route", async () => {
+    const handler = createAwsAskAlpApiHandler({ configuration: productionConfiguration(), trustedCallerVerifier: mockTrustedCaller,
+      trustedContextLoader: async () => { throw new Error("must not load"); }, coreGuard: async () => { throw new Error("must not check"); },
+      provider: async () => { throw new Error("must not generate"); } });
+    const response = await handler({ ...productionEvent(), routeKey: "POST /clinical-core/consumer/ask-alp/generate" });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("does not load clinical context or call OpenAI when private caller verification fails", async () => {
+    let contextLoads = 0, providerCalls = 0;
+    const handler = createAwsAskAlpApiHandler({ configuration: productionConfiguration(),
+      trustedCallerVerifier: async () => { throw new PrivateAskAlpCallerError(); },
+      trustedContextLoader: async () => { contextLoads += 1; throw new Error("must not load"); },
+      coreGuard: async () => { throw new Error("must not check entitlement"); },
+      provider: async () => { providerCalls += 1; throw new Error("must not generate"); } });
+    const response = await handler(productionEvent());
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({ error: "trusted_caller_refused" });
+    expect(contextLoads).toBe(0);
+    expect(providerCalls).toBe(0);
+  });
+
+  it("uses verified IAM and Cognito claims, never forged gateway JWT claims, in the production handler", async () => {
+    const token = `${"a".repeat(12)}.${"b".repeat(48)}.${"c".repeat(16)}`;
+    const event = productionEvent() as ApiGatewayV2Event;
+    event.headers!["x-alp-consumer-id-token"] = token;
+    event.requestContext!.apiId = "abcdefghij";
+    event.requestContext!.accountId = "173535830222";
+    event.requestContext!.authorizer!.iam = { accountId: "173535830222",
+      userArn: "arn:aws:sts::173535830222:assumed-role/alp-v2-production-api/fictional-ecs-task" };
+    event.requestContext!.authorizer!.jwt!.claims!["custom:person_id"] = "44444444-4444-4444-8444-444444444444";
+    const verifiedClaims = { ...productionEvent().requestContext.authorizer.jwt.claims };
+    let seenPerson = "";
+    const handler = createAwsAskAlpApiHandler({ configuration: productionConfiguration(),
+      trustedCallerVerifier: candidate => verifyPrivateAskAlpCaller(candidate, {
+        apiId: "abcdefghij", accountId: "173535830222",
+        backendRoleArn: "arn:aws:iam::173535830222:role/alp-v2-production-api",
+        consumerIssuer: ISSUER, consumerAudience: AUDIENCE,
+      }, async () => verifiedClaims),
+      coreGuard: async input => { expect(input.authorization).toBe(`Bearer ${token}`); },
+      trustedContextLoader: async identity => { seenPerson = identity.actorPersonId;
+        return { context: { labs: [] }, assertCurrent: async () => undefined }; },
+      provider: async () => ({ ...result(), provider: "openai", model: MODEL }),
+    });
+    expect((await handler(event)).statusCode).toBe(200);
+    expect(seenPerson).toBe("22222222-2222-4222-8222-222222222222");
+    event.requestContext!.authorizer!.iam!.userArn = "arn:aws:sts::173535830222:assumed-role/other/task";
+    expect((await handler(event)).statusCode).toBe(403);
   });
 
   it("refuses misspelled runtime modes instead of treating them as synthetic", () => {

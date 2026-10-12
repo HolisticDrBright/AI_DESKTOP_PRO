@@ -18,17 +18,30 @@ consent, ignores every caller-supplied context field, caps context bytes, and
 rebuilds the snapshot after generation so withdrawal or record changes withhold
 the response. The API also checks current owner claims, Core entitlement, the
 prompt hash, activation-evidence field, and output guard before delivery.
-These are local/source tests only. The Lambda does **not** configure a trusted
-backend-caller verifier; the production path still returns
-`trusted_caller_not_configured` and cannot invoke OpenAI. A public JWT route
-must not bypass the V2 server's deterministic red-flag/refusal and inbox
-workflow.
+The production handler now accepts only
+`POST /clinical-core/internal/ask-alp/generate`, not the public consumer JWT
+route. Its caller verifier pins the API and account, requires an API Gateway
+IAM-authenticated invocation from the specified ECS role, and independently
+verifies a Cognito ID token carried in a separate header before deriving the
+owner. Core entitlement receives that verified token; SigV4 Authorization is
+not misread as a consumer bearer token. The synthetic route is unchanged.
+These are local/source tests only. V2 now has a source-only SigV4 backend
+signer for the private route and sends no device context on that path. No
+production `AWS_IAM` route, restrictive Lambda permission, matched
+context/chip contract or hosted proof exists yet. A public JWT route must not
+bypass the V2 server's
+deterministic red-flag/refusal and inbox workflow. The existing synthetic
+CloudFormation template fixes `RUNTIME_MODE=synthetic` and `PHI_ALLOWED=false`.
 
 Before a production candidate may replace this refusal:
 
-1. Add a private, authenticated backend-to-model invocation that a consumer
-   cannot mint or replay. Prove it is reached only after deterministic
-   red-flag/refusal handling, including practitioner-inbox alerts. Do not
+1. Deploy a separately reviewed `AWS_IAM` route and IAM-scoped ECS task role,
+   with a restrictive API Gateway-only Lambda resource permission. The V2
+   source signer must be bound to the deployed ECS task role; prove a consumer
+   cannot mint or replay the call and verify the actual gateway IAM event
+   shape, including its account field, under hosted qualification. Also prove
+   that the route is reached only after deterministic red-flag/refusal handling,
+   including practitioner-inbox alerts. Do not
    satisfy this with an unverified request header or a browser-held secret.
 2. Produce one exact context/chip contract across V2 and the model boundary;
    the V2 builder currently budgets the snapshot while the new AWS loader

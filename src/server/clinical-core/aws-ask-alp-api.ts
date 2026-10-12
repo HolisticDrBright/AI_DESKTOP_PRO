@@ -7,6 +7,7 @@ import { CoreSubscriptionError, requireConsumerCore } from "./core-subscription-
 import { ownedConsumerIdentity } from "./owned-consumer-api";
 import { OwnedStorageError } from "./owned-consumer-records";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
+import { ASK_ALP_PRIVATE_ROUTE, PrivateAskAlpCallerError } from "./aws-ask-alp-private-caller";
 
 const ROUTE = "POST /clinical-core/consumer/ask-alp/generate";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -22,6 +23,7 @@ export type AskAlpApiConfiguration = {
 export type AskAlpProvider = (request: AskAlpGenerationRequest) => Promise<AskAlpGenerationResult>;
 export type TrustedAskAlpContextLease = { context: Record<string, unknown>; assertCurrent: () => Promise<void> };
 export type TrustedAskAlpContextLoader = (identity: ProductionClinicalRequestContext) => Promise<TrustedAskAlpContextLease>;
+export type TrustedAskAlpCaller = { claims: Record<string, string | number | boolean | undefined>; consumerAuthorization: string };
 
 export function parseAskAlpRuntimeMode(value: string): "synthetic" | "production" {
   if (value !== "synthetic" && value !== "production") throw new Error("ask_alp_configuration_invalid");
@@ -31,27 +33,30 @@ export function parseAskAlpRuntimeMode(value: string): "synthetic" | "production
 export function createAwsAskAlpApiHandler(input: {
   configuration: AskAlpApiConfiguration; provider?: AskAlpProvider;
   trustedContextLoader?: TrustedAskAlpContextLoader;
-  trustedCallerVerifier?: (event: ApiGatewayV2Event) => Promise<void>;
+  trustedCallerVerifier?: (event: ApiGatewayV2Event) => Promise<TrustedAskAlpCaller>;
   coreGuard?: typeof requireConsumerCore;
 }) {
   validateConfiguration(input.configuration);
   const provider = input.provider ?? ((request) => generateAskAlpWithOpenAI({ request, model: input.configuration.model, secretArn: input.configuration.openAiSecretArn }));
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
-    if (event.routeKey !== ROUTE) return response(404, { error: "route_not_found" });
+    const production = input.configuration.runtimeMode === "production";
+    if (event.routeKey !== (production ? ASK_ALP_PRIVATE_ROUTE : ROUTE)) return response(404, { error: "route_not_found" });
     if (input.configuration.runtimeMode === "production" && !input.configuration.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
     if (input.configuration.runtimeMode === "production" && !input.trustedContextLoader) return response(503, { error: "trusted_context_not_configured" });
     if (input.configuration.runtimeMode === "production" && !input.trustedCallerVerifier) return response(503, { error: "trusted_caller_not_configured" });
     try {
-      const production = input.configuration.runtimeMode === "production";
-      const identity = production
-        ? ownedConsumerIdentity(event, input.configuration, "clinical_data", Date.now())
-        : assertIdentity(event, input.configuration);
+      // On the IAM route the Authorization header is SigV4, not a consumer JWT.
+      // Verify both the backend principal and the separate Cognito token before
+      // accepting owner claims or parsing clinical request content.
+      const caller = production ? await input.trustedCallerVerifier!(event) : null;
+      const identity = production ? ownedConsumerIdentity({ ...event, requestContext: {
+        authorizer: { jwt: { claims: caller!.claims } },
+      } }, input.configuration, "clinical_data", Date.now()) : assertIdentity(event, input.configuration);
       const callerRequest = validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
       if (production) {
         // The V2 server runs deterministic pre-generation safety screening.
         // A direct consumer call must not bypass it merely by carrying a JWT.
-        await input.trustedCallerVerifier!(event);
-        await (input.coreGuard ?? requireConsumerCore)(event.headers ?? {});
+        await (input.coreGuard ?? requireConsumerCore)({ authorization: caller!.consumerAuthorization });
         // The entire caller context is discarded. Only owner-scoped server data
         // may reach the provider; a mid-generation change withholds the answer.
         const lease = await input.trustedContextLoader!(identity as ProductionClinicalRequestContext);
@@ -68,6 +73,7 @@ export function createAwsAskAlpApiHandler(input: {
         return response(status, { error: error.category });
       }
       if (error instanceof AskAlpApiIdentityError) return response(403, { error: "identity_refused" });
+      if (error instanceof PrivateAskAlpCallerError) return response(403, { error: "trusted_caller_refused" });
       if (error instanceof OwnedStorageError) return response(error.code === "consent_required" ? 403 : error.code === "owner_required" ? 403 : 503,
         { error: error.code === "consent_required" ? "consent_required" : error.code === "owner_required" ? "identity_refused" : "trusted_context_unavailable" });
       return response(503, { error: "service_unavailable" });
