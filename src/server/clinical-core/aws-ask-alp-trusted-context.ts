@@ -1,13 +1,11 @@
 if (typeof window !== "undefined") throw new Error("aws-ask-alp-trusted-context is server-only");
 
-import { createHash } from "node:crypto";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { buildOwnedChatContext } from "./owned-chat-context";
 import { createOwnedConsumerRecordsAdapter, OwnedStorageError, OWNED_STORAGE_SCOPES, type OwnedStorageScope } from "./owned-consumer-records";
 import type { KnowledgeLoader } from "./aws-reviewed-knowledge";
 import type { TrustedAskAlpContextLoader } from "./aws-ask-alp-api";
-
-const MAX_CONTEXT_BYTES = 60_000;
+import { ownerChatContextDigest } from "./owner-chat-context-digest";
 
 /** A server-owned, consent-filtered snapshot for one verified consumer identity.
  * Re-read before delivery so withdrawal or record changes withhold a stale answer. */
@@ -23,19 +21,13 @@ export function createOwnedAskAlpContextLoader(input: {
     const now = input.now?.() ?? Date.now();
     const collect = () => buildOwnedChatContext(input.adapter(), identity, input.allowedScopes, now, input.knowledgeLoader);
     const context = await collect();
-    const initialDigest = digest(context);
+    const initialDigest = ownerChatContextDigest(context);
     return {
       context,
       assertCurrent: async () => {
         const current = await collect();
-        if (digest(current) !== initialDigest) throw new OwnedStorageError("storage_unavailable");
+        if (ownerChatContextDigest(current) !== initialDigest) throw new OwnedStorageError("storage_unavailable");
       },
     };
   };
-}
-
-function digest(context: Record<string, unknown>): string {
-  const bytes = Buffer.from(JSON.stringify(context), "utf8");
-  if (bytes.byteLength > MAX_CONTEXT_BYTES) throw new OwnedStorageError("storage_unavailable");
-  return createHash("sha256").update(bytes).digest("hex");
 }

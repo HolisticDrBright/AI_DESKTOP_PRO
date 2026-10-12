@@ -8,6 +8,7 @@ import { ownedConsumerIdentity } from "./owned-consumer-api";
 import { OwnedStorageError } from "./owned-consumer-records";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { ASK_ALP_PRIVATE_ROUTE, PrivateAskAlpCallerError } from "./aws-ask-alp-private-caller";
+import { ownerChatContextDigest } from "./owner-chat-context-digest";
 
 const ROUTE = "POST /clinical-core/consumer/ask-alp/generate";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,7 +24,7 @@ export type AskAlpApiConfiguration = {
 export type AskAlpProvider = (request: AskAlpGenerationRequest) => Promise<AskAlpGenerationResult>;
 export type TrustedAskAlpContextLease = { context: Record<string, unknown>; assertCurrent: () => Promise<void> };
 export type TrustedAskAlpContextLoader = (identity: ProductionClinicalRequestContext) => Promise<TrustedAskAlpContextLease>;
-export type TrustedAskAlpCaller = { claims: Record<string, string | number | boolean | undefined>; consumerAuthorization: string };
+export type TrustedAskAlpCaller = { claims: Record<string, string | number | boolean | undefined>; consumerAuthorization: string; expectedContextSha256: string };
 
 export function parseAskAlpRuntimeMode(value: string): "synthetic" | "production" {
   if (value !== "synthetic" && value !== "production") throw new Error("ask_alp_configuration_invalid");
@@ -60,6 +61,8 @@ export function createAwsAskAlpApiHandler(input: {
         // The entire caller context is discarded. Only owner-scoped server data
         // may reach the provider; a mid-generation change withholds the answer.
         const lease = await input.trustedContextLoader!(identity as ProductionClinicalRequestContext);
+        if (ownerChatContextDigest(lease.context) !== caller!.expectedContextSha256)
+          throw new PrivateAskAlpCallerError();
         const request = validateAskAlpRequest({ ...callerRequest, context: lease.context }, input.configuration.approvedPromptSha256);
         const answer = await provider(request);
         await lease.assertCurrent();

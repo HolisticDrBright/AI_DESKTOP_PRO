@@ -3,6 +3,7 @@ import { ASK_ALP_PRIVATE_ROUTE, PrivateAskAlpCallerError, verifyPrivateAskAlpCal
 import type { ApiGatewayV2Event } from "./aws-identity-api";
 
 const token = `${"a".repeat(12)}.${"b".repeat(48)}.${"c".repeat(16)}`;
+const contextDigest = "d".repeat(64);
 const config = {
   apiId: "abcdefghij", accountId: "173535830222",
   backendRoleArn: "arn:aws:iam::173535830222:role/alp-v2-production-api",
@@ -12,7 +13,8 @@ const config = {
 const claims = { iss: config.consumerIssuer, aud: config.consumerAudience, token_use: "id", sub: "owner-12345678" };
 function event(): ApiGatewayV2Event {
   return { routeKey: ASK_ALP_PRIVATE_ROUTE,
-    headers: { authorization: "AWS4-HMAC-SHA256 Credential=fictional", "x-alp-consumer-id-token": token },
+    headers: { authorization: "AWS4-HMAC-SHA256 Credential=fictional", "x-alp-consumer-id-token": token,
+      "x-alp-context-sha256": contextDigest },
     requestContext: { apiId: config.apiId, accountId: config.accountId,
       authorizer: { iam: { accountId: config.accountId,
         userArn: "arn:aws:sts::173535830222:assumed-role/alp-v2-production-api/fictional-ecs-task" } } } };
@@ -22,7 +24,7 @@ describe("private Ask ALP backend and owner authentication", () => {
   it("admits only the pinned IAM role after separately verifying a consumer token", async () => {
     const verify = vi.fn(async () => claims);
     const result = await verifyPrivateAskAlpCaller(event(), config, verify);
-    expect(result).toEqual({ claims, consumerAuthorization: `Bearer ${token}` });
+    expect(result).toEqual({ claims, consumerAuthorization: `Bearer ${token}`, expectedContextSha256: contextDigest });
     expect(verify).toHaveBeenCalledExactlyOnceWith(token);
   });
 
@@ -35,6 +37,8 @@ describe("private Ask ALP backend and owner authentication", () => {
     ["browser bearer", (e: ApiGatewayV2Event) => { e.headers!.authorization = `Bearer ${token}`; }],
     ["missing consumer token", (e: ApiGatewayV2Event) => { delete e.headers!["x-alp-consumer-id-token"]; }],
     ["duplicate token header casing", (e: ApiGatewayV2Event) => { e.headers!["X-ALP-CONSUMER-ID-TOKEN"] = token; }],
+    ["missing owner context digest", (e: ApiGatewayV2Event) => { delete e.headers!["x-alp-context-sha256"]; }],
+    ["duplicate digest header casing", (e: ApiGatewayV2Event) => { e.headers!["X-ALP-CONTEXT-SHA256"] = contextDigest; }],
   ])("refuses %s before token verification", async (_name, mutate) => {
     const candidate = event(); mutate(candidate);
     const verify = vi.fn(async () => claims);

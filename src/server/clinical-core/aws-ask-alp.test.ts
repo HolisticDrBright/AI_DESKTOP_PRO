@@ -5,6 +5,7 @@ import { buildAskAlpOpenAIRequest, parseAskAlpOpenAIResponse } from "./aws-ask-a
 import { OwnedStorageError } from "./owned-consumer-records";
 import { CoreSubscriptionError } from "./core-subscription-guard";
 import { ASK_ALP_PRIVATE_ROUTE, PrivateAskAlpCallerError, verifyPrivateAskAlpCaller } from "./aws-ask-alp-private-caller";
+import { ownerChatContextDigest } from "./owner-chat-context-digest";
 import type { ApiGatewayV2Event } from "./aws-identity-api";
 
 const ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_example";
@@ -31,7 +32,8 @@ function result() {
 function productionEvent(body: unknown = request()) {
   const now = Math.floor(Date.now() / 1000);
   return {
-    routeKey: ASK_ALP_PRIVATE_ROUTE, headers: { "content-type": "application/json", authorization: "AWS4-HMAC-SHA256 test" }, body: JSON.stringify(body),
+    routeKey: ASK_ALP_PRIVATE_ROUTE, headers: { "content-type": "application/json", authorization: "AWS4-HMAC-SHA256 test",
+      "x-alp-context-sha256": ownerChatContextDigest({ labs: [] }) }, body: JSON.stringify(body),
     requestContext: { authorizer: { jwt: { claims: {
       iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "production-user-123", email_verified: "true",
       exp: String(now + 3600), iat: String(now - 60),
@@ -42,7 +44,8 @@ function productionEvent(body: unknown = request()) {
 }
 
 async function mockTrustedCaller(event: ApiGatewayV2Event) {
-  return { claims: event.requestContext?.authorizer?.jwt?.claims ?? {}, consumerAuthorization: `Bearer ${"x".repeat(64)}` };
+  return { claims: event.requestContext?.authorizer?.jwt?.claims ?? {}, consumerAuthorization: `Bearer ${"x".repeat(64)}`,
+    expectedContextSha256: event.headers?.["x-alp-context-sha256"] ?? "" };
 }
 
 function productionConfiguration() {
@@ -132,7 +135,9 @@ describe("AWS Ask ALP OpenAI boundary", () => {
       provider: async (value) => { seen.push(value); return { ...result(), provider: "openai", model: MODEL }; },
     });
     const forged = { ...request(), context: { labs: [{ name: "Forged ferritin", value: 1 }] } };
-    const response = await handler(productionEvent(forged));
+    const event = productionEvent(forged);
+    event.headers["x-alp-context-sha256"] = ownerChatContextDigest({ labs: [{ name: "Owned ferritin", value: 112, unit: "ng/mL", drawnAt: "2026-10-01T00:00:00.000Z", conventionalRange: null, functionalRange: null, sourceStatus: "consumer_import_unverified" }] });
+    const response = await handler(event);
     expect(response.statusCode).toBe(200);
     expect(seen).toHaveLength(1);
     expect(JSON.stringify(seen[0]!.context)).toContain("Owned ferritin");
@@ -152,6 +157,19 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     expect(response.statusCode).toBe(403);
     expect(JSON.parse(response.body)).toEqual({ error: "consent_required" });
     expect(providerCalls).toBe(1);
+  });
+
+  it("refuses a changed owner context before contacting the model", async () => {
+    let providerCalls = 0;
+    const handler = createAwsAskAlpApiHandler({ configuration: productionConfiguration(), coreGuard: async () => undefined,
+      trustedCallerVerifier: mockTrustedCaller,
+      trustedContextLoader: async () => ({ context: { labs: [{ name: "New result", value: 42 }] }, assertCurrent: async () => undefined }),
+      provider: async () => { providerCalls += 1; return { ...result(), provider: "openai", model: MODEL }; },
+    });
+    const response = await handler(productionEvent());
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({ error: "trusted_caller_refused" });
+    expect(providerCalls).toBe(0);
   });
 
   it("refuses a token without current owner claims before loading any context", async () => {

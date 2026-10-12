@@ -1,6 +1,7 @@
 import {describe,it,expect,vi} from "vitest";
 import {createHash} from 'node:crypto';
 import {createOwnedConsumerApi,type OwnedConsumerApiConfiguration} from "./owned-consumer-api";
+import {ownerChatContextDigest} from './owner-chat-context-digest';
 import {createOwnedConsumerRecordsAdapter} from "./owned-consumer-records";
 import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from "./database";
 import type {ApiGatewayV2Event} from "./aws-identity-api";
@@ -69,6 +70,19 @@ describe("independent consumer API",()=>{
     e.queryStringParameters={collection:"wellness_profiles"};expect((await s.handler(e)).statusCode).toBe(400);
     const unverified=event("GET /clinical-core/consumer/personal/posture");unverified.queryStringParameters={};delete unverified.requestContext;
     expect((await s.handler(unverified)).statusCode).toBe(401);
+  });
+  it('binds a consent-filtered chat snapshot to the exact response data',async()=>{
+    const adapter=()=>({
+      consentState:vi.fn(async()=>({activeRevision:1})),
+      recent:vi.fn(async()=>[]),
+      list:vi.fn(async()=>[]),
+    }) as unknown as ReturnType<typeof createOwnedConsumerRecordsAdapter>;
+    const handler=createOwnedConsumerApi({configuration:{...config,allowedScopes:['ai_context']},adapter,now:()=>now});
+    const e=event('GET /clinical-core/consumer/personal/chat-context');e.queryStringParameters={};
+    const r=await handler(e);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['x-alp-context-sha256']).toBe(ownerChatContextDigest(JSON.parse(r.body).data));
+    expect(r.headers['cache-control']).toBe('no-store');
   });
   it("lists tombstones only through the explicit view under the same scope gate",async()=>{
     const list=vi.fn(async()=>[]),listTombstones=vi.fn(async()=>[{recordId:id,revision:2,deleted:true,receivedAt:"2026-09-01T00:00:00.000Z"}]);

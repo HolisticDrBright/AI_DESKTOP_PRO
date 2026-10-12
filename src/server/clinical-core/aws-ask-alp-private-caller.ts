@@ -37,22 +37,24 @@ export async function verifyPrivateAskAlpCaller(
   event: ApiGatewayV2Event,
   config: PrivateAskAlpCallerConfiguration,
   verifyConsumerToken: (token: string) => Promise<Claims>,
-): Promise<{ claims: Claims; consumerAuthorization: string }> {
+): Promise<{ claims: Claims; consumerAuthorization: string; expectedContextSha256: string }> {
   const { roleName } = configured(config);
   const iam = event.requestContext?.authorizer?.iam;
   const principal = iam?.userArn ?? "";
   const prefix = `arn:aws:sts::${config.accountId}:assumed-role/${roleName}/`;
   const session = principal.startsWith(prefix) ? principal.slice(prefix.length) : "";
   const token = header(event, "x-alp-consumer-id-token");
+  const expectedContextSha256 = header(event, "x-alp-context-sha256");
   if (event.routeKey !== ASK_ALP_PRIVATE_ROUTE || event.requestContext?.apiId !== config.apiId
     || event.requestContext?.accountId !== config.accountId
     || !/^[A-Za-z0-9+=,.@_-]{1,128}$/.test(session)
     || iam?.accountId !== config.accountId || !TOKEN.test(token)
+    || !/^[0-9a-f]{64}$/.test(expectedContextSha256)
     || !/^AWS4-HMAC-SHA256\s/.test(header(event, "authorization"))) throw new PrivateAskAlpCallerError();
   let claims: Claims;
   try { claims = await verifyConsumerToken(token); } catch { throw new PrivateAskAlpCallerError(); }
   if (!claims || typeof claims !== "object" || Array.isArray(claims)) throw new PrivateAskAlpCallerError();
-  return { claims, consumerAuthorization: `Bearer ${token}` };
+  return { claims, consumerAuthorization: `Bearer ${token}`, expectedContextSha256 };
 }
 
 /** Runtime path: verify the Cognito signature and issuer, ID-token use and

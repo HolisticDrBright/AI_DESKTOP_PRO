@@ -26,9 +26,15 @@ verifies a Cognito ID token carried in a separate header before deriving the
 owner. Core entitlement receives that verified token; SigV4 Authorization is
 not misread as a consumer bearer token. The synthetic route is unchanged.
 These are local/source tests only. V2 now has a source-only SigV4 backend
-signer for the private route and sends no device context on that path. No
-production `AWS_IAM` route, restrictive Lambda permission, matched
-context/chip contract or hosted proof exists yet. A public JWT route must not
+signer for the private route and sends no device context on that path. The
+personal-context response carries a digest of its exact owner snapshot;
+V2 validates it and signs it into the private request. The Lambda reloads
+owner data and refuses a digest mismatch before calling OpenAI. V2 emits
+context chips only after an accepted answer has been saved. This binds the
+source read across the two servers, but does not make the V2 budgeted snapshot
+identical to the raw Lambda/model snapshot. No production `AWS_IAM` route,
+restrictive Lambda permission, exact context/chip contract or hosted proof
+exists yet. A public JWT route must not
 bypass the V2 server's
 deterministic red-flag/refusal and inbox workflow. The existing synthetic
 CloudFormation template fixes `RUNTIME_MODE=synthetic` and `PHI_ALLOWED=false`.

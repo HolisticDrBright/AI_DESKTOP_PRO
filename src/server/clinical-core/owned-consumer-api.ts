@@ -4,6 +4,7 @@ import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createOwnedConsumerRecordsAdapter,OwnedStorageError,OWNED_STORAGE_SCOPES,type OwnedStorageScope,type OwnedRecordWrite } from "./owned-consumer-records";
 import { OWNED_COLLECTIONS as CONSUMER_CLINICAL_COLLECTIONS,type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import {buildOwnedChatContext} from './owned-chat-context';
+import {ownerChatContextDigest} from './owner-chat-context-digest';
 import type {KnowledgeLoader} from './aws-reviewed-knowledge';
 import type {createOwnedPrivacyExportJobs} from './owned-privacy-export-job';
 import {assertQualificationConfiguration,markQualificationResponse,qualificationAdmits,type QualificationExecution} from './qualification-execution';
@@ -144,7 +145,10 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       if(route.endsWith('/chat-context')){
         exact(body,[]);
         if(!c.allowedScopes.includes('ai_context'))return response(403,{error:'feature_scope_not_enabled'});
-        return response(200,{data:await buildOwnedChatContext(input.adapter(),context,c.allowedScopes,input.now?.()??Date.now(),input.knowledgeLoader)});
+        const data=await buildOwnedChatContext(input.adapter(),context,c.allowedScopes,input.now?.()??Date.now(),input.knowledgeLoader);
+        const result=response(200,{data});
+        result.headers={...result.headers,'x-alp-context-sha256':ownerChatContextDigest(data)};
+        return result;
       }
       const scope=consent?body.scope:COLLECTION_SCOPE[body.collection as ConsumerClinicalCollection];
       if (!scope || !OWNED_STORAGE_SCOPES.includes(scope as OwnedStorageScope)) invalid();
