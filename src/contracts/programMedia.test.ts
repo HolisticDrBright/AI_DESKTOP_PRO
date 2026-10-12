@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PROGRAM_MEDIA_TEXT_SOURCES, programMediaArtifact, programMediaExtension, programMediaPrepareRequest, programMediaReference, programMediaStorageSchema,
+  PROGRAM_MEDIA_TEXT_SOURCES, programMediaArtifact, programMediaExtension, programMediaPrepareRequest, programMediaReference, programMediaStorageSchema, programMediaCleanupReceipt,
 } from './programMedia';
 import { programItemEducation } from './programAssignments';
 
@@ -24,6 +24,7 @@ describe('program-media/1', () => {
   it('keeps the artifact state machine consistent: ready and retired carry a proven object; retired carries a time; text follows the kind', () => {
     expect(programMediaArtifact.safeParse(artifact).success).toBe(true);
     expect(programMediaArtifact.safeParse({ ...artifact, objectVersion: null }).success).toBe(false);
+    expect(programMediaArtifact.safeParse({ ...artifact, objectVersion: 'null' }).success).toBe(false);
     expect(programMediaArtifact.safeParse({ ...artifact, state: 'reserved' }).success).toBe(false);
     expect(programMediaArtifact.safeParse({ ...artifact, state: 'retired' }).success).toBe(false);
     expect(programMediaArtifact.safeParse({ ...artifact, state: 'retired', retiredAt: artifact.committedAt }).success).toBe(true);
@@ -34,6 +35,18 @@ describe('program-media/1', () => {
     expect(programMediaArtifact.safeParse({ ...artifact, kind: 'image', contentType: 'image/png', caption: text }).success).toBe(false);
     expect(programMediaArtifact.safeParse({ ...artifact, caption: { ...text, source: 'generated' } }).success).toBe(false);
     expect(PROGRAM_MEDIA_TEXT_SOURCES).toEqual(['supplied_by_author', 'supplied_vendor_file']);
+  });
+  it('a deletion receipt requires one exact complete absence proof per successful action', () => {
+    const action = { artifactId: artifact.artifactId, outcome: 'abandoned_object_removed' };
+    const proof = { artifactId: artifact.artifactId, claimId: artifact.programId, objectKey: artifact.objectKey,
+      checkedAt: artifact.committedAt, complete: true, remainingVersions: 0, removedVersions: ['v1'] };
+    const receipt = { programId: artifact.programId, checkedAt: artifact.committedAt, actions: [action], proofs: [proof] };
+    expect(programMediaCleanupReceipt.safeParse(receipt).success).toBe(true);
+    for (const changed of [{ proofs: [] }, { proofs: [{ ...proof, artifactId: artifact.clinic }] }, { proofs: [{ ...proof, complete: false }] },
+      { proofs: [{ ...proof, remainingVersions: 1 }] }, { proofs: [{ ...proof, removedVersions: [] }] }, { proofs: [proof, proof] }, { actions: [action, action] }]) {
+      expect(programMediaCleanupReceipt.safeParse({ ...receipt, ...changed }).success).toBe(false);
+    }
+    expect(programMediaCleanupReceipt.safeParse({ ...receipt, actions: [{ ...action, outcome: 'kept_pending' }] }).success).toBe(false);
   });
   it('refuses a storage declaration that could be a clinical store', () => {
     const storage = { purpose: 'educational_media', phiAllowed: false, dedicated: true, bucket: 'alp-fictional-program-media', expectedBucketOwner: '588966314750', region: 'us-east-2',

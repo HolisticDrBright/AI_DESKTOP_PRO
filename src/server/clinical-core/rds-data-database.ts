@@ -54,6 +54,21 @@ export function createRdsDataFullscriptDraftDatabase(
   return createRdsDataDatabase(configuration, client, "fullscript_draft_worker");
 }
 
+/** Unreleased educational-media qualification worker. A missing role is a
+ * refusal, never permission to fall back to clinical API or migration access.
+ * This source admits only the isolated fictional account and database. */
+export function createRdsDataProgramMediaDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  if(configuration.databaseName!=="clinical_core_qualification"||configuration.region!=="us-east-2"
+    ||!configuration.clusterArn.startsWith("arn:aws:rds:us-east-2:588966314750:cluster:")
+    ||!configuration.secretArn.startsWith("arn:aws:secretsmanager:us-east-2:588966314750:secret:")) {
+    throw new RdsDataDatabaseError("configuration_invalid");
+  }
+  return createRdsDataDatabase(configuration, client, "program_media_worker");
+}
+
 /** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
@@ -69,7 +84,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api" | "fullscript_draft_worker",
+  assumeRole?: "clinical_core_api" | "fullscript_draft_worker" | "program_media_worker",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {

@@ -16,9 +16,10 @@ and no schema successor is created: the ledger is a blocked candidate for review
 | `infra/aws-clinical-core/source-candidates/program-education-catalog-admission.sql` (sha `eac6f2f1ae0ff2d418da9f7a06b5086d50ba46374f31961726fd52fa0530ba1d`, standalone, unregistered, unapplied) | Admits the education fields and the catalog binding into the SQL copy of the program contract | A media ledger. Its identity is preserved; this design does not amend it. |
 
 Conclusion of the inventory: **no reviewed media architecture exists.** The recording
-store is the right pattern and the wrong store. So this return is a dedicated-media
-design, a complete authoring source over interfaces, a fictional store that runs every
-journey, and a blocked ledger candidate, in that order, and no activation.
+store must remain separate. The source specification now requires durable writer and
+cleanup admission, complete version-inventory absence proof and the entire recorded
+publication. See `docs/program-media-settlement-2026-10-11.md` for the four independently
+reproduced defects and their source repairs. The runtime remains disabled.
 
 ## Design
 
@@ -61,8 +62,8 @@ journey, and a blocked ledger candidate, in that order, and no activation.
 - Every metadata change raises the artifact `version`. A publication names the exact
   version, bytes (sha256), kind, content type, origin clinic and program, and the https
   address under the dedicated public origin. `programMediaReferenceStatus` reports whether
-  that reference is `historical` (artifact retired) and `current` (bytes and version still
-  match).
+  that reference is `historical` only for a recorded reference after retirement, and
+  `current` only when the whole recorded reference matches the current artifact snapshot.
 - The mirrored slot is not changed. A successor slot carrying the reference is a
   separate, mirrored contract change for both repositories after this review.
 
@@ -75,10 +76,13 @@ with `program_media_disabled` until a reviewed activation is passed in. The inte
 - `ProgramMediaLedger`: `authorize`, `reserve` (idempotent on clinic, program and command;
   a changed payload under the same command conflicts), `reservation`, `artifact`, `commit`
   (idempotent for the same object version), `settle`, `attachText`, `retire`,
-  `recordPublication`, `expiredReservations`.
+  `recordPublication`, `hasPublication`, `expiredReservations`, and the durable
+  `beginWriter`, `finishWriter`, `beginCleanup`, `certifyCleanup` operations. Commit checks
+  the writer claim in the same transaction as its state change. An uncertain writer does
+  not expire automatically and needs a separately reviewed recovery protocol.
 - `ProgramMediaObjectStore`: `put` (conditional create, `If-None-Match: *`), `head`
   (full-object SHA-256 checksum, SSE-KMS key, object metadata), `remove` (exact version,
-  cleanup only), `preview` (short-lived read handle).
+  cleanup only), `inventory` (complete exact-key version inventory), `preview` (short-lived read handle).
 
 What the runtime keeps:
 
@@ -87,8 +91,8 @@ What the runtime keeps:
 | A lost response never duplicates an upload | The reservation is idempotent on the command. `admit` for a `ready` artifact returns it without writing. A `put` that throws (conflict or lost response) is followed by a `head`; a proven object is committed, never rewritten. Two concurrent admits of one reservation write one object. |
 | A lost response never claims a publication | A reference exists only when `recordPublication` returned; a ledger failure leaves no reference. |
 | Integrity | Bytes must match the reservation's length and sha256 before any write; the stored object must report the same length, content type, full-object checksum, KMS key and identity metadata, else the artifact is `held` as `storage_unverified` and nothing commits. |
-| Explicit retry and reconciliation | A failed write or an unprovable object leaves the reservation in `error`. `reconcile` proves a later object and commits it, abandons an expired empty reservation, and holds a mismatch. |
-| Orphan cleanup never touches a committed artifact | `cleanupOrphans` considers only expired, uncommitted reservations of one authorized program: no object → `abandoned`; an object that provably belongs to the reservation → removed by exact version and `abandoned`; anything else → `held` for review. `ready`, `retired` and `held` rows are reported `kept_pending`. |
+| Explicit retry and reconciliation | Writer admission precedes storage calls. `reconcile` can recover proven bytes after the upload window expires; expiry alone is not absence proof. An abandoned reservation stays discoverable until cleanup is certified. |
+| Cleanup and committed artifacts | A durable cleanup seal must win before deletion. Active and uncertain writers block it; the seal prevents later writer admissions and commits. Cleanup verifies a complete exact-key version inventory after deletion and records its proof. A no-op, denied or uncertain delete remains pending. Ready, retired and held artifacts are not deleted. |
 | Retirement | A retired artifact is never newly published and accepts no new text; earlier references stay exactly what they were and read back as `historical`. |
 | Version binding | Text, publication and retirement each name the version they saw; a stale version conflicts. |
 
@@ -130,6 +134,8 @@ Not verified here, and not claimed: any S3, KMS, IAM, CloudFront or database beh
 the Studio's media slot still accepts an https address and is unchanged.
 
 ## Prerequisites Codex owns before activation
+
+The native ledger, restricted RDS worker and per-request factory now have disabled source implementations. See `docs/program-media-native-ledger-2026-10-11.md` for their distinct candidate, local evidence and remaining source/hosted work. The prerequisites below remain activation and delivery requirements; their presence does not mean the native source is deployed or that the browser/V2 media routes exist.
 
 1. **Store.** A dedicated bucket in the qualification account (`588966314750`,
    `us-east-2`) for educational media: versioning, bucket-owner-enforced ownership, all
@@ -185,12 +191,12 @@ the Studio's media slot still accepts an https address and is unchanged.
    stale version conflicts.
 9. Retire: publication after retirement is refused; the earlier reference reads back
    `historical: true`; the object is not deleted by retirement.
-10. Reconcile: a reservation in `error` after a forced `put` failure is committed by
-    `reconcile` once an object exists, abandoned once expired with no object.
-11. Cleanup: an expired reservation with its own orphan object is removed by exact version
-    and abandoned; a committed artifact in the same program is untouched; a mismatched
-    orphan is held, not deleted. Receipt: the cleanup receipt and `ListObjectVersions`
-    before and after.
+10. Reconcile: an admitted recovery can commit an object after the acceptance window
+    expires. Empty recovery certifies no deletion; unresolved reservations remain discoverable.
+11. Cleanup: prove both race orders, delayed and uncertain uploads, denial, incomplete
+    inventory and acknowledged no-op deletion. A settled orphan is removed by exact version
+    only after the durable seal; success needs a complete empty version inventory and recorded
+    absence proof. Ready objects and uncertain writers are preserved.
 12. Refusals: a consumer token, a production (PHI) context, another clinic's program, a
     PDF, a 17 MiB image, a name with a path separator, a patient field in the request, a
     publication before activation names an origin.
@@ -202,6 +208,12 @@ Failure recovery for each step is the state the runtime leaves: `error` is retry
 other than the dedicated one, and no step is evidence of patient-facing delivery.
 
 ## What this does not decide
+
+The bounded control HTTP source and 8 MiB part reader are recorded in
+`docs/program-media-http-admission-2026-10-11.md`. They preserve the 256 MiB
+video reservation ceiling but do not install routes or complete multipart
+upload/whole-file verification. Native multipart admission, actual host wiring
+and read-only V2 delivery remain prerequisites, not completed capabilities.
 
 Retention of educational media, who may retire, whether a published reference may be
 withdrawn from an already-assigned program, the delivery origin's caching, multipart

@@ -3,6 +3,8 @@
 import { Btn } from "@/components/ui/Btn";
 import { ClinicalNote } from "@/components/ui/ClinicalStates";
 import { CatalogPickerPanel } from "@/components/programs/CatalogPickerPanel";
+import { ProgramMediaUploadPanel } from "@/components/programs/ProgramMediaUploadPanel";
+import type { ProgramMediaUploadScope } from "@/lib/programs/programMediaUpload";
 import type { CatalogReader } from "@/lib/programs/catalogPicker";
 import {
   governedMediaIssue, newItem, newPhase, readingLevelNote, validateConsumerProgram,
@@ -30,10 +32,11 @@ export type ConsumerProgramCatalog = { read: CatalogReader; versionId: string; s
 export const CONSUMER_PROGRAM_HELD_TEXT =
   "The deployed service does not return the patient program for this version, so it cannot be edited here without overwriting what it holds. Authoring opens once the reviewed admission candidate (program-education-catalog-admission) is applied by Codex. Nothing typed here is saved.";
 
-export function ConsumerProgramEditor({ value, disabled, onChange, catalog = null }: {
+export function ConsumerProgramEditor({ value, disabled, onChange, catalog = null, mediaScope = null }: {
   value: ConsumerProgram | null | undefined; disabled: boolean; onChange: (next: ConsumerProgram | null) => void;
   /** Null when no catalog reader is connected: bindings are then shown and kept, never changed. */
   catalog?: ConsumerProgramCatalog | null;
+  mediaScope?: Omit<ProgramMediaUploadScope, 'stepId'> | null;
 }) {
   if (value === undefined) {
     return <ClinicalNote data-testid="consumer-program-held">{CONSUMER_PROGRAM_HELD_TEXT}</ClinicalNote>;
@@ -71,6 +74,7 @@ export function ConsumerProgramEditor({ value, disabled, onChange, catalog = nul
             </select>
           </div>
           {phase.items.map((item, ii) => <ItemFields key={ii} item={item} pi={pi} ii={ii} disabled={disabled} catalog={catalog}
+            mediaScope={mediaScope ? { ...mediaScope, stepId: `${phase.id}/${item.id}` } : null}
             onItem={patch => setItem(pi, ii, patch)} onProduct={patch => setProduct(pi, ii, patch)}
             onRemove={() => update(d => { d.phases[pi]!.items.splice(ii, 1); return d; })} />)}
           <div className="flex flex-wrap gap-2">
@@ -90,8 +94,9 @@ export function ConsumerProgramEditor({ value, disabled, onChange, catalog = nul
   );
 }
 
-function ItemFields({ item, pi, ii, disabled, catalog, onItem, onProduct, onRemove }: {
+function ItemFields({ item, pi, ii, disabled, catalog, mediaScope, onItem, onProduct, onRemove }: {
   item: ConsumerProgramItem; pi: number; ii: number; disabled: boolean; catalog: ConsumerProgramCatalog | null;
+  mediaScope: ProgramMediaUploadScope | null;
   onItem: (patch: Record<string, unknown>) => void; onProduct: (patch: Record<string, unknown>) => void; onRemove: () => void;
 }) {
   const label = `Step ${pi + 1}.${ii + 1}`;
@@ -149,7 +154,8 @@ function ItemFields({ item, pi, ii, disabled, catalog, onItem, onProduct, onRemo
         <Btn size="sm" disabled={disabled || sources.length >= 10} onClick={() => onItem({ sources: [...sources, { title: "", url: "https://" }] })}>Add source</Btn>
       </div>
       <div className="flex flex-col gap-1">
-        <span className={LABEL}>Media slots (governed https addresses, up to 5; no upload or hosting exists yet)</span>
+        {mediaScope ? <ProgramMediaUploadPanel key={`${mediaScope.programId}/${mediaScope.draftId}/${mediaScope.stepId}/${mediaScope.session}`} scope={mediaScope} disabled={disabled} /> : null}
+        <span className={LABEL}>Media slots (governed https addresses, up to 5; native uploaded references remain separately held)</span>
         {media.map((slot, mi) => {
           const issue = governedMediaIssue(slot.url);
           return (

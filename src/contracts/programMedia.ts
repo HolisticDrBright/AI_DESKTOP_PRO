@@ -106,7 +106,7 @@ export const programMediaArtifact = z.object({
   /** Increments on every change to the artifact's metadata; a publication names the exact one it saw. */
   version: counter.min(1),
   state: programMediaState,
-  objectVersion: z.string().min(1).max(1024).nullable(),
+  objectVersion: z.string().min(1).max(1024).refine(v => v !== 'null').nullable(),
   committedAt: date.nullable(),
   retiredAt: date.nullable(),
   failure: z.string().max(80).nullable(),
@@ -149,19 +149,41 @@ export const programMediaReferenceStatus = z.object({
 }).strict();
 
 /** A bounded, short-lived read of an artifact for the author's preview. Not the published address, not a write. */
+// An SDK-signed GET contains an encoded temporary STS token and exact version.
+// Keep its wire shape, but do not truncate that capability to 512 characters.
+// This ceiling permits the configured 3,000-character token and 1,024-character
+// version after URL encoding. It is not a relaxation of resource authorization.
+export const PROGRAM_MEDIA_PREVIEW_MAX_TOKEN_LENGTH = 16_384;
 export const programMediaPreview = z.object({
   artifactId: uuid, version: counter.min(1), state: programMediaState, kind: programMediaKind, contentType: programMediaContentType,
-  bytes: counter.min(1), sha256: hash, previewToken: z.string().min(16).max(512), previewUntil: date, historical: z.boolean(),
+  bytes: counter.min(1), sha256: hash, previewToken: z.string().min(16).max(PROGRAM_MEDIA_PREVIEW_MAX_TOKEN_LENGTH), previewUntil: date, historical: z.boolean(),
 }).strict();
 export type ProgramMediaPreview = z.infer<typeof programMediaPreview>;
 
 export const programMediaCleanupReceipt = z.object({
   programId: uuid, checkedAt: date,
+  proofs: z.array(z.object({ artifactId: uuid, claimId: uuid, objectKey: z.string().min(1).max(512),
+    checkedAt: date, complete: z.literal(true), remainingVersions: z.literal(0),
+    removedVersions: z.array(z.string().min(1).max(1024)).max(1000),
+  }).strict()).max(1000).default([]),
   actions: z.array(z.object({
     artifactId: uuid,
     outcome: z.enum(['abandoned_no_object', 'abandoned_object_removed', 'held_object_mismatch', 'recovered_ready', 'kept_pending']),
   }).strict()).max(1000),
-}).strict();
+}).strict().superRefine((receipt, ctx) => {
+  if (new Set(receipt.actions.map(a => a.artifactId)).size !== receipt.actions.length
+    || new Set(receipt.proofs.map(p => p.artifactId)).size !== receipt.proofs.length)
+    ctx.addIssue({ code: 'custom', message: 'program_media_receipt_duplicate' });
+  for (const action of receipt.actions) {
+    const proof = receipt.proofs.find(p => p.artifactId === action.artifactId);
+    const success = action.outcome === 'abandoned_no_object' || action.outcome === 'abandoned_object_removed';
+    if (success !== !!proof || (proof && ((action.outcome === 'abandoned_no_object') !== (proof.removedVersions.length === 0)
+      || new Set(proof.removedVersions).size !== proof.removedVersions.length)))
+      ctx.addIssue({ code: 'custom', message: 'program_media_absence_unproven' });
+  }
+  if (receipt.proofs.some(p => !receipt.actions.some(a => a.artifactId === p.artifactId)))
+    ctx.addIssue({ code: 'custom', message: 'program_media_receipt_unbound' });
+});
 export type ProgramMediaCleanupReceipt = z.infer<typeof programMediaCleanupReceipt>;
 
 export const PROGRAM_MEDIA_FAILURES = [

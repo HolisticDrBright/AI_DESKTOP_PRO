@@ -1,7 +1,8 @@
 if (typeof window !== 'undefined') throw new Error('programs/program-media-fictional is server-only.');
 import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity-consent';
 import type { ProgramMediaArtifact, ProgramMediaReference, ProgramMediaReservation } from '@/contracts/programMedia';
-import type { ProgramMediaLedger, ProgramMediaObjectStore, ProgramMediaStoredObject } from './program-media-authoring';
+import { ProgramMediaWriteError, type ProgramMediaAbsenceProof, type ProgramMediaLedger, type ProgramMediaObjectStore, type ProgramMediaStoredObject } from './program-media-authoring';
+import { programMediaReference } from '@/contracts/programMedia';
 
 /**
  * FICTIONAL ledger and object store for the program-media authoring runtime. In memory, no
@@ -15,14 +16,14 @@ import type { ProgramMediaLedger, ProgramMediaObjectStore, ProgramMediaStoredObj
  * on head, and removal by exact version. Faults can be injected to rehearse a lost response, a
  * failed write and a mismatched object.
  */
-export type FictionalStoreFault = 'lose_put_response' | 'fail_put' | 'fail_head' | 'corrupt_object';
+export type FictionalStoreFault = 'lose_put_response' | 'fail_put' | 'fail_head' | 'corrupt_object' | 'incomplete_inventory' | 'fail_inventory' | 'noop_remove' | 'fail_remove';
 
 export function createFictionalProgramMediaStore(input: { kmsKeyArn: string; now?: () => Date }) {
   const now = input.now ?? (() => new Date());
   const objects = new Map<string, Array<{ version: string; bytes: Uint8Array; head: ProgramMediaStoredObject }>>();
   const faults: FictionalStoreFault[] = [];
   let counter = 0;
-  const log: Array<{ op: 'put' | 'head' | 'remove' | 'preview'; key: string }> = [];
+  const log: Array<{ op: 'put' | 'head' | 'remove' | 'preview' | 'inventory'; key: string }> = [];
   const take = (fault: FictionalStoreFault) => { const i = faults.indexOf(fault); if (i >= 0) { faults.splice(i, 1); return true; } return false; };
   const store: ProgramMediaObjectStore & { inject(fault: FictionalStoreFault): void; versionsOf(key: string): string[]; log: typeof log; grantsPublicRead: false } = {
     grantsPublicRead: false,
@@ -31,8 +32,8 @@ export function createFictionalProgramMediaStore(input: { kmsKeyArn: string; now
     versionsOf: key => (objects.get(key) ?? []).map(o => o.version),
     async put(reservation, bytes) {
       log.push({ op: 'put', key: reservation.objectKey });
-      if (take('fail_put')) throw new Error('fictional_store_write_failed');
-      if ((objects.get(reservation.objectKey) ?? []).length > 0) throw new Error('PreconditionFailed');
+      if (take('fail_put')) throw new ProgramMediaWriteError(true);
+      if ((objects.get(reservation.objectKey) ?? []).length > 0) throw new ProgramMediaWriteError(true);
       const version = `fv${++counter}`;
       const corrupt = take('corrupt_object');
       const checksum = Buffer.from(corrupt ? 'ff'.repeat(32) : reservation.sha256, 'hex').toString('base64');
@@ -41,7 +42,7 @@ export function createFictionalProgramMediaStore(input: { kmsKeyArn: string; now
         encryption: 'aws:kms', kmsKeyArn: input.kmsKeyArn,
         metadata: { 'artifact-id': reservation.artifactId, 'program-id': reservation.programId, clinic: reservation.clinic, purpose: 'educational_media' },
       } }]);
-      if (take('lose_put_response')) throw new Error('fictional_lost_response');
+      if (take('lose_put_response')) throw new ProgramMediaWriteError(false);
       return { version };
     },
     async head(reservation, objectVersion) {
@@ -53,8 +54,15 @@ export function createFictionalProgramMediaStore(input: { kmsKeyArn: string; now
     },
     async remove(reservation, objectVersion) {
       log.push({ op: 'remove', key: reservation.objectKey });
+      if (take('fail_remove')) throw new Error('fictional_delete_denied');
+      if (take('noop_remove')) return;
       const versions = objects.get(reservation.objectKey) ?? [];
       objects.set(reservation.objectKey, versions.filter(o => o.version !== objectVersion));
+    },
+    async inventory(reservation) {
+      log.push({ op: 'inventory', key: reservation.objectKey });
+      if (take('fail_inventory')) throw new Error('fictional_inventory_denied');
+      return { complete: !take('incomplete_inventory'), versions: (objects.get(reservation.objectKey) ?? []).map(o => structuredClone(o.head)) };
     },
     async preview(artifact) {
       log.push({ op: 'preview', key: artifact.objectKey });
@@ -72,6 +80,16 @@ export function createFictionalProgramMediaLedger(input: { authorized: (context:
   const publications: ProgramMediaReference[] = [];
   const events: Array<{ artifactId: string; event: string; at: string }> = [];
   const byCommand = new Map<string, string>();
+  // This is ONLY the fictional implementation of the durable SQL contract. It
+  // is not a native mutex, service adapter, or deployment/cleanup certificate.
+  const work = new Map<string, { artifactId: string; actorId: string; mode: 'admit' | 'reconcile'; state: 'open' | 'settled' | 'uncertain' }>();
+  const cleanups = new Map<string, { claims: Set<string>; proof: ProgramMediaAbsenceProof | null }>();
+  const pending = (artifactId: string) => [...work.values()].some(w => w.artifactId === artifactId && w.state !== 'settled');
+  const writer = (context: ClinicalRequestContext, artifactId: string, claimId: string) => {
+    const w = work.get(claimId);
+    if (!w || w.artifactId !== artifactId || w.actorId !== context.actorPersonId || w.state !== 'open' || cleanups.has(artifactId)) throw new Error('conflict');
+    return w;
+  };
   const commandKey = (clinic: string, programId: string, commandId: string) => `${clinic}|${programId}|${commandId}`;
   const scoped = <T extends { clinic: string }>(context: ClinicalRequestContext, record: T | undefined): T | null =>
     record && record.clinic === context.organizationId ? record : null;
@@ -96,7 +114,44 @@ export function createFictionalProgramMediaLedger(input: { authorized: (context:
     },
     async reservation(context, artifactId) { const r = scoped(context, reservations.get(artifactId)); return r ? { ...r } : null; },
     async artifact(context, artifactId) { const a = scoped(context, artifacts.get(artifactId)); return a ? structuredClone(a) : null; },
-    async commit(context, artifactId, objectVersion, committedAt) {
+    async beginWriter(context, artifactId, claimId, mode, at) {
+      const r = scoped(context, reservations.get(artifactId));
+      if (!r || cleanups.has(artifactId) || r.state === 'abandoned'
+        || ['held', 'retired'].includes(artifacts.get(artifactId)?.state ?? '')
+        || (mode === 'admit' && Date.parse(r.acceptBefore) <= Date.parse(at))) return false;
+      if (work.has(claimId)) throw new Error('conflict');
+      work.set(claimId, { artifactId, actorId: context.actorPersonId, mode, state: 'open' });
+      return true;
+    },
+    async finishWriter(context, artifactId, claimId, outcome) {
+      const w = work.get(claimId);
+      if (!scoped(context, reservations.get(artifactId)) || !w || w.artifactId !== artifactId || w.actorId !== context.actorPersonId) throw new Error('conflict');
+      if (w.state === 'uncertain' && outcome !== 'uncertain') throw new Error('conflict');
+      w.state = outcome;
+    },
+    async beginCleanup(context, artifactId, claimId, at) {
+      const r = scoped(context, reservations.get(artifactId));
+      if (!r || Date.parse(r.acceptBefore) > Date.parse(at) || pending(artifactId)
+        || ['ready', 'retired', 'held'].includes(artifacts.get(artifactId)?.state ?? '')) return false;
+      const current = cleanups.get(artifactId) ?? { claims: new Set<string>(), proof: null };
+      if (current.proof) return false;
+      current.claims.add(claimId); cleanups.set(artifactId, current);
+      return true;
+    },
+    async certifyCleanup(context, artifactId, claimId, proof) {
+      const r = scoped(context, reservations.get(artifactId)), c = cleanups.get(artifactId);
+      if (!r || !c?.claims.has(claimId) || pending(artifactId) || c.proof
+        || proof.artifactId !== artifactId || proof.claimId !== claimId || proof.objectKey !== r.objectKey
+        || proof.complete !== true || proof.remainingVersions !== 0
+        || ['ready', 'retired', 'held'].includes(artifacts.get(artifactId)?.state ?? '')) throw new Error('conflict');
+      c.proof = structuredClone(proof);
+      reservations.set(artifactId, { ...r, state: 'abandoned', failure: proof.removedVersions.length ? 'orphan_removed' : 'reservation_expired' });
+      const a = artifacts.get(artifactId);
+      if (a) artifacts.set(artifactId, { ...a, state: 'abandoned', version: a.version + 1, failure: 'orphan_removed' });
+      events.push({ artifactId, event: 'absence_proven', at: proof.checkedAt });
+    },
+    async commit(context, artifactId, objectVersion, committedAt, claimId) {
+      writer(context, artifactId, claimId);
       const reservation = scoped(context, reservations.get(artifactId));
       if (!reservation) throw new Error('not_found');
       const existing = artifacts.get(artifactId);
@@ -114,11 +169,15 @@ export function createFictionalProgramMediaLedger(input: { authorized: (context:
       events.push({ artifactId, event: 'committed', at: committedAt });
       return structuredClone(artifact);
     },
-    async settle(context, artifactId, state, failure) {
+    async settle(context, artifactId, state, failure, claimId) {
       const reservation = scoped(context, reservations.get(artifactId));
       if (!reservation) throw new Error('not_found');
       const existing = artifacts.get(artifactId);
-      if (existing && (existing.state === 'ready' || existing.state === 'retired')) throw new Error('conflict');
+      // A concurrent successful writer wins. An error/expiry is not permission
+      // to overwrite ready state, nor to abandon an admitted/uncertain writer.
+      if (existing && (existing.state === 'ready' || existing.state === 'retired')) return;
+      if (!claimId && pending(artifactId)) return;
+      if (claimId && !cleanups.get(artifactId)?.claims.has(claimId)) writer(context, artifactId, claimId);
       if (state === 'held') {
         artifacts.set(artifactId, {
           artifactId, clinic: reservation.clinic, programId: reservation.programId, kind: reservation.kind, contentType: reservation.contentType,
@@ -156,12 +215,22 @@ export function createFictionalProgramMediaLedger(input: { authorized: (context:
     },
     async recordPublication(context, reference) {
       if (reference.origin.clinic !== context.organizationId) throw new Error('access_refused');
+      const a = scoped(context, artifacts.get(reference.artifactId));
+      if (!a || a.state !== 'ready' || a.version !== reference.version || a.sha256 !== reference.sha256
+        || a.programId !== reference.origin.programId || a.kind !== reference.kind || a.bytes !== reference.bytes || a.contentType !== reference.contentType
+        || JSON.stringify(a.caption ? { source: a.caption.source, sha256: a.caption.sha256 } : null) !== JSON.stringify(reference.caption)
+        || JSON.stringify(a.transcript ? { source: a.transcript.source, sha256: a.transcript.sha256, format: a.transcript.format } : null) !== JSON.stringify(reference.transcript)) throw new Error('conflict');
       publications.push(structuredClone(reference));
       events.push({ artifactId: reference.artifactId, event: `published:v${reference.version}`, at: reference.publishedAt });
     },
+    async hasPublication(context, reference) {
+      if (reference.origin.clinic !== context.organizationId) return false;
+      const canonical = JSON.stringify(programMediaReference.parse(reference));
+      return publications.some(p => JSON.stringify(programMediaReference.parse(p)) === canonical);
+    },
     async expiredReservations(context, programId, before) {
       return [...reservations.values()].filter(r => r.clinic === context.organizationId && r.programId === programId && Date.parse(r.acceptBefore) <= Date.parse(before)
-        && (r.state === 'reserved' || r.state === 'error') && artifacts.get(r.artifactId)?.state !== 'ready' && artifacts.get(r.artifactId)?.state !== 'retired').map(r => ({ ...r }));
+        && !cleanups.get(r.artifactId)?.proof && artifacts.get(r.artifactId)?.state !== 'ready' && artifacts.get(r.artifactId)?.state !== 'retired').map(r => ({ ...r }));
     },
   };
   return ledger;

@@ -1147,6 +1147,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
               disabled={editable.status !== "draft" || busy}
               onChange={(next) => touch((d) => ({ ...d, consumerProgram: next }))}
               catalog={{ read: (input) => api.programs.catalogObservation(input), versionId: editable.id, session: String(studioSession) }}
+              mediaScope={{ programId: studio.program.id, draftId: editable.id, session: String(studioSession) }}
             />
           </div>
         </Card>

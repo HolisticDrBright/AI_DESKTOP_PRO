@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClinicalRequestContext, SyntheticRequestContext } from '@/server/clinical-core/aws-identity-consent';
 import { programMediaArtifact, programMediaReference, programMediaReservation, type ProgramMediaStorage } from '@/contracts/programMedia';
 import { createProgramMediaAuthoring, PROGRAM_MEDIA_ACTIVATION, ProgramMediaError, type ProgramMediaAuthoring } from './program-media-authoring';
@@ -45,6 +45,60 @@ async function ready() {
   const reservation = await authoring.prepare(context(), prepare());
   return authoring.admit(context(), { artifactId: reservation.artifactId, sha256: sha(image), bytes: image.byteLength }, image);
 }
+
+describe('Codex independent negative audit of the returned source', () => {
+  it('copies a Node Buffer before yielding to authorization',async()=>{
+    const reservation=await authoring.prepare(context(),prepare()),mutable=Buffer.from(image),write=vi.spyOn(store,'put');
+    vi.spyOn(ledger,'authorize').mockImplementation(async()=>{mutable.fill(0);return true;});
+    const artifact=await authoring.admit(context(),{artifactId:reservation.artifactId,sha256:sha(image),bytes:image.length},mutable);
+    expect(artifact.state).toBe('ready');expect(artifact.sha256).toBe(sha(image));
+    expect(Buffer.from(write.mock.calls[0][1])).toEqual(Buffer.from(image));
+  });
+  it('keeps a written object discoverable after an expired admission retry', async () => {
+    const reservation = await authoring.prepare(context(), prepare());
+    await store.put(reservation, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    expect(await code(authoring.admit(context(), { artifactId: reservation.artifactId, sha256: sha(image), bytes: image.byteLength }, image)))
+      .toBe('reservation_expired');
+    // A failed/expired retry cannot hide already-written bytes from recovery.
+    const found = await ledger.expiredReservations(context(), program, clock.toISOString());
+    expect(found.map(r => r.artifactId)).toContain(reservation.artifactId);
+  });
+  it('does not call a substituted publication URL and program current', async () => {
+    const artifact = await ready();
+    const reference = await authoring.publish(context(), { artifactId: artifact.artifactId, expectedVersion: artifact.version });
+    const substituted = { ...reference, url: 'https://other-fictional.example/not-the-artifact',
+      origin: { ...reference.origin, programId: foreignProgram } };
+    expect((await authoring.describeReference(context(), substituted)).current).toBe(false);
+  });
+  it('does not certify removal when the store acknowledges a no-op delete', async () => {
+    const reservation = await authoring.prepare(context(), prepare());
+    await store.put(reservation, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    store.remove = async () => {}; // Fictional transport acknowledged; bytes still exist.
+    const receipt = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(receipt.actions.some(a => a.outcome === 'abandoned_object_removed')).toBe(false);
+    expect(store.versionsOf(reservation.objectKey)).toEqual(['fv1']);
+  });
+  it('preserves a ready object when reconciliation commits after cleanup reads the artifact', async () => {
+    const reservation = await authoring.prepare(context(), prepare());
+    await store.put(reservation, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    const originalHead = store.head;
+    let interleaved = false;
+    store.head = async (...args) => {
+      const snapshot = await originalHead(...args);
+      if (!interleaved) {
+        interleaved = true;
+        await authoring.reconcile(context(), { artifactId: reservation.artifactId });
+      }
+      return snapshot;
+    };
+    await authoring.cleanupOrphans(context(), { programId: program }).catch(() => {});
+    expect((await ledger.artifact(context(), reservation.artifactId))?.state).toBe('ready');
+    expect(store.versionsOf(reservation.objectKey)).toEqual(['fv1']);
+  });
+});
 
 describe('activation', () => {
   it('is disabled in source, and the default runtime refuses every operation before touching the ledger or the store', async () => {
@@ -258,6 +312,10 @@ describe('orphan cleanup', () => {
     store.inject('lose_put_response'); store.inject('fail_head');
     expect(await code(authoring.admit(context(), { artifactId: orphan.artifactId, sha256: sha(image), bytes: image.byteLength }, image))).toBe('service_unavailable');
     expect(store.versionsOf(orphan.objectKey)).toEqual(['fv1']);
+    // A lost write reply is not settlement. Also cover a known-settled legacy
+    // orphan separately, so positive deletion still has to be demonstrated.
+    const settledOrphan = await authoring.prepare(context(), prepare({ fileName: 'settled.png' }));
+    await store.put(settledOrphan, image, AbortSignal.timeout(1_000));
     const committed = await ready();
     const foreignEmpty = await authoring.prepare(context(), prepare({ fileName: 'later.png' }));
     clock = new Date('2026-10-11T12:10:00Z');
@@ -266,17 +324,157 @@ describe('orphan cleanup', () => {
     const receipt = await authoring.cleanupOrphans(context(), { programId: program });
     expect(receipt.actions).toEqual(expect.arrayContaining([
       { artifactId: empty.artifactId, outcome: 'abandoned_no_object' },
-      { artifactId: orphan.artifactId, outcome: 'abandoned_object_removed' },
+      { artifactId: orphan.artifactId, outcome: 'kept_pending' },
+      { artifactId: settledOrphan.artifactId, outcome: 'abandoned_object_removed' },
       { artifactId: foreignEmpty.artifactId, outcome: 'abandoned_no_object' },
     ]));
     expect(receipt.actions.map(a => a.artifactId)).not.toContain(committed.artifactId);
-    expect(store.versionsOf(orphan.objectKey)).toEqual([]);
-    expect(store.versionsOf(committed.objectKey)).toEqual(['fv2']);
+    expect(store.versionsOf(orphan.objectKey)).toEqual(['fv1']);
+    expect(store.versionsOf(settledOrphan.objectKey)).toEqual([]);
+    expect(store.versionsOf(committed.objectKey)).toEqual(['fv3']);
     expect((await ledger.artifact(context(), committed.artifactId))?.state).toBe('ready');
-    expect(store.log.filter(l => l.op === 'remove')).toEqual([{ op: 'remove', key: orphan.objectKey }]);
+    expect(store.log.filter(l => l.op === 'remove')).toEqual([{ op: 'remove', key: settledOrphan.objectKey }]);
+    expect(receipt.proofs.map(p => p.artifactId)).not.toContain(orphan.artifactId);
+    expect(receipt.proofs.find(p => p.artifactId === settledOrphan.artifactId)).toMatchObject({ complete: true, remainingVersions: 0, removedVersions: ['fv2'] });
   });
   it('cleanup is scoped to the actor\'s clinic and an authorized program', async () => {
     expect(await code(authoring.cleanupOrphans(context({ organizationId: otherClinic }), { programId: program }))).toBe('access_refused');
     expect(await code(authoring.cleanupOrphans(context(), { programId: foreignProgram }))).toBe('access_refused');
+  });
+});
+
+describe('durable settlement contract against fictional transports', () => {
+  // Independent coverage inspired by Claude's seven audit cases at 23d65e9.
+  // These are adaptations, not unchanged ports: this contract has durable
+  // writers and no time-expiring lease or unresolvedStorage boolean.
+  it('reconciliation winning during cleanup reads preserves the committed version', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    await store.put(r, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    const head = store.head;
+    let interleaved = false;
+    store.head = async (...args) => {
+      if (!interleaved) {
+        interleaved = true;
+        expect(await authoring.reconcile(context(), { artifactId: r.artifactId }))
+          .toMatchObject({ state: 'ready', objectVersion: 'fv1' });
+      }
+      return head(...args);
+    };
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(interleaved).toBe(true);
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'recovered_ready' }]);
+    expect(result.proofs).toEqual([]);
+    expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+  });
+  it('an uncertain writer does not expire into deletion permission, even after recovery', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    store.inject('lose_put_response'); store.inject('fail_head');
+    expect(await code(authoring.admit(context(), { artifactId: r.artifactId, sha256: r.sha256, bytes: r.bytes }, image)))
+      .toBe('service_unavailable');
+    clock = new Date('2027-01-01T00:00:00Z');
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).actions)
+      .toEqual([{ artifactId: r.artifactId, outcome: 'kept_pending' }]);
+    expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+    expect(await authoring.reconcile(context(), { artifactId: r.artifactId }))
+      .toMatchObject({ state: 'ready', objectVersion: 'fv1' });
+    expect(store.log.filter(l => l.op === 'put')).toHaveLength(1);
+    expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).proofs).toEqual([]);
+  });
+  it('removes an exact-key versioned delete marker only after inventory, and certifies only the second empty inventory', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    clock = new Date('2026-10-11T12:16:00Z');
+    let markerPresent = true, reads = 0;
+    const removed: string[] = [];
+    store.inventory = async () => {
+      reads++;
+      return { complete: true, versions: markerPresent ? [{ version: 'fictional-marker', deleteMarker: true, listedKey: r.objectKey }] : [] };
+    };
+    store.remove = async (reservation, version) => {
+      expect(reservation.objectKey).toBe(r.objectKey);
+      removed.push(version); markerPresent = false;
+    };
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(reads).toBe(2); expect(removed).toEqual(['fictional-marker']);
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'abandoned_object_removed' }]);
+    expect(result.proofs).toEqual([expect.objectContaining({ complete: true, remainingVersions: 0, objectKey: r.objectKey, removedVersions: ['fictional-marker'] })]);
+  });
+  it.each(['foreign-key', 'missing-key', 'null-version'] as const)('holds a %s delete marker without deleting or certifying', async problem => {
+    const r = await authoring.prepare(context(), prepare());
+    clock = new Date('2026-10-11T12:16:00Z');
+    store.inventory = async () => ({ complete: true, versions: [{ deleteMarker: true,
+      version: problem === 'null-version' ? 'null' : 'fictional-marker',
+      listedKey: problem === 'missing-key' ? undefined : problem === 'foreign-key' ? r.objectKey + '.other' : r.objectKey }] });
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'held_object_mismatch' }]);
+    expect(result.proofs).toEqual([]); expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    expect((await ledger.artifact(context(), r.artifactId))?.state).toBe('held');
+  });
+  it('keeps an admitted delayed writer pending until its storage call and commit settle', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    const original = store.put;
+    let resume!: () => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const delayed = new Promise<void>(resolve => { resume = resolve; });
+    store.put = async (...args) => { entered(); await delayed; return original(...args); };
+    const write = authoring.admit(context(), { artifactId: r.artifactId, sha256: r.sha256, bytes: r.bytes }, image);
+    await started;
+    clock = new Date('2026-10-11T12:16:00Z');
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'kept_pending' }]);
+    expect(result.proofs).toEqual([]); expect(store.log.filter(l => l.op === 'remove')).toEqual([]);
+    resume(); expect(await write).toMatchObject({ state: 'ready', objectVersion: 'fv1' });
+    expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+  });
+  it('cleanup winning first permanently fences reconciliation and new writer admissions', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    await store.put(r, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z');
+    const remove = store.remove;
+    store.remove = async (...args) => {
+      expect(await code(authoring.reconcile(context(), { artifactId: r.artifactId }))).toBe('conflict');
+      expect(await ledger.beginWriter(context(), r.artifactId, randomUUID(), 'reconcile', clock.toISOString())).toBe(false);
+      await remove(...args);
+    };
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).actions)
+      .toEqual([{ artifactId: r.artifactId, outcome: 'abandoned_object_removed' }]);
+    expect(store.versionsOf(r.objectKey)).toEqual([]);
+    expect(await ledger.beginWriter(context(), r.artifactId, randomUUID(), 'reconcile', clock.toISOString())).toBe(false);
+  });
+  it.each(['incomplete_inventory', 'fail_inventory', 'noop_remove', 'fail_remove'] as const)('refuses an absence receipt on %s', async fault => {
+    const r = await authoring.prepare(context(), prepare());
+    await store.put(r, image, AbortSignal.timeout(1_000));
+    clock = new Date('2026-10-11T12:16:00Z'); store.inject(fault);
+    const result = await authoring.cleanupOrphans(context(), { programId: program });
+    expect(result.actions).toEqual([{ artifactId: r.artifactId, outcome: 'kept_pending' }]);
+    expect(result.proofs).toEqual([]); expect(store.versionsOf(r.objectKey)).toEqual(['fv1']);
+    // A failed delete/inspection leaves the durable cleanup barrier in place.
+    expect(await code(authoring.reconcile(context(), { artifactId: r.artifactId }))).toBe('conflict');
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).proofs).toHaveLength(1);
+  });
+  it('does not let an expiry retry abandon another admitted writer', async () => {
+    const r = await authoring.prepare(context(), prepare());
+    const claim = randomUUID();
+    expect(await ledger.beginWriter(context(), r.artifactId, claim, 'admit', clock.toISOString())).toBe(true);
+    clock = new Date('2026-10-11T12:16:00Z');
+    expect(await code(authoring.admit(context(), { artifactId: r.artifactId, sha256: r.sha256, bytes: r.bytes }, image))).toBe('reservation_expired');
+    expect((await ledger.reservation(context(), r.artifactId))?.state).toBe('reserved');
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).proofs).toEqual([]);
+    await ledger.finishWriter(context(), r.artifactId, claim, 'uncertain');
+    clock = new Date('2027-01-01T00:00:00Z');
+    expect((await authoring.cleanupOrphans(context(), { programId: program })).proofs).toEqual([]);
+    await expect(ledger.finishWriter(context(), r.artifactId, claim, 'settled')).rejects.toThrow('conflict');
+  });
+  it('requires the full recorded publication, not matching ids or a plausible timestamp', async () => {
+    const a = await ready(), ref = await authoring.publish(context(), { artifactId: a.artifactId, expectedVersion: a.version });
+    for (const changed of [{ url: 'https://media.fictional.example/fake' }, { publishedAt: '2026-10-11T12:00:01.000Z' },
+      { bytes: a.bytes + 1 }, { contentType: 'image/jpeg' }, { kind: 'video' }, { caption: { source: 'supplied_by_author', sha256: 'b'.repeat(64) } }]) {
+      expect((await authoring.describeReference(context(), { ...ref, ...changed })).current).toBe(false);
+    }
+    await authoring.attachText(context(), { artifactId: a.artifactId, expectedVersion: a.version, slot: 'caption', text: 'New supplied caption', source: 'supplied_by_author', format: 'plain' });
+    expect((await authoring.describeReference(context(), ref)).current).toBe(false);
+    expect(ledger.publications).toEqual([ref]);
   });
 });

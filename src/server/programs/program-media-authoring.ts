@@ -4,7 +4,7 @@ import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity
 import {
   PROGRAM_MEDIA_REFERENCE_CONTRACT, programMediaAdmitRequest, programMediaArtifact, programMediaExtension, programMediaPrepareRequest,
   programMediaPreview, programMediaReadRequest, programMediaReference, programMediaReferenceStatus, programMediaReservation,
-  programMediaStorageSchema, programMediaText, programMediaTextRequest, programMediaVersionRequest,
+  programMediaStorageSchema, programMediaText, programMediaTextRequest, programMediaVersionRequest, programMediaCleanupReceipt,
   type ProgramMediaArtifact, type ProgramMediaCleanupReceipt, type ProgramMediaFailure, type ProgramMediaPreview,
   type ProgramMediaReference, type ProgramMediaReservation, type ProgramMediaStorage,
 } from '@/contracts/programMedia';
@@ -13,8 +13,10 @@ import {
  * Authoring of governed lesson media: prepare, admit within bounds, commit with integrity recorded,
  * attach supplied captions or transcripts, preview by a separate read, publish by exact artifact
  * and version, retire, reconcile and clean up. The ledger and the object store are interfaces; the
- * only implementations in this repository are fictional (program-media-fictional.ts). Activation is
- * off: `PROGRAM_MEDIA_ACTIVATION.enabled` is false and the runtime refuses every operation until a
+ * native ledger has an embedded-PostgreSQL restricted-role journey; its candidate is still
+ * BLOCKED and uninstalled. The AWS SDK storage source and native request factory are
+ * separately tested over fictional network replies, not installed or hosted
+ * qualified. Activation is off: `PROGRAM_MEDIA_ACTIVATION.enabled` is false and every operation refuses until a
  * reviewed store and ledger exist. A fictional store proving these journeys certifies nothing hosted.
  *
  * Rules the code keeps:
@@ -39,9 +41,17 @@ export class ProgramMediaError extends Error {
   constructor(readonly code: ProgramMediaFailure) { super(code); this.name = 'ProgramMediaError'; }
 }
 
+/** Only a store adapter that knows a write was rejected before mutation may
+ * mark it settled. Timeouts, aborts and lost replies are uncertain by default. */
+export class ProgramMediaWriteError extends Error {
+  constructor(readonly settled: boolean) { super('program_media_store_write_failed'); }
+}
+
 export type ProgramMediaStoredObject = {
   version?: string; bytes?: number; contentType?: string; checksum?: string; checksumType?: string;
   encryption?: string; kmsKeyArn?: string; metadata?: Record<string, string>; deleteMarker?: boolean;
+  /** Exact key observed by a complete version listing; mandatory for markers. */
+  listedKey?: string;
 };
 export interface ProgramMediaObjectStore {
   /** Conditional create (If-None-Match: *). Resolves with the stored version; rejects when the key exists or the write fails. */
@@ -50,6 +60,9 @@ export interface ProgramMediaObjectStore {
   head(reservation: ProgramMediaReservation, objectVersion: string | undefined, signal: AbortSignal): Promise<ProgramMediaStoredObject | null>;
   /** Removes exactly the named version. Only cleanup calls it, only for an orphan it proved. */
   remove(reservation: ProgramMediaReservation, objectVersion: string, signal: AbortSignal): Promise<void>;
+  /** Complete, exact-key VERSION inventory, not a latest-object HEAD. An
+   * incomplete page, denial or ambiguous key is never absence. */
+  inventory(reservation: ProgramMediaReservation, signal: AbortSignal): Promise<{ complete: boolean; versions: ProgramMediaStoredObject[] }>;
   /** A short-lived read handle for the author's preview; never the published address. */
   preview(artifact: ProgramMediaArtifact, signal: AbortSignal): Promise<{ token: string; until: string }>;
 }
@@ -62,13 +75,25 @@ export interface ProgramMediaLedger {
   reservation(context: ClinicalRequestContext, artifactId: string): Promise<ProgramMediaReservation | null>;
   artifact(context: ClinicalRequestContext, artifactId: string): Promise<ProgramMediaArtifact | null>;
   /** reserved|error -> ready with the proven object version. Idempotent for the same version; a different version conflicts. */
-  commit(context: ClinicalRequestContext, artifactId: string, objectVersion: string, committedAt: string): Promise<ProgramMediaArtifact>;
-  settle(context: ClinicalRequestContext, artifactId: string, state: 'held' | 'error' | 'abandoned', failure: string): Promise<void>;
+  commit(context: ClinicalRequestContext, artifactId: string, objectVersion: string, committedAt: string, claimId: string): Promise<ProgramMediaArtifact>;
+  settle(context: ClinicalRequestContext, artifactId: string, state: 'held' | 'error' | 'abandoned', failure: string, claimId?: string): Promise<void>;
+  /** These are atomic DURABLE ledger operations. Multiple writers may admit;
+   * cleanup may seal the artifact only after every writer is settled. Unknown
+   * writers never expire automatically. Commit checks the same claim in its
+   * transaction. This is not a process-local mutex or an HTTP proof. */
+  beginWriter(context: ClinicalRequestContext, artifactId: string, claimId: string, mode: 'admit' | 'reconcile', at: string): Promise<boolean>;
+  finishWriter(context: ClinicalRequestContext, artifactId: string, claimId: string, outcome: 'settled' | 'uncertain'): Promise<void>;
+  beginCleanup(context: ClinicalRequestContext, artifactId: string, claimId: string, at: string): Promise<boolean>;
+  certifyCleanup(context: ClinicalRequestContext, artifactId: string, claimId: string, proof: ProgramMediaAbsenceProof): Promise<void>;
   attachText(context: ClinicalRequestContext, artifactId: string, expectedVersion: number, slot: 'caption' | 'transcript', text: ProgramMediaArtifact['caption']): Promise<ProgramMediaArtifact>;
   retire(context: ClinicalRequestContext, artifactId: string, expectedVersion: number, retiredAt: string): Promise<ProgramMediaArtifact>;
   recordPublication(context: ClinicalRequestContext, reference: ProgramMediaReference): Promise<void>;
+  hasPublication(context: ClinicalRequestContext, reference: ProgramMediaReference): Promise<boolean>;
   expiredReservations(context: ClinicalRequestContext, programId: string, before: string): Promise<ProgramMediaReservation[]>;
 }
+
+export type ProgramMediaAbsenceProof = { artifactId: string; claimId: string; objectKey: string;
+  checkedAt: string; complete: true; remainingVersions: 0; removedVersions: string[] };
 
 const ACCEPT_WINDOW_MS = 15 * 60 * 1000;
 const STORE_TIMEOUT_MS = 20_000;
@@ -82,7 +107,7 @@ export function createProgramMediaAuthoring(input: {
   newId?: () => string;
 }) {
   const { ledger, store } = input;
-  const activation = input.activation ?? PROGRAM_MEDIA_ACTIVATION;
+  const activation = Object.freeze({ ...(input.activation ?? PROGRAM_MEDIA_ACTIVATION) });
   const storage = programMediaStorageSchema.parse(input.storage);
   const now = input.now ?? (() => new Date());
   const newId = input.newId ?? randomUUID;
@@ -104,21 +129,21 @@ export function createProgramMediaAuthoring(input: {
   }
   function expectedChecksum(sha256: string) { return Buffer.from(sha256, 'hex').toString('base64'); }
   function objectMatches(head: ProgramMediaStoredObject, reservation: ProgramMediaReservation): boolean {
-    return typeof head.version === 'string' && head.version.length > 0 && head.deleteMarker !== true
+    return typeof head.version === 'string' && head.version.length > 0 && head.version !== 'null' && head.deleteMarker !== true
       && head.bytes === reservation.bytes && head.contentType === reservation.contentType
       && head.checksum === expectedChecksum(reservation.sha256) && head.checksumType === 'FULL_OBJECT'
       && head.encryption === 'aws:kms' && head.kmsKeyArn === storage.kmsKeyArn
       && head.metadata?.['artifact-id'] === reservation.artifactId && head.metadata?.['program-id'] === reservation.programId
       && head.metadata?.['clinic'] === reservation.clinic && head.metadata?.['purpose'] === 'educational_media';
   }
-  async function proveAndCommit(context: ClinicalRequestContext, reservation: ProgramMediaReservation, version: string | undefined): Promise<ProgramMediaArtifact> {
+  async function proveAndCommit(context: ClinicalRequestContext, reservation: ProgramMediaReservation, version: string | undefined, claimId: string): Promise<ProgramMediaArtifact> {
     const head = await store.head(reservation, version, signal());
     if (!head) throw new ProgramMediaError('service_unavailable');
     if (!objectMatches(head, reservation)) {
-      await ledger.settle(context, reservation.artifactId, 'held', 'storage_unverified');
+      await ledger.settle(context, reservation.artifactId, 'held', 'storage_unverified', claimId);
       throw new ProgramMediaError('storage_unverified');
     }
-    return programMediaArtifact.parse(await ledger.commit(context, reservation.artifactId, head.version!, now().toISOString()));
+    return programMediaArtifact.parse(await ledger.commit(context, reservation.artifactId, head.version!, now().toISOString(), claimId));
   }
   function referenceFor(artifact: ProgramMediaArtifact, publishedAt: string): ProgramMediaReference {
     return programMediaReference.parse({
@@ -158,7 +183,9 @@ export function createProgramMediaAuthoring(input: {
     async admit(context: ClinicalRequestContext, request: unknown, bytes: Uint8Array): Promise<ProgramMediaArtifact> {
       const parsed = programMediaAdmitRequest.safeParse(request);
       if (!parsed.success || !(bytes instanceof Uint8Array) || bytes.byteLength !== parsed.data.bytes
-        || createHash('sha256').update(bytes).digest('hex') !== parsed.data.sha256) throw new ProgramMediaError('request_invalid');
+        || bytes.byteLength > Math.max(storage.maxImageBytes, storage.maxVideoBytes)) throw new ProgramMediaError('request_invalid');
+      const admittedBytes = new Uint8Array(bytes);
+      if (createHash('sha256').update(admittedBytes).digest('hex') !== parsed.data.sha256) throw new ProgramMediaError('request_invalid');
       const reservation = await owned(context, () => ledger.reservation(context, parsed.data.artifactId));
       if (reservation.sha256 !== parsed.data.sha256 || reservation.bytes !== parsed.data.bytes) throw new ProgramMediaError('request_invalid');
       const existing = await ledger.artifact(context, reservation.artifactId);
@@ -169,40 +196,49 @@ export function createProgramMediaAuthoring(input: {
         await ledger.settle(context, reservation.artifactId, 'abandoned', 'reservation_expired');
         throw new ProgramMediaError('reservation_expired');
       }
-      let version: string | undefined;
+      const claimId = newId();
+      if (!await ledger.beginWriter(context, reservation.artifactId, claimId, 'admit', now().toISOString())) throw new ProgramMediaError('conflict');
+      let uncertain = false;
       try {
-        version = (await store.put(reservation, bytes, signal())).version;
-      } catch {
-        // A conditional conflict or a lost response: the object may exist. Prove it; never overwrite, never assume.
-        const head = await store.head(reservation, undefined, signal()).catch(() => null);
-        if (!head) { await ledger.settle(context, reservation.artifactId, 'error', 'store_write_failed'); throw new ProgramMediaError('service_unavailable'); }
-      }
-      try {
-        return await proveAndCommit(context, reservation, version);
-      } catch (error) {
-        if (error instanceof ProgramMediaError) {
-          if (error.code === 'service_unavailable') await ledger.settle(context, reservation.artifactId, 'error', 'store_unproven');
-          throw error;
+        let version: string | undefined;
+        try {
+          version = (await store.put(reservation, admittedBytes, signal())).version;
+        } catch (error) {
+          uncertain = !(error instanceof ProgramMediaWriteError && error.settled);
+          // A conditional conflict or a lost response: prove, never overwrite.
+          const head = await store.head(reservation, undefined, signal()).catch(() => null);
+          if (!head) { await ledger.settle(context, reservation.artifactId, 'error', 'store_write_failed', claimId); throw new ProgramMediaError('service_unavailable'); }
         }
-        await ledger.settle(context, reservation.artifactId, 'error', 'commit_failed');
-        throw new ProgramMediaError('service_unavailable');
+        try {
+          return await proveAndCommit(context, reservation, version, claimId);
+        } catch (error) {
+          if (error instanceof ProgramMediaError) {
+            if (error.code === 'service_unavailable') await ledger.settle(context, reservation.artifactId, 'error', 'store_unproven', claimId);
+            throw error;
+          }
+          await ledger.settle(context, reservation.artifactId, 'error', 'commit_failed', claimId);
+          throw new ProgramMediaError('service_unavailable');
+        }
+      } finally {
+        await ledger.finishWriter(context, reservation.artifactId, claimId, uncertain ? 'uncertain' : 'settled');
       }
     },
 
-    /** Settle a reservation whose outcome was lost: commit a proven object, abandon an expired empty one, hold a mismatch. */
+    /** Recover a proven object under writer admission. Expiry alone certifies no absence. */
     async reconcile(context: ClinicalRequestContext, request: unknown): Promise<ProgramMediaArtifact | ProgramMediaReservation> {
       const parsed = programMediaReadRequest.safeParse(request);
       if (!parsed.success) throw new ProgramMediaError('request_invalid');
       const reservation = await owned(context, () => ledger.reservation(context, parsed.data.artifactId));
       const existing = await ledger.artifact(context, reservation.artifactId);
       if (existing && existing.state !== 'error' && existing.state !== 'reserved') return existing;
-      const head = await store.head(reservation, undefined, signal());
-      if (head) return proveAndCommit(context, reservation, undefined);
-      if (Date.parse(reservation.acceptBefore) <= now().getTime()) {
-        await ledger.settle(context, reservation.artifactId, 'abandoned', 'reservation_expired');
-        return programMediaReservation.parse({ ...reservation, state: 'abandoned', failure: 'reservation_expired' });
-      }
-      return reservation;
+      if (reservation.state === 'abandoned') return reservation;
+      const claimId = newId();
+      if (!await ledger.beginWriter(context, reservation.artifactId, claimId, 'reconcile', now().toISOString())) throw new ProgramMediaError('conflict');
+      try {
+        const head = await store.head(reservation, undefined, signal());
+        if (head) return await proveAndCommit(context, reservation, undefined, claimId);
+        return reservation;
+      } finally { await ledger.finishWriter(context, reservation.artifactId, claimId, 'settled'); }
     },
 
     /** Attach a supplied caption or transcript. The source is declared by the author; a generated one has no admissible source. */
@@ -265,10 +301,12 @@ export function createProgramMediaAuthoring(input: {
       const parsed = programMediaReference.safeParse(value);
       if (!parsed.success) throw new ProgramMediaError('request_invalid');
       const artifact = await owned(context, () => ledger.artifact(context, parsed.data.artifactId));
+      const recorded = await ledger.hasPublication(context, parsed.data);
       return programMediaReferenceStatus.parse({
         reference: parsed.data,
-        historical: artifact.state === 'retired',
-        current: artifact.state === 'ready' && artifact.version === parsed.data.version && artifact.sha256 === parsed.data.sha256 && artifact.objectVersion !== null,
+        historical: recorded && artifact.state === 'retired',
+        current: recorded && artifact.state === 'ready' && artifact.objectVersion !== null
+          && JSON.stringify(referenceFor(artifact, parsed.data.publishedAt)) === JSON.stringify(parsed.data),
       });
     },
 
@@ -279,25 +317,44 @@ export function createProgramMediaAuthoring(input: {
       await authorize(context, parsed.data.programId);
       const checkedAt = now().toISOString();
       const actions: ProgramMediaCleanupReceipt['actions'] = [];
-      for (const reservation of await ledger.expiredReservations(context, parsed.data.programId, checkedAt)) {
+      const proofs: ProgramMediaAbsenceProof[] = [];
+      for (const reservation of (await ledger.expiredReservations(context, parsed.data.programId, checkedAt)).slice(0, 1000)) {
         if (reservation.clinic !== context.organizationId || reservation.programId !== parsed.data.programId) continue;
         const artifact = await ledger.artifact(context, reservation.artifactId);
         if (artifact && (artifact.state === 'ready' || artifact.state === 'retired' || artifact.state === 'held')) { actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); continue; }
-        const head = await store.head(reservation, undefined, signal());
-        if (!head) {
-          await ledger.settle(context, reservation.artifactId, 'abandoned', 'reservation_expired');
-          actions.push({ artifactId: reservation.artifactId, outcome: 'abandoned_no_object' });
-        } else if (objectMatches(head, reservation)) {
-          // The bytes are exactly the reservation's and nothing was committed against them: an orphan, removed by its exact version.
-          await store.remove(reservation, head.version!, signal());
-          await ledger.settle(context, reservation.artifactId, 'abandoned', 'orphan_removed');
-          actions.push({ artifactId: reservation.artifactId, outcome: 'abandoned_object_removed' });
-        } else {
-          await ledger.settle(context, reservation.artifactId, 'held', 'storage_unverified');
-          actions.push({ artifactId: reservation.artifactId, outcome: 'held_object_mismatch' });
+        // This preliminary read admits no deletion. A competing reconciliation
+        // can win here; the subsequent atomic ledger seal must then refuse.
+        try { await store.head(reservation, undefined, signal()); }
+        catch { actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); continue; }
+        const claimId = newId();
+        if (!await ledger.beginCleanup(context, reservation.artifactId, claimId, now().toISOString())) {
+          const latest = await ledger.artifact(context, reservation.artifactId);
+          actions.push({ artifactId: reservation.artifactId, outcome: latest?.state === 'ready' ? 'recovered_ready' : 'kept_pending' }); continue;
         }
+        try {
+          const before = await store.inventory(reservation, signal());
+          if (!before.complete || new Set(before.versions.map(v => v.version)).size !== before.versions.length) {
+            actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); continue;
+          }
+          if (before.versions.some(v => v.deleteMarker === true
+            ? typeof v.version !== 'string' || !v.version || v.version === 'null' || v.listedKey !== reservation.objectKey
+            : !objectMatches(v, reservation))) {
+            await ledger.settle(context, reservation.artifactId, 'held', 'storage_unverified', claimId);
+            actions.push({ artifactId: reservation.artifactId, outcome: 'held_object_mismatch' }); continue;
+          }
+          for (const version of before.versions) await store.remove(reservation, version.version!, signal());
+          const after = await store.inventory(reservation, signal());
+          if (!after.complete || after.versions.length !== 0) {
+            actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); continue;
+          }
+          const proof: ProgramMediaAbsenceProof = { artifactId: reservation.artifactId, claimId, objectKey: reservation.objectKey,
+            checkedAt: now().toISOString(), complete: true, remainingVersions: 0, removedVersions: before.versions.map(v => v.version!) };
+          await ledger.certifyCleanup(context, reservation.artifactId, claimId, proof);
+          proofs.push(proof);
+          actions.push({ artifactId: reservation.artifactId, outcome: before.versions.length ? 'abandoned_object_removed' : 'abandoned_no_object' });
+        } catch { actions.push({ artifactId: reservation.artifactId, outcome: 'kept_pending' }); }
       }
-      return { programId: parsed.data.programId, checkedAt, actions };
+      return programMediaCleanupReceipt.parse({ programId: parsed.data.programId, checkedAt, actions, proofs });
     },
   };
 }
