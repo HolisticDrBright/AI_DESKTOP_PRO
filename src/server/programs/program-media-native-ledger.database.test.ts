@@ -1,4 +1,4 @@
-import {beforeAll, beforeEach, afterAll, describe, it, expect} from 'vitest';
+import {beforeAll, beforeEach, afterAll, describe, it, expect, vi} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
@@ -6,8 +6,13 @@ import {createHash, randomUUID} from 'node:crypto';
 import type {ClinicalCoreDatabase} from '@/server/clinical-core/database';
 import type {ClinicalRequestContext} from '@/server/clinical-core/aws-identity-consent';
 import {createProgramMediaNativeLedger} from './program-media-native-ledger';
-import {createProgramMediaAuthoring} from './program-media-authoring';
+import {createProgramMediaAuthoring,ProgramMediaError} from './program-media-authoring';
 import {createFictionalProgramMediaStore} from './program-media-fictional';
+import {createProgramMediaNativeRequestSource} from './program-media-native-request';
+import {createProgramMediaControlHandler} from './program-media-http';
+
+const provider=vi.hoisted(()=>({open:vi.fn()}));
+vi.mock('./aws-program-media-store',()=>({createAwsProgramMediaStoreSource:provider.open}));
 
 const id=(n:number)=>'71000000-0000-4000-8000-'+String(n).padStart(12,'0');
 const org=id(1), actor=id(2), program=id(3), otherOrg=id(4), otherActor=id(5), otherProgram=id(6), staff=id(7);
@@ -17,7 +22,7 @@ const context={actorPersonId:actor,organizationId:org,identityPool:'workforce',i
 const storage={purpose:'educational_media' as const,phiAllowed:false as const,dedicated:true as const,bucket:'alp-synthetic-lessons',expectedBucketOwner:'588966314750',
  region:'us-east-2',kmsKeyArn:'arn:aws:kms:us-east-2:588966314750:key/71000000-0000-4000-8000-000000000099',
  maxImageBytes:16777216,maxVideoBytes:268435456,publicOrigin:'https://lessons.example.test/'};
-let db:PGlite, ledger:ReturnType<typeof createProgramMediaNativeLedger>;
+let db:PGlite, ledger:ReturnType<typeof createProgramMediaNativeLedger>,database:ClinicalCoreDatabase;
 const bytes=new TextEncoder().encode('fictional educational PNG bytes');
 const hash=(value:Uint8Array|string)=>createHash('sha256').update(value).digest('hex');
 const prepare=(commandId=randomUUID(),data=bytes)=>({commandId,programId:program,kind:'image',contentType:'image/png',bytes:data.length,sha256:hash(data),fileName:'lesson.png'});
@@ -45,7 +50,7 @@ beforeAll(async()=>{
   await db.query(`insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,$3)`,[clinic,person,role]);
  }
  await db.query(`insert into clinical_core.synthetic_desktop_programs(id,organization_id,name,created_by_person_id) values($1,$2,'Fictional lesson',$3),($4,$5,'Fictional unrelated lesson',$6)`,[program,org,actor,otherProgram,otherOrg,otherActor]);
- const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>{
+ database={transaction:work=>db.transaction(async tx=>{
   await tx.exec('set local role program_media_worker');
   return work({query:async(sql,parameters)=>await tx.query(sql,parameters?.map(p=>typeof p==='object'&&p!==null&&'kind' in p&&'value' in p?p.value:p)??[]) as never});
  })};
@@ -145,5 +150,35 @@ describe('complete native media ledger under the restricted worker role',()=>{
   }
   expect((await db.query("select rolcanlogin,rolbypassrls,rolsuper from pg_roles where rolname='program_media_authority'")).rows).toEqual([{rolcanlogin:false,rolbypassrls:false,rolsuper:false}]);
   expect((await db.query("select pg_has_role('program_media_worker','program_media_authority','MEMBER') as member,has_table_privilege('program_media_worker','clinical_core.program_media_activation','SELECT,UPDATE') as table_access")).rows).toEqual([{member:false,table_access:false}]);
+ });
+ it('passes HTTP metadata through the real native factory and restricted SQL, replaying one reservation',async()=>{
+  const close=vi.fn();provider.open.mockResolvedValue({store:createFictionalProgramMediaStore({kmsKeyArn:storage.kmsKeyArn}),close});
+  const source=()=>createProgramMediaNativeRequestSource({database,storage,activation:{enabled:true,evidenceSha256:'a'.repeat(64)},
+   resolveContext:async()=>context,credentialsForProgram:async scope=>({storage,scope,expectedRoleArn:'arn:aws:iam::588966314750:role/alp-educational-media-worker',
+    credentials:{accessKeyId:'ASIA'+'A'.repeat(16),secretAccessKey:'x'.repeat(40),sessionToken:'fictional-token',expiration:new Date(Date.now()+3600000)},
+    forbiddenBuckets:['alp-recording-store'],forbiddenKmsKeyArns:['arn:aws:kms:us-east-2:588966314750:key/'+id(98)]})});
+  const handler=createProgramMediaControlHandler({enabled:true,sourceForRequest:async()=>{if(!await ledger.authorize(context,program))throw new ProgramMediaError('access_refused');return source();}});
+  const command={operation:'prepare',request:prepare()},req=()=>new Request('https://desktop.example.test/api/live/programs/media/control',{
+   method:'POST',headers:{host:'desktop.example.test',origin:'https://desktop.example.test','content-type':'application/json'},body:JSON.stringify(command)});
+  const first=await handler(req()),again=await handler(req());expect(first.status).toBe(200);expect(again.status).toBe(200);
+  const a=await first.json(),b=await again.json();expect(b.data.artifactId).toBe(a.data.artifactId);expect(b.data.replayed).toBe(true);expect(close).toHaveBeenCalledTimes(2);
+  expect((await db.query<{n:number}>('select count(*)::int as n from clinical_core.program_media_artifacts where command_id=$1',[command.request.commandId])).rows[0].n).toBe(1);
+ });
+ it('refuses membership withdrawal during HTTP body reads before the native factory can reserve',async()=>{
+  const command={operation:'prepare',request:prepare()},open=vi.fn();
+  const handler=createProgramMediaControlHandler({enabled:true,sourceForRequest:async()=>{
+   if(!await ledger.authorize(context,program))throw new ProgramMediaError('access_refused');
+   return createProgramMediaNativeRequestSource({database,storage,activation:{enabled:true,evidenceSha256:'a'.repeat(64)},resolveContext:async()=>context,credentialsForProgram:open});
+  }});
+  const body=new ReadableStream<Uint8Array>({async pull(stream){
+   await db.query("update clinical_core.organization_memberships set status='suspended' where person_id=$1",[actor]);
+   stream.enqueue(new TextEncoder().encode(JSON.stringify(command)));stream.close();
+  }},{highWaterMark:0});
+  try{
+   const r=new Request('https://desktop.example.test/api/live/programs/media/control',{method:'POST',
+    headers:{host:'desktop.example.test',origin:'https://desktop.example.test','content-type':'application/json'},body,duplex:'half'} as RequestInit);
+   const result=await handler(r);expect(result.status).toBe(403);expect((await result.json()).error.code).toBe('access_refused');expect(open).not.toHaveBeenCalled();
+   expect((await db.query<{n:number}>('select count(*)::int as n from clinical_core.program_media_artifacts where command_id=$1',[command.request.commandId])).rows[0].n).toBe(0);
+  }finally{await db.query("update clinical_core.organization_memberships set status='active' where person_id=$1",[actor]);}
  });
 });

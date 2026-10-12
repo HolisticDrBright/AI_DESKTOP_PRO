@@ -209,6 +209,12 @@ other than the dedicated one, and no step is evidence of patient-facing delivery
 
 ## What this does not decide
 
+The bounded control HTTP source and 8 MiB part reader are recorded in
+`docs/program-media-http-admission-2026-10-11.md`. They preserve the 256 MiB
+video reservation ceiling but do not install routes or complete multipart
+upload/whole-file verification. Native multipart admission, actual host wiring
+and read-only V2 delivery remain prerequisites, not completed capabilities.
+
 Retention of educational media, who may retire, whether a published reference may be
 withdrawn from an already-assigned program, the delivery origin's caching, multipart
 admission, accessibility obligations beyond showing supplied provenance, and any
