@@ -3125,7 +3125,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 294,
+          "line": 298,
           "argumentKeys": [
             "_activate",
             "_comp_reason",
@@ -4611,7 +4611,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 371,
+          "line": 375,
           "argumentKeys": [
             "_patient_id"
           ]
@@ -7601,7 +7601,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 338,
+          "line": 342,
           "argumentKeys": [
             "_block_id",
             "_enrollment_id",
@@ -9211,7 +9211,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 358,
+          "line": 362,
           "argumentKeys": [
             "_progress_id"
           ]
@@ -10717,7 +10717,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 315,
+          "line": 319,
           "argumentKeys": [
             "_enrollment_id",
             "_reason",
@@ -12007,7 +12007,7 @@
         {
           "adapter": "programs.live.ts",
           "domain": "programs",
-          "line": 259,
+          "line": 263,
           "argumentKeys": [
             "_access_duration_days",
             "_currency",
