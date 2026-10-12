@@ -4,8 +4,9 @@ import {z} from 'zod';
 import {readBoundedRequestBody,BoundedBodyError} from '@/server/bounded-request-body';
 import {ProgramMediaError} from './program-media-authoring';
 
-export const PROGRAM_MEDIA_PART_BYTES=8_388_608;
-export const PROGRAM_MEDIA_MAX_VIDEO_BYTES=268_435_456;
+import { PROGRAM_MEDIA_PART_BYTES, PROGRAM_MEDIA_MAX_VIDEO_BYTES, programMediaPartManifest } from '@/contracts/programMediaUpload';
+export { PROGRAM_MEDIA_PART_BYTES, PROGRAM_MEDIA_MAX_VIDEO_BYTES, programMediaPartManifest } from '@/contracts/programMediaUpload';
+export type { ProgramMediaPartManifest } from '@/contracts/programMediaUpload';
 const digest=z.string().regex(/^[a-f0-9]{64}$/);
 const total=z.number().int().safe().min(1).max(PROGRAM_MEDIA_MAX_VIDEO_BYTES);
 const part=z.object({partNumber:z.number().int().min(1).max(32),bytes:z.number().int().min(1).max(PROGRAM_MEDIA_PART_BYTES),sha256:digest}).strict();
@@ -15,12 +16,6 @@ const admission=z.object({totalBytes:total,partNumber:part.shape.partNumber,sha2
 /** Exact ordered recipe. Non-final parts are 8 MiB (above S3's 5 MiB
  * minimum); the last may be smaller. This preserves the 256 MiB video ceiling,
  * not a substituted image-size maximum or an unbounded server allocation. */
-export const programMediaPartManifest=z.object({totalBytes:total,parts:z.array(part).min(1).max(32)}).strict().superRefine((m,ctx)=>{
- const count=Math.ceil(m.totalBytes/PROGRAM_MEDIA_PART_BYTES);
- if(m.parts.length!==count||m.parts.some((p,i)=>p.partNumber!==i+1||p.bytes!==Math.min(PROGRAM_MEDIA_PART_BYTES,m.totalBytes-i*PROGRAM_MEDIA_PART_BYTES)))
-  ctx.addIssue({code:'custom',message:'program_media_part_manifest_mismatch'});
-});
-export type ProgramMediaPartManifest=z.infer<typeof programMediaPartManifest>;
 export function programMediaCompositeChecksum(value:unknown):string{
  const manifest=programMediaPartManifest.parse(value);
  return createHash('sha256').update(Buffer.concat(manifest.parts.map(p=>Buffer.from(p.sha256,'hex')))).digest('base64')+'-'+manifest.parts.length;

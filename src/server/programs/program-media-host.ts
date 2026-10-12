@@ -111,7 +111,11 @@ export function createProgramMediaHostHandlers(input: { target?: unknown; enable
           const metadata = createProgramMediaAuthoring({ ledger, storage: t.storage, store: neverStore,
             activation: { enabled: true, reason: 'Requires current reviewed native SQL release' } });
           let answer: unknown;
-          if (['prepare', 'attachText', 'publish', 'retire', 'describeReference'].includes(command.operation)) {
+          if (command.operation === 'inspect') {
+            answer = await ledger.artifact(context, command.request.artifactId) ?? await ledger.reservation(context, command.request.artifactId);
+            const row = answer as { clinic: string; programId: string } | null;
+            if (!row || row.clinic !== context.organizationId || !await ledger.authorize(context, row.programId)) throw new ProgramMediaError('not_found');
+          } else if (['prepare', 'attachText', 'publish', 'retire', 'describeReference'].includes(command.operation)) {
             if (command.operation === 'prepare') answer = await metadata.prepare(context, command.request);
             else if (command.operation === 'attachText') answer = await metadata.attachText(context, command.request);
             else if (command.operation === 'publish') answer = await metadata.publish(context, command.request);

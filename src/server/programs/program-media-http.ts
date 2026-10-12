@@ -3,27 +3,17 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {readBoundedRequestBody,BoundedBodyError} from '@/server/bounded-request-body';
 import {sameBrowserOrigin} from '@/server/same-browser-origin';
-import {PROGRAM_MEDIA_FAILURES,programMediaPrepareRequest,programMediaReadRequest,programMediaTextRequest,
- programMediaVersionRequest,programMediaReference,programMediaReferenceStatus,programMediaReservation,programMediaArtifact,
+import {PROGRAM_MEDIA_FAILURES,programMediaReference,programMediaReferenceStatus,programMediaReservation,programMediaArtifact,
  programMediaPreview,programMediaCleanupReceipt,programMediaExtension,type ProgramMediaFailure} from '@/contracts/programMedia';
 import {ProgramMediaError} from './program-media-authoring';
 
-export const PROGRAM_MEDIA_HTTP_CONTRACT='program-media-control-http/1' as const;
+import { PROGRAM_MEDIA_HTTP_CONTRACT, programMediaControlCommand, type ProgramMediaControlCommand } from '@/contracts/programMediaUpload';
+export { PROGRAM_MEDIA_HTTP_CONTRACT, programMediaControlCommand } from '@/contracts/programMediaUpload';
+export type { ProgramMediaControlCommand } from '@/contracts/programMediaUpload';
 const PATH='/api/live/programs/media/control',MAX_BODY_BYTES=1_048_576,MAX_REPLY_BYTES=1_048_576,MAX_DEADLINE_MS=30_000;
 
 /** Metadata only. Video/image bytes never enter a JSON body, base64 field or
  * request-specific authority object. Chunk transport has its own admission. */
-export const programMediaControlCommand=z.discriminatedUnion('operation',[
- z.object({operation:z.literal('prepare'),request:programMediaPrepareRequest.refine(r=>r.bytes<=(r.kind==='image'?16_777_216:268_435_456))}).strict(),
- z.object({operation:z.literal('reconcile'),request:programMediaReadRequest}).strict(),
- z.object({operation:z.literal('attachText'),request:programMediaTextRequest}).strict(),
- z.object({operation:z.literal('preview'),request:programMediaReadRequest}).strict(),
- z.object({operation:z.literal('publish'),request:programMediaVersionRequest}).strict(),
- z.object({operation:z.literal('retire'),request:programMediaVersionRequest}).strict(),
- z.object({operation:z.literal('describeReference'),request:programMediaReference}).strict(),
- z.object({operation:z.literal('cleanupOrphans'),request:z.object({programId:z.string().uuid()}).strict()}).strict(),
-]);
-export type ProgramMediaControlCommand=z.infer<typeof programMediaControlCommand>;
 type Source={execute(value:unknown,signal:AbortSignal):Promise<unknown>};
 const STATUS:Record<ProgramMediaFailure,number>={program_media_disabled:503,request_invalid:400,access_refused:403,not_found:404,
  conflict:409,not_ready:409,retired:409,storage_unverified:503,service_unavailable:503,reservation_expired:409,text_source_refused:422};
@@ -40,7 +30,7 @@ function checkedReply(command:ProgramMediaControlCommand,value:unknown){
    if(r.commandId!==q.commandId||r.programId!==q.programId||r.kind!==q.kind||r.contentType!==q.contentType||r.sha256!==q.sha256||r.bytes!==q.bytes)throw new Error('reply_unbound');
    data=r;break;
   }
-  case 'reconcile':data=z.union([programMediaArtifact,programMediaReservation]).parse(value);break;
+  case 'inspect':case 'reconcile':data=z.union([programMediaArtifact,programMediaReservation]).parse(value);break;
   case 'attachText':{
    const r=programMediaArtifact.parse(value),q=command.request,t=r[q.slot];
    if(!t||t.text!==q.text||t.source!==q.source||t.format!==q.format||t.sha256!==createHash('sha256').update(q.text).digest('hex'))throw new Error('reply_unbound');

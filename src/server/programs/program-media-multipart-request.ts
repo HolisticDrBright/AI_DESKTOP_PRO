@@ -7,42 +7,16 @@ import { programMediaStorageSchema, type ProgramMediaStorage } from '@/contracts
 import { ProgramMediaError, ProgramMediaWriteError } from './program-media-authoring';
 import { createProgramMediaNativeLedger } from './program-media-native-ledger';
 import { createProgramMediaMultipartLedger, type ProgramMediaMultipartSession } from './program-media-multipart-ledger';
-import { programMediaPartManifest, PROGRAM_MEDIA_PART_BYTES } from './program-media-parts';
+import { PROGRAM_MEDIA_PART_BYTES } from './program-media-parts';
 import { createAwsProgramMediaMultipartStoreSource, type AwsProgramMediaMultipartStore } from './aws-program-media-multipart-store';
 import type { AwsProgramMediaStoreConfiguration, ProgramMediaMultipartPolicyReview } from './aws-program-media-store';
 
-export const PROGRAM_MEDIA_MULTIPART_REQUEST_CONTRACT = 'program-media-multipart-control/1' as const;
-const uuid = z.string().uuid(), digest = z.string().regex(/^[a-f0-9]{64}$/);
-const reference = z.object({ artifactId: uuid }).strict();
-const write = reference.extend({ commandId: uuid });
-const command = <O extends string, S extends z.ZodType>(operation: O, request: S) => z.object({ operation: z.literal(operation), request }).strict();
+import { programMediaMultipartControlCommand, programMediaMultipartView, programMediaPartBodyAdmission } from '@/contracts/programMediaUpload';
+export { PROGRAM_MEDIA_MULTIPART_REQUEST_CONTRACT, programMediaMultipartControlCommand, programMediaMultipartView, programMediaPartBodyAdmission } from '@/contracts/programMediaUpload';
+export type { ProgramMediaMultipartControlCommand, ProgramMediaMultipartView } from '@/contracts/programMediaUpload';
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
 /** No provider IDs, receipts, proof, release, actor, credentials or endpoint may
  * enter from a browser. commandId is only an idempotency key, not authority. */
-export const programMediaMultipartControlCommand = z.discriminatedUnion('operation', [
-  command('start', write.extend({ manifest: programMediaPartManifest })), command('status', reference),
-  command('create', write), command('part', write.extend({ partNumber: z.number().int().min(1).max(32) })),
-  command('complete', write), command('reconcile', reference), command('cancel', reference), command('cleanup', reference),
-]);
-export type ProgramMediaMultipartControlCommand = z.infer<typeof programMediaMultipartControlCommand>;
-export const programMediaMultipartView = z.object({
-  artifactId: uuid, contentType: z.enum(['video/mp4', 'video/webm']), bytes: z.number().int().positive().max(268435456), sha256: digest,
-  state: z.enum(['prepared', 'creation_admitted', 'uploading', 'completion_admitted', 'verifying', 'abort_requested', 'committed', 'aborted']),
-  acceptBefore: z.string().datetime({ offset: true }), receivedParts: z.array(z.number().int().min(1).max(32)).max(32),
-  pendingParts: z.array(z.number().int().min(1).max(32)).max(32), pendingWork: z.boolean(),
-}).strict().superRefine((s, ctx) => {
-  const count = Math.ceil(s.bytes / PROGRAM_MEDIA_PART_BYTES);
-  const received = new Set(s.receivedParts), pending = new Set(s.pendingParts);
-  if (received.size !== s.receivedParts.length || pending.size !== s.pendingParts.length
-    || [...received, ...pending].some(part => part > count) || [...pending].some(part => received.has(part))
-    || (pending.size > 0 && !s.pendingWork)
-    || (s.state === 'committed' && (s.pendingWork || received.size !== count))
-    || (s.state === 'aborted' && s.pendingWork)) {
-    ctx.addIssue({ code: 'custom', message: 'program_media_progress_mismatch' });
-  }
-});
-export type ProgramMediaMultipartView = z.infer<typeof programMediaMultipartView>;
-export const programMediaPartBodyAdmission = z.object({ totalBytes: z.number().int().positive().max(268435456),
-  partNumber: z.number().int().min(1).max(32), sha256: digest }).strict();
 const storageIdentity = (s: ProgramMediaStorage) => JSON.stringify([s.purpose, s.phiAllowed, s.dedicated, s.bucket,
   s.expectedBucketOwner, s.region, s.kmsKeyArn, s.maxImageBytes, s.maxVideoBytes, s.publicOrigin]);
 const activationSchema = z.object({ enabled: z.literal(true), nativeEvidenceSha256: digest, multipartEvidenceSha256: digest }).strict();

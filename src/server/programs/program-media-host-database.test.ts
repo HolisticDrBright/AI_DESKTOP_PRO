@@ -12,6 +12,7 @@ import { guardProgramMediaHostDatabase, PROGRAM_MEDIA_HOST_PRIVILEGES_SQL } from
 import { PROGRAM_MEDIA_HOST_SCHEMA_SHA256, programMediaHostTarget } from './program-media-host-target';
 import { createProgramMediaHostAuthority } from './program-media-host-authority';
 import { createProgramMediaHostHandlers } from './program-media-host';
+import { createProgramMediaUploadController } from '@/lib/programs/programMediaUpload';
 
 const sha = (s: string) => createHash('sha256').update(s.replaceAll('\r\n', '\n')).digest('hex');
 const id = (n: number) => `74000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -237,7 +238,10 @@ async function composedHost() {
   const host = createProgramMediaHostHandlers({ target: t, enabled: true, openRequest });
   const request = (operation: string, value: unknown) => new Request(t.origin + '/api/live/programs/media/control', { method: 'POST',
     headers: { host: new URL(t.origin).host, origin: t.origin, 'content-type': 'application/json' }, body: JSON.stringify({ operation, request: value }) });
-  const data = new TextEncoder().encode('Fictional host educational image, no patient data');
+  // Each composed host has its own fictional S3 store while the SQL database
+  // deliberately persists. Do not collide with a prior host's committed-byte
+  // identity: SQL admits only one committed artifact per program and digest.
+  const data = new TextEncoder().encode('Fictional host educational image, no patient data: ' + randomUUID());
   const prepare = () => ({ commandId: randomUUID(), programId: id(3), kind: 'image', contentType: 'image/png', bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), fileName: 'fictional.png' });
   return { ...f, t, host, token, sdk, request, data, prepare, control: (operation: string, value: unknown) => host.handle(request(operation, value), token),
     setMfa: (enabled: boolean) => { f.mfa = enabled; }, afterResolve: (callback: typeof f.afterResolve) => { f.afterResolve = callback; } };
@@ -266,6 +270,37 @@ it('denies a real forged signature and current MFA withdrawal before reserving a
   expect((await f.host.handle(f.request('prepare', f.prepare()), bad)).status).toBe(403);
   f.setMfa(false); expect((await f.control('prepare', f.prepare())).status).toBe(403);
   expect(await count()).toBe(before); expect(f.issued).not.toHaveBeenCalled(); expect(f.sdk).not.toHaveBeenCalled();
+});
+it('inspects an existing reservation with current author authority without opening provider credentials', async () => {
+  const f = await composedHost(); const prepared = await f.control('prepare', f.prepare());
+  const reservation = (await prepared.json()).data;
+  const inspected = await f.control('inspect', { artifactId: reservation.artifactId });
+  expect(inspected.status).toBe(200); expect((await inspected.json()).data.artifactId).toBe(reservation.artifactId);
+  expect(f.issued).not.toHaveBeenCalled(); expect(f.sdk).not.toHaveBeenCalled();
+  f.setMfa(false); expect((await f.control('inspect', { artifactId: reservation.artifactId })).status).toBe(403);
+});
+it('runs the actual editor controller through bounded routes and restricted SQL, recovering a lost binary receipt in a fresh controller', async () => {
+  const f = await composedHost(); let lost = false; const observations: { path: string; status: number; error: unknown }[] = [];
+  const transport: typeof fetch = async (url, init) => {
+    const headers = new Headers(init!.headers); headers.set('host', new URL(f.t.origin).host); headers.set('origin', f.t.origin);
+    const response = await f.host.handle(new Request(f.t.origin + String(url), { ...init, headers }), f.token);
+    observations.push({ path: String(url), status: response.status, error: (await response.clone().json()).error ?? null });
+    if (String(url).includes('/media/image/') && !lost && response.ok) { lost = true; throw new Error('fictional reply loss after actual SQL commit'); }
+    return response;
+  };
+  const make = () => createProgramMediaUploadController({ scope: () => ({ programId: id(3), draftId: id(4), stepId: 'phase-1/item-1', session: 'fictional-host-session' }), fetch: transport });
+  const editor = make(); await editor.selectFile(new File([f.data], 'lesson.png', { type: 'image/png' })); await editor.upload();
+  expect(lost, JSON.stringify(observations)).toBe(true);
+  expect(editor.snapshot().state).toBe('waiting'); expect(editor.snapshot().receivedParts).toBe(0);
+  const artifactId = editor.snapshot().artifact!.artifactId; editor.invalidate();
+  const fresh = make(); await fresh.restore(artifactId);
+  expect(fresh.snapshot()).toMatchObject({ state: 'ready', receivedParts: 1, fileSelected: false });
+  await fresh.attachText('Fictional supplied editor description'); await fresh.preview(); await fresh.publish();
+  expect(fresh.snapshot().reference).toMatchObject({ artifactId, origin: { clinic: id(2), programId: id(3) } });
+  expect(new URL(fresh.snapshot().preview!.previewToken).searchParams.get('versionId')).toBe('fictional-host-version');
+  expect(f.sdk.mock.calls.filter(([c]) => c.constructor.name === 'PutObjectCommand')).toHaveLength(1);
+  f.setMfa(false); await fresh.checkStatus();
+  expect(fresh.snapshot()).toMatchObject({ artifact: null, reference: null, preview: null, fileSelected: false });
 });
 it('withholds a private response if the release changes between mutation and final response', async () => {
   const f = await composedHost(); f.afterResolve(async count => { if (count === 2) await db.query('update clinical_core.program_media_activation set native_evidence_sha256=$1', ['f'.repeat(64)]); });
