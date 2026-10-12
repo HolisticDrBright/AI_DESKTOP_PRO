@@ -15,6 +15,7 @@ import { createProgramSettlement, hashClaimToken } from './program-settlement';
 import { createFictionalCheckoutProcessor } from './program-checkout-processor';
 import type { OfferActor } from './program-offer-ledger';
 import type { VerifiedEvent } from '../stripe-boundary';
+import { educationAccessView } from '../../contracts/programEducationAccess';
 
 /**
  * The BLOCKED education-access candidate on top of the offer and checkout candidates, against the
@@ -143,7 +144,9 @@ describe('enabled in this embedded database only', () => {
     expect(await settlement().claim(bob, 'A'.repeat(43))).toEqual({ outcome: 'refused', reason: 'claim_invalid' });
     expect(await settlement().access(bob)).toMatchObject({ entitlements: [], enrollments: [] });
     const claimed = await settlement().claim(alice, token);
-    expect(claimed).toMatchObject({ outcome: 'claimed', entitlement: { state: 'active', revision: 2, subject: { kind: 'claimed', consumerSubject: alice }, window: { startsAt: '2026-10-11T12:00:00+00:00' } } });
+    expect(claimed).toMatchObject({ outcome: 'claimed', entitlement: { state: 'active', revision: 2, subject: { kind: 'claimed', consumerSubject: alice } } });
+    // The window opens at the claim instant. The database renders timestamptz in its session zone (PGlite follows the process TZ; CI runs the unit suite in Pacific time), so the instant is compared, never the rendering.
+    expect(claimed.outcome === 'claimed' && claimed.entitlement.window ? Date.parse(claimed.entitlement.window.startsAt) : NaN).toBe(Date.parse('2026-10-11T12:00:00Z'));
     expect(await settlement().claim(alice, token)).toEqual({ outcome: 'refused', reason: 'claim_used' });
     expect(await settlement().claim(bob, token)).toEqual({ outcome: 'refused', reason: 'already_claimed_by_other' });
     const access = await settlement().access(alice);
@@ -154,6 +157,25 @@ describe('enabled in this embedded database only', () => {
     expect(await fails(`update commercial_education.program_entitlements set consumer_subject=$2,revision=revision+1 where id=$1`, [entitlementId, bob])).toContain('program_entitlement_subject_immutable');
     expect(await fails(`update commercial_education.program_claims set state='issued',used_at=null,used_by=null where entitlement_id=$1`, [entitlementId])).toContain('program_claim_settled');
     expect(await fails(`insert into commercial_education.program_education_enrollments(entitlement_id,consumer_subject,curriculum_version_id,curriculum_version,curriculum_source_digest) select entitlement_id,$2,curriculum_version_id,curriculum_version,curriculum_source_digest from commercial_education.program_education_enrollments where entitlement_id=$1`, [entitlementId, bob])).toMatch(/unique/);
+  });
+  it('the claim window is one instant under a UTC and a non-UTC database session zone, and both renderings are the contract\'s timestamp', async () => {
+    // The declared contract is `z.string().datetime({ offset: true })`: an offset rendering is admitted, so the instant is the fact and the zone is presentation.
+    const instant = Date.parse('2026-10-11T12:00:00Z');
+    const renderings: string[] = [];
+    for (const zone of ['UTC', 'America/Los_Angeles', 'Asia/Kolkata']) {
+      await db.exec(`set time zone '${zone}'`);
+      const access = await settlement().access(alice);
+      const entitlement = access?.entitlements[0];
+      expect(entitlement).toMatchObject({ state: 'active', revision: 2, subject: { kind: 'claimed', consumerSubject: alice } });
+      expect(entitlement?.window ? Date.parse(entitlement.window.startsAt) : NaN).toBe(instant);
+      expect(educationAccessView.safeParse(access).success).toBe(true);
+      renderings.push(entitlement!.window!.startsAt);
+      expect(await settlement().claim(alice, token)).toEqual({ outcome: 'refused', reason: 'claim_used' });
+      expect(await settlement().access(bob)).toMatchObject({ entitlements: [], enrollments: [] });
+    }
+    await db.exec(`set time zone 'UTC'`);
+    // Three zones, three renderings of the same instant: the proof is not a rendering happening to match.
+    expect(new Set(renderings).size).toBe(3);
   });
   it('serves the exact purchased version to the owner only, and withholds when the stored content no longer matches the digest', async () => {
     const served = await education().access(alice);

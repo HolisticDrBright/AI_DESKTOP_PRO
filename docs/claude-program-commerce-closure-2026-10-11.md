@@ -539,3 +539,157 @@ No purchase can be made in the mounted run: every funnel is a draft and no progr
 ### Decisions
 
 None new. The verified-account-first versus anonymous-plus-claim question (unit 3) still decides which of the two convergence journeys the hosted service will offer first; both are implemented as the safe state.
+
+## Unit 6 — verification, the authority map, and what Codex runs next
+
+### Authority map: offer → checkout → receipt → entitlement → account read → clinical adoption
+
+| Stage | Who may say it | The record | Where it lives | What can never say it |
+| --- | --- | --- | --- | --- |
+| An offer exists on these terms | a clinician of the clinic, through the Studio, bound to the published curriculum the ledger read | `program-offer/1` revision (append-only log) | `program_offers` + `program_offer_revisions` (BLOCKED candidate), fictional ledger under the fixture | a funnel page, a request body, a caller-named curriculum, a free or zero price, text inference |
+| A visitor may buy now | the stored offer evaluated against the program as it is now (`availability`) | a hold or `available` on exact terms | `funnel-purchase.ts` over the offer ledger | the funnel's own text; a stale revision; a changed curriculum |
+| An order was opened | the checkout boundary, after the order row is admitted with its terms snapshot | `program-checkout/1` order, state `checkout_open` | `program_orders` (BLOCKED candidate), fictional ledger | the processor page, the browser, the attempt cookie |
+| A payment was made | the retrieved processor object, bound to the saved order, amount, currency, mode, account and price | `payment_verified` with the verification columns | `program_orders` verification columns; intake in `program_checkout_intake` | a redirect to `/buy/return`, a `success` query, an unsigned or live-mode event, an event naming a session we never opened |
+| Access exists | settlement, from one verified order, once | `program-education-access/1` entitlement `awaiting_claim` + one claim token (hash stored) | `program_entitlements`, `program_claims` (BLOCKED candidate) | an order number, a receipt, an email address |
+| This person owns it | the claim, bound to the verified consumer subject in the request context | `active`, window opened from the saved duration, one enrollment | the same ledger; bridge `education-access-service.ts` (route seam not registered) | a forged, expired, replayed or second-use token; a view carrying another subject's row |
+| What the account may read | the owner's own view and the exact purchased version, read-only | `educationAccessView`, `educationCurriculumRead` | V2 `lib/education/awsEducationAccess.ts` → `/clinical-core/consumer/education` (unmounted); Desktop staff read via `/api/live/commerce/status` | device state, a mock, a flag, a previous positive; a curriculum whose digest moved |
+| Clinical adoption | a practitioner, through the existing reviewed assignment path, after a purchase and never because of one | a program assignment (clinical) | the assignments inbox (Desktop), My programs (V2) | settlement, the claim, the course read; the commercial status view is `pending_review` for every claimed purchase |
+
+Commercial data never touches clinical data: the three candidates live in `commercial_education`, no clinical function names that schema, no commerce module imports a clinical one, and the status route returns everything under `commercial` and nothing else.
+
+### Inventory of what this branch adds
+
+| Kind | Name | Digest / pin |
+| --- | --- | --- |
+| Contract | `src/contracts/programOffers.ts` (`program-offer/1`) | — |
+| Contract | `src/contracts/programCheckout.ts` (`program-checkout/1`) | — |
+| Contract (mirrored) | `src/contracts/programEducationAccess.ts` = `expo/contracts/programEducationAccess.ts` (`program-education-access/1`) | `af2af740c349e8b1344e870ba8b0bb2426558b6ef2defbb6e4b60d66aa474a4f`, pinned by V2 `__tests__/education-access-contract.test.ts` |
+| BLOCKED candidate | `infra/aws-clinical-core/source-candidates/program-offer-revisions.sql` (parents: identity consent `c4ca9673…`, programs inbox `6ba42349…`, assignments `8d6bcac8…`) | `4973461564e6812906403525cb3aa109d6fd569eec159c9400fcf568a90b321f` = `PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256` |
+| BLOCKED candidate | `…/program-checkout-orders.sql` (parents: identity consent, the offer candidate) | `767ac13bc111a15b98bdc2978a5e42a33f5f1ab61f010061907787040b0c37ee` = `PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256` |
+| BLOCKED candidate | `…/program-education-access.sql` (parents: identity consent, the checkout candidate) | `e4f11e29f1b6a68f1478dbc112aaac1ea2bbf72adf86f9458dd5a20c8151df93` = `PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256` |
+| Routes (workforce, same-origin, cookie) | `POST /api/live/commerce/offers`, `POST /api/live/commerce/status` | identity via `workforce-identity.ts` |
+| Routes (public) | `POST /api/live/commerce/checkout` (303 back to the page or to the processor; HttpOnly attempt cookie), `POST /api/live/commerce/webhook` (provider-authenticated; 503 while unconfigured) | — |
+| Pages (public, allow-listed in middleware, funnel CSP) | `/buy/[slug]`, `/buy/return` | — |
+| Route seam (not registered) | `POST /clinical-core/consumer/education` (`education-access-service.ts`) | asserted absent in `aws-identity-api.ts`, the check script and `identity-api-extension.json` |
+| Studio | `ProgramOfferEditor.tsx`, `ProgramPurchasesPanel.tsx`; `offerAuthoring.ts`, `purchaseStatus.ts` | — |
+| Funnels | `FunnelPage.tsx` (both choices), `PurchasePage.tsx`, `ReturnPage.tsx` | — |
+| Runtime selection | `program-commerce-runtime.ts`: fictional ledgers only inside the contract-fixture boundary; otherwise `commerce_disabled` / `checkout_unconfigured`; the Stripe transport and the SQL ledgers are never constructed by any Desktop runtime | — |
+| V2 | `lib/education/awsEducationAccess.ts`, `app/education.tsx`; tests `education-access-{contract,client}`, `education-screen-journey`, `education-dual-path` | — |
+| Stub | `scripts/live-stub-server.mjs` mints RFC-layout program ids; no new mutable binding (`check:stub-reset` unchanged at 141 bindings) | — |
+
+### The repair the scripted unit run found
+
+`npm run test:unit` runs under `TZ=America/Los_Angeles`. PGlite renders `timestamptz` in the process's session zone, so the education candidate's claim test, which compared the claim window's rendering (`2026-10-11T12:00:00+00:00`), received `2026-10-11T04:00:00-08:00`: the same instant, a different presentation. The declared contract is `z.string().datetime({ offset: true })` in all three commerce contracts, so an offset rendering is admitted and the instant is the fact. The assertion now compares the instant (`Date.parse`) beside the unchanged ownership, revision, single-use and stranger checks, and a new case reads the same entitlement under `UTC`, `America/Los_Angeles` and `Asia/Kolkata` session zones: one instant, three distinct renderings, each a contract timestamp, the claim still used and the stranger still empty under every zone. The file passes under `TZ=UTC` and `TZ=America/Los_Angeles` from the shell as well. No runtime changed, no assertion was removed, no environment was forced.
+
+### Verification record — Desktop (`claude/program-commerce-closure-20261011`, head `the unit-6 commit that carries this record`)
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run lint` | PASS, 0 errors, 0 warnings |
+| `npm run test:unit` (full, `TZ=America/Los_Angeles` as CI runs it) | PASS: 493 files; 7676 tests passed, 11 skipped |
+| `APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build` | PASS (exit 0; `/buy/[slug]` and `/buy/return` in the route table) |
+| Gate battery (`check:aws-desktop-operation-inventory` plus the 32 checks the CI job runs after the unit step, among them the strict client scan and the mock-import, security, inventory and compatibility gates) | 33/33 PASS; `qualify:security` 29/29 (its first local attempt exited 1 only because the report file from the unit-2 run still existed and the CLI creates it exclusively; CI starts clean) |
+| `npm run check:stub-reset` | PASS — 141 mutable bindings, every one covered |
+| CI-recipe e2e, forward and reverse in one process (`E2E_LIVE=1 E2E_DEV_SERVER=1 APP_EDITION=clinical CLINICAL_CONTRACT_FIXTURE=1`, `env -u NODE_OPTIONS`, `E2E_DEV_HEAP_MB=6144`, `PW_CHROMIUM_PATH=/opt/pw-browsers/chromium`) | NOT a clean pass, recorded as observed. Forward: 299 passed, **1 failed**, 19 skipped (provider-gated by design), 14 did not run (serial followers of the failure). Reverse: 312 passed, **1 failed**, 19 skipped, 1 did not run. The forward failure is `live-plans.spec.ts` case 4 (a complimentary grant not seen after reload, 50 s); the reverse failure is `live-telehealth.spec.ts` chart placement (`page.goto` exceeded the 120 s test timeout while the dev server restarted at its memory threshold). Each failing case passed in the other direction, neither spec touches commerce code, and `live-plans` case 4 passed in CI on `d14522b`. Not retried, not reclassified: CI's battery on the pushed head is the authority, and the reliability return records it. |
+
+Runner memory: the dev server is started with a 6144 MB heap on a 16 GB container (constrained to about 13.4 GB); the memory probe samples are in the e2e logs. The battery is one process per direction.
+
+### Verification record — V2 (`claude/program-commerce-closure-20261011`, head `1a9fd82`)
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, 0 errors, 0 warnings |
+| `npm test` (full) | 274 files passed, 1 skipped; 3251 tests passed, 1 skipped |
+| `npm run build:production-patient-api` | PASS |
+| `check:testflight` | PASS (395 production source files scanned) |
+| `check:surface-disclosure` | PASS (4 declared surfaces, 4 asked through the recorded gate) |
+| `check:core-launch-scope` | PASS (mirror of `core-launch-scope.json` at digest `e2248e1be632`, add-on programs unavailable) |
+| `check:billing-configuration` | PASS (Core-only $19.99/month; not a program price) |
+| `check:launch-acceptance` | WITHHELD by design: the 11 source-runner cases observed; the 9 hosted, device and human cases unobserved (`j1`–`j7` hosted/device, `j7-human-paid-build-and-store-authorization`), each recorded only by its own observer |
+| `check:store-readiness` | runs clean and lists the standing blockers (owner, business, engineering, qa); none is this branch's to clear |
+
+### CI
+
+| Repository | Run | Head | Result |
+| --- | --- | --- | --- |
+| AI_DESKTOP_PRO | 38189223349 | `2be1922` (unit 2) | failed only at `check:aws-desktop-operation-inventory` (stale line numbers); regenerated in `9787a98` |
+| AI_DESKTOP_PRO | 38192228557 | `d14522b` (unit 5) | failed only at `test:unit`: one assertion in `program-education-access-candidate.database.test.ts` compared a claim window's rendering (`+00:00`) rather than its instant, and PGlite renders timestamptz in the runner's Pacific session zone (`-08:00`). The other 10 jobs succeeded, among them the three live-fixture browser suites (which include `live-program-commerce.spec.ts`), the backend-down suite and the care-messaging database job. Fixed in unit 6 by comparing the instant. |
+| AI_LONGEVITY_PRO_V2 | 38192230619 | `1a9fd82` (unit 5) | success (01:35Z) |
+| AI_DESKTOP_PRO | recorded in `docs/claude-program-commerce-reliability-learner-journeys-2026-10-11.md` | unit-6 head | observed after this commit is pushed; a record cannot contain its own commit's run |
+
+### Hosted verification matrix — not claimed run
+
+Nothing in this branch was run against AWS, Stripe, a device or a store. The matrix says what each hosted step would prove and what it needs; every row is **not run**.
+
+| Step | Proves | Needs (names only) | Status |
+| --- | --- | --- | --- |
+| Register and apply the three candidates to the qualification database, in order | the SQL ledgers behave as the PGlite tests say under the real role grants | reviewed successors of the three BLOCKED files; the migration ledger read first | not run |
+| Activation row with evidence | the ledgers refuse until the exact digest is recorded, then admit | `program_commerce_activation` evidence + reviewer + time | not run |
+| Offer authoring through the clinical service | the Lambda-side ledger over RDS Data API | Codex's route family behind `clinical_core_api` | not run |
+| Stripe test-mode checkout session | the transport creates, retrieves and binds a session on the pinned account and API version | `STRIPE_TEST_MODE_ENABLED`, `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_ACCOUNT_ID`, `STRIPE_API_VERSION_PINNED`, `NEXT_PUBLIC_SITE_ORIGIN` | not run |
+| Webhook endpoint registered on that account | signed test events reach durable intake; replays are duplicates; live-mode refused | `STRIPE_TEST_WEBHOOK_SECRET`, the endpoint URL | not run |
+| Settlement worker | a verified order becomes one entitlement and one claim; a crash is recovered | the scheduled invocation Codex chooses | not run |
+| Claim delivery | the token reaches the processor-verified address once | the provider decision (owner) | not run |
+| Consumer education route registered | V2 reads its own view; 404 becomes a view | `identity-api-extension.json` successor, `aws-identity-api.ts` registration | not run |
+| Device read on a TestFlight build | the screen shows courses only from the service | a synthetic build authorization (owner) | not run |
+| Any PHI | — | — | never: the branch is synthetic end to end |
+
+### Ordered execution inputs for Codex (secret names only; no values exist in this branch)
+
+1. **Review units 1 and 2** (the offer contract and the checkout boundary) before anything is registered; the fictional ledgers are the behavioural specification for the SQL adapters.
+2. **Read the migration ledger**, then register `program-offer-revisions.sql` as a successor against its three parents at the digests above; apply to the qualification database only; rename the local file to the stamped version.
+3. Register and apply `program-checkout-orders.sql`, then `program-education-access.sql`, each against the previous one's recorded digest; re-run the three PGlite candidate tests against the registered text and update the three `*_SCHEMA_CANDIDATE_SHA256` pins in the same change.
+4. **Route families behind `clinical_core_api`**: offer authoring (`list`, `create`, `revise`, `approve_provider_mapping`, `publish`, `retire`), checkout (`start`, `admit_event`, `process`, `settle_due`), education (`access`, `claim`, `curriculum`, `staff_curriculum`, `list_for_program`), modelled on the fictional ledgers' refusal categories; the Desktop routes then call them with the workforce token instead of the fictional ledgers.
+5. **Stripe test account**: create the test-mode products and prices Brandon approves (none exist); record `STRIPE_TEST_ACCOUNT_ID` and `STRIPE_API_VERSION_PINNED`; register the webhook endpoint; store `STRIPE_TEST_SECRET_KEY` and `STRIPE_TEST_WEBHOOK_SECRET` in the secret store under exactly those names; set `STRIPE_TEST_MODE_ENABLED` last.
+6. **Activation**: one reviewed change recording the registered digests on `program_commerce_activation` with reviewer and time; until then every runtime answers `commerce_disabled`.
+7. **Register `/clinical-core/consumer/education`** in `aws-identity-api.ts`, the check script and `identity-api-extension.json`, and remove the three "absent" assertions in the same commit; the V2 client needs no change.
+8. **Hosted matrix** above, in order, with fictional data only; record each row's evidence where the launch-acceptance observers expect it.
+
+### Owner decisions (consolidated; each is implemented as the safe unavailable state)
+
+1. Access terms version (`education-access-terms/N`); no offer publishes without it.
+2. Program binding per funnel (clinic id, program id); every buy choice is unavailable until then.
+3. Prices, billing frequency and access duration per program; nothing is assumed; Core's $19.99 is not a program price.
+4. Whether provider-mapping approval needs a second person.
+5. Supported currencies beyond `USD`.
+6. Whether an offer may exist before the program is published (refused today).
+7. Verified-account-first or anonymous order plus claim (built: anonymous plus claim; both convergence journeys are the safe state).
+8. The Stripe account, the API version to pin, webhook registration.
+9. Session lifetime (30 minutes) and attempt-cookie lifetime (24 hours).
+10. Whether a subscription-mode purchase is offered before refund, cancellation and renewal policies exist.
+11. Claim delivery provider and the 7-day validity.
+12. Refund, dispute, chargeback and renewal policy: what releases, what revokes, whether a refund ever follows automatically.
+13. Whether a purchaser may claim without a consumer account (no, today).
+14. Whether education access needs ALP Core (not checked today).
+15. Native purchase classification (V2 checklist): nothing in the app sells, links to or prices a program until it is decided.
+16. Children and guardians: deferred; nothing here admits a minor's purchase or a guardian's claim.
+
+### Remaining defects and limits
+
+- **Fixture only.** No Desktop runtime constructs the Stripe transport or a SQL ledger; the mounted browser proves refusals and honest first states, not a purchase. The purchase journey is proven at the module boundary and in PGlite.
+- **The consumer education route is a seam.** Until it is registered, every V2 call answers `unavailable`; the screen and tests are ready.
+- **Token shape.** A receipt-shaped string of token length reaches the service, which refuses it; the device cannot tell a receipt from a token by shape, and does not try.
+- **The attempt cookie** is a convenience for reusing an open checkout, not identity; a forged one is replaced.
+- **The stub's older id layout** was a fixture defect, not a product one; fixed in unit 5 and covered by the ordered battery.
+- **Legacy modes** (`free`, `manual_comp`, `stripe` in older Supabase-era source) are refused by the candidate's check constraint and are not reachable from the new routes; their removal is a separate clean-up.
+
+### Graphify — append-ready (continues after section 572)
+
+```
+573. Program commerce closure (2026-10-11/12) — branch claude/program-commerce-closure-20261011
+     Desktop e69f96c (U1) 2be1922 (U2) f207cba (U3) dc90d5e (U4) 9787a98 (inventory) d14522b (U5) + unit 6 (this record and the instant repair)
+     V2 1f2de21 (U4) 1a9fd82 (U5)
+     Node | Implemented | Locally verified | CI verified | Hosted | Device | PHI
+     program-offer/1 contract + fictional/SQL ledgers + BLOCKED candidate 4973461… | yes | yes (unit + PGlite) | unit-5 head red at one assertion, repaired in unit 6 | no | n/a | never
+     program-checkout/1 contract + boundary + durable intake + BLOCKED candidate 767ac13… | yes | yes | unit-5 head red at one assertion, repaired in unit 6 | no | n/a | never
+     Stripe test-mode transport (source only, never constructed) | yes | yes (fictional fetch) | unit-5 head red at one assertion, repaired in unit 6 | no | n/a | never
+     program-education-access/1 mirrored contract af2af740… + settlement + claim + BLOCKED candidate e4f11e2… | yes | yes | unit-5 head red at one assertion, repaired in unit 6 | no | no | never
+     Studio offer editor + purchases panel + status route | yes | yes (unit + mounted browser) | unit-5 head red at one assertion, repaired in unit 6 | no | n/a | never
+     Funnel both choices, /buy/[slug], /buy/return, checkout + webhook routes | yes | yes (unit + mounted browser) | unit-5 head red at one assertion, repaired in unit 6 | no | n/a | never
+     Consultation dual path: separation + race + hostile-input inventory | yes | yes | unit-5 head red at one assertion, repaired in unit 6 | no | no | never
+     V2 My courses screen + owner-bound client + dual-path tests | yes | yes (3251 tests) | green | no | no (route seam unregistered) | never
+     Consumer education route /clinical-core/consumer/education | seam only | asserted absent | unit-5 head red at one assertion, repaired in unit 6 | no | no | never
+     Activation, prices, products, webhook registration, claim delivery | no (owner/Codex) | — | — | no | — | never
+```
