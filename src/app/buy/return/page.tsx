@@ -4,7 +4,7 @@ import { ReturnPage } from "@/components/funnels/ReturnPage";
 import { knownFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { publicSiteOrigin } from "@/lib/publicSite";
-import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
+import { resolvePurchaseRuntime } from "@/server/commerce/program-commerce-runtime";
 
 /**
  * Where the processor sends the visitor back. The address names an opaque order and an outcome
@@ -21,9 +21,9 @@ export default async function BuyReturnRoute({ searchParams }: { searchParams: P
   const orderParam = typeof params.order === "string" ? params.order : "";
   const returned = params.returned === "success" ? "success" : params.returned === "cancel" ? "cancel" : "unknown";
   const orderId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderParam) ? orderParam : null;
-  const selection = selectProgramCheckout();
-  const status = orderId && selection.kind === "fictional" ? await selection.checkout.returnStatus(orderId) : { state: "unknown" as const };
-  const order = orderId && selection.kind === "fictional" ? await selection.ledger.readOrder(orderId).catch(() => null) : null;
+  const selection = await resolvePurchaseRuntime();
+  const status = orderId && (selection.kind === "fictional" || selection.kind === "reviewed") ? await selection.checkout.returnStatus(orderId) : { state: "unknown" as const };
+  const order = orderId && (selection.kind === "fictional" || selection.kind === "reviewed") ? await selection.ledger.readOrder(orderId).catch(() => null) : null;
   const funnel = order ? knownFunnel(order.funnelSlug) : null;
   const consultHref = funnel ? consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}` : null;
   return <ReturnPage returned={returned} state={status.state} learnHref={funnel ? `/learn/${funnel.slug}` : null} consultHref={consultHref} />;

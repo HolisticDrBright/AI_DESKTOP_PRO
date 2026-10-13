@@ -4,7 +4,7 @@ import { CHECKOUT_HOLD_REASONS, checkoutStartRequest } from '@/contracts/program
 import { resolvePublicFunnel } from '@/server/commerce/journey-fixture';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { sameBrowserOrigin } from '@/server/same-browser-origin';
-import { selectProgramCheckout } from '@/server/commerce/program-commerce-runtime';
+import { resolvePurchaseRuntime } from '@/server/commerce/program-commerce-runtime';
 import { liveGuard } from '../../route-helpers';
 
 /**
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   }
   const funnel = slug ? await resolvePublicFunnel(slug) : null;
   if (!funnel) return NextResponse.json({ error: { code: 'not_found', message: 'funnel_not_found' } }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
-  const selection = selectProgramCheckout();
+  const selection = await resolvePurchaseRuntime();
   if (selection.kind === 'disabled') return back(request, funnel.slug, selection.reason);
   const cookies = Object.fromEntries((request.headers.get('cookie') ?? '').split(';').map(part => part.trim().split('=') as [string, string]).filter(([key]) => key));
   const existing = cookies[ATTEMPT_COOKIE];

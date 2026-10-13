@@ -3,7 +3,8 @@ if (typeof window !== "undefined") {
 }
 import { unavailable, type PurchaseAvailability } from "../../contracts/programOffers";
 import type { FunnelDefinition } from "../../funnels/schema";
-import { selectProgramOfferLedger, type ProgramOfferLedgerSelection } from "./program-commerce-runtime";
+import { resolveOfferAvailabilityLedger, type ProgramOfferLedgerSelection } from "./program-commerce-runtime";
+import type { ProgramOfferLedger } from "./program-offer-ledger";
 
 /**
  * The buy choice on a funnel page, answered on the server from the page's program binding and the
@@ -12,7 +13,8 @@ import { selectProgramOfferLedger, type ProgramOfferLedgerSelection } from "./pr
  * unbound page, a disabled ledger and a failed read are three different answers, none of them
  * "free" and none of them silent.
  */
-export async function funnelPurchaseAvailability(funnel: Pick<FunnelDefinition, "programBinding">, selection: ProgramOfferLedgerSelection = selectProgramOfferLedger()): Promise<PurchaseAvailability> {
+export async function funnelPurchaseAvailability(funnel: Pick<FunnelDefinition, "programBinding">, given?: ProgramOfferLedgerSelection | { kind: "reviewed"; ledger: ProgramOfferLedger }): Promise<PurchaseAvailability> {
+  const selection = given ?? await resolveOfferAvailabilityLedger();
   if (!funnel.programBinding) return unavailable("program_unbound");
   if (selection.kind === "disabled") return unavailable(selection.reason);
   try {

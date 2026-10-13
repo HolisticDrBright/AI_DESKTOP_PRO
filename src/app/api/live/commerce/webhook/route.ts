@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { StripeNotConfiguredError, StripeRefusedError, getStripeConfig, verifyWebhookSignature } from "@/server/stripe-boundary";
 import { BoundedBodyError, readBoundedRequestBody } from "@/server/bounded-request-body";
-import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
+import { resolvePurchaseRuntime } from "@/server/commerce/program-commerce-runtime";
 
 /**
  * The program-checkout webhook receiver. Provider authentication, not a browser origin: the body is
@@ -13,7 +13,8 @@ import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtim
  * (src/server/commerce/program-commerce-worker.ts), which a host schedules independently and which
  * recovers everything admitted here even if this process exits the moment it answers.
  *
- *   503  the boundary is not configured, or no checkout runtime exists for this process (never a fixture)
+ *   503  the boundary is not configured, or no checkout runtime exists for this process: the local fixture,
+ *        or the reviewed runtime only while its bootstrap installed it and its target still verifies
  *   400  the body is malformed, too large or arrived too slowly; or the signature, tolerance, livemode,
  *        account or API version refuses the event (not ours to accept)
  *   500  the event could not be recorded durably (the processor must retry)
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
     return json(400, { error: { code: "refused", message: reason === "too_large" ? "body_too_large" : `body_${reason}` } });
   }
   const signature = request.headers.get("stripe-signature");
-  const selection = selectProgramCheckout();
+  const selection = await resolvePurchaseRuntime();
   if (selection.kind === "disabled") return json(503, { error: { code: "not_configured", message: selection.reason } });
   if (!getStripeConfig().configured) return json(503, { error: { code: "not_configured", message: "The Stripe boundary is disabled." } });
   let event;

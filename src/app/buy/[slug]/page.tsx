@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { PurchasePage, holdWords } from "@/components/funnels/PurchasePage";
 import { PURCHASE_HOLD_EXPLANATIONS } from "@/contracts/programOffers";
-import { selectProgramCheckout } from "@/server/commerce/program-commerce-runtime";
+import { resolvePurchaseRuntime } from "@/server/commerce/program-commerce-runtime";
 import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
 import { funnelPageUrl, publicSiteOrigin } from "@/lib/publicSite";
@@ -30,7 +30,8 @@ export default async function BuyRoute({ params, searchParams }: { params: Promi
   if (!funnel) notFound();
   const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
   const purchase = await funnelPurchaseAvailability(funnel);
-  const checkout = selectProgramCheckout().kind === "fictional"
+  const runtime = (await resolvePurchaseRuntime()).kind;
+  const checkout = runtime === "fictional" || runtime === "reviewed"
     ? { ready: true as const }
     : { ready: false as const, reason: "checkout_unconfigured" as const, explanation: PURCHASE_HOLD_EXPLANATIONS.checkout_unconfigured };
   return (

@@ -70,6 +70,12 @@ function LearnerView({ snapshot, controller }: { snapshot: LearnerSnapshot; cont
       <p className="m-0 text-[13px] text-subtle">Courses you bought appear here once the course service confirms them for your account. A course is reading and practice material; it is not a clinical program and it adds nothing to a protocol.</p>
       {error && <p role="alert" className="m-0 text-[13px] text-critical" data-testid="learner-error">{error}</p>}
       {notice && <p role="status" className="m-0 text-[13px] text-body" data-testid="learner-notice">{notice}</p>}
+      {phase === "signin" && host !== "fictional_fixture" && host !== "fictional_sql_fixture" && (
+        <div><a className="text-[13px] text-action underline" href="/api/my-courses/session" data-testid="learner-signin">Sign in with your course account</a></div>
+      )}
+      {host === "reviewed" && phase === "ready" && (
+        <div><Btn type="button" size="sm" disabled={busy} onClick={() => void fetch("/api/my-courses/session/signout", { method: "POST", credentials: "same-origin" }).finally(() => window.location.assign("/courses"))} data-testid="learner-signout">Sign out on every device</Btn></div>
+      )}
       {phase === "host_unavailable" && (
         <p role="status" className="m-0 text-[13px] text-body" data-testid="learner-host-unavailable">
           My courses is not connected on this server. Courses are read only through a reviewed sign-in and course service, and none is configured here, so nothing is shown rather than something unverified. This does not mean you have no courses.

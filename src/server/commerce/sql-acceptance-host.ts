@@ -189,7 +189,8 @@ export async function openSqlAcceptanceHost(dataDir: string, boundaries: Accepta
 }
 export type SqlAcceptanceHost = Awaited<ReturnType<typeof openSqlAcceptanceHost>>;
 
-async function buildChainAndFixture(db: PGlite, root: string) {
+/** The candidate chain and the visibly fictional fixture rows, on a fresh embedded database. Exported for the reviewed-runtime source tests, which run it under their own fake RDS Data client. */
+export async function buildChainAndFixture(db: PGlite, root: string) {
   const manifest = JSON.parse(readFileSync(join(root, "infra/aws-clinical-core/migrations/manifest.json"), "utf8")) as { migrations: { file: string }[] };
   if (manifest.migrations.some(m => /program[-_](offer|checkout|order|education|entitlement)|commercial_education/.test(m.file))) throw new Error("a commerce candidate is in the installed manifest; this host applies them itself");
   for (const { file } of manifest.migrations) await db.exec(readFileSync(join(root, "infra/aws-clinical-core/migrations", file), "utf8"));

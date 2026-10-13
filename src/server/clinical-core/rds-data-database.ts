@@ -69,6 +69,33 @@ export function createRdsDataProgramMediaDatabase(
   return createRdsDataDatabase(configuration, client, "program_media_worker");
 }
 
+/** The four program-commerce authorities and the one role each assumes. Fixed here: no caller selects a role. */
+const COMMERCE_SESSION_ROLES = Object.freeze({
+  api: "clinical_core_api",
+  worker: "commercial_education_worker",
+  delivery: "commercial_education_delivery",
+  operator: "commercial_education_operator",
+} as const);
+export type CommerceSessionAuthority = keyof typeof COMMERCE_SESSION_ROLES;
+
+/** One reduced program-commerce session (BLOCKED candidate program-commerce-runtime-sessions.sql):
+ * its own secret, whose login is that authority's runtime role, assuming exactly that authority's
+ * role in every transaction. Qualification account and database only, like the media worker. A
+ * missing membership is a refusal from the database, never a fallback to another role. */
+export function createRdsDataCommerceSessionDatabase(
+  configuration: RdsDataConfiguration,
+  authority: CommerceSessionAuthority,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  if(!Object.prototype.hasOwnProperty.call(COMMERCE_SESSION_ROLES, authority)
+    ||configuration.databaseName!=="clinical_core_qualification"||configuration.region!=="us-east-2"
+    ||!configuration.clusterArn.startsWith("arn:aws:rds:us-east-2:588966314750:cluster:")
+    ||!configuration.secretArn.startsWith("arn:aws:secretsmanager:us-east-2:588966314750:secret:")) {
+    throw new RdsDataDatabaseError("configuration_invalid");
+  }
+  return createRdsDataDatabase(configuration, client, COMMERCE_SESSION_ROLES[authority]);
+}
+
 /** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
@@ -84,7 +111,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api" | "fullscript_draft_worker" | "program_media_worker",
+  assumeRole?: "clinical_core_api" | "fullscript_draft_worker" | "program_media_worker" | "commercial_education_worker" | "commercial_education_delivery" | "commercial_education_operator",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {
