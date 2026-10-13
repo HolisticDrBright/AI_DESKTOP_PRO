@@ -201,7 +201,8 @@ orderable; owner holds stand.
 | Desktop clinical build `APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build` at `1034ce0f` | exit 0, before the push |
 | Desktop `npm run check:clinical-bundle` | PASS: 325 client chunks, no synthetic identity, no demo-only copy, none of the 17 server-only markers |
 | Desktop at `4cad229e` before the merge | `tsc` and `eslint` exit 0; the full suite was stopped and re-run on the merge head instead |
-| Desktop E2E battery | see the final message: no browser spec renders the changed intake card (its mounted component test covers it), and the battery is run on the merged head for regression evidence only |
+| Desktop E2E battery `npm run test:e2e:order` (full CLAUDE.md environment, own clinical live build) at `1034ce0f` | **exit 1: forward 20 passed, 45 failed, 91 skipped; reverse identical.** Not caused by this branch: the unchanged integrated base `c4f8e3da`, run the same way in a scratch worktree, fails the **identical set of 45** with the same counts in both orders. Failing pages render the signed-in shell without their workspace (for example `billing-workspace` absent; the sign-in transition test finds no login request); the fixture backend logged nothing beyond its banner, and the cause is not established here. No browser spec renders the changed intake card (its mounted component test covers it). A first attempt with `NODE_OPTIONS` unset ran out of heap in its own build and ran no spec. |
+| Desktop `npm run check:stub-reset` | PASS: 141 mutable bindings, every one covered |
 
 No timeout was raised, no test was skipped or disabled, and no refusal was turned into a pass.
 
@@ -214,8 +215,10 @@ No timeout was raised, no test was skipped or disabled, and no refusal was turne
 | V2 | `3741f6b` (with the Cowork intake) | [38446048803](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38446048803) | success |
 | V2 | `5faa032` | [38447010879](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38447010879) | success |
 | V2 | `8d9241c` | [38447617971](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38447617971) | success |
-| V2 | `7a9699e` (two metadata commits on the final code head `e671657`) | [38450238296](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38450238296) | in progress at writing; final result in the final message |
-| Desktop | `1034ce0f` (final code head; first push of this branch, carrying `4cad229e`) | [38450224110](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38450224110) | queued at writing; final result in the final message |
+| V2 | `7a9699e` (two metadata commits on the final code head `e671657`) | [38450238296](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38450238296) | cancelled (superseded by the next push) |
+| V2 | `7d59112` (this return's first commit, on `7a9699e`) | [38450347249](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38450347249) | success |
+| Desktop | `1034ce0f` (final code head; first push of this branch, carrying `4cad229e`) | [38450224110](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38450224110) | success |
+| Desktop | `4d6d3b77` (this return's first commit) | [38450685681](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38450685681) | success |
 
 ## Overlap with Codex lanes
 
@@ -301,6 +304,8 @@ function there is added to `AWS_LAMBDA_FUNCTIONS` in the same change.
 - Human: clinical, privacy, counsel, store and security reviews; the disclosure drafts are unapproved.
 - Hosted: the launch acceptance index's hosted, device and human cases are unobserved; release acceptance is
   withheld.
+- Desktop live E2E battery: red at the integrated base and at this head (identical 45 failures); it needs a
+  root cause in Codex's or the owner's lane before it can serve as journey evidence.
 
 ## Graphify
 
