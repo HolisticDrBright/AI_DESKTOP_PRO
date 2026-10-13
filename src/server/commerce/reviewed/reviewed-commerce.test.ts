@@ -1,3 +1,4 @@
+import { LEARNER_MEDIA_ROUTE_SEAM } from '../../programs/learner-media';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -161,7 +162,8 @@ describe('connectors', () => {
 
 describe('the consumer education API and the worker are closed by default', () => {
   it('the route seams are served by the reviewed education API, never by the identity API', () => {
-    expect(REVIEWED_EDUCATION_API_ROUTES).toEqual([EDUCATION_ACCESS_ROUTE_SEAM.route, EDUCATION_PROGRESS_ROUTE_SEAM.route]);
+    // The learner media seam (program-learner-media/1) is the third route of the same function, named here so the table stays exact.
+    expect(REVIEWED_EDUCATION_API_ROUTES).toEqual([EDUCATION_ACCESS_ROUTE_SEAM.route, EDUCATION_PROGRESS_ROUTE_SEAM.route, LEARNER_MEDIA_ROUTE_SEAM.route]);
     for (const path of ['src/server/clinical-core/aws-identity-api.ts', 'scripts/check-aws-authenticated-api.mjs', 'infra/aws-clinical-core/identity-api-extension.json']) {
       expect(readFileSync(path, 'utf8'), path).not.toContain('consumer/education');
     }

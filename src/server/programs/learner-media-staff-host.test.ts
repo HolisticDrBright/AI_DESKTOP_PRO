@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { POST } from '@/app/api/live/programs/media/learner-view/route';
+import { POST } from '@/app/api/live/programs/media/staff-view/route';
 import { __resetStaffMediaHost, installStaffMediaHost, type StaffMediaHost } from './learner-media-staff-host';
 import { LearnerMediaError } from './learner-media';
 import type { ClinicalRequestContext } from '../clinical-core/aws-identity-consent';
 
 /** The workforce host for the learner media read is separate from the consumer host, and absent unless a reviewed bootstrap installs one. */
 const ORIGIN = 'https://clinic.fictional.example';
-const post = (body: unknown = { contractVersion: 'program-learner-media-staff/1' }, headers: Record<string, string> = {}) => POST(new Request(`${ORIGIN}/api/live/programs/media/learner-view`, {
+const post = (body: unknown = { contractVersion: 'program-learner-media-staff/1' }, headers: Record<string, string> = {}) => POST(new Request(`${ORIGIN}/api/live/programs/media/staff-view`, {
   method: 'POST', headers: { host: 'clinic.fictional.example', origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }));
 const clinician: ClinicalRequestContext = { actorPersonId: '7f000000-0000-4000-8000-000000000001', organizationId: '7f000000-0000-4000-8000-000000000002', identityPool: 'workforce', identitySubject: 'wf:fictional',
   purpose: 'clinical_data', environment: 'synthetic-staging', dataClassification: 'synthetic_only', containsPhi: false, realPatientData: false };
