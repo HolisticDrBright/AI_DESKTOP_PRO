@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { applyProductionClinicalCoreMigrations } from './production-migrations';
+import type { ClinicalCoreDatabase } from './database';
 
 // Fictional reduced-role proof. This candidate is not registered or applied to AWS.
 const candidate = 'infra/aws-clinical-core/production-candidates/delegated-protocol-records.sql';
@@ -21,11 +23,25 @@ const queryAs = async (person: string, org: string, rel: string, scope = 'protoc
 
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath,
-    ['scripts/build-aws-production-clinical-core.mjs', '--json'],
+    ['scripts/build-telehealth-consent-copy-candidate.mjs', '--json'],
     { encoding: 'utf8', timeout: 20_000, maxBuffer: 8 * 1024 * 1024 }));
-  expect(manifest.migrations).toHaveLength(106);
+  expect(manifest.migrations).toHaveLength(112);
   db = new PGlite({ extensions: { pgcrypto } });
-  for (const migration of manifest.migrations) await db.exec(files[migration.file]);
+  const entries = (manifest.migrations as Array<{ version: string; file: string }>).map((entry) => ({
+    version: entry.version, name: entry.file.slice(15, -4), sql: files[entry.file] as string,
+    sha256: createHash('sha256').update(files[entry.file] as string).digest('hex'),
+  }));
+  const admin: ClinicalCoreDatabase = { transaction: (work) => db.transaction((tx) => work({
+    query: (sql, parameters = []) => tx.query(sql, [...parameters]),
+  })) };
+  await applyProductionClinicalCoreMigrations(admin, entries.slice(0, 106));
+  // Forward source rehearsal: these ledger rows are fictional in-memory facts,
+  // not evidence of an approved or deployed 107→112 preserving upgrade.
+  for (const entry of entries.slice(106)) {
+    await db.exec(entry.sql);
+    await db.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)',
+      [entry.version, entry.name, entry.sha256]);
+  }
   await db.exec(readFileSync(candidate, 'utf8'));
 }, 120_000);
 afterAll(async () => { await db?.close(); });

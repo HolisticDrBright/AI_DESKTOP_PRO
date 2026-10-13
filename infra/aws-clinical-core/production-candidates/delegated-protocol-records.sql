@@ -1,6 +1,8 @@
 -- delegated-protocol-records/2 — unreleased, preserving source candidate.
--- No historical migration or release row is changed. Do not apply until its
--- parent artifact, rollback, reduced-role tests and caregiver policy are reviewed.
+-- Tested on the exact 112-migration consent-copy source artifact, not applied
+-- to a database. No historical migration or release row is changed. Do not
+-- apply until its parent artifact, rollback, reduced-role tests and caregiver
+-- policy are reviewed.
 -- A caregiver receives only an active, practitioner-approved clinic protocol's
 -- individually reviewed, governed non-peptide supplement instructions. The
 -- owned/AI lab-derived plan is a different record family and is never queried.

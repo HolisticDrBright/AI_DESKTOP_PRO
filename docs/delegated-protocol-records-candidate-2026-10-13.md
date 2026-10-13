@@ -2,7 +2,8 @@
 
 Status: **source-only, unregistered, not deployed, not PHI-approved**. The clinical SQL source is
 `infra/aws-clinical-core/production-candidates/delegated-protocol-records.sql` (`delegated-protocol-records/2`).
-It replaces one existing function on the exact production-clinical artifact; it does not alter
+It replaces one existing function and is locally tested on the 112-migration
+telehealth-consent-copy source artifact; it does not alter
 historical migrations, grant new table access, seed records or enable a feature.
 
 ## Patient-approved scope
