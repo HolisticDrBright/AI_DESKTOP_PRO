@@ -54,7 +54,10 @@ export function createAwsGovernedCatalogApiHandler(input: {
       const page = parsePage(event.queryStringParameters);
       const data = route.operation === "products"
         // A consumer never receives a practitioner-only, injectable, peptide or declared-restricted product.
-        ? await reader.listProducts(route.pool === "consumer" ? { ...page, audience: "consumer" } : page)
+        ? productionEducationOnlyProjection(
+          await reader.listProducts(route.pool === "consumer" ? { ...page, audience: "consumer" } : page),
+          route.pool, input.configuration.environment,
+        )
         : await reader.listProtocolTemplates(page);
       return response(200, {
         contractVersion: "governed-catalog-api/1",
@@ -74,6 +77,22 @@ export function createAwsGovernedCatalogApiHandler(input: {
       }
       return response(503, { error: "service_unavailable" });
     }
+  };
+}
+
+function productionEducationOnlyProjection(
+  page: Awaited<ReturnType<AwsGovernedCatalogReader["listProducts"]>>,
+  pool: Pool,
+  environment: CatalogEnvironment,
+) {
+  // Consumer commerce is not a Core launch entitlement. This is a server-side hold, not a hidden button:
+  // an inspected production API response must not contain an order destination or claim orderability.
+  // Fictional qualification and workforce reference reads retain their existing contracts.
+  if (pool !== "consumer" || environment !== "production-clinical") return page;
+  return {
+    ...page,
+    products: page.products.map((product) => ({ ...product, directOrderAllowed: false })),
+    commercial: { offers: [] },
   };
 }
 
