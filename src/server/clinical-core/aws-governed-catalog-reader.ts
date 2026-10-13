@@ -114,7 +114,7 @@ export function createAwsGovernedCatalogReader(
             `select v.product_stable_id, v.version, v.display_name, v.product_type, v.access_tier,
                     v.declared_restricted, v.direct_order_allowed,
                     v.clinical_payload::text as clinical_payload_json,
-                    v.source_refs::text as source_refs_json
+                    v.source_refs::text as source_refs_json, v.import_batch_id::text as import_batch_id
              from clinical_reference.catalog_product_versions v
              join clinical_reference.catalog_products p
                on p.stable_id = v.product_stable_id and p.active_version = v.version
@@ -130,7 +130,7 @@ export function createAwsGovernedCatalogReader(
           const labels = productIds.length === 0 ? [] : (await tx.query<LabelRow>(
             `select l.product_stable_id, v.label_stable_id, v.version,
                     v.label_payload::text as label_payload_json,
-                    v.crosscheck_payload::text as crosscheck_payload_json
+                    v.crosscheck_payload::text as crosscheck_payload_json, v.import_batch_id::text as import_batch_id
              from clinical_reference.product_label_versions v
              join clinical_reference.product_labels l
                on l.stable_id = v.label_stable_id and l.active_version = v.version
@@ -141,6 +141,13 @@ export function createAwsGovernedCatalogReader(
             [productIds.join(","), environment],
           )).rows;
           const labelsByProduct = new Map(labels.map((row) => [row.product_stable_id, toLabel(row)]));
+          // A label describes the bottle as it was when the product version it shipped with was reviewed.
+          // For the consumer, a label counts only when it arrived in the same reviewed release (import
+          // batch) as the product's CURRENT version; a later product version with an older label orders
+          // nothing until both are released together again.
+          const productBatch = new Map(pageRows.map((row) => [row.product_stable_id, row.import_batch_id]));
+          const currentLabel = new Set(labels.filter((row) => typeof row.import_batch_id === "string" && row.import_batch_id.length > 0
+            && productBatch.get(row.product_stable_id) === row.import_batch_id).map((row) => row.product_stable_id));
           const offers = productIds.length === 0 ? [] : (await tx.query<OfferRow>(
             `select v.offer_stable_id, v.version, v.product_stable_id, v.destination_url,
                     v.tracking_metadata::text as tracking_metadata_json
@@ -160,18 +167,22 @@ export function createAwsGovernedCatalogReader(
              order by v.offer_stable_id`,
             [productIds.join(","), environment],
           )).rows;
+          // More than one active destination for one product is ambiguous; the consumer orders neither.
+          const offerCount = new Map<string, number>();
+          for (const row of offers) offerCount.set(row.product_stable_id, (offerCount.get(row.product_stable_id) ?? 0) + 1);
+          const consumerOrderable = (productId: string) => currentLabel.has(productId) && offerCount.get(productId) === 1;
           return {
             products: pageRows.map((row) => {
               const label = labelsByProduct.get(row.product_stable_id);
               const product = toProduct(row, label);
-              // The reviewed product row remains visible as reference data,
-              // but consumer ordering is withheld until its exact label is approved.
-              return input.audience === "consumer" && !label
+              // The reviewed product row remains visible as reference data, but consumer ordering is
+              // withheld until its exact current label is approved and it has exactly one destination.
+              return input.audience === "consumer" && !consumerOrderable(row.product_stable_id)
                 ? { ...product, directOrderAllowed: false }
                 : product;
             }),
             commercial: { offers: offers
-              .filter((row) => input.audience !== "consumer" || labelsByProduct.has(row.product_stable_id))
+              .filter((row) => input.audience !== "consumer" || consumerOrderable(row.product_stable_id))
               .map(toOffer) },
             ...(rows.rows.length > input.limit ? { nextCursor: pageRows.at(-1)!.product_stable_id } : {}),
           };
@@ -254,6 +265,7 @@ type ProductRow = {
   direct_order_allowed: boolean;
   clinical_payload_json: string;
   source_refs_json: string;
+  import_batch_id?: string;
 };
 
 type OfferRow = {
@@ -270,6 +282,7 @@ type LabelRow = {
   version: number;
   label_payload_json: string;
   crosscheck_payload_json: string;
+  import_batch_id?: string;
 };
 
 type TemplateRow = {
