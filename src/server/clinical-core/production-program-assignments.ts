@@ -17,7 +17,7 @@ import type {ClinicalRequestContext} from './aws-identity-consent';
  */
 /** SHA-256 of infra/aws-clinical-core/production-candidates/production-program-assignments.sql. A test holds this
  * equal to the file, so a changed candidate cannot be activated against evidence that reviewed another one. */
-export const PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256='bb1c06a134069ab30fdf6b181e5a87d047310f4ef7c61b613129a6baa52213a1';
+export const PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256='78bd5b3805d96443829f6e7380deba0d66ad2f03073374bd6681f4f6bc25b4f3';
 export class ProductionProgramAssignmentError extends Error {
  constructor(readonly category:'activation_refused'|'request_invalid'|'identity_refused'|'consent_refused'|'entitlement_refused'|'conflict'|'service_unavailable',readonly reason?:ProgramRefusalReason){super(category);}
 }

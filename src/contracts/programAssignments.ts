@@ -120,10 +120,24 @@ export const programAssignmentRequest = z.discriminatedUnion('action', [
 ]);
 export type ProgramAssignmentRequest = z.infer<typeof programAssignmentRequest>;
 const state = z.enum(['offered', 'active', 'paused', 'withdrawn']);
+/**
+ * Lab-aware holds the service attaches to its review (program-lab-review/1). Additive and optional: a review without
+ * them parses as before. Each names a supplement step the service HELD because of the owner's own saved lab results,
+ * the nutrient and why, and whose decision releases it. Never the value, the range, or whether a result is high or
+ * low: classifying a result is not part of the education-only release, and the hold says only that a review is due.
+ */
+export const PROGRAM_LAB_HOLD_NUTRIENTS = ['iron', 'vitamin_d', 'vitamin_b12', 'folate', 'magnesium', 'zinc'] as const;
+export const PROGRAM_LAB_HOLD_REASONS = ['measured_above_range', 'results_disagree', 'status_not_verified'] as const;
+export const programLabHold = z.object({
+  itemId: key, nutrient: z.enum(PROGRAM_LAB_HOLD_NUTRIENTS), reason: z.enum(PROGRAM_LAB_HOLD_REASONS),
+  decision: z.literal('clinician_review'),
+}).strict();
+export type ProgramServiceLabHold = z.infer<typeof programLabHold>;
 export const programReview = z.object({
   planRevision: z.string().min(1).max(200), inventoryComplete: z.boolean(),
   add: z.array(key).max(5200), duplicate: z.array(key).max(5200),
   held: z.array(key).max(5200), conflicts: z.array(key).max(5200),
+  labHolds: z.array(programLabHold).max(5200).optional(),
 }).strict();
 function reviewMatches(phases: z.infer<typeof programPhases>, review: z.infer<typeof programReview>): boolean {
   const items = phases.flatMap(phase => phase.items);
@@ -131,6 +145,10 @@ function reviewMatches(phases: z.infer<typeof programPhases>, review: z.infer<ty
   const ids = new Set(items.map(item => item.id));
   if (decisions.length !== items.length || !unique(decisions) || decisions.some(id => !ids.has(id))) return false;
   const held = new Set(review.held), add = new Set(review.add);
+  // A lab hold is a reason for a hold, never a decision of its own: it names a held supplement step, once.
+  const labHolds = review.labHolds ?? [];
+  const supplements = new Set(items.filter(item => item.kind === 'supplement').map(item => item.id));
+  if (!unique(labHolds.map(hold => hold.itemId)) || labHolds.some(hold => !held.has(hold.itemId) || !supplements.has(hold.itemId))) return false;
   return items.every(item => (!item.released ? held.has(item.id) : true)
     && (item.kind === 'supplement'
       ? review.inventoryComplete || held.has(item.id)

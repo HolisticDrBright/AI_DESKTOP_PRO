@@ -16,6 +16,7 @@ import {createProtocolCartWorkforce,ProtocolCartError} from './protocol-carts';
 import {createOutcomeLedgerWorkforce,createOutcomeReport,PracticeOutcomeError} from './practice-outcomes';
 import {createConsultRetention,ConsultRetentionError} from './consult-retention';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
+import {LAB_RESULT_TRANSFER_V2,LAB_RESULT_TRANSFER_V2_ACCEPTED,labResultTransferV2} from "../../contracts/labResultTransfer";
 
 import {
   ClinicalCoreAdapterError,
@@ -711,6 +712,16 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
           }) });
         }
         case "import_lab": {
+          // lab-result/2 is not accepted: refused before any database work, whatever else the body says. A /1 body is
+          // read exactly as before.
+          if (body.schemaVersion === LAB_RESULT_TRANSFER_V2) {
+            if (!LAB_RESULT_TRANSFER_V2_ACCEPTED || !clinicalStateAdapter?.importLabResultV2) {
+              return response(409, { error: "lab_result_v2_not_accepted" });
+            }
+            const parsed = labResultTransferV2.safeParse(body);
+            if (!parsed.success) throw new IdentityApiError("request_invalid");
+            return response(202, { data: await clinicalStateAdapter.importLabResultV2(context, parsed.data) });
+          }
           return response(202, { data: await clinicalStateAdapter!.importLabResult(context, parseLabImport(body)) });
         }
         case "import_specimen_context": {

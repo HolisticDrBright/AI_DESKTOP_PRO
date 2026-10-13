@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import {labSpecimenTransferSchema,labSpecimenReceiptSchema,labSpecimenRecordSchema,specimenContent,type LabSpecimenTransfer,type LabSpecimenReceipt,type LabSpecimenRecord} from "../../contracts/labSpecimenTransfer";
+import {labResultTransferV2,type LabResultTransferV2} from "../../contracts/labResultTransfer";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import {
   ClinicalCoreAdapterError,
@@ -58,6 +59,8 @@ export interface AwsClinicalStateAdapter<Context extends ClinicalRequestContext>
     labResultsImportConsent: "granted" | "revoked" | "not_granted";
   } | null>;
   importLabResult(context: Context, payload: LabResultImport): Promise<LabImportResult>;
+  /** lab-result/2 through the BLOCKED candidate's own function. Reached only once LAB_RESULT_TRANSFER_V2_ACCEPTED is on. */
+  importLabResultV2?(context: Context, payload: LabResultTransferV2): Promise<Omit<LabImportResult, "receipt">>;
   importLabSpecimenContext?(context:Context,payload:LabSpecimenTransfer):Promise<LabSpecimenReceipt>;
   getLabSpecimenContext?(context:Context,eventId:string):Promise<LabSpecimenRecord|null>;
   reviewLabResult(context: Context, input: {
@@ -151,6 +154,19 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       return { eventId: row.event_id, state: row.state, duplicate: row.duplicate,
         receipt: { version: "lab-import-receipt/1", connectionId: payload.connectionId, providerEventId: payload.providerEventId,
           resourceVersion: payload.resourceVersion, payloadSha256: createHash("sha256").update(canonicalPayload).digest("hex") } };
+    },
+
+    async importLabResultV2(context, input) {
+      assertContext(context, boundary, "consumer");
+      const parsed = labResultTransferV2.safeParse(input);
+      if (!parsed.success) throw new ClinicalStateError("request_invalid");
+      // The candidate re-checks every field, computes its own digest and records no status: nothing here can add one.
+      const row = await run(database, context, async (tx) => first(await tx.query<{
+        event_id: string; state: LabImportResult["state"]; duplicate: boolean;
+      }>("select * from clinical_core.record_lab_import_v2($1::jsonb)", [JSON.stringify(parsed.data)])), "clinical_state_refused");
+      if (!UUID.test(row.event_id) || !["review_pending", "conflict", "accepted", "rejected"].includes(row.state)
+        || typeof row.duplicate !== "boolean") throw new ClinicalStateError("database_unavailable");
+      return { eventId: row.event_id, state: row.state, duplicate: row.duplicate };
     },
 
     async importLabSpecimenContext(context,input) {

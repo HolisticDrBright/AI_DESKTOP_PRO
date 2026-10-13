@@ -164,6 +164,43 @@ describe('synthetic patient-to-practitioner messaging API',()=>{
  });
 });
 
+describe("lab-result/2 is not accepted (lab follow-up 2026-10-13, WP2)", () => {
+  const post = "POST /clinical-core/consumer/labs/import";
+  function setup() {
+    const state = { getConsumerConnection: vi.fn(), reviewLabResult: vi.fn(), listLabImports: vi.fn(),
+      listPatientLabObservations: vi.fn(), listDesktopPatients: vi.fn(), listDesktopLabDocuments: vi.fn(),
+      importLabResult: vi.fn(async () => ({ eventId: PATIENT, state: "review_pending" as const, duplicate: false })),
+      importLabResultV2: vi.fn() };
+    const run = createAwsIdentityApiHandler({ adapter: adapter(), clinicalStateAdapter: state,
+      configuration: { workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD } });
+    return { run, state };
+  }
+  const v2 = () => ({ schemaVersion: "lab-result/2", provider: "alp_patient_sync", providerEventId: "lab:" + "1".repeat(32) + ":" + "2".repeat(16),
+    connectionId: CONNECTION, resourceVersion: "f".repeat(64), occurredAt: new Date().toISOString(),
+    source: { system: "ai_longevity_pro_v2", recordType: "lab_panels", panelId: "panel_" + "1".repeat(32), markerId: "marker_" + "2".repeat(32) },
+    panel: { name: "Fictional panel", collectedAt: "2026-10-01T09:00:00.000Z" },
+    result: { name: "Ferritin", value: 80, unit: "ng/mL" },
+    provenance: { origin: "uploaded_report_analysis", documents: ["d".repeat(64)], reportedVerification: "analysis_cross_checked" } });
+  test("a /2 transfer is refused before any database work, valid or not; a /1 transfer is read exactly as before", async () => {
+    const t = setup();
+    for (const body of [v2(), { ...v2(), result: { name: "Ferritin", value: 900, sourceStatus: "critical" } }]) {
+      const refused = await t.run(event(post, "consumer", body));
+      expect(refused.statusCode).toBe(409);
+      expect(JSON.parse(refused.body)).toEqual({ error: "lab_result_v2_not_accepted" });
+    }
+    expect(t.state.importLabResultV2).not.toHaveBeenCalled();
+    expect(t.state.importLabResult).not.toHaveBeenCalled();
+    const legacy = { schemaVersion: "lab-result/1", provider: "alp_patient_sync", providerEventId: "lab:" + "1".repeat(32) + ":" + "2".repeat(16),
+      connectionId: CONNECTION, resourceVersion: "f".repeat(64), occurredAt: new Date().toISOString(),
+      source: { system: "ai_longevity_pro_v2", recordType: "lab_panels", panelId: "panel_" + "1".repeat(32), markerId: "marker_" + "2".repeat(32) },
+      panel: { name: "Fictional panel", collectedAt: "2026-10-01T09:00:00.000Z" },
+      result: { name: "Ferritin", value: 80, unit: "ng/mL", sourceStatus: "unknown" } };
+    expect((await t.run(event(post, "consumer", legacy))).statusCode).toBe(202);
+    expect(t.state.importLabResult).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("separately consented specimen-context API", () => {
   const post = "POST /clinical-core/consumer/labs/specimen-context";
   const read = (pool: string) => `GET /clinical-core/${pool}/labs/specimen-context`;
