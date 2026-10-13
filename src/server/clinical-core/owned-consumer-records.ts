@@ -6,6 +6,7 @@ import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import { createOwnedPrivacyExport } from './owned-privacy-export';
+import { withholdProtocolPurchaseLinks } from './protocol-purchase-link-projection';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context","lab_history","voice_transcription"] as const;
@@ -67,7 +68,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         const result=await tx.query<{result:unknown}>('select clinical_core.recent_owned_consumer_records($1,$2::integer) as result',[input.collection,input.limit]);
         const values=parsed(result.rows[0]?.result);if(!Array.isArray(values)||values.length>input.limit)unavailable();
         const rows=values.map(raw=>{const v=object(raw);if(typeof v.recordId!=='string'||!UUID.test(v.recordId)||!revision(v.revision,1)||!date(v.receivedAt))unavailable();const payload=object(v.payload);try{validateCollectionPayload(input.collection,payload);}catch{unavailable();}return {recordId:v.recordId as string,revision:v.revision as number,payload,receivedAt:v.receivedAt as string};});
-        return redactWithdrawnContext(tx,input.collection,rows);
+        return projectOwnedRead(tx,input.collection,rows);
       });
     },
     async get(context: ProductionClinicalRequestContext,input: {collection:ConsumerClinicalCollection;recordId:string}): Promise<(OwnedRecord & {deleted:boolean}) | null> {
@@ -80,7 +81,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         if (value.recordId !== input.recordId || !revision(value.revision,1) || typeof value.deleted !== "boolean" || !date(value.receivedAt)) unavailable();
         const payload = object(value.payload);
         try { const encoded=canonicalPayload(payload,ownedPayloadLimit(input.collection)); if (value.deleted ? encoded !== "{}" : false) unavailable(); if (!value.deleted) validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
-        const [row]=await redactWithdrawnContext(tx,input.collection,[{recordId:input.recordId,revision:value.revision as number,payload,receivedAt:value.receivedAt as string}]);
+        const [row]=await projectOwnedRead(tx,input.collection,[{recordId:input.recordId,revision:value.revision as number,payload,receivedAt:value.receivedAt as string}]);
         return {...row,deleted:value.deleted as boolean};
       });
     },
@@ -152,7 +153,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
           try { canonicalPayload(payload,ownedPayloadLimit(input.collection)); validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
           return { recordId: value.recordId as string,revision: value.revision as number,payload,receivedAt: value.receivedAt as string };
         });
-        return redactWithdrawnContext(tx,input.collection,rows);
+        return projectOwnedRead(tx,input.collection,rows);
       });
     },
     /** Latest-version tombstones only, no payload. Lets a device learn what the
@@ -202,9 +203,10 @@ async function reproductiveConsentActive(tx: ClinicalCoreTransaction): Promise<b
   if (typeof value !== 'boolean') unavailable();
   return value;
 }
-/** Reads never surface reproductive collection context after that consent is
- * withdrawn; the stored record stays intact for a later re-grant or deletion. */
-async function redactWithdrawnContext(tx: ClinicalCoreTransaction, collection: ConsumerClinicalCollection, rows: OwnedRecord[]): Promise<OwnedRecord[]> {
+/** Read projections leave stored versions intact: held purchase links are
+ * never returned, and reproductive context stays hidden after withdrawal. */
+async function projectOwnedRead(tx: ClinicalCoreTransaction, collection: ConsumerClinicalCollection, rows: OwnedRecord[]): Promise<OwnedRecord[]> {
+  if (collection === 'protocols') return rows.map(row => ({...row,payload:withholdProtocolPurchaseLinks(row.payload)}));
   if (collection !== "lab_observations" || !rows.some(row => hasReproductiveCollectionContext(row.payload))) return rows;
   if (await reproductiveConsentActive(tx)) return rows;
   return rows.map(row => ({ ...row, payload: withholdReproductiveContext(row.payload) }));

@@ -86,6 +86,22 @@ describe("independent consumer storage adapter",() => {
     const s = setup([{recordId:id,revision:1,payload,receivedAt:time,ownerId:"not exposed"}]);
     expect(await s.adapter.list(context,{collection:"wellness_profiles",limit:20})).toEqual([{recordId:id,revision:1,payload,receivedAt:time}]);
   });
+  it("withholds links from an older saved protocol on list, recent and get without changing the stored copy",async()=>{
+    const saved={id,name:"Fictional plan",start_date:time,status:"active",version:1,
+      supplements_json:[{name:"Fictional product",orderingLink:"https://shop.example.test/buy",
+        product:{purchaseUrl:"https://shop.example.test/other"},notes:"Read https://shop.example.test/legacy"}],
+      peptides_json:[],lifestyle_tasks_json:[]};
+    const stored={recordId:id,revision:1,payload:saved,receivedAt:time};
+    const list=setup([stored]);
+    const listed=await list.adapter.list(context,{collection:"protocols",limit:10});
+    expect(JSON.stringify(listed)).not.toMatch(/shop[.]example[.]test|orderingLink|purchaseUrl/);
+    expect(listed[0].payload).toMatchObject({name:"Fictional plan",supplements_json:[{name:"Fictional product",notes:"Read [link withheld]"}]});
+    const recent=setup([stored]);
+    expect(JSON.stringify(await recent.adapter.recent(context,{collection:"protocols",limit:10}))).not.toMatch(/shop[.]example[.]test|orderingLink|purchaseUrl/);
+    const one=setup({...stored,deleted:false});
+    expect(JSON.stringify(await one.adapter.get(context,{collection:"protocols",recordId:id}))).not.toMatch(/shop[.]example[.]test|orderingLink|purchaseUrl/);
+    expect(saved.supplements_json[0].orderingLink).toBe("https://shop.example.test/buy");
+  });
   it("rejects malformed pagination and bad server data",async () => {
     const s = setup([{recordId:id,revision:1,payload:{},receivedAt:time}]);
     await expect(s.adapter.list(context,{collection:"wellness_profiles",limit:101})).rejects.toThrow("request_invalid");

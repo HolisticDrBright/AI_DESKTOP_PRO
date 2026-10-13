@@ -60,7 +60,13 @@ export function createProductionProgramAssignments(deps:ProductionProgramAssignm
     context.purpose,context.environment,context.dataClassification]);
    const result=await tx.query<{data:unknown}>('select clinical_core.production_program_assignment_request($1::jsonb) as data',[JSON.stringify(request)]);
    const raw=result.rows[0]?.data;
-   return parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw);
+   const answer=parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw);
+   if(answer.action!=='read')return answer;
+   // Consumer purchase is not released. Keep the authored artifact and its
+   // digest intact, but never return its legacy destination to the app.
+   return {...answer,assignment:{...answer.assignment,phases:answer.assignment.phases.map(phase=>({
+    ...phase,items:phase.items.map(item=>item.product?{...item,product:{...item.product,purchaseUrl:null}}:item),
+   }))}};
   });}catch(error){
    if(error instanceof ClinicalCoreDatabaseRejection){
     const reason=error.category==='conflict'&&(PROGRAM_REFUSAL_REASONS as readonly string[]).includes(error.reason??'')?error.reason as ProgramRefusalReason:undefined;

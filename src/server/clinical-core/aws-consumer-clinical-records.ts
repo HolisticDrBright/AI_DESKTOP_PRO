@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import { withholdProtocolPurchaseLinks } from "./protocol-purchase-link-projection";
 import type {
   ClinicalRequestContext,
   ProductionClinicalRequestContext,
@@ -209,7 +210,16 @@ function createAwsClinicalRecordsAdapter<Context extends ClinicalRequestContext>
         [clinicalUuid(input.connectionId), input.collection, input.afterReceivedAt ?? null,
           input.afterId ? clinicalUuid(input.afterId) : null, input.limit],
       )).rows);
-      return rows.map((row) => versionFromRow(row));
+      return rows.map((row) => {
+        const version = versionFromRow(row);
+        if (input.collection !== "protocols") return version;
+        const payload = withholdProtocolPurchaseLinks(version.payload);
+        if (payload === version.payload) return version;
+        // List replies describe the bytes actually sent. The immutable stored
+        // version and the write receipt keep their original payload digest.
+        return { ...version, payload,
+          payloadSha256: createHash("sha256").update(canonicalPayload(payload)).digest("hex") };
+      });
     },
 
     async listConsentHistory(context, connectionId) {

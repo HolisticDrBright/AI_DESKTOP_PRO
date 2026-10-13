@@ -173,6 +173,17 @@ describe('authority once enabled in this test',()=>{
   const current=await read(offered.enrollmentId);
   expect(current.assignment.phases[0]!.items[0]).toMatchObject({id:'lesson-a',authorship:'practitioner_authored'});
  });
+ it('withholds an authored purchase URL in the consumer read while purchase is unreleased',async()=>{
+  const base=supplement();
+  const step={...base,product:{...base.product,purchaseUrl:'https://shop.example.test/fictional-product'}};
+  await publish(phases([step]));
+  const offered=await assign();
+  const answer=await read(offered.enrollmentId);
+  expect(answer.assignment.phases[0]?.items[0]?.product?.purchaseUrl).toBeNull();
+  const stored=await db.query<{content:{items:{product:{purchaseUrl:string}}[]}[]}>(
+   'select content from clinical_core.program_assignments where id=$1',[offered.enrollmentId]);
+  expect(stored.rows[0]?.content[0]?.items[0]?.product.purchaseUrl).toBe('https://shop.example.test/fictional-product');
+ });
  it('refuses the wrong owner, a revoked connection and a replaced connection, and a withdrawn consent',async()=>{
   const offered=await assign();
   expect((await refusal({action:'read',enrollmentId:offered.enrollmentId},production(other,'consumer'))).category).toBe('identity_refused');

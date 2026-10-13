@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { createHash } from "node:crypto";
 import type { ClinicalCoreDatabase } from "./database";
 import type { ProductionClinicalRequestContext, SyntheticRequestContext } from "./aws-identity-consent";
 import {
@@ -32,7 +33,7 @@ function productionContext(): ProductionClinicalRequestContext {
   };
 }
 
-function database() {
+function database(payload: Record<string, unknown> = { name: "Synthetic protocol" }) {
   const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
   const db: ClinicalCoreDatabase = {
     async transaction(work) {
@@ -45,7 +46,7 @@ function database() {
           }] as unknown as Row[] };
           if (sql.includes("list_consumer_clinical_records")) return { rows: [{
             version_id: VERSION_ID, stable_record_id: RECORD, record_key: RECORD,
-            resource_version: "1", payload: '{"name":"Synthetic protocol"}',
+            resource_version: "1", payload: JSON.stringify(payload),
             payload_sha256: "a".repeat(64), deleted: false, received_at: "2026-08-21T01:02:04.000Z",
           }] as unknown as Row[] };
           if (sql.includes("list_consumer_consent_history")) return { rows: [{
@@ -142,6 +143,25 @@ describe("AWS consumer clinical record adapter", () => {
     });
     expect(rows).toEqual([expect.objectContaining({ payload: { name: "Synthetic protocol" }, deleted: false })]);
     expect(fixture.calls.find((call) => call.sql.includes("list_consumer_clinical_records"))?.parameters.at(-1)).toBe(100);
+  });
+
+  test("does not return order links from an older saved plan, without rewriting its stored version", async () => {
+    const legacy = { id: "fictional-plan", name: "Fictional plan", supplements_json: [
+      { name: "Fictional supplement", dose: "one measured serving", orderingLink: "https://shop.example.test/buy",
+        product: { purchaseUrl: "https://shop.example.test/other" },
+        instructions: "With food; see https://shop.example.test/legacy" },
+    ] };
+    const fixture = database(legacy);
+    const records = await createAwsProductionConsumerClinicalRecordsAdapter(fixture.db).listRecords(productionContext(), {
+      connectionId: CONNECTION, collection: "protocols", limit: 10,
+    });
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records[0]?.payload)).not.toMatch(/shop[.]example[.]test|orderingLink|purchaseUrl/);
+    expect(records[0]?.payload).toMatchObject({ supplements_json: [{
+      name: "Fictional supplement", dose: "one measured serving", instructions: "With food; see [link withheld]",
+    }] });
+    expect(records[0]?.payloadSha256).toBe(createHash("sha256").update(canonicalPayload(records[0]!.payload)).digest("hex"));
+    expect(legacy.supplements_json[0]?.orderingLink).toBe("https://shop.example.test/buy");
   });
 
   test("refuses credentials, excessive depth, and real-data posture before the database", async () => {
