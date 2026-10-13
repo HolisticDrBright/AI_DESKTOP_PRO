@@ -10,6 +10,78 @@ classification, inference and directive tiers are off, general lab ordering is o
 and peptides and longevity stay unavailable. **Neither app is commercial-ready or PHI-ready.** Source tests are
 source evidence only; they fill no hosted, device, store, provider or human-review cell.
 
+## Addendum: Codex's updated handoff (Desktop `16651909`, V2 `d499c15f`)
+
+Codex's updated handoff named a newer integrated pair: Desktop `166519096756b741b0b08677b767356a61584586`
+(production consumer catalog offers withheld at the catalog Lambda) and V2 `d499c15f59980c9593355c8ae54b061ebff2d220`
+(the same hold at the V2 API boundary, the awaited telehealth join, the Bun patch copy and its acceptance
+rebinds; code head `05f04f74`). Neither contained this branch. Both were merged in with ordinary merges:
+Desktop `fc3a685142` (clean), V2 `3bdf3f1e21` (Codex's acceptance index and its test taken as they were, then
+rebound here). The handoff asked new work to begin at the consumer-offer boundary.
+
+**Consumer-offer boundary sweep** (read-only, both repositories, every consumer path checked):
+
+1. **Fixed: product pages in production label and clinical payloads.** Codex's hold empties the offer table and
+   clears orderability, but a production consumer page still carried product-page links through the label
+   evidence: `labelSourceUrl` (97 in the checked-in `labels.json`, mostly the brand's own product page and three
+   Fullscript catalog pages), `phase9f.officialProductUrl`, and free text such as the D-Spiked normalization note
+   quoting its offer destination. The production consumer projection now removes every link from the label,
+   crosscheck and clinical payloads at **both** boundaries (a link-only value is dropped; a link inside text reads
+   "[link withheld]"); what a person reads about the bottle is unchanged, and workforce reference and synthetic
+   qualification keep their links. Desktop `24d4c2cf` (`aws-governed-catalog-api.ts`), V2 `0cedea1`
+   (`backend/trpc/routes/supplements.ts`). **Failing before 1 of 1 at each boundary**; 7/7 and 3/3 after. The V2
+   app reads none of these fields.
+2. **Open, Brandon's decision: lab order links ship in the app bundle.** About 17 `orderLink` URLs (the Rupa
+   storefront, the practitioner store, 3x4) in `catalogs/labRecommendations.ts` are statically imported by the Plan,
+   Insights and lab catalog screens, so they are in the JavaScript bundle of every build although the
+   `labDirective`, `disorderRiskClassification` and `generalLabCatalogOrdering` gates keep them off screen. No API
+   boundary can withhold them. Not changed here: removing them restructures the lab catalog contract
+   (`contracts/labCatalog.ts` skips a panel without a link; `lab-catalog.test.ts` pins the links) and discards
+   Brandon's storefront configuration. Proposal: take the URLs out of the bundle and, when lab ordering is released,
+   serve reviewed destinations from a server route that checks the buyer's state (NY and NJ excluded) and the
+   release record.
+3. **Open, low: old `orderingLink` in a person's own saved plans.** Plans saved by older app versions carry
+   `orderingLink` inside `supplements_json`; the owned-records reads return the payload as stored. The app strips it
+   on restore and read and never shows it, and no current code writes it. A strip in the records read is a Codex
+   candidate.
+4. **Latent, Codex candidate: production program steps.** The production program-assignment SQL candidate returns
+   phases as stored and validates `product.purchaseUrl`; the production `program_versions` check covers top-level
+   keys only. Production programs are not wired (programs are served only on the synthetic boundary; V2 refuses the
+   production channel), but before they are, the read must withhold `purchaseUrl` while consumer purchase is
+   unreleased.
+5. **Checked and clean:** delegated records (explicit field list), clinic protocol delivery (`affiliateUrl` null,
+   affiliate keys refused), the other V2 routes (recommendations, click tracking and affiliate validation refuse),
+   Ask ALP (off in production), daily guidance and lab analysis (refuse URLs and commercial wording), education
+   access (refused in production), other bundled data.
+
+**Updated verification** (the tables below this addendum describe the earlier pair and stay as recorded):
+
+| Item | Result |
+| --- | --- |
+| Commits | Desktop `fc3a68517b1e9a4e84daed2732be4b43529aae51` (merge of `16651909`), `24d4c2cfd76497dc976cc6032e7dfd6c7867e9fc` (links withheld); V2 `3bdf3f1e214dc9d844a2e8dff0e3f8559ea82aa9` (merge of `d499c15f`), `0cedea1c0690a9bfe8313e69ee53b4c4bbf0ab9f` (links withheld), `688c7a3761aa639a1382155d6f771a9be2721668` (predecessor index preserved, metadata), `ed2b61bc63a4916be6d0aa26540204a12ab518bd` (index rebound, metadata) |
+| **Updated final code pair** | **Desktop `24d4c2cfd76497dc976cc6032e7dfd6c7867e9fc`, V2 `0cedea1c0690a9bfe8313e69ee53b4c4bbf0ab9f`** |
+| Desktop at `24d4c2cf` | `tsc` and `eslint` exit 0; `npm run test:unit` **538 files, 8563 passed, 11 skipped** (the same 11 pre-existing skips); clinical build exit 0 before the push; `check:clinical-bundle` PASS (325 client chunks, none of the 17 server-only markers); all 36 source gates pass |
+| V2 at `0cedea1` | `bun run test` **3543 passed, 1 skipped**; `tsc` and `lint` exit 0 (one import-order warning on an unchanged line of Codex's hold test); all 13 Core/TestFlight source gates as above exit 0 |
+| V2 merge `3bdf3f1` alone | full suite 3542 passed, 1 skipped; all gates exit 0 |
+| Acceptance after the rebind | `test:launch-acceptance` 22/22; `check:launch-acceptance` exit 1 **by design**: 8 source cases accepted, 9 hosted/device/human cases unobserved; source digest `9eae03ac99ab7af0f1f82ccfbf402a4eef83abd63a6469424c264d2f7a4ab813`; predecessor `index-2026-10-13-synthetic-api-image-predecessor.json`, LF SHA-256 `6650a0b603c828a6504b76a95206e9099915d86ee0da764f4d0ccd4ac6e4b2f6` |
+| Earlier heads' CI | V2 `6b98586` [38459240423](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38459240423) success; the updated heads' CI is reported in the final message |
+| Desktop E2E battery | not re-run on the updated pair; the earlier result (45 identical failures at this branch and at the unchanged base) stands, and the change here is server-side with no page or stub change |
+
+**Hand-back additions for Codex, in order** (after the list further below):
+
+1. Integrate Desktop `24d4c2cf` and V2 `0cedea1` (and the metadata heads) into the integrated branches with
+   ordinary merges; both already contain Codex's latest heads.
+2. When the production catalog Lambda and the V2 patient API image are next built, build them from these heads so
+   the link projection ships with the offer hold. It acts only on `production-clinical` consumer pages, so a
+   synthetic deployment shows no difference; the hosted check is a production-environment read when one is
+   authorized, never a real account.
+3. Production program read (latent): withhold `product.purchaseUrl` from consumer phases while consumer purchase is
+   unreleased, before production programs are wired.
+4. Owned-records read (low): strip `orderingLink` from stored plan copies in the read, so old copies stop echoing it.
+
+**New decision for Brandon:** whether the lab order links leave the app bundle now (proposal in item 2 above), or
+stay bundled behind their OFF gates until lab ordering is reviewed.
+
 ## Start pair (verified before any work)
 
 | | Commit | Branch | Exact-head CI |
@@ -329,3 +401,8 @@ ledger". Append-ready text in its form, for whoever runs Graphify next:
 > - The Cowork catalog return is stored as unreviewed reference data.
 >
 > All six phases remain partial. No deployment, activation, PHI or paid build.
+>
+> **Addendum, same day.** Updated pair Desktop `24d4c2cfd76497dc976cc6032e7dfd6c7867e9fc`, V2
+> `0cedea1c0690a9bfe8313e69ee53b4c4bbf0ab9f`, each merged with Codex's production offer hold (`16651909`, `d499c15f`).
+> Product-page links are withheld from production consumer label and clinical payloads at both boundaries; lab
+> order links stay in the app bundle behind their OFF gates pending Brandon's decision.
