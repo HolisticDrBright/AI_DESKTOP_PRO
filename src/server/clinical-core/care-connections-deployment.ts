@@ -13,13 +13,14 @@ import { assertInventoryQualificationBinding, type InventoryQualificationBuild }
 import { ADOPTED_INVENTORY_UPGRADE } from './adopted-plan-inventory-schema-upgrade';
 
 export type CareConnectionsBuild = {
-  sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
+  sourceCommit: string; sourceClean: boolean; migrationCount: 106 | 112; migrationReleaseSha256: string;
   functions: readonly CareConnectionFunctionBinding[];
   claimFunctions: readonly CareConnectionFunctionBinding[];
 };
 export type InventoryCareConnectionsBuild = InventoryQualificationBuild & Pick<CareConnectionsBuild, 'functions' | 'claimFunctions'>;
 type Environment = Record<string, string | undefined>;
 const release = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
+const qualificationRelease112 = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 const hash = /^[a-f0-9]{64}$/;
 
 /** Review identifiers are supplied by the release operator, not generated here.
@@ -42,16 +43,22 @@ function createHandler(environment: Environment, suppliedBuild: CareConnectionsB
   try {
     const e = { ...environment }, build = structuredClone(suppliedBuild);
     if (inventory) assertInventoryQualificationBinding(e, build as InventoryCareConnectionsBuild, 'CARE_CONNECTIONS_ACTIVATION');
-    const expectedRelease = inventory ? ADOPTED_INVENTORY_UPGRADE.to : release;
+    const expectedCount = inventory ? 107 : build.migrationCount === 112 ? 112 : 106;
+    const expectedRelease = inventory ? ADOPTED_INVENTORY_UPGRADE.to
+      : expectedCount === 112 ? qualificationRelease112 : release;
     const functions = validateCareConnectionFunctions(build.functions);
     const claimFunctions = validateCareClaimFunctions(build.claimFunctions);
-    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== (inventory ? 107 : 106)
+    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== expectedCount
       || build.migrationReleaseSha256 !== expectedRelease || e.SOURCE_COMMIT !== build.sourceCommit
       || e.MIGRATION_RELEASE_SHA256 !== expectedRelease || e.AWS_REGION !== 'us-east-2'
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.CONSUMER_ISSUER ?? '')
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.WORKFORCE_ISSUER ?? '')
       || !['false', 'true'].includes(e.PHI_ALLOWED ?? '')
       || !['blocked', 'approved'].includes(e.CARE_CONNECTIONS_ACTIVATION ?? '')) throw new Error('binding_refused');
+    // This successor is only for the approved isolated fictional database.
+    // Production needs its own reviewed release; it cannot inherit this pin.
+    if (!inventory && expectedCount === 112
+      && (e.PHI_ALLOWED !== 'false' || e.CARE_CONNECTIONS_ACTIVATION !== 'blocked')) throw new Error('binding_refused');
     const activation = e.CARE_CONNECTIONS_ACTIVATION === 'approved' ? 'approved' as const : 'blocked' as const;
     const qualification = resolveQualificationExecution(e, activation);
     const serving = qualification !== undefined || e.PHI_ALLOWED === 'true';

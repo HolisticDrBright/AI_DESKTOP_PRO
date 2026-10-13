@@ -1,25 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,readdirSync,unlinkSync,rmdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {CARE_CONNECTION_OBSERVER as c,CareObservationError,assertCareConnectionsArtifact,inspectCareConnectionsQualification} from './care-messaging-qualification-observer.mjs';
 import {inspectionAwsReader} from './care-messaging-inspection-io.mjs';
+import {careInspectionOptions} from './care-qualification-inspection-cli.mjs';
 
 // Actual emitted artifacts; all live observations below are fictional. The
 // sourceClean override models a clean fixture, never a reviewed deployment.
 const directory=mkdtempSync(join(tmpdir(),'alp-connection-observer-'));
-let artifact;
+let artifact,successorArtifact;
 try{
  execFileSync(process.execPath,['scripts/build-aws-care-connections.mjs','--out-dir='+directory],{timeout:30000,windowsHide:true});
  artifact={manifest:JSON.parse(readFileSync(join(directory,'artifact-manifest.json'),'utf8')),code:readFileSync(join(directory,'index.js')),
   templateBytes:readFileSync(join(directory,'template.json')),zip:readFileSync(join(directory,'deployment.zip'))};
  artifact.manifest.sourceClean=true;
+ execFileSync(process.execPath,['scripts/build-aws-care-connections.mjs','--release=112','--out-dir='+directory],{timeout:30000,windowsHide:true});
+ successorArtifact={manifest:JSON.parse(readFileSync(join(directory,'artifact-manifest.json'),'utf8')),code:readFileSync(join(directory,'index.js')),
+  templateBytes:readFileSync(join(directory,'template.json')),zip:readFileSync(join(directory,'deployment.zip'))};
+ successorArtifact.manifest.sourceClean=true;
 }finally{for(const name of readdirSync(directory))unlinkSync(join(directory,name));rmdirSync(directory);}
 const hash='a'.repeat(64),uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const pairs=(o,key,value)=>Object.entries(o).map(([k,v])=>({[key]:k,[value]:v}));
-function fixture(recovery=true){
+function fixture(recovery=true,packageArtifact=artifact){
+ const artifact=packageArtifact;
  const template=JSON.parse(artifact.templateBytes.toString('utf8'));
  const f={PhiAllowed:'false',Activation:'blocked',QualificationExecution:'disabled',QualificationInfrastructure:'prepared_no_candidates',
   DatabaseName:c.database,DatabaseClusterArn:`arn:aws:rds:${c.region}:${c.account}:cluster:fictional`,DatabaseSecretArn:`arn:aws:secretsmanager:${c.region}:${c.account}:secret:fictional`,
@@ -79,8 +86,34 @@ function fixture(recovery=true){
   if(!Object.hasOwn(responses,key))throw new Error('unexpected observation');if(responses[key] instanceof Error)throw responses[key];return structuredClone(responses[key]);
  };
  return {responses,calls,options:{artifact,head:artifact.manifest.sourceCommit,binding,readAws,readCodeVersion:async()=>artifact.zip,
-  inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:106,rolledBack:true})}};
+  inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:artifact.manifest.migrationCount,rolledBack:true})}};
 }
+test('112 connection observer binds the entire approved successor without treating inspection as acceptance',async()=>{
+ const f=fixture(false,successorArtifact),report=await inspectCareConnectionsQualification(f.options);
+ assert.equal(report.status,'deployment_bindings_verified');assert.equal(report.acceptance,false);
+ assert.equal(report.migrationReleaseSha256,'45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4');
+ assert.deepEqual(successorArtifact.manifest.functions,artifact.manifest.functions);
+ assert.deepEqual(successorArtifact.manifest.claimFunctions,artifact.manifest.claimFunctions);
+ const old=fixture(false,successorArtifact);old.options.inspectLedger=async()=>({database:c.database,release:artifact.manifest.migrationReleaseSha256,rows:106,rolledBack:true});
+ await assert.rejects(()=>inspectCareConnectionsQualification(old.options),/ledger_refused/);
+});
+test('112 connection artifact refuses a widened production template or missing qualification marker',()=>{
+ for(const mutate of [a=>{a.manifest.qualificationOnly=false;},a=>{
+  const t=JSON.parse(a.templateBytes);t.Parameters.PhiAllowed.AllowedValues=['false','true'];
+  a.templateBytes=Buffer.from(JSON.stringify(t));a.manifest.templateSha256=createHash('sha256').update(a.templateBytes).digest('hex');
+ }]){
+  const a={...successorArtifact,manifest:structuredClone(successorArtifact.manifest)};mutate(a);
+  assert.throws(()=>assertCareConnectionsArtifact(a,a.manifest.sourceCommit),/artifact_refused/);
+ }
+});
+test('both inspectors require explicit selection of 112 and refuse unknown or duplicate options before AWS',()=>{
+ for(const candidate of ['care-messaging','care-connections']){
+  assert.equal(careInspectionOptions([],candidate).successor,false);
+  assert.equal(careInspectionOptions(['--release=112'],candidate).successor,true);
+  for(const args of [['--release=113'],['--release=106'],['--release=112','--release=112'],['--unsafe=true']])
+   assert.throws(()=>careInspectionOptions(args,candidate),/argument_refused/);
+ }
+});
 for(const enabled of [false,true])test('connection bindings, recovery '+enabled+', never certify approvals or API acceptance',async()=>{
  const f=fixture(enabled),report=await inspectCareConnectionsQualification(f.options);
  assert.equal(report.status,'deployment_bindings_verified');assert.equal(report.acceptance,false);assert.equal(report.humanReviewsVerified,false);assert.equal(report.phiAllowed,false);

@@ -15,16 +15,21 @@ const load=directory=>{
  return {manifest:JSON.parse(readFileSync(join(directory,'artifact-manifest.json'),'utf8')),
   code:readFileSync(join(directory,'index.js')),templateBytes:readFileSync(join(directory,'template.json')),zip:readFileSync(join(directory,'deployment.zip'))};
 };
+export function careInspectionOptions(args,candidate){
+ if(!['care-messaging','care-connections'].includes(candidate)||!Array.isArray(args))throw new CareObservationError('argument_refused');
+ const options={};
+ for(const arg of args){const match=/^--(artifact-dir|binding|release)=(.+)$/.exec(arg);
+  if(!match||Object.hasOwn(options,match[1]))throw new CareObservationError('argument_refused');options[match[1]]=match[2];}
+ const successor=options.release==='112';
+ if(options.release!==undefined&&!successor)throw new CareObservationError('argument_refused');
+ return {options,successor};
+}
 export async function runCareInspection(candidate){
  if(!['care-messaging','care-connections'].includes(candidate))throw new CareObservationError('argument_refused');
  const inspector=candidate==='care-connections'?inspectCareConnectionsQualification:inspectCareMessagingQualification;
  let temporary;
 try{
- const args=process.argv.slice(2),options={};
- for(const arg of args){const match=/^--(artifact-dir|binding|release)=(.+)$/.exec(arg);
-  if(!match||Object.hasOwn(options,match[1]))throw new CareObservationError('argument_refused');options[match[1]]=match[2];}
- const successor=options.release==='112';
- if(options.release!==undefined&&(!successor||candidate!=='care-messaging'))throw new CareObservationError('argument_refused');
+ const {options,successor}=careInspectionOptions(process.argv.slice(2),candidate);
  const first=source();if(first.dirty)throw new CareObservationError('dirty_source_refused');
  const expected=successor
   ? qualificationCare112Artifact(JSON.parse(local(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'])))

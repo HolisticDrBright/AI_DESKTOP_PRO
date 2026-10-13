@@ -55,8 +55,10 @@ rolled back, and checks the exact template, uploaded ZIP version, stack,
 authorizers, IAM, alarms and routes if a candidate stack exists. An optional
 `--artifact-dir=<directory>` must match the rebuilt bytes, and
 `--binding=<reviewed-file>` is required to inspect an existing stack. The
-historical no-argument mode remains pinned to 106; the care-connections
-inspector cannot borrow the 112 switch. `not_deployed` or an inspection
+historical no-argument mode remains pinned to 106. The separately added
+[care-connections 112 candidate](care-connections-112-qualification-candidate-2026-10-13.md)
+now has its own explicit `--release=112` build and inspection path with
+matching connection/recovery bindings and production refusals. `not_deployed` or an inspection
 refusal is not hosted acceptance, and syntactically valid review hashes are
 not evidence of independent reviews.
 

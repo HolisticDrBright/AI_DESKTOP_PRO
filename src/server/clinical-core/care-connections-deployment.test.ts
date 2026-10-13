@@ -52,6 +52,36 @@ function transport(valid = true, response: unknown = { connection: null }) {
   return { query, factory };
 }
 describe('artifact-bound connection runtime', () => {
+  it('admits the approved 112 fictional release while retaining request function checks', async () => {
+    const successor = { ...build, migrationCount: 112,
+      migrationReleaseSha256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4' } as unknown as CareConnectionsBuild;
+    const t = transport();
+    const handle = createCareConnectionsHandler({ ...env(), MIGRATION_RELEASE_SHA256: successor.migrationReleaseSha256 }, successor, t.factory, () => now);
+    expect(await handle(event())).toMatchObject({ statusCode: 200, headers: { 'x-clinical-execution': 'qualification' } });
+    expect(t.factory).toHaveBeenCalledOnce();
+    expect(t.query.mock.calls[0][0]).toContain('with expected');
+  });
+  it('refuses production-like or mismatched settings for the 112 fictional release before data access', async () => {
+    const successor = { ...build, migrationCount: 112,
+      migrationReleaseSha256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4' } as unknown as CareConnectionsBuild;
+    const base = { ...env(), MIGRATION_RELEASE_SHA256: successor.migrationReleaseSha256 };
+    for (const altered of [{ PHI_ALLOWED: 'true' }, { CARE_CONNECTIONS_ACTIVATION: 'approved' },
+      { MIGRATION_RELEASE_SHA256: build.migrationReleaseSha256 }, { QUALIFICATION_ACCOUNT_ID: '173535830222' }]) {
+      const t = transport();
+      expect((await createCareConnectionsHandler({ ...base, ...altered }, successor, t.factory, () => now)(event())).statusCode).toBe(503);
+      expect(t.factory).not.toHaveBeenCalled();
+    }
+    const production = { ...base, QUALIFICATION_EXECUTION: 'disabled', PHI_ALLOWED: 'true', CARE_CONNECTIONS_ACTIVATION: 'approved',
+      CARE_CONNECTIONS_EVIDENCE_SHA256: review, DEPLOYMENT_ACCOUNT_ID: '173535830222', CLINICAL_DATABASE_NAME: 'clinical_core',
+      CLINICAL_DATABASE_CLUSTER_ARN: 'arn:aws:rds:us-east-2:173535830222:cluster:fictional',
+      CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:173535830222:secret:fictional-AbCd12' };
+    const t = transport();
+    expect((await createCareConnectionsHandler(production, successor, t.factory, () => now)(event())).statusCode).toBe(503);
+    expect(t.factory).not.toHaveBeenCalled();
+    const blocked = transport();
+    expect((await createCareConnectionsHandler({ ...base, QUALIFICATION_EXECUTION: 'disabled' }, successor, blocked.factory)(event())).statusCode).toBe(503);
+    expect(blocked.factory).not.toHaveBeenCalled();
+  });
   it('does not construct a data client in default blocked mode', async () => {
     const t = transport(); const handle = createCareConnectionsHandler({ ...env(), QUALIFICATION_EXECUTION: 'disabled' }, build, t.factory, () => now);
     expect(await handle(event())).toMatchObject({ statusCode: 503, body: '{"error":"production_not_activated","phiAllowed":false}' });

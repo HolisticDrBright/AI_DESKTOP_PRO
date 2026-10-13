@@ -248,9 +248,9 @@ test('inspection entrypoint has rollback-only whole-ledger queries and no write 
  assert.match(text,/new RollbackTransactionCommand/);assert.doesNotMatch(text,/CommitTransactionCommand|INSERT INTO|UPDATE clinical|PhiAllowed=true/);
  assert.match(text,/dirty_source_refused/);assert.match(text,/rebuilt_artifact_mismatch/);
 });
-test('read-only entrypoint requires an explicit 112 choice and refuses it for care connections',()=>{
+test('read-only entrypoints refuse unsupported successor releases',()=>{
  for(const [script,argument] of [['inspect-care-messaging-qualification.mjs','--release=113'],
-  ['inspect-care-connections-qualification.mjs','--release=112']]){
+  ['inspect-care-connections-qualification.mjs','--release=113']]){
   const result=spawnSync(process.execPath,['scripts/'+script,argument],{encoding:'utf8',timeout:15000,windowsHide:true});
   assert.equal(result.status,1);assert.match(result.stderr,/"category":"argument_refused"/);
  }

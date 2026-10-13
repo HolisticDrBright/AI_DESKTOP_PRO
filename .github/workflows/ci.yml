@@ -176,11 +176,15 @@ jobs:
       - name: Build and lint blocked/logs-only messaging candidate (no AWS execution)
         run: |
           npm run build:aws-care-messaging
+          node scripts/build-aws-care-messaging.mjs --release=112
+          node scripts/build-aws-care-connections.mjs --release=112
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint dist/aws-clinical-core/fullscript-api/template.json
           cfn-lint dist/aws-clinical-core/fullscript-api/template-consent-112.json
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/care-connections/template.json
+          cfn-lint dist/aws-clinical-core/care-messaging-qualification-112/template.json
+          cfn-lint dist/aws-clinical-core/care-connections-qualification-112/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json

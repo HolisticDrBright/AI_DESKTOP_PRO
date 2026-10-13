@@ -26,12 +26,12 @@ export function assertCareArtifact({manifest,code,templateBytes,zip},head){
 }
 export function assertCareConnectionsArtifact(artifact,head){return assertArtifact(artifact,head,'care-connections');}
 function assertArtifact({manifest,code,templateBytes,zip},head,candidate){
- const successor=candidate==='care-messaging'&&manifest?.migrationCount===112;
+ const successor=manifest?.migrationCount===112;
  const expectedCount=successor?112:106,expectedRelease=successor?QUALIFICATION_CARE_112_LEDGER:QUALIFICATION_CONSENT_LEDGER;
  if(!record(manifest)||manifest.contract!==candidate+'-deployment/1'||manifest.sourceClean!==true
   ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==expectedCount
   ||manifest.migrationReleaseSha256!==expectedRelease||manifest.deploymentPerformed!==false
-  ||candidate==='care-messaging'&&manifest.qualificationOnly!==successor
+  ||manifest.qualificationOnly!==successor
   ||!Buffer.isBuffer(code)||!Buffer.isBuffer(templateBytes)||!Buffer.isBuffer(zip)
   ||manifest.codeSha256!==sha(code)||manifest.templateSha256!==sha(templateBytes)
   ||manifest.deploymentZipSha256!==sha(zip)||manifest.deploymentZipBytes!==zip.length)refuse('artifact_refused');
