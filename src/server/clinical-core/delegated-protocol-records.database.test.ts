@@ -96,4 +96,43 @@ describe('caregiver supplement payload at the database boundary', () => {
     await db.query("update clinical_core.patient_relationships set status='revoked',revoked_at=now() where id=$1", [rel]);
     await expect(queryAs(recipient, org, rel)).rejects.toThrow(/delegated_access_refused/);
   }, 120_000);
+
+  it('refuses when the relationship is revoked after the content read but before release', async () => {
+    const org = id(), clinician = id(), recipient = id(), patient = id(), rel = id();
+    await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL RACE CLINIC')", [org]);
+    for (const [person, pool] of [[clinician, 'workforce'], [recipient, 'consumer']] as const) {
+      await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)', [person, 'subject_' + person.replaceAll('-', '')]);
+      await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)',
+        [person, pool, subject(person)]);
+    }
+    await db.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'FICTIONAL','PARENT')",
+      [patient, org, 'patient_' + patient.replaceAll('-', '')]);
+    await db.query(`insert into clinical_core.patient_relationships(id,organization_id,patient_record_id,recipient_person_id,display_name,
+      masked_email,recipient_email_sha256,relationship_type,requested_scopes,granted_scopes,status,invitation_code_sha256,
+      invitation_expires_at,access_duration_days,access_expires_at,invited_by_person_id,patient_approved_at,recipient_claimed_at)
+      values($1,$2,$3,$4,'FICTIONAL RECIPIENT','f***@example.test',$5,'adult_child',
+      array['protocols_supplements'],array['protocols_supplements'],'active',$6,
+      now()+interval '1 day',30,now()+interval '30 days',$7,now(),now())`,
+      [rel, org, patient, recipient, 'c'.repeat(64), 'd'.repeat(64), clinician]);
+    // A deterministic surrogate for revocation during payload construction:
+    // the access-audit write revokes this relationship before the function returns.
+    await db.exec(`create function clinical_core.fixture_revoke_delegated_read() returns trigger
+      language plpgsql security definer set search_path='' as $$ begin
+        if new.relationship_id = '${rel}'::uuid then
+          update clinical_core.patient_relationships set status='revoked',revoked_at=clock_timestamp()
+            where id=new.relationship_id;
+        end if;
+        return new;
+      end $$;
+      create trigger fixture_revoke_delegated_read after insert on clinical_audit.patient_relationship_events
+        for each row execute function clinical_core.fixture_revoke_delegated_read();`);
+    try {
+      await expect(queryAs(recipient, org, rel)).rejects.toThrow(/delegated_access_refused/);
+      const result = await db.query<{ status: string }>('select status from clinical_core.patient_relationships where id=$1', [rel]);
+      expect(result.rows[0]?.status).toBe('active'); // failed read and trigger are rolled back together
+    } finally {
+      await db.exec(`drop trigger fixture_revoke_delegated_read on clinical_audit.patient_relationship_events;
+        drop function clinical_core.fixture_revoke_delegated_read();`);
+    }
+  }, 120_000);
 });

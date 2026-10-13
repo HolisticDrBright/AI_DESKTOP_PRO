@@ -47,7 +47,7 @@ export function createAwsFamilyAccessAdapter<Context extends ClinicalRequestCont
 }
 
 // The legacy database function returns every protocol field. Until the
-// delegated-protocol-records/2 candidate is registered and verified, fail
+// delegated-protocol-records/3 candidate is registered and verified, fail
 // closed at this server boundary: no legacy protocol bytes reach the device.
 export function projectApprovedCaregiverProtocol(record: Record<string, unknown>): Record<string, unknown> {
   const output = { relationshipId: record.relationshipId, patientDisplayName: record.patientDisplayName,

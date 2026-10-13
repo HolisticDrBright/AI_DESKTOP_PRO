@@ -1,4 +1,4 @@
--- delegated-protocol-records/2 — unreleased, preserving source candidate.
+-- delegated-protocol-records/3 — unreleased, preserving source candidate.
 -- Tested on the exact 112-migration consent-copy source artifact, not applied
 -- to a database. No historical migration or release row is changed. Do not
 -- apply until its parent artifact, rollback, reduced-role tests and caregiver
@@ -131,6 +131,16 @@ begin
   insert into clinical_audit.patient_relationship_events(organization_id,patient_record_id,
     relationship_id,actor_person_id,action,safe_metadata) values(_row.organization_id,
     _row.patient_record_id,_row.id,_actor,'accessed',jsonb_build_object('scope',_scope));
+  -- Construct the payload without a long-held relationship lock, then take a
+  -- row lock for the final authorization check. A concurrent revocation either
+  -- wins first (this read refuses) or waits for this short transaction to end.
+  -- Re-check the deadline after any lock wait, not against an earlier clock.
+  perform 1 from clinical_core.patient_relationships
+    where id=_row.id and recipient_person_id=_actor and status='active'
+      and revoked_at is null and access_expires_at>clock_timestamp()
+      and _scope=any(granted_scopes)
+    for share;
+  if not found then raise exception using errcode='42501',message='delegated_access_refused'; end if;
   return jsonb_build_object('relationshipId',_row.id,'patientDisplayName',
     btrim(_patient.first_name||' '||_patient.last_name),'scope',_scope,'readOnly',true,
     'items',coalesce(_items,'[]'::jsonb),'generatedAt',clock_timestamp());
