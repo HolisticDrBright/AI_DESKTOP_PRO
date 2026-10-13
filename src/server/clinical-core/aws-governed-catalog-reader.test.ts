@@ -36,7 +36,13 @@ describe("AWS governed catalog reader", () => {
         clinical_payload_json: JSON.stringify({ ingredients: ["EPA"] }),
         source_refs_json: JSON.stringify(["label:reviewed-omega:v1"]),
       }],
-      [],
+      [{
+        product_stable_id: "prd_reviewed_omega",
+        label_stable_id: "lbl_reviewed_omega",
+        version: 1,
+        label_payload_json: JSON.stringify({ ingredients: [{ name: "EPA" }] }),
+        crosscheck_payload_json: JSON.stringify({ verified: true }),
+      }],
       [{
         offer_stable_id: "off_reviewed_omega",
         version: 1,
@@ -54,6 +60,29 @@ describe("AWS governed catalog reader", () => {
     expect(db.calls[2]!.sql).toContain("product_label_versions");
     expect(db.calls[3]!.sql).not.toContain("clinical_payload");
     expect(db.calls.every((call) => !call.sql.toLowerCase().includes("supabase"))).toBe(true);
+  });
+
+  test("never releases an affiliate offer when its product lacks a reviewed label", async () => {
+    const db = database([
+      [{
+        product_stable_id: "prd_reviewed_omega", version: 1, display_name: "Reference Omega",
+        product_type: "supplement", access_tier: "open", declared_restricted: false,
+        direct_order_allowed: true, clinical_payload_json: JSON.stringify({ ingredients: ["EPA"] }),
+        source_refs_json: JSON.stringify(["catalog:reference"]),
+      }],
+      [],
+      [{
+        offer_stable_id: "off_reviewed_omega", version: 1,
+        product_stable_id: "prd_reviewed_omega", destination_url: "https://shop.example.com/omega",
+        tracking_metadata_json: JSON.stringify({ campaign: "reviewed" }),
+      }],
+    ]);
+    const page = await createAwsGovernedCatalogReader(db.value, "synthetic-staging")
+      .listProducts({ limit: 50, audience: "consumer" });
+    expect(page.products).toHaveLength(1);
+    expect(page.products[0]?.label).toBeUndefined();
+    expect(page.products[0]?.directOrderAllowed).toBe(false);
+    expect(page.commercial.offers).toEqual([]);
   });
 
   test("never describes a failed backend as an empty catalog", async () => {

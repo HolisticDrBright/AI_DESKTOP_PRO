@@ -161,8 +161,18 @@ export function createAwsGovernedCatalogReader(
             [productIds.join(","), environment],
           )).rows;
           return {
-            products: pageRows.map((row) => toProduct(row, labelsByProduct.get(row.product_stable_id))),
-            commercial: { offers: offers.map(toOffer) },
+            products: pageRows.map((row) => {
+              const label = labelsByProduct.get(row.product_stable_id);
+              const product = toProduct(row, label);
+              // The reviewed product row remains visible as reference data,
+              // but consumer ordering is withheld until its exact label is approved.
+              return input.audience === "consumer" && !label
+                ? { ...product, directOrderAllowed: false }
+                : product;
+            }),
+            commercial: { offers: offers
+              .filter((row) => input.audience !== "consumer" || labelsByProduct.has(row.product_stable_id))
+              .map(toOffer) },
             ...(rows.rows.length > input.limit ? { nextCursor: pageRows.at(-1)!.product_stable_id } : {}),
           };
         });
