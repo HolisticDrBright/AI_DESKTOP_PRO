@@ -48,6 +48,21 @@ describe("offer coverage audit", () => {
     expect(r.counts).toMatchObject({ offers: 10, actionableOffers: 1, withheldOffers: 9, productsWithAnyLabel: 8, productsWithReadyLabel: 6 });
     expect(r.held).toEqual([{ authoringId: "auth_held", productStableId: "prd_cov_held", offerStableIds: ["off_cov_held_a"], consumerActionable: false }]);
   });
+  it("withholds a quarantined stable id whatever else is true, by id and not by name", () => {
+    const ok = (id: string) => { const base = { stableId: id, version: 1, displayName: "Fictional", productType: "supplement" as const, accessTier: "open" as const,
+      declaredRestricted: false, directOrderAllowed: true, clinicalPayload: {}, sourceRefs: ["synthetic:coverage"] };
+      return { ...base, contentSha256: catalogSha256(productContentForHash(base)) }; };
+    const lbl = (id: string) => { const base = { stableId: id.replace("prd_", "lbl_"), version: 1, productStableId: id, labelFound: true, physicalLabelRequired: false,
+      substantiveConflict: false, practitionerDecisionRequired: false, labelPayload: {}, crosscheckPayload: {}, sourceRefs: ["synthetic:coverage"] };
+      return { ...base, contentSha256: catalogSha256(productLabelContentForHash(base)) }; };
+    const off = (id: string) => { const base = { stableId: id.replace("prd_", "off_"), version: 1, productStableId: id, destinationUrl: `https://example.invalid/${id}`,
+      trackingMetadata: {}, declaredRestricted: false, directOrderAllowed: true }; return { ...base, contentSha256: catalogSha256(offerContentForHash(base)) }; };
+    const ids = ["prd_aff_nutrisense_cgm_090", "prd_fictional_nutrisense_lookalike"];
+    const r = auditCatalogOfferCoverage(release(ids.map(ok), ids.map(lbl), ids.map(off)));
+    expect(r.offers.find(o => o.productStableId === ids[0])?.reasons).toEqual(["quarantined_non_supplement"]);
+    expect(r.offers.find(o => o.productStableId === ids[1])?.consumerActionableAfterApproval).toBe(true);
+    expect(r.quarantined.find(q => q.productStableId === "prd_aff_super_teeth_super_teeth_089")).toMatchObject({ inRelease: false, offerStableIds: [] });
+  });
   it("reports a duplicate-of link to a labelled original for review, and never makes it orderable", () => {
     const r = auditCatalogOfferCoverage(release([product("orig"), product("dup", {}, { duplicateOfOriginalStableId: "prd_cov_orig" })], [label("orig")], [offer("dup")]), []);
     expect(r.offers[0]).toMatchObject({ consumerActionableAfterApproval: false, reasons: ["no_label_record"], labelTraceableViaDuplicateOf: "prd_cov_orig" });
@@ -55,7 +70,7 @@ describe("offer coverage audit", () => {
 });
 
 describe("the committed report for the checked-in packages (docs/evidence/2026-10-13-catalog-offer-coverage.json)", () => {
-  const report = JSON.parse(readFileSync("docs/evidence/2026-10-13-catalog-offer-coverage.json", "utf8")) as Record<"expandedRelease" | "originalRelease", ReturnType<typeof auditCatalogOfferCoverage>>;
+  const report = JSON.parse(readFileSync("docs/evidence/2026-10-13-catalog-offer-coverage-followup.json", "utf8")) as Record<"expandedRelease" | "originalRelease", ReturnType<typeof auditCatalogOfferCoverage>>;
   it("explains the hosted gap: every expanded-catalog offer lacks a label record, so none is consumer-actionable", () => {
     expect(report.expandedRelease.counts).toMatchObject({ products: 847, offers: 598, actionableOffers: 0 });
     expect(report.expandedRelease.counts.byReason.no_label_record).toBe(598);
@@ -66,6 +81,19 @@ describe("the committed report for the checked-in packages (docs/evidence/2026-1
     const original = Object.fromEntries(report.originalRelease.offers.map(o => [o.productStableId, o.reasons]));
     expect(original.prd_aff_supreme_nutrition_black_walnut_tincture_029).toEqual(expect.arrayContaining(["substantive_conflict", "held_by_owner_decision"]));
     expect(original.prd_aff_supreme_nutrition_scutellaria_tincture_032).toEqual(expect.arrayContaining(["substantive_conflict", "held_by_owner_decision"]));
+  });
+  it("reports the three non-supplement goods as quarantined, with their reason, instead of dropping them", () => {
+    const original = Object.fromEntries(report.originalRelease.offers.map(o => [o.productStableId, o]));
+    for (const id of ["prd_aff_nutrisense_cgm_090", "prd_aff_super_teeth_super_teeth_089", "prd_aff_branch_basics_branch_basics_088"]) {
+      expect(original[id]?.reasons, id).toContain("quarantined_non_supplement");
+      expect(original[id]?.consumerActionableAfterApproval, id).toBe(false);
+    }
+    expect(report.originalRelease.quarantined.map(q => [q.productStableId, q.reason, q.inRelease, q.offerStableIds.length])).toEqual([
+      ["prd_aff_nutrisense_cgm_090", "non_supplement_device", true, 1],
+      ["prd_aff_super_teeth_super_teeth_089", "non_supplement_personal_care", true, 1],
+      ["prd_aff_branch_basics_branch_basics_088", "non_supplement_household", true, 1]]);
+    // The expected consumer change once a reviewed release lands: 9 actionable original offers become 6.
+    expect(report.originalRelease.counts.actionableOffers).toBe(6);
   });
   it("is reference data only: stable ids, reasons and counts, no address or person", () => {
     const text = JSON.stringify(report);

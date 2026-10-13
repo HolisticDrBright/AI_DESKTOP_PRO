@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import type { ClinicalCoreDatabase } from "./database";
 import type { CatalogAccessTier, CatalogProductType } from "./aws-governed-catalog";
+import { CONSUMER_SUPPLEMENT_QUARANTINE } from "./catalog-consumer-quarantine";
 
 export type GovernedCatalogProduct = {
   stableId: string;
@@ -81,7 +82,8 @@ export type TemplatePage = {
 };
 
 export interface AwsGovernedCatalogReader {
-  /** `consumer` reads only open, unrestricted supplements; the workforce (default) reads every approved product. */
+  /** `consumer` reads only open, unrestricted supplements, less the quarantined non-supplement goods; the workforce
+   * (default) reads every approved product. */
   listProducts(input: { limit: number; cursor?: string; audience?: "workforce" | "consumer" }): Promise<CatalogPage>;
   listProtocolTemplates(input: { limit: number; cursor?: string }): Promise<TemplatePage>;
 }
@@ -121,9 +123,11 @@ export function createAwsGovernedCatalogReader(
              where p.review_status = 'approved'
                and p.environment = $3 and p.contains_phi = false
                and ($1 = '' or v.product_stable_id > $1)
-               and ($4 = 'workforce' or (v.product_type = 'supplement' and v.access_tier = 'open' and v.declared_restricted = false))
+               and ($4 = 'workforce' or (v.product_type = 'supplement' and v.access_tier = 'open' and v.declared_restricted = false
+                    and not (v.product_stable_id = any(string_to_array($5, ',')))))
              order by v.product_stable_id limit $2`,
-            [input.cursor ?? "", input.limit + 1, environment, input.audience === "consumer" ? "consumer" : "workforce"],
+            [input.cursor ?? "", input.limit + 1, environment, input.audience === "consumer" ? "consumer" : "workforce",
+              Object.keys(CONSUMER_SUPPLEMENT_QUARANTINE).join(",")],
           );
           const pageRows = rows.rows.slice(0, input.limit);
           const productIds = pageRows.map((row) => row.product_stable_id);
