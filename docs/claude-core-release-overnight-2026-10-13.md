@@ -212,10 +212,10 @@ Results are recorded in the section below.
 | V2 CI gates (store-readiness and launch-acceptance tests, core-launch-scope check and test, knowledge packages, HIPAA baseline, v2-capabilities, TestFlight readiness, production container and workload, food catalog, billing configuration, store readiness, public pages test, surface disclosure) | all 18 exit 0 |
 | V2 iOS inspector test; patient API build, smoke and security qualification; core billing build and smoke | all exit 0 |
 | V2 Docker image builds, `expo-doctor` | **not run locally**; left to CI |
-| Desktop `npm run test:unit` | DESKTOP_UNIT |
-| Desktop typecheck, lint | DESKTOP_TSC_LINT |
-| Desktop source gates (the Typecheck job's gate list) | DESKTOP_GATES |
-| Desktop clinical build (`APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build`) | DESKTOP_BUILD |
+| Desktop `npm run test:unit` | **535 files: 8491 passed, 11 skipped** (the same 11 pre-existing skips), exit 0. The run started at `fec66354`, and the host fix changed three test files while it ran. Those files were re-run at `f76a7fd8`: 63 passed. Exact-head CI runs the whole suite again. |
+| Desktop typecheck, lint | exit 0, exit 0 |
+| Desktop source gates (the 36 commands in the Typecheck job) | **all 36 pass**. The first run stopped at `qualify:security` because a report from an earlier run in this working copy was still in the ignored `dist/` (the CLI writes with `wx` and refuses to overwrite). After removing that build output it passed 29/29, and the last gate passed too. No code or gate was changed. |
+| Desktop clinical build (`APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build`) | exit 0 |
 | Desktop E2E battery | **not run**: no file under a page, route or the live stub changed. |
 | Exact-head CI | reported in the final message |
 
