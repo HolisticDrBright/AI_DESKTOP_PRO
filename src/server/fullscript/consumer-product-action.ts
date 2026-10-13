@@ -2,9 +2,9 @@ if (typeof window !== 'undefined') throw new Error('Fullscript consumer product 
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ACTION_LIFETIME_SECONDS, FULLSCRIPT_CONSUMER_ACTION, PURCHASE_ADMISSION, PURCHASE_MAX_AUTH_AGE_SECONDS,
-  fullscriptProductDestination, fullscriptStorefrontHost, productActionIssued, productActionRedeemed, productActionRedemptionRequest, productActionRequest,
+  directProductDestination, fullscriptProductDestination, fullscriptStorefrontHost, productActionIssued, productActionRedeemed, productActionRedemptionRequest, productActionRequest,
   purchaseAdmissionDeclaration, purchaseAdmissionStatus,
-  type AdmissionRefusal, type ProductActionBinding, type ProductActionIssued, type ProductActionRedeemed, type ProductActionRefusal,
+  type AdmissionRefusal, type ProductActionBinding, type ProductActionIssued, type ProductActionKind, type ProductActionRedeemed, type ProductActionRefusal,
   type PurchaseAdmissionDeclaration, type PurchaseAdmissionStatus,
 } from '@/contracts/fullscriptConsumerAction';
 import type { AwsGovernedCatalogReader, CatalogEnvironment, GovernedCatalogProduct, GovernedCommercialOffer } from '../clinical-core/aws-governed-catalog-reader';
@@ -21,11 +21,12 @@ import type { AwsGovernedCatalogReader, CatalogEnvironment, GovernedCatalogProdu
  *  1. a reviewed release for this environment that is in effect (else commerce_disabled);
  *  2. a session that is the caller's own, recent and not revoked (else session_stale);
  *  3. the person's declared jurisdiction and practitioner relationship, validated here against server
- *     records: the release's jurisdictions, the dispensary practitioner's verified jurisdictions, and the
- *     care connection the person named. Never an IP address, a locale or a time zone: the ports carry
- *     none, and an unknown answer refuses;
+ *     records: the release's jurisdictions, the dispensary practitioner's verified jurisdictions where the
+ *     release requires licensure there, and the care connection the person named. Never an IP address, a
+ *     locale or a time zone: the ports carry none, and an unknown answer refuses;
  *  4. the exact product, label and single offer the person was shown are still the current ones;
- *  5. the offer's address is a Fullscript product page in the release's own storefront and dispensary;
+ *  5. the offer's address is a Fullscript product page in the release's own storefront and dispensary, or,
+ *     for a brand-site offer the release admits, that product's own reviewed product page;
  *  6. issue: the request id has never been used; redemption: the action is this account's, from this
  *     session, unexpired and unused, and it is spent atomically.
  */
@@ -38,6 +39,14 @@ export type ConsumerPurchaseRelease = {
   jurisdictions: readonly string[];
   /** The reviewed storefront host and dispensary an action may send someone to. */
   provider: { name: 'fullscript'; host: string; dispensarySlug: string; organizationId: string };
+  /**
+   * `not_required_over_the_counter`: a consumer release for over-the-counter products, which needs no
+   * practitioner licence in the buyer's state. `buyer_jurisdiction_verified`: the dispensary practitioner's
+   * authority must be verified in the buyer's declared state. The clinician-connected tier always needs it.
+   */
+  licensure: 'not_required_over_the_counter' | 'buyer_jurisdiction_verified';
+  /** Brand-site offers stay withheld, or are admitted only to each product's own reviewed offer page. */
+  directProducts: 'withheld' | 'reviewed_offer_destination';
   /** Reviewed copy shown with the action. This module writes none. */
   disclosure: string;
   effectiveFrom: string;
@@ -53,7 +62,8 @@ export type PatientLink = { connectionId: string; organizationId: string; state:
 export type AdmissionRecord = { accountId: string; declaration: PurchaseAdmissionDeclaration; declarationSha256: string; recordedAt: string };
 export type ProductActionRecord = {
   actionId: string; requestId: string; requestSha256: string; accountId: string; sessionId: string; environment: CatalogEnvironment;
-  binding: ProductActionBinding; connectionId: string | null; destinationUrl: string; issuedAt: string; expiresAt: string; redeemedAt: string | null;
+  kind: ProductActionKind; binding: ProductActionBinding; connectionId: string | null; destinationUrl: string; destinationHost: string;
+  issuedAt: string; expiresAt: string; redeemedAt: string | null;
 };
 export type ConsumerPurchasePorts = {
   /** Consumer-audience catalog: null when the product is not openly available to consumers. */
@@ -88,7 +98,9 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     const effective = releases.filter(r => r.contract === 'consumer-purchase-release/1' && r.environment === environment
       && Number.isFinite(Date.parse(r.effectiveFrom)) && Date.parse(r.effectiveFrom) <= asOf && r.jurisdictions.length > 0
       && r.jurisdictions.every(j => /^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(j)) && r.disclosure.trim().length > 0
-      && fullscriptStorefrontHost(r.provider.host) && /^[a-z0-9][a-z0-9-]{1,62}$/.test(r.provider.dispensarySlug));
+      && fullscriptStorefrontHost(r.provider.host) && /^[a-z0-9][a-z0-9-]{1,62}$/.test(r.provider.dispensarySlug)
+      && (r.licensure === 'buyer_jurisdiction_verified' || (r.licensure === 'not_required_over_the_counter' && r.tier === 'consumer'))
+      && (r.directProducts === 'withheld' || r.directProducts === 'reviewed_offer_destination'));
     // Two releases in effect at once is a review error, not a choice to make here.
     return effective.length === 1 ? effective[0]! : null;
   };
@@ -106,8 +118,10 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     if (!parsed.success || record.declarationSha256 !== sha256(canonical(parsed.data))) return { ok: false, refused: 'admission_required', record: null };
     const declaration = parsed.data;
     if (!r.jurisdictions.includes(declaration.jurisdiction)) return { ok: false, refused: 'jurisdiction_not_supported', record };
-    const verified = await ports.practitionerAuthority.verifiedJurisdictions(r.provider.organizationId);
-    if (!verified.includes(declaration.jurisdiction)) return { ok: false, refused: 'practitioner_jurisdiction_unverified', record };
+    if (r.licensure === 'buyer_jurisdiction_verified') {
+      const verified = await ports.practitionerAuthority.verifiedJurisdictions(r.provider.organizationId);
+      if (!verified.includes(declaration.jurisdiction)) return { ok: false, refused: 'practitioner_jurisdiction_unverified', record };
+    }
     if (declaration.practitioner.relationship === 'none') {
       return r.tier === 'clinician_connected' ? { ok: false, refused: 'practitioner_relationship_required', record } : { ok: true, record, connectionId: null };
     }
@@ -121,7 +135,7 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     return { ok: true, record, connectionId };
   }
 
-  async function currentOffer(binding: ProductActionBinding, r: ConsumerPurchaseRelease): Promise<{ ok: true; destinationUrl: string } | Refused> {
+  async function currentOffer(binding: ProductActionBinding, r: ConsumerPurchaseRelease, kind: ProductActionKind): Promise<{ ok: true; destinationUrl: string; destinationHost: string } | Refused> {
     const current = await ports.catalog.current(binding.productStableId);
     if (!current || current.product.stableId !== binding.productStableId) return refuse('product_unavailable');
     const { product } = current;
@@ -134,9 +148,17 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     if (!product.directOrderAllowed || offers.length === 0) return refuse('offer_unavailable');
     const offer = offers[0]!;
     if (offer.stableId !== binding.offerStableId || offer.version !== binding.offerVersion) return refuse('offer_changed');
-    const destination = fullscriptProductDestination(offer.destinationUrl, r.provider.host);
-    if (!destination || destination.dispensarySlug !== r.provider.dispensarySlug) return refuse('destination_unverified');
-    return { ok: true, destinationUrl: offer.destinationUrl };
+    if (kind === 'product_patient_action') {
+      const destination = fullscriptProductDestination(offer.destinationUrl, r.provider.host);
+      if (!destination || destination.dispensarySlug !== r.provider.dispensarySlug) return refuse('destination_unverified');
+      return { ok: true, destinationUrl: offer.destinationUrl, destinationHost: r.provider.host };
+    }
+    // A brand-site offer: its authority is this product's own reviewed offer, never a brand-wide approval.
+    if (r.directProducts !== 'reviewed_offer_destination') return refuse('direct_product_withheld');
+    let host: string;
+    try { host = new URL(offer.destinationUrl).hostname; } catch { return refuse('destination_unverified'); }
+    if (!directProductDestination(offer.destinationUrl, host)) return refuse('destination_unverified');
+    return { ok: true, destinationUrl: offer.destinationUrl, destinationHost: host };
   }
 
   async function admissionStatus(session: ConsumerSession): Promise<{ ok: true; status: PurchaseAdmissionStatus } | Refused> {
@@ -174,17 +196,17 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       const request = parsed.data;
       const admitted = await admission(session.accountId, r);
       if (!admitted.ok) return refuse(admitted.refused);
-      const offer = await currentOffer(request.binding, r);
+      const offer = await currentOffer(request.binding, r, request.kind);
       if (!offer.ok) return offer;
       const issuedAt = ports.clock.now(), expiresAt = new Date(issuedAt.getTime() + ACTION_LIFETIME_SECONDS * 1000);
       const record: ProductActionRecord = {
         actionId: `act_${randomBytes(24).toString('base64url')}`, requestId: request.requestId, requestSha256: sha256(canonical(request)),
-        accountId: session.accountId, sessionId: session.sessionId, environment, binding: request.binding, connectionId: admitted.connectionId,
-        destinationUrl: offer.destinationUrl, issuedAt: issuedAt.toISOString(), expiresAt: expiresAt.toISOString(), redeemedAt: null,
+        accountId: session.accountId, sessionId: session.sessionId, environment, kind: request.kind, binding: request.binding, connectionId: admitted.connectionId,
+        destinationUrl: offer.destinationUrl, destinationHost: offer.destinationHost, issuedAt: issuedAt.toISOString(), expiresAt: expiresAt.toISOString(), redeemedAt: null,
       };
       if (!(await ports.actions.insertIfNew(record))) return refuse('request_replayed');
       return { ok: true, issued: productActionIssued.parse({ contractVersion: FULLSCRIPT_CONSUMER_ACTION, environment, provider: 'fullscript',
-        data: { actionId: record.actionId, kind: 'product_patient_action', purpose: 'supplement_purchase', binding: record.binding,
+        data: { actionId: record.actionId, kind: record.kind, purpose: 'supplement_purchase', binding: record.binding,
           issuedAt: record.issuedAt, expiresAt: record.expiresAt, syntheticOnly: environment === 'synthetic-staging', disclosure: r.disclosure } }) };
     },
 
@@ -204,12 +226,12 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       const admitted = await admission(session.accountId, r);
       if (!admitted.ok) return refuse(admitted.refused);
       if (admitted.connectionId !== record.connectionId) return refuse('patient_link_not_found');
-      const offer = await currentOffer(record.binding, r);
+      const offer = await currentOffer(record.binding, r, record.kind);
       if (!offer.ok) return offer;
-      if (offer.destinationUrl !== record.destinationUrl) return refuse('destination_unverified');
+      if (offer.destinationUrl !== record.destinationUrl || offer.destinationHost !== record.destinationHost) return refuse('destination_unverified');
       if (!(await ports.actions.spend(record.actionId, nowIso()))) return refuse('action_used');
       return { ok: true, redeemed: productActionRedeemed.parse({ contractVersion: FULLSCRIPT_CONSUMER_ACTION, environment, provider: 'fullscript',
-        data: { actionId: record.actionId, binding: record.binding, destinationUrl: record.destinationUrl, destinationHost: r.provider.host, expiresAt: record.expiresAt,
+        data: { actionId: record.actionId, kind: record.kind, binding: record.binding, destinationUrl: record.destinationUrl, destinationHost: record.destinationHost, expiresAt: record.expiresAt,
           syntheticOnly: environment === 'synthetic-staging' } }) };
     },
   };

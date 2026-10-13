@@ -88,6 +88,7 @@ function candidate() {
   };
   const issuer = createConsumerPurchaseCandidate(ports, 'synthetic-staging', [{ contract: 'consumer-purchase-release/1', environment: 'synthetic-staging',
     tier: 'consumer', jurisdictions: ['US-TX'], provider: { name: 'fullscript', host: 'us.fullscript.com', dispensarySlug: SLUG, organizationId: CLINIC },
+    licensure: 'buyer_jurisdiction_verified', directProducts: 'withheld',
     disclosure: 'FICTIONAL disclosure for tests only.', effectiveFrom: '2026-01-01T00:00:00Z' }]);
   const session: ConsumerSession = { accountId: 'fictional-account', sessionId: 'fictional-session', authenticatedAt: '2026-10-13T11:59:00Z', revoked: false };
   return { issuer, session };

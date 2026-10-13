@@ -128,6 +128,23 @@ describe("consumer offers need the exact current product's clean, approved label
     expect(consumer.products.find(p => p.stableId === `prd_gate_${k}`)?.directOrderAllowed).toBe(false);
     expect(workforce.commercial.offers.filter(o => o.productStableId === `prd_gate_${k}`)).toHaveLength(2);
   });
+  it("one destination shared by two products is bound to neither, even when they land on different pages", async () => {
+    const a = fresh(), b = fresh();
+    const shared = (key: string) => { const o = offer(key); const base = { ...o, destinationUrl: "https://example.invalid/shared-signup" };
+      delete (base as Partial<typeof base>).contentSha256; return { ...base, contentSha256: catalogSha256(offerContentForHash(base as Omit<typeof o, "contentSha256">)) }; };
+    await publish(manifest(a, { products: [product(a)], labels: [label(a, CLEAN)], offers: [shared(a)] }));
+    await publish(manifest(b, { products: [product(b)], labels: [label(b, CLEAN)], offers: [shared(b)] }));
+    for (const limit of [100, 1]) {
+      const consumer = await readAll("consumer", limit);
+      for (const k of [a, b]) {
+        expect(consumer.offers.some(o => o.productStableId === `prd_gate_${k}`), `${k} at page size ${limit}`).toBe(false);
+        expect(consumer.products.find(p => p.stableId === `prd_gate_${k}`)?.directOrderAllowed).toBe(false);
+      }
+    }
+    // The workforce still sees both rows with their shared destination: the truthful state to fix.
+    const workforce = await readAll("workforce", 100);
+    expect(workforce.offers.filter(o => o.destinationUrl === "https://example.invalid/shared-signup")).toHaveLength(2);
+  });
   it("a changed current product version is not ordered under the label approved for the old one", async () => {
     const k = fresh();
     await publish(manifest(k, { products: [product(k)], labels: [label(k, CLEAN)], offers: [offer(k)] }));

@@ -1,7 +1,12 @@
 import { describe, expect, it, test } from "vitest";
-import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, SUPPLEMENT_CONSIDERATION_RULESET_VERSION, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, CONSIDERATION_TRACE_IN_RESULT, withConsiderationTrace, SUPPLEMENT_CONSIDERATION_RULESET_VERSION, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
+const LAB_CONSIDERATION_TRACE_FIXTURE_SHA256 = "b23d0dde40a0e1d16676d4c033112b554327bb7ac5aca22d95738c8906887d86";
 
 describe("synthetic AWS functional lab rules", () => {
   test('retains explicit noncatalog line measurements without manufacturing functional limits',()=>{
@@ -402,5 +407,67 @@ describe("recommendation provenance", () => {
       }
     }
     expect(seen.size).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// Follow-up 2026-10-13 (WP3): the iron veto withheld silently. A reviewer could not tell "iron was considered and
+// withheld because ferritin is high" from "nothing suggested iron". The withholding is now a record naming both sides,
+// and every consideration names the measurement it rests on: the analysis's biomarker id, value, unit, draw date, bound
+// and kind of range, marked as still needing human review at source.
+describe("considerations say what they rest on, and the iron veto says why", () => {
+  const row = (id: string, canonicalName: string, value: number, unit: string, labMin: number | null, labMax: number | null, extra: Record<string, unknown> = {}) =>
+    ({ biomarkerId: `7a1d0c6e-0000-4000-8000-00000000000${id}`, canonicalName, value, unit, labMin, labMax, testDate: "2026-09-30", ...extra });
+  test("low serum iron beside HIGH ferritin records the withholding with both measurements (fails before: nothing was recorded)", () => {
+    const output = buildMeasuredSupplementConsiderations([row("1", "Iron", 40, "mcg/dL", 50, 170), row("2", "Ferritin", 420, "ng/mL", 30, 400)]);
+    expect(output.recommendations).toEqual([]);
+    expect(output.withheld).toEqual([{
+      rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION, ruleKey: "iron", ruleVersion: "iron/2", reason: "iron_panel_above_range",
+      measurementsSuggesting: [{ biomarkerId: "7a1d0c6e-0000-4000-8000-000000000001", canonicalName: "Iron", value: 40, unit: "mcg/dL", testDate: "2026-09-30",
+        direction: "below", rangeKind: "reporting_laboratory", bound: 50, verificationState: "needs_human_review" }],
+      measurementsContradicting: [{ biomarkerId: "7a1d0c6e-0000-4000-8000-000000000002", canonicalName: "Ferritin", value: 420, unit: "ng/mL", testDate: "2026-09-30",
+        direction: "above", rangeKind: "reporting_laboratory", bound: 400, verificationState: "needs_human_review" }],
+    }]);
+  });
+  test("low ferritin beside a high transferrin saturation above a governed functional bound names the functional bound", () => {
+    const output = buildMeasuredSupplementConsiderations([
+      row("1", "Ferritin", 12, "ng/mL", 30, 400),
+      row("2", "Transferrin Saturation", 48, "%", 20, 50, { functionalMin: 25, functionalMax: 45 }),
+    ]);
+    expect(output.withheld[0]?.measurementsContradicting).toEqual([expect.objectContaining({ canonicalName: "Transferrin Saturation", rangeKind: "governed_functional", bound: 45 })]);
+    expect(output.withheld[0]?.measurementsSuggesting).toEqual([expect.objectContaining({ canonicalName: "Ferritin", direction: "below", bound: 30 })]);
+  });
+  test("both low iron markers are named when both are vetoed, and nothing is recorded when no iron marker was low", () => {
+    const both = buildMeasuredSupplementConsiderations([row("1", "Iron", 40, "mcg/dL", 50, 170), row("2", "Ferritin", 12, "ng/mL", 30, 400),
+      row("3", "Transferrin Saturation", 62, "%", 20, 50)]);
+    expect(both.withheld[0]?.measurementsSuggesting.map((m) => m.canonicalName)).toEqual(["Iron", "Ferritin"]);
+    expect(buildMeasuredSupplementConsiderations([row("2", "Ferritin", 420, "ng/mL", 30, 400)]).withheld).toEqual([]);
+  });
+  test("every consideration maps to the measurement that triggered it, with its biomarker id and draw date", () => {
+    const output = buildMeasuredSupplementConsiderations([row("3", "Vitamin D", 42, "ng/mL", 30, 100, { functionalMin: 50, functionalMax: 80 })]);
+    const id = output.recommendations[0]!.recommendationId;
+    expect(output.measurements[id]).toEqual({ biomarkerId: "7a1d0c6e-0000-4000-8000-000000000003", canonicalName: "Vitamin D", value: 42, unit: "ng/mL",
+      testDate: "2026-09-30", direction: "below", rangeKind: "governed_functional", bound: 50, verificationState: "needs_human_review" });
+  });
+  test("a measurement without a supplied id or date still has the analysis's id and an Unknown (null) date, never an invented one", () => {
+    const output = buildMeasuredSupplementConsiderations([{ canonicalName: "Vitamin D", value: 18, unit: "ng/mL", labMin: 30, labMax: 100 }]);
+    const measurement = output.measurements[output.recommendations[0]!.recommendationId]!;
+    expect(measurement.testDate).toBeNull();
+    expect(measurement.biomarkerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+  test("the completed result carries the trace only once V2 accepts it: off today, and off means the considerations are unchanged", () => {
+    expect(CONSIDERATION_TRACE_IN_RESULT).toBe(false);
+    const output = buildMeasuredSupplementConsiderations([row("3", "Vitamin D", 18, "ng/mL", 30, 100)]);
+    expect(withConsiderationTrace(output, false)).toEqual(output.recommendations);
+    expect(withConsiderationTrace(output, true)[0]).toMatchObject({ measurement: { biomarkerId: "7a1d0c6e-0000-4000-8000-000000000003" } });
+    const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "aws-lab-analysis-worker.ts"), "utf8");
+    expect(source).toContain('persistArtifact("supplement-considerations"');
+    expect(source).toContain("...(CONSIDERATION_TRACE_IN_RESULT ? { withheldConsiderations: supplementConsiderations.withheld } : {})");
+  });
+  test("the fixture V2 parses is exactly what this builder produces (both repositories pin its digest)", () => {
+    const path = resolve(dirname(fileURLToPath(import.meta.url)), "../../contracts/fixtures/lab-consideration-trace.json");
+    const fixture = JSON.parse(readFileSync(path, "utf8"));
+    const output = buildMeasuredSupplementConsiderations([row("1", "Iron", 40, "mcg/dl", 50, 170), row("2", "Ferritin", 420, "ng/ml", 30, 400), row("3", "Vitamin D", 18, "ng/ml", 30, 100)]);
+    expect(fixture).toEqual({ disclosure: expect.stringContaining("FICTIONAL"), recommendations: withConsiderationTrace(output, true), citations: output.citations, withheldConsiderations: output.withheld });
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(LAB_CONSIDERATION_TRACE_FIXTURE_SHA256);
   });
 });

@@ -1,4 +1,5 @@
 import type { GovernedCatalogSeedManifest } from "./aws-governed-catalog";
+import { CONSUMER_SUPPLEMENT_QUARANTINE, consumerQuarantineReason } from "./catalog-consumer-quarantine";
 
 /**
  * Offer coverage audit (catalog-offer-coverage/1): for every commercial offer in a release, whether a
@@ -7,7 +8,8 @@ import type { GovernedCatalogSeedManifest } from "./aws-governed-catalog";
  * needs a current open supplement, exactly one destination, and a label that is located, needs no
  * physical label, has no open conflict and no outstanding practitioner decision, and that ships in the
  * same release as the product. Explicit owner holds (NeuroGEVITY, the Black Walnut and Scutellaria label
- * conflicts) are reported as held whatever else is true.
+ * conflicts) are reported as held whatever else is true. The three known non-supplement goods held out of the
+ * consumer supplement read are reported as quarantined, with their reason, rather than silently dropped.
  *
  * It never proposes a label. A candidate row that names an original product as its duplicate is
  * reported as `label_traceable_via_duplicate` so a reviewer can look; it does not become orderable.
@@ -16,7 +18,7 @@ export const CATALOG_OFFER_COVERAGE_CONTRACT = "catalog-offer-coverage/1" as con
 export type OfferCoverageReason =
   | "product_missing" | "product_not_consumer_open" | "product_direct_order_withdrawn"
   | "no_label_record" | "label_not_found" | "physical_label_required" | "substantive_conflict" | "practitioner_decision_required"
-  | "ambiguous_destinations" | "destination_shared_with_other_product" | "held_by_owner_decision";
+  | "ambiguous_destinations" | "destination_shared_with_other_product" | "held_by_owner_decision" | "quarantined_non_supplement";
 export type OfferCoverageRow = {
   offerStableId: string; productStableId: string; origin: "original_primary" | "expanded_secondary" | "unknown";
   consumerActionableAfterApproval: boolean; reasons: OfferCoverageReason[]; labelTraceableViaDuplicateOf?: string;
@@ -26,6 +28,7 @@ export type OfferCoverageReport = {
   counts: { products: number; offers: number; productsWithAnyLabel: number; productsWithReadyLabel: number; actionableOffers: number; withheldOffers: number;
     byReason: Partial<Record<OfferCoverageReason, number>>; byOrigin: Record<string, { offers: number; actionable: number }> };
   held: { authoringId: string; productStableId: string | null; offerStableIds: string[]; consumerActionable: boolean }[];
+  quarantined: { productStableId: string; reason: string; inRelease: boolean; offerStableIds: string[] }[];
   offers: OfferCoverageRow[];
 };
 
@@ -66,6 +69,7 @@ export function auditCatalogOfferCoverage(manifest: GovernedCatalogSeedManifest,
       if ((offersPerProduct.get(p.stableId) ?? 0) > 1) reasons.push("ambiguous_destinations");
       if ((productsPerDestination.get(o.destinationUrl.trim().toLowerCase())?.size ?? 0) > 1) reasons.push("destination_shared_with_other_product");
       if (held.has(authoringId(p.stableId) ?? "")) reasons.push("held_by_owner_decision");
+      if (consumerQuarantineReason(p.stableId)) reasons.push("quarantined_non_supplement");
     }
     const group = p?.clinicalPayload.selectionPriorityGroup;
     const duplicateOf = p?.clinicalPayload.duplicateOfOriginalStableId;
@@ -94,6 +98,9 @@ export function auditCatalogOfferCoverage(manifest: GovernedCatalogSeedManifest,
     contract: CATALOG_OFFER_COVERAGE_CONTRACT, sourcePackageId: manifest.sourcePackageId, sourcePackageVersion: manifest.sourcePackageVersion, manifestSha256: manifest.manifestSha256,
     counts: { products: manifest.products.length, offers: rows.length, productsWithAnyLabel: labels.size,
       productsWithReadyLabel: [...labels.keys()].filter(ready).length, actionableOffers: actionable, withheldOffers: rows.length - actionable, byReason, byOrigin },
-    held: heldRows, offers: rows,
+    held: heldRows,
+    quarantined: Object.entries(CONSUMER_SUPPLEMENT_QUARANTINE).map(([productStableId, reason]) => ({ productStableId, reason,
+      inRelease: products.has(productStableId), offerStableIds: rows.filter(r => r.productStableId === productStableId).map(r => r.offerStableId) })),
+    offers: rows,
   };
 }
