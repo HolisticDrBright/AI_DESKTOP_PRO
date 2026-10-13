@@ -21,6 +21,11 @@ export type DailyGuidanceApiConfiguration = {
 
 export type DailyGuidanceProvider = (request: DailyGuidanceInput) => Promise<DailyGuidanceResult>;
 
+export function parseDailyGuidanceRuntimeMode(value: string): DailyGuidanceApiConfiguration["runtimeMode"] {
+  if (value !== "synthetic" && value !== "production") throw new Error("daily_guidance_configuration_invalid");
+  return value;
+}
+
 export function createAwsDailyGuidanceApiHandler(input: { configuration: DailyGuidanceApiConfiguration; provider?: DailyGuidanceProvider }) {
   validateConfiguration(input.configuration);
   const provider = input.provider ?? ((request) => generateDailyGuidanceWithOpenAI({

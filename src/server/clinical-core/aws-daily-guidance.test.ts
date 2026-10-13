@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAwsDailyGuidanceApiHandler } from "./aws-daily-guidance-api";
+import { createAwsDailyGuidanceApiHandler, parseDailyGuidanceRuntimeMode } from "./aws-daily-guidance-api";
 import {
   DailyGuidanceError,
   deriveCycleContext,
@@ -45,6 +45,13 @@ function modelValue() {
 }
 
 describe("governed daily guidance", () => {
+  it("refuses an unknown Lambda runtime mode instead of treating it as synthetic", () => {
+    expect(parseDailyGuidanceRuntimeMode("synthetic")).toBe("synthetic");
+    expect(parseDailyGuidanceRuntimeMode("production")).toBe("production");
+    expect(() => parseDailyGuidanceRuntimeMode("prod")).toThrow("daily_guidance_configuration_invalid");
+    expect(() => parseDailyGuidanceRuntimeMode("SYNTHETIC")).toThrow("daily_guidance_configuration_invalid");
+  });
+
   it("accepts measured-only inputs and returns provenance", () => {
     const parsed = validateDailyGuidanceInput(request());
     const result = validateDailyGuidanceResult({ value: modelValue(), request: parsed, model: MODEL, generatedAt: "2026-08-28T12:30:00.000Z" });
