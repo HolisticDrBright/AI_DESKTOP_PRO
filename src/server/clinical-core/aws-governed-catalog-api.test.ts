@@ -52,6 +52,44 @@ describe("AWS governed catalog API", () => {
     expect(value.listProducts).toHaveBeenCalledWith({ limit: 50, audience: "consumer" });
   });
 
+  test("withholds production consumer offer destinations while preserving workforce reference", async () => {
+    const product = {
+      stableId: "prd_fictional_omega", version: 1, displayName: "Fictional omega",
+      productType: "supplement" as const, accessTier: "open" as const,
+      declaredRestricted: false, directOrderAllowed: true, clinical: {},
+      sourceRefs: ["fictional:source"], reviewStatus: "approved" as const,
+    };
+    const offer = {
+      stableId: "off_fictional_omega", version: 1, productStableId: product.stableId,
+      destinationUrl: "https://shop.example.invalid/omega", trackingMetadata: {},
+      reviewStatus: "approved" as const,
+    };
+    const value = reader();
+    vi.mocked(value.listProducts).mockResolvedValue({ products: [product], commercial: { offers: [offer] } });
+    const handler = createAwsGovernedCatalogApiHandler({ reader: value, configuration });
+    const consumer = await handler(event("GET /clinical-core/consumer/catalog/products", "consumer"));
+    expect(consumer.statusCode).toBe(200);
+    expect(JSON.parse(consumer.body).data).toMatchObject({
+      products: [{ stableId: product.stableId, directOrderAllowed: false }],
+      commercial: { offers: [] },
+    });
+    expect(consumer.body).not.toContain(offer.destinationUrl);
+    const workforce = await handler(event("GET /clinical-core/workforce/catalog/products", "workforce"));
+    expect(JSON.parse(workforce.body).data).toMatchObject({
+      products: [{ stableId: product.stableId, directOrderAllowed: true }],
+      commercial: { offers: [offer] },
+    });
+    const syntheticEvent = event("GET /clinical-core/consumer/catalog/products", "consumer");
+    syntheticEvent.requestContext!.authorizer!.jwt!.claims!["custom:synthetic_attested"] = "true";
+    const synthetic = await createAwsGovernedCatalogApiHandler({
+      reader: value, configuration: { ...configuration, environment: "synthetic-staging" },
+    })(syntheticEvent);
+    expect(JSON.parse(synthetic.body).data).toMatchObject({
+      products: [{ stableId: product.stableId, directOrderAllowed: true }],
+      commercial: { offers: [offer] },
+    });
+  });
+
   test("allows protocol templates only on the workforce route", async () => {
     const value = reader();
     const handler = createAwsGovernedCatalogApiHandler({ reader: value, configuration });
