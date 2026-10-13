@@ -95,6 +95,7 @@
     "sync:worker": "node scripts/sync/worker.mjs",
     "check:stub-reset": "node scripts/check-stub-reset-coverage.mjs",
     "test:e2e:order": "node scripts/check-e2e-order-independence.mjs",
+    "test:e2e-order-config": "node --test scripts/e2e-order-config.test.mjs",
     "check:aws-clinical-core": "node scripts/check-aws-clinical-core.mjs",
     "check:aws-identity-consent": "node scripts/check-aws-identity-consent.mjs",
     "check:aws-authenticated-api": "node scripts/check-aws-authenticated-api.mjs",

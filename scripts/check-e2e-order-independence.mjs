@@ -15,21 +15,37 @@
  * This exists because "run each spec separately" is not a fix. A battery that
  * only passes in one sequence has stopped testing sequence, and the leak it is
  * hiding will surface later as a product bug that is not one.
+ *
+ * The runtime is `next dev` with the contract fixture, as in CI's live-fixture
+ * job; why, and which specs run, is in scripts/e2e-order-config.mjs. Each order
+ * gets a FRESH dev server and a reset fixture backend, so both start from the
+ * same state. Outcomes are read from Playwright's JSON report by test identity:
+ * a declared skip is reported with its reason and never counted as a pass, a
+ * test a failed hook never ran is a failure, and both orders must pass the
+ * same tests, not merely the same number of them.
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
-  statSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
+import { devServerEnvironment } from "./e2e-dev-resources.mjs";
+import {
+  compareOrders,
+  fixturePostureFromProbe,
+  orderBatteryEnvironment,
+  selectOrderBattery,
+  summarizeReport,
+} from "./e2e-order-config.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -46,9 +62,8 @@ const PLAYWRIGHT_ENTRY = join(
   process.cwd(), "node_modules", "@playwright", "test", "cli.js",
 );
 
-const specs = readdirSync("e2e")
-  .filter((f) => f.endsWith(".spec.ts"))
-  .sort();
+const battery = selectOrderBattery(readdirSync("e2e"));
+const specs = battery.run;
 
 if (specs.length === 0) {
   console.error("[e2e-order] FAIL — no spec files found");
@@ -57,6 +72,7 @@ if (specs.length === 0) {
 
 const STUB_BASE = process.env.E2E_STUB_BASE ?? "http://127.0.0.1:3999";
 const APP_PORT = Number(process.env.E2E_PORT ?? 3114);
+const SUMMARY = process.env.E2E_ORDER_SUMMARY ?? join("test-results", "e2e-order-summary.json");
 
 /**
  * ONE precise configuration error, and then stop.
@@ -76,36 +92,34 @@ function configFailure(what, fix) {
 /**
  * Everything the battery needs, set here rather than expected from the shell.
  *
- * An explicitly-set variable always wins: an operator pointing the suite at a
- * real backend must not have it silently redirected to the fixture.
+ * An explicitly-set variable always wins, except where it would make the
+ * battery a different claim (a production NODE_ENV, an opted-out fixture, a
+ * backend that is not loopback): those refuse, naming the fix.
  */
 function provisionEnv() {
-  const defaults = {
-    APP_EDITION: "clinical",
-    E2E_LIVE: "1",
-    NEXT_PUBLIC_USE_LIVE_API: "true",
-    TRPC_BASE_URL: `${STUB_BASE}/api/trpc`,
-    CLINICAL_SUPABASE_URL: STUB_BASE,
-    CLINICAL_SUPABASE_ANON_KEY: "stub",
-    CLINICAL_DEMO_EMAIL: "demo@local",
-    CLINICAL_DEMO_PASSWORD: "demo",
-    CLINICAL_ORG_ID: "org-fixture",
-    E2E_PORT: String(APP_PORT),
-  };
-  const applied = [];
-  for (const [key, value] of Object.entries(defaults)) {
-    if (process.env[key] === undefined || process.env[key] === "") {
-      process.env[key] = value;
-      applied.push(key);
-    }
-  }
-  if (process.env.APP_EDITION !== "clinical") {
+  const result = orderBatteryEnvironment(process.env, { stubBase: STUB_BASE, port: APP_PORT });
+  if ("refusal" in result) configFailure(result.refusal, result.fix);
+  for (const [key, value] of Object.entries(result.env)) process.env[key] = value;
+  if (battery.unclassified.length > 0) {
     configFailure(
-      `APP_EDITION is "${process.env.APP_EDITION}", but this battery only runs against the clinical edition.`,
-      "Unset APP_EDITION and re-run, or set APP_EDITION=clinical.",
+      `${battery.unclassified.join(", ")} ${battery.unclassified.length === 1 ? "is" : "are"} neither a live- spec nor a separately configured one.`,
+      "Name it live-*.spec.ts to join this battery, or add it to SEPARATELY_CONFIGURED_SPECS in scripts/e2e-order-config.mjs with the CI job that runs it.",
     );
   }
-  return applied;
+  return result.applied;
+}
+
+/**
+ * The dev server's explicit heap budget, validated before anything boots. The
+ * same rule the Playwright config applies (scripts/e2e-dev-resources.mjs).
+ */
+function provisionHeap() {
+  try {
+    return devServerEnvironment(process.env);
+  } catch (error) {
+    configFailure(error instanceof Error ? error.message : String(error),
+      "Set E2E_DEV_HEAP_MB alone (2048-12288, with 4096 MiB to spare), or leave it unset to inherit NODE_OPTIONS.");
+  }
 }
 
 /**
@@ -143,97 +157,12 @@ function provisionBrowser() {
 }
 
 /**
- * A build signature over the sources the running server is made of.
- *
- * Path + size + mtime rather than content: this runs on every invocation, and
- * hashing the whole tree would cost more than it saves. It catches every edit
- * that matters and errs towards rebuilding.
- */
-function sourceSignature() {
-  const hash = createHash("sha256");
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else {
-        const st = statSync(full);
-        hash.update(`${full}:${st.size}:${Math.floor(st.mtimeMs)}`);
-      }
-    }
-  };
-  walk("src");
-  for (const file of ["next.config.ts", "package.json", "postcss.config.mjs"]) {
-    if (existsSync(file)) {
-      const st = statSync(file);
-      hash.update(`${file}:${st.size}:${Math.floor(st.mtimeMs)}`);
-    }
-  }
-  hash.update(`edition=${process.env.APP_EDITION}`);
-  hash.update(`live=${process.env.NEXT_PUBLIC_USE_LIVE_API}`);
-  return hash.digest("hex");
-}
-
-const STAMP = ".next/.e2e-provision.json";
-
-/**
- * Build if there is no build, or if the build does not match these sources.
- *
- * `E2E_REUSE_BUILD=1` skips the check for an operator who knows their build is
- * current and does not want to wait. Nothing else skips it: a battery that
- * silently tests a stale bundle is worse than one that takes two minutes.
- */
-function provisionBuild() {
-  const signature = sourceSignature();
-  const built = existsSync(".next/BUILD_ID");
-  let stamped = null;
-  try {
-    stamped = JSON.parse(readFileSync(STAMP, "utf8")).signature;
-  } catch {
-    stamped = null;
-  }
-
-  if (process.env.E2E_REUSE_BUILD === "1") {
-    if (!built) {
-      configFailure(
-        "E2E_REUSE_BUILD=1 was set, but there is no build in .next to reuse.",
-        "Unset E2E_REUSE_BUILD so this script builds, or run the build yourself first.",
-      );
-    }
-    console.log("[e2e-order] reusing the existing build (E2E_REUSE_BUILD=1)");
-    return;
-  }
-
-  if (built && stamped === signature) {
-    console.log("[e2e-order] the existing build matches these sources");
-    return;
-  }
-
-  console.log(
-    `[e2e-order] building the clinical live bundle (${built ? "sources changed" : "no build present"})`,
-  );
-  try {
-    execFileSync(process.execPath, [NEXT_ENTRY, "build"], {
-      stdio: ["ignore", "inherit", "inherit"],
-      env: process.env,
-    });
-  } catch {
-    configFailure(
-      "the clinical live build failed.",
-      "Fix the build error above, then re-run. The battery cannot prove anything about a bundle that does not exist.",
-    );
-  }
-  writeFileSync(STAMP, JSON.stringify({ signature, builtAt: new Date().toISOString() }, null, 2));
-}
-
-/**
  * The app port must be ours, for the same reason the stub must be.
  *
- * `playwright.config.ts` sets `reuseExistingServer: true`, so a server left
- * over from a demo-edition build would be silently reused and the battery
- * would report on a bundle nobody in this run produced.
+ * Playwright reuses whatever answers on the port (`reuseExistingServer`, and
+ * E2E_ORDER_OWNS_SERVER=1 keeps that true under CI too), so a server left over
+ * from another configuration would be silently reused and the battery would
+ * report on a server nobody in this run started.
  */
 async function assertAppPortFree() {
   const reachable = await fetch(`http://127.0.0.1:${APP_PORT}/api/health`)
@@ -336,40 +265,38 @@ async function withStub(run) {
 
 function run(label, files) {
   console.log(`\n[e2e-order] ${label} (${files.length} specs)`);
+  const reportFile = join(tmpdir(), `e2e-order-${label.replace(/\W+/g, "-")}-${process.pid}.json`);
+  rmSync(reportFile, { force: true });
   let out = "";
   try {
     out = execFileSync(
       process.execPath,
-      [PLAYWRIGHT_ENTRY, "test", ...files.map((f) => `e2e/${f}`)],
+      [PLAYWRIGHT_ENTRY, "test", "--reporter=list,json", ...files.map((f) => `e2e/${f}`)],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
+        env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile },
+        maxBuffer: 256 * 1024 * 1024,
       },
     );
   } catch (e) {
     out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
   }
-  const passed = /(\d+) passed/.exec(out);
-  const failed = /(\d+) failed/.exec(out);
-  const skipped = /(\d+) skipped/.exec(out);
-  const result = {
-    passed: passed ? Number(passed[1]) : 0,
-    failed: failed ? Number(failed[1]) : 0,
-    skipped: skipped ? Number(skipped[1]) : 0,
-  };
-  console.log(
-    `[e2e-order] ${label}: ${result.passed} passed, ${result.failed} failed, ` +
-      `${result.skipped} skipped`,
-  );
-  if (result.failed > 0) {
-    // Print the failing test titles so the diagnosis does not require a re-run.
-    for (const line of out.split("\n")) {
-      if (line.includes("✘") || line.trimStart().startsWith("1)")) {
-        console.error(`    ${line.trim()}`);
-      }
-    }
+  let report;
+  try {
+    report = JSON.parse(readFileSync(reportFile, "utf8"));
+  } catch {
+    console.error(`[e2e-order] FAIL — ${label}: Playwright wrote no JSON report. Its last output:`);
+    console.error(out.slice(-6000));
+    process.exit(1);
   }
+  const result = summarizeReport(report);
+  console.log(
+    `[e2e-order] ${label}: ${result.passed.length} passed, ${result.failed.length} failed or did not run, ` +
+      `${result.skipped.length} skipped by declaration (not counted as passes)`,
+  );
+  for (const failure of result.failed) console.error(`    ✘ [${failure.status}] ${failure.id}\n        ${failure.message}`);
+  for (const error of result.errors) console.error(`    ✘ [outside any test] ${error}`);
   return result;
 }
 
@@ -442,10 +369,10 @@ async function warmApp() {
   console.log(`[warmup] complete in ${Date.now() - battery0}ms`);
 }
 
-async function withApp(run) {
+async function withApp(heap, run) {
   const owned = spawn(
-    process.execPath, [NEXT_ENTRY, "start", "-p", String(APP_PORT)],
-    { stdio: ["ignore", "pipe", "pipe"], env: process.env },
+    process.execPath, [NEXT_ENTRY, "dev", "-p", String(APP_PORT)],
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap } },
   );
   const appLog = [];
   const push = (buf) => { appLog.push(String(buf)); if (appLog.length > 200) appLog.shift(); };
@@ -467,61 +394,88 @@ async function withApp(run) {
         .then((r) => r.ok).catch(() => false);
     }
     if (!ready) {
-      console.error(`[e2e-order] FAIL — next start never became ready on ${APP_PORT}. Its last output:`);
+      console.error(`[e2e-order] FAIL — next dev never became ready on ${APP_PORT}. Its last output:`);
       console.error(appLog.join(""));
       process.exit(1);
     }
+    // Observe the fixture posture before any spec runs. Forty-five suites failing in beforeAll is what a refused
+    // fixture used to look like; one precise line is what it looks like now.
+    const probe = await fetch(`http://localhost:${APP_PORT}/today`, { redirect: "manual", signal: AbortSignal.timeout(120_000) })
+      .then(async (r) => { await r.text().catch(() => ""); return { status: r.status, location: r.headers.get("location") }; })
+      .catch((e) => ({ status: -1, location: String(e) }));
+    const posture = fixturePostureFromProbe(probe);
+    if (!posture.allowed) {
+      console.error(`\n[e2e-order] FAIL — ${posture.detail} No spec ran. The refusal is correct for a deployed runtime ` +
+        "and is not weakened here; check that this server is `next dev` with CLINICAL_CONTRACT_FIXTURE=1 and a loopback backend.");
+      console.error(appLog.join("").slice(-4000));
+      process.exit(1);
+    }
+    console.log("[e2e-order] contract fixture allowed by this server (observed: a signed-out page rendered)");
     await warmApp();
     return await run();
   } finally {
     killOwned();
+    // Let the port and the dev compiler's file handles go before the next order starts its own server.
+    for (let i = 0; i < 40 && died === null; i += 1) await sleep(250);
   }
 }
 
 /* ------------------------------------------------------------------ run */
 
 const appliedDefaults = provisionEnv();
+const heap = provisionHeap();
 const chromium = provisionBrowser();
 console.log(
-  `[e2e-order] configuration: edition=${process.env.APP_EDITION} live=1 ` +
+  `[e2e-order] configuration: edition=${process.env.APP_EDITION} live=1 server=next dev fixture=1 ` +
     `stub=${STUB_BASE} port=${APP_PORT}` +
+    (heap.NODE_OPTIONS ? ` heap=${process.env.E2E_DEV_HEAP_MB}MiB` : ` heap=inherited(${process.env.NODE_OPTIONS ?? "node default"})`) +
     (chromium ? ` chromium=${chromium}` : " chromium=playwright default"),
 );
 if (appliedDefaults.length > 0) {
   console.log(`[e2e-order] provisioned by this script: ${appliedDefaults.join(", ")}`);
 }
+console.log(`[e2e-order] battery: ${specs.length} live- specs; ${battery.excluded.length} separately configured specs are not run here and are not counted:`);
+for (const { spec, reason } of battery.excluded) console.log(`    - ${spec}: ${reason}`);
 await assertAppPortFree();
-provisionBuild();
 
-const { forward, reverse } = await withStub(async () =>
-  withApp(async () => ({
-    forward: run("forward order", specs),
-    reverse: run("reverse order", [...specs].reverse()),
-  })),
-);
+const orders = [["forward order", specs], ["reverse order", [...specs].reverse()]];
+const results = await withStub(async () => {
+  const out = {};
+  for (const [label, files] of orders) {
+    // Both orders start from the same backend state and a fresh server.
+    await fetch(`${STUB_BASE}/__control/reset-all`, { method: "POST" });
+    out[label] = await withApp(heap, async () => run(label, files));
+  }
+  return out;
+});
+const forward = results["forward order"], reverse = results["reverse order"];
+const verdict = compareOrders(forward, reverse);
 
-const problems = [];
-if (forward.failed > 0) problems.push(`${forward.failed} failed in forward order`);
-if (reverse.failed > 0) problems.push(`${reverse.failed} failed in reverse order`);
-if (forward.passed !== reverse.passed) {
-  problems.push(
-    `passing totals differ (${forward.passed} forward vs ${reverse.passed} ` +
-      `reverse) — a suite behaves differently depending on what ran before it`,
-  );
+mkdirSync(dirname(SUMMARY), { recursive: true });
+writeFileSync(SUMMARY, JSON.stringify({
+  contract: "e2e-order-summary/1",
+  runtime: { server: "next dev", contractFixture: true, stub: STUB_BASE },
+  battery: specs, excluded: battery.excluded,
+  forward, reverse, verdict,
+}, null, 2) + "\n");
+
+if (forward.skipped.length > 0) {
+  console.log(`\n[e2e-order] ${forward.skipped.length} skipped by declaration in each order (not passes):`);
+  const reasons = new Map();
+  for (const { reason } of forward.skipped) reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+  for (const [reason, count] of reasons) console.log(`    - ${count} × ${reason}`);
 }
-if (forward.passed === 0) {
-  // Zero-passed-zero-failed is what a misconfigured run looks like, and it
-  // would otherwise be reported as success.
-  problems.push("no tests ran; the battery is not actually being exercised");
-}
 
-if (problems.length) {
-  console.error(`\n[e2e-order] FAIL`);
-  for (const p of problems) console.error(`  - ${p}`);
+if (!verdict.ok) {
+  console.error(`\n[e2e-order] FAIL (details in ${SUMMARY})`);
+  for (const p of verdict.problems) console.error(`  - ${p}`);
+  for (const id of verdict.forwardOnly.slice(0, 20)) console.error(`    passed only forward: ${id}`);
+  for (const id of verdict.reverseOnly.slice(0, 20)) console.error(`    passed only reverse: ${id}`);
   process.exit(1);
 }
 
 console.log(
-  `\n[e2e-order] PASS — ${forward.passed} passed in both orders, 0 failed. ` +
-    `The battery does not depend on spec order.`,
+  `\n[e2e-order] PASS — the same ${forward.passed.length} tests passed in both orders, 0 failed, ` +
+    `${forward.skipped.length} skipped by declaration and not counted. The battery does not depend on spec order. ` +
+    `Summary: ${SUMMARY}`,
 );
