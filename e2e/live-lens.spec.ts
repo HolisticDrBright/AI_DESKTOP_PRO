@@ -62,6 +62,83 @@ async function coreText(page: Page): Promise<string> {
   return text.replace(/\s+/g, " ").trim();
 }
 
+test("a saved evaluation is not announced as displayed when its readback fails", async ({ page }) => {
+  let saved = false;
+  await page.route(/\/api\/live\/lens\/evaluation(?:\?|$)/, async (route) => {
+    if (route.request().method() === "POST") {
+      saved = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: { evaluationId: "saved-but-unread", status: "complete", questionsInserted: 2 } }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: saved ? 503 : 200,
+      contentType: "application/json",
+      body: saved
+        ? JSON.stringify({ error: { code: "unavailable", message: "Readback unavailable." } })
+        : JSON.stringify({ data: null }),
+    });
+  });
+
+  await page.goto(LENS_ENCOUNTER);
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId("lens-empty")).toBeVisible();
+  await page.getByTestId("run-evaluation").click();
+  await expect(panel(page).getByRole("alert")).toContainText("Readback unavailable.");
+  await expect(page.getByTestId("lens-notice")).toHaveCount(0);
+  await expect(page.getByTestId("lens-core")).toHaveCount(0);
+});
+
+test("a prior evaluation cannot confirm a newly saved evaluation", async ({ page }) => {
+  let saved = false;
+  await page.route(/\/api\/live\/lens\/evaluation(?:\?|$)/, async (route) => {
+    if (route.request().method() === "POST") {
+      saved = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: { evaluationId: "new-evaluation", status: "complete", questionsInserted: 2 } }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: saved ? {
+        evaluationId: "older-evaluation",
+        paradigm: "western_conventional",
+        status: "complete",
+        invariantCore: {},
+        lensFraming: {},
+        inputSnapshot: {},
+        inputCutoffAt: "2026-10-13T00:00:00Z",
+        ruleSetVersion: "fixture",
+        model: null,
+        provider: null,
+        promptTemplateVersion: null,
+        outputSchemaVersion: "fixture",
+        outputSha256: "older",
+        validationResult: null,
+        stale: false,
+        staleReason: null,
+        createdAt: "2026-10-13T00:00:00Z",
+        questions: [],
+        safetyBlocks: [],
+      } : null }),
+    });
+  });
+
+  await page.goto(LENS_ENCOUNTER);
+  await expect(page.getByTestId("lens-empty")).toBeVisible();
+  await page.getByTestId("run-evaluation").click();
+  await expect(panel(page).getByRole("alert")).toContainText("latest result could not be confirmed");
+  await expect(page.getByTestId("lens-notice")).toHaveCount(0);
+  await expect(page.getByTestId("lens-core")).toHaveCount(0);
+});
+
 test("steps 1–4: deterministic run over transcript+labs+chart; core identical across paradigms; framing-only changes; provenance inspectable", async ({ page }) => {
   await page.goto(LENS_ENCOUNTER);
   await expect(panel(page)).toBeVisible();

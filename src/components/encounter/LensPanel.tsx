@@ -238,20 +238,30 @@ export function LensPanel({
   }, []);
 
   const loadEvaluation = useCallback(
-    async (p: string) => {
+    async (p: string, expected?: { evaluationId: string; status: "complete" | "blocked" }): Promise<boolean> => {
       setLoadingEval(true);
       setError(null);
       try {
-        const res = await fetch(`/api/live/lens/evaluation?encounterId=${encounterId}&paradigm=${p}`);
+        const res = await fetch(`/api/live/lens/evaluation?encounterId=${encounterId}&paradigm=${p}`, {
+          signal: AbortSignal.timeout(30_000),
+        });
         if (!res.ok) {
           setError(await readError(res));
           setEvaluation(null);
-          return;
+          return false;
         }
         const json = (await res.json()) as { data: Evaluation | null };
+        if (expected && (json.data?.evaluationId !== expected.evaluationId || json.data.status !== expected.status)) {
+          setError("The evaluation was saved, but its latest result could not be confirmed for display. Refresh the page to try again.");
+          setEvaluation(null);
+          return false;
+        }
         setEvaluation(json.data);
+        return true;
       } catch {
         setError("The lens service is unreachable right now.");
+        setEvaluation(null);
+        return false;
       } finally {
         setLoadingEval(false);
       }
@@ -277,13 +287,18 @@ export function LensPanel({
         setError(await readError(res));
         return;
       }
-      const json = (await res.json()) as { data: { status: string; questionsInserted?: number; blockedRules?: number } };
+      const json = (await res.json()) as { data: { evaluationId?: string; status: string; questionsInserted?: number; blockedRules?: number } };
+      if (!json.data?.evaluationId || (json.data.status !== "complete" && json.data.status !== "blocked")) {
+        setError("The lens service did not return a verifiable evaluation result.");
+        setEvaluation(null);
+        return;
+      }
+      if (!await loadEvaluation(paradigm, { evaluationId: json.data.evaluationId, status: json.data.status })) return;
       setNotice(
         json.data.status === "blocked"
           ? `Evaluation blocked by ${json.data.blockedRules ?? 0} safety rule(s) — output withheld for review.`
           : `Evaluation complete — ${json.data.questionsInserted ?? 0} question(s) generated.`,
       );
-      await loadEvaluation(paradigm);
     } catch {
       setError("The lens service is unreachable right now.");
     } finally {
