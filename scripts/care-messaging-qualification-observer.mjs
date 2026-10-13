@@ -105,7 +105,7 @@ function expectedParameters(b,f,candidate){return {ApiId:b.apiId,ConsumerIssuer:
  DatabaseSecretArn:f.DatabaseSecretArn,DatabaseName:CARE_OBSERVER.database,SecretKmsKeyArn:b.secretKmsKeyArn,LogsKmsKeyArn:b.logsKmsKeyArn,
  AlarmTopicArn:b.alarmTopicArn,CodeBucket:b.codeBucket,CodeKey:b.codeKey,CodeVersion:b.codeVersion,SourceCommit:b.sourceCommit,
  MigrationReleaseSha256:b.migrationReleaseSha256,QualificationExecution:'enabled',QualificationAccountId:CARE_OBSERVER.account,
- QualificationDatabaseName:CARE_OBSERVER.database,QualificationReviewSha256:b.reviews.qualification,QualificationIdentitySubjects:b.subjects.join(',')};}
+ QualificationReviewSha256:b.reviews.qualification,QualificationIdentitySubjects:b.subjects.join(',')};}
 function resources(value){
  if(!Array.isArray(value?.StackResourceSummaries)||value.NextToken)refuse('resources_refused');const out={};
  for(const r of value.StackResourceSummaries){if(!r.LogicalResourceId||typeof r.PhysicalResourceId!=='string'||Object.hasOwn(out,r.LogicalResourceId)

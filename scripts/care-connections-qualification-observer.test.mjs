@@ -42,8 +42,9 @@ function fixture(recovery=true,packageArtifact=artifact){
   PhiAllowed:'false',Activation:'blocked',ActivationEvidenceSha256:'',DatabaseReviewSha256:hash,WorkforceMfaReviewSha256:hash,ConnectionReviewSha256:hash,ConsentReviewSha256:hash,RetentionReviewSha256:hash,
   ClaimRecoveryEnabled:String(recovery),ClaimRecoveryReviewSha256:recovery?hash:'',EnabledConsentScopes:'',DatabaseClusterArn:f.DatabaseClusterArn,DatabaseSecretArn:f.DatabaseSecretArn,DatabaseName:c.database,
   SecretKmsKeyArn:binding.secretKmsKeyArn,LogsKmsKeyArn:binding.logsKmsKeyArn,AlarmTopicArn:binding.alarmTopicArn,CodeBucket:binding.codeBucket,CodeKey:binding.codeKey,CodeVersion:binding.codeVersion,
-  SourceCommit:binding.sourceCommit,MigrationReleaseSha256:binding.migrationReleaseSha256,QualificationExecution:'enabled',QualificationAccountId:c.account,QualificationDatabaseName:c.database,
+  SourceCommit:binding.sourceCommit,MigrationReleaseSha256:binding.migrationReleaseSha256,QualificationExecution:'enabled',QualificationAccountId:c.account,
   QualificationReviewSha256:hash,QualificationIdentitySubjects:binding.subjects.join(',')};
+ assert.deepEqual(Object.keys(p).sort(),Object.keys(template.Parameters).sort());
  const physical=Object.fromEntries(Object.keys(template.Resources).map(k=>[k,'fictional-'+k]));physical.Function=f.ApiId+'-care-connections';physical.Logs='/aws/lambda/'+physical.Function;
  const arn=`arn:aws:lambda:${c.region}:${c.account}:function:${physical.Function}`,logArn=`arn:aws:logs:${c.region}:${c.account}:log-group:${physical.Logs}:*`,roleArn=`arn:aws:iam::${c.account}:role/${physical.Role}`;
  const resolve=v=>{
@@ -88,6 +89,19 @@ function fixture(recovery=true,packageArtifact=artifact){
  return {responses,calls,options:{artifact,head:artifact.manifest.sourceCommit,binding,readAws,readCodeVersion:async()=>artifact.zip,
   inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:artifact.manifest.migrationCount,rolledBack:true})}};
 }
+test('connection inspection accepts only parameters the real template declares in both release modes',async()=>{
+ for(const a of [artifact,successorArtifact]){
+  const f=fixture(false,a),declared=Object.keys(JSON.parse(a.templateBytes).Parameters).sort();
+  const stack=f.responses['cloudformation/describe-stacks/candidate'].Stacks[0];
+  stack.Parameters=stack.Parameters.filter(row=>declared.includes(row.ParameterKey));
+  assert.deepEqual(stack.Parameters.map(row=>row.ParameterKey).sort(),declared);
+  const report=await inspectCareConnectionsQualification(f.options);
+  assert.equal(report.status,'deployment_bindings_verified');assert.equal(report.acceptance,false);
+  const extra=fixture(false,a);
+  extra.responses['cloudformation/describe-stacks/candidate'].Stacks[0].Parameters.push({ParameterKey:'QualificationDatabaseName',ParameterValue:c.database});
+  await assert.rejects(()=>inspectCareConnectionsQualification(extra.options),/parameters_refused/);
+ }
+});
 test('112 connection observer binds the entire approved successor without treating inspection as acceptance',async()=>{
  const f=fixture(false,successorArtifact),report=await inspectCareConnectionsQualification(f.options);
  assert.equal(report.status,'deployment_bindings_verified');assert.equal(report.acceptance,false);

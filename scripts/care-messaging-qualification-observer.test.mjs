@@ -45,8 +45,9 @@ const params={ApiId:binding.apiId,ConsumerIssuer:binding.consumerIssuer,Consumer
  SecretKmsKeyArn:binding.secretKmsKeyArn,LogsKmsKeyArn:binding.logsKmsKeyArn,AlarmTopicArn:binding.alarmTopicArn,
  CodeBucket:binding.codeBucket,CodeKey:binding.codeKey,CodeVersion:binding.codeVersion,SourceCommit:binding.sourceCommit,
  MigrationReleaseSha256:binding.migrationReleaseSha256,QualificationExecution:'enabled',QualificationAccountId:c.account,
- QualificationDatabaseName:c.database,QualificationReviewSha256:hash,QualificationIdentitySubjects:binding.subjects.join(',')};
+ QualificationReviewSha256:hash,QualificationIdentitySubjects:binding.subjects.join(',')};
 const template=JSON.parse(artifact.templateBytes.toString());
+assert.deepEqual(Object.keys(params).sort(),Object.keys(template.Parameters).sort());
 const physical=Object.fromEntries(Object.keys(template.Resources).map(key=>[key,'fictional-'+key]));
 physical.Function='abcdefghij-care-messaging';physical.Logs='/aws/lambda/'+physical.Function;
 const logArn=`arn:aws:logs:${c.region}:${c.account}:log-group:${physical.Logs}:*`;
@@ -119,6 +120,19 @@ function fixture112(){
  functionConfiguration.Environment.Variables.MIGRATION_RELEASE_SHA256=release;
  return f;
 }
+test('messaging inspection accepts only parameters the real template declares in both release modes',async()=>{
+ for(const make of [fixture,fixture112]){
+  const f=make(),declared=Object.keys(JSON.parse(f.options.artifact.templateBytes).Parameters).sort();
+  const stack=f.responses['cloudformation/describe-stacks/candidate'].Stacks[0];
+  stack.Parameters=stack.Parameters.filter(row=>declared.includes(row.ParameterKey));
+  assert.deepEqual(stack.Parameters.map(row=>row.ParameterKey).sort(),declared);
+  const report=await inspectCareMessagingQualification(f.options);
+  assert.equal(report.status,'deployment_bindings_verified');assert.equal(report.acceptance,false);
+  const extra=make();
+  extra.responses['cloudformation/describe-stacks/candidate'].Stacks[0].Parameters.push({ParameterKey:'QualificationDatabaseName',ParameterValue:c.database});
+  await assert.rejects(()=>inspectCareMessagingQualification(extra.options),/parameters_refused/);
+ }
+});
 test('fictional 112 artifact and hosted bindings are distinct from the historical 106 release',async()=>{
  const f=fixture112(),result=await inspectCareMessagingQualification(f.options);
  assert.equal(result.status,'deployment_bindings_verified');

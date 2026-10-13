@@ -70,6 +70,34 @@ CI now builds and lints the separate 112 messaging and connection templates
 alongside the unchanged default and 107 profiles. Exact-head CI must be
 observed separately; the parent's green run is not evidence for these edits.
 
+## Inspector parameter contract repair
+
+Deployment preparation found that both care inspectors expected an extra
+`QualificationDatabaseName` stack parameter. Neither emitted template declares
+it: the actual parameter is `DatabaseName`, already pinned to the isolated
+qualification database. The fictional transports had copied the same extra
+field, hiding the mismatch. Two tests restricted observations to the real
+emitted parameter keys and failed on `9dc8eba9` with `parameters_refused`.
+
+The inspector now compares exactly the declared parameter set. Fixtures assert
+that their keys equal the real template's keys in both 106 and 112 modes;
+adding the undeclared field still refuses. Both suites then passed 75 tests,
+with no skips, and targeted lint passed. DatabaseName, whole-ledger, account,
+identity, review, IAM, source and activation checks remain unchanged. This
+follow-up changes inspection source and tests, not Lambda source, templates,
+SQL or any serving setting. The full unit suite and clinical build/bundle scan
+above were observed before this follow-up; the final head needs its own CI.
+
+The clean `9dc8eba9` read-only AWS inspection first stopped with
+`database_resuming`, then verified all 112 rows and reported `not_deployed`.
+Its code ZIP was uploaded create-only and downloaded by exact S3 version;
+all 825,653 bytes matched SHA-256
+`26566f2f5de7af51f2d755c79251230c618e4aaff0961068e2071a0e542924c5`.
+No stack proposal or execution was performed. That upload is retained as
+historical preparation, not selected for a later head: rebuild and bind the
+final clean commit before proposing a deployment. A warm successful ledger
+inspection is not cold-start or functional connection acceptance.
+
 ## Next deployment work
 
 Rebuild from the final clean commit after its required checks and CI pass.
