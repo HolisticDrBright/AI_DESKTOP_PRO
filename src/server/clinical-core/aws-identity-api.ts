@@ -2,6 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("clinical-core/aws-identity-api is server-only.");
 }
 
+import type { NoticeEmitter } from "../notifications/notification-dispatcher";
 import { createHash } from "node:crypto";
 import {createCareMessaging,CareMessageError} from './care-messaging';
 import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
@@ -230,6 +231,8 @@ export function createAwsIdentityApiHandler(input: {
   familyAccessAdapter?: FamilyAccessAdapter<SyntheticRequestContext>;
   chatContextAdapter?: ChatContextAdapter<SyntheticRequestContext>;
   patientChatAdapter?: PatientChatAdapter<SyntheticRequestContext>;
+  /** Patient notices for items a committed workforce action made visible. Unset, nothing is enqueued. */
+  patientNotices?: NoticeEmitter;
   configuration: IdentityApiConfiguration;
 }) {
   return createIdentityApiHandler<SyntheticRequestContext>({ ...input, boundary: "synthetic" });
@@ -281,6 +284,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   familyAccessAdapter?: FamilyAccessAdapter<Context>;
   chatContextAdapter?: ChatContextAdapter<Context>;
   patientChatAdapter?: PatientChatAdapter<Context>;
+  patientNotices?: NoticeEmitter;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
   productionPilot?: { scope: ProductionPilotScope; organizationId: string };
@@ -329,6 +333,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const outcomeReport=input.database ? createOutcomeReport(input.database) : undefined;
   const consultRetention=input.database ? createConsultRetention(input.database) : undefined;
   validateConfiguration(input.configuration);
+  // After the action has committed: a notice can never change or roll back its reply.
+  const notify=async(context:Context,operation:string,request:unknown,reply:unknown)=>{
+    if(!input.patientNotices)return;
+    try{await input.patientNotices(context,operation,request,reply);}catch{/* the emitter reports; the caller's reply is already decided */}
+  };
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     try {
@@ -378,7 +387,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const expiry=Number(claims?.exp);
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
-        return response(200,{data:await programAssignments(context,parseBody(event))});
+        const body=parseBody(event);const data=await programAssignments(context,body);
+        await notify(context,"program_assignments",body,data);
+        return response(200,{data});
       }
       if (route.operation === "care_data_lifecycle") {
         // The owner's own export and erasure for the messaging and program domains.
@@ -471,7 +482,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const expiry=Number(claims?.exp);
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
-        return response(200,{data:await service(context,parseBody(event))});
+        const body=parseBody(event);const data=await service(context,body);
+        if(route.operation==="intake_packets_workforce")await notify(context,route.operation,body,data);
+        return response(200,{data});
       }
       if (route.operation === "calendar_connection") {
         // Same posture as programs and messaging: synthetic boundary only, live JWT only,
@@ -491,7 +504,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const expiry=Number(claims?.exp);
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
-        return response(200,{data:await careMessaging(context,parseBody(event))});
+        const body=parseBody(event);const data=await careMessaging(context,body);
+        await notify(context,"care_messages",body,data);
+        return response(200,{data});
       }
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -736,11 +751,13 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
             throw new IdentityApiError("request_invalid");
           }
           const note = "note" in body ? requiredString(body, "note") : undefined;
-          return response(200, { data: await clinicalStateAdapter!.reviewLabResult(context, {
+          const data = await clinicalStateAdapter!.reviewLabResult(context, {
             eventId: requiredString(body, "eventId"),
             decision: decision as "accept" | "reject",
             ...(note ? { note } : {}),
-          }) });
+          });
+          await notify(context, "review_lab", body, data);
+          return response(200, { data });
         }
         case "record_clinical": {
           exactKeys(body, ["connectionId", "stableRecordId", "collection", "recordKey", "resourceVersion", "idempotencyKey", "payload", "deleted"],
