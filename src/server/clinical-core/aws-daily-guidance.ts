@@ -215,17 +215,28 @@ export function deriveCycleContext(context: ReproductiveContext | null): DailyGu
 }
 
 export function safetyEscalation(input: DailyGuidanceInput): DailyGuidanceResult["escalation"] {
-  const urgent = new Set<GuidanceSymptom>(["fainting", "chest_pain", "breathlessness_before_exertion", "calf_pain_or_swelling", "fluid_leakage", "painful_contractions"]);
-  if (input.symptoms.some((symptom) => urgent.has(symptom))) return { level: "urgent", message: "Stop exercise and seek prompt medical care for the reported warning symptom." };
-  if (input.symptoms.includes("heavy_bleeding") && (input.symptoms.includes("dizziness") || input.symptoms.includes("severe_headache"))) {
-    return { level: "urgent", message: "Heavy bleeding with dizziness or severe symptoms needs urgent medical evaluation." };
-  }
+  const urgent = urgentSymptomEscalation(input.symptoms);
+  if (urgent) return urgent;
   if (input.symptoms.includes("heavy_bleeding") || input.symptoms.includes("pelvic_pain")
     || input.reproductiveContext?.stage === "irregular_cycle" || input.reproductiveContext?.stage === "perimenopause"
     || input.reproductiveContext?.stage === "menopause") {
     return { level: "routine", message: "Consider discussing the reported reproductive-health pattern with a qualified healthcare professional." };
   }
   return { level: "none", message: "" };
+}
+
+/** Authenticated, bounded requests may carry an urgent symptom even when no
+ * wearable measurement is available. Screen those names before requiring the
+ * measured-data contract; no model output is needed for this fixed refusal. */
+export function urgentSymptomEscalation(symptoms: unknown): DailyGuidanceResult["escalation"] | null {
+  if (!Array.isArray(symptoms)) return null;
+  const reported = new Set(symptoms.filter((symptom): symptom is GuidanceSymptom => typeof symptom === "string"));
+  const urgentNames = new Set<GuidanceSymptom>(["fainting", "chest_pain", "breathlessness_before_exertion", "calf_pain_or_swelling", "fluid_leakage", "painful_contractions"]);
+  if ([...reported].some((symptom) => urgentNames.has(symptom))) return { level: "urgent", message: "Stop exercise and seek prompt medical care for the reported warning symptom." };
+  if (reported.has("heavy_bleeding") && (reported.has("dizziness") || reported.has("severe_headache"))) {
+    return { level: "urgent", message: "Heavy bleeding with dizziness or severe symptoms needs urgent medical evaluation." };
+  }
+  return null;
 }
 
 export function inputSha256(input: DailyGuidanceInput): string {

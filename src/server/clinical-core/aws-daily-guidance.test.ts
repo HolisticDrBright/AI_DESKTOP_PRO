@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAwsDailyGuidanceApiHandler } from "./aws-daily-guidance-api";
 import {
   DailyGuidanceError,
@@ -99,5 +99,39 @@ describe("governed daily guidance", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body).data.summary).toContain("measured recovery");
+  });
+
+  it.each([
+    ["chest pain", ["chest_pain"]],
+    ["fainting", ["fainting"]],
+    ["breathlessness", ["breathlessness_before_exertion"]],
+    ["heavy bleeding with dizziness", ["heavy_bleeding", "dizziness"]],
+  ] as const)("does not invoke the model for %s", async (_label, symptoms) => {
+    const provider = vi.fn(async () => validateDailyGuidanceResult({ value: modelValue(), request: request(), model: MODEL }));
+    const handler = createAwsDailyGuidanceApiHandler({
+      configuration: { consumerIssuer: ISSUER, consumerAudience: AUDIENCE, runtimeMode: "synthetic", phiAllowed: false, model: MODEL, openAiSecretArn: "arn:aws:secretsmanager:us-east-2:588966314750:secret:test-guidance" },
+      provider,
+    });
+    const response = await handler({
+      routeKey: "POST /clinical-core/consumer/daily-guidance", headers: { "content-type": "application/json" }, body: JSON.stringify(request({ symptoms: [...symptoms] })),
+      requestContext: { authorizer: { jwt: { claims: { iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "synthetic-user-123", "custom:person_id": "22222222-2222-4222-8222-222222222222", "custom:organization_id": "33333333-3333-4333-8333-333333333333", "custom:synthetic_attested": "true" } } } },
+    });
+    expect(response.statusCode).toBe(422);
+    expect(JSON.parse(response.body)).toEqual({ error: "urgent_symptom_requires_care", escalation: safetyEscalation(request({ symptoms: [...symptoms] })) });
+    expect(provider).not.toHaveBeenCalled();
+  });
+  it("returns the fixed urgent refusal even without two measured recovery signals", async () => {
+    const provider = vi.fn(async () => validateDailyGuidanceResult({ value: modelValue(), request: request(), model: MODEL }));
+    const handler = createAwsDailyGuidanceApiHandler({
+      configuration: { consumerIssuer: ISSUER, consumerAudience: AUDIENCE, runtimeMode: "synthetic", phiAllowed: false, model: MODEL, openAiSecretArn: "arn:aws:secretsmanager:us-east-2:588966314750:secret:test-guidance" },
+      provider,
+    });
+    const response = await handler({
+      routeKey: "POST /clinical-core/consumer/daily-guidance", headers: { "content-type": "application/json" }, body: JSON.stringify(request({ measurements: [], symptoms: ["chest_pain"] })),
+      requestContext: { authorizer: { jwt: { claims: { iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "synthetic-user-123", "custom:person_id": "22222222-2222-4222-8222-222222222222", "custom:organization_id": "33333333-3333-4333-8333-333333333333", "custom:synthetic_attested": "true" } } } },
+    });
+    expect(response.statusCode).toBe(422);
+    expect(JSON.parse(response.body).error).toBe("urgent_symptom_requires_care");
+    expect(provider).not.toHaveBeenCalled();
   });
 });

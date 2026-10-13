@@ -2,7 +2,7 @@ if (typeof window !== "undefined") throw new Error("aws-daily-guidance-api is se
 import { CoreSubscriptionError, requireConsumerCore } from "./core-subscription-guard";
 
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
-import { DailyGuidanceError, validateDailyGuidanceInput, type DailyGuidanceInput, type DailyGuidanceResult } from "./aws-daily-guidance";
+import { DailyGuidanceError, urgentSymptomEscalation, validateDailyGuidanceInput, type DailyGuidanceInput, type DailyGuidanceResult } from "./aws-daily-guidance";
 import { generateDailyGuidanceWithOpenAI } from "./aws-daily-guidance-openai";
 
 const ROUTE = "POST /clinical-core/consumer/daily-guidance";
@@ -34,7 +34,12 @@ export function createAwsDailyGuidanceApiHandler(input: { configuration: DailyGu
     try {
       assertIdentity(event, input.configuration);
       if (input.configuration.runtimeMode === "production") await requireConsumerCore(event.headers ?? {});
-      const request = validateDailyGuidanceInput(parseBody(event));
+      const raw = parseBody(event);
+      const escalation = urgentSymptomEscalation(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).symptoms : null);
+      // An urgent warning is deterministic safety output, never an occasion to ask
+      // a model for exercise, nutrition or recovery actions alongside it.
+      if (escalation) return response(422, { error: "urgent_symptom_requires_care", escalation });
+      const request = validateDailyGuidanceInput(raw);
       return response(200, { data: await provider(request) });
     } catch (error) {
       if (error instanceof CoreSubscriptionError) return response(402, { error: "core_subscription_required" });
