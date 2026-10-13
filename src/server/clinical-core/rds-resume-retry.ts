@@ -6,8 +6,8 @@
 export function isDatabaseResuming(error:unknown):boolean{
   return error!==null&&typeof error==='object'&&(error as {name?:unknown}).name==='DatabaseResumingException';
 }
-export async function retryDatabaseResume<T>(operation:()=>Promise<T>,sleep:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms))):Promise<T>{
-  const delays=[1_000,2_000,4_000];
+export async function retryDatabaseResume<T>(operation:()=>Promise<T>,sleep:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),policy:'general'|'catalog_read'='general'):Promise<T>{
+  const delays=policy==='catalog_read'?[1_000,2_000,4_000,4_000]:[1_000,2_000,4_000];
   for(let attempt=0;;attempt++){
     try{return await operation();}catch(error){
       if(!isDatabaseResuming(error)||attempt>=delays.length)throw error;

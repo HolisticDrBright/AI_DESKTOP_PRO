@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createAwsGovernedCatalogApiHandler } from "./aws-governed-catalog-api";
-import { createRdsDataClinicalCoreDatabase } from "./rds-data-database";
+import { createRdsDataCatalogReaderDatabase } from "./rds-data-database";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -11,7 +11,7 @@ function required(name: string): string {
   return value;
 }
 
-const database = createRdsDataClinicalCoreDatabase({
+const database = createRdsDataCatalogReaderDatabase({
   clusterArn: required("CLINICAL_DATABASE_CLUSTER_ARN"),
   secretArn: required("CLINICAL_DATABASE_SECRET_ARN"),
   databaseName: required("CLINICAL_DATABASE_NAME"),

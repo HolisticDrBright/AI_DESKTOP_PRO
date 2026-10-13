@@ -44,6 +44,16 @@ export function createRdsDataClinicalCoreDatabase(
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
 
+/** The catalog endpoint is read-only and has a 29-second Lambda deadline. The
+ * synthetic database may need longer than the general policy's three delays
+ * to resume from zero ACUs. Only BeginTransaction is retried. */
+export function createRdsDataCatalogReaderDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  return createRdsDataDatabase(configuration, client, "clinical_core_api", "catalog_read");
+}
+
 /** Dedicated unreleased Fullscript worker. No caller-selected role or
  * administrative migration connection is exposed to request code. The role
  * must already exist on the reviewed target; missing membership fails closed. */
@@ -85,6 +95,7 @@ function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
   assumeRole?: "clinical_core_api" | "fullscript_draft_worker" | "program_media_worker",
+  resumePolicy: "general" | "catalog_read" = "general",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {
@@ -98,7 +109,7 @@ function createRdsDataDatabase(
       let transactionId: string | undefined;
       let workError: unknown;
       try {
-        const begun = await retryDatabaseResume(()=>client.send(new BeginTransactionCommand(common)));
+        const begun = await retryDatabaseResume(()=>client.send(new BeginTransactionCommand(common)), undefined, resumePolicy);
         transactionId = stringProperty(begun, "transactionId");
         if (!transactionId) throw new RdsDataDatabaseError("transaction_failed");
 

@@ -1,6 +1,6 @@
 import {afterEach,describe,expect,test,vi} from 'vitest';
 import {retryDatabaseResume} from './rds-resume-retry';
-import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
+import {createRdsDataCatalogReaderDatabase,createRdsDataClinicalCoreDatabase} from './rds-data-database';
 const resuming=()=>Object.assign(new Error('private database details'),{name:'DatabaseResumingException'});
 afterEach(()=>vi.useRealTimers());
 describe('bounded Aurora resume handling',()=>{
@@ -30,5 +30,24 @@ describe('bounded Aurora resume handling',()=>{
     await vi.runAllTimersAsync();await pending;
     expect(work).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(['BeginTransactionCommand','BeginTransactionCommand','ExecuteStatementCommand','CommitTransactionCommand','RollbackTransactionCommand']);
+  });
+  test('catalog read can wait through a longer synthetic resume without extending the general transaction policy',async()=>{
+    vi.useFakeTimers();const calls:string[]=[];let begun=0;
+    const client={send:async(command:unknown)=>{const name=(command as object).constructor.name;calls.push(name);
+      if(name==='BeginTransactionCommand'&&++begun<=4)throw resuming();
+      if(name==='BeginTransactionCommand')return {transactionId:'fictional'};
+      return {};
+    }};
+    const config={clusterArn:'arn:aws:rds:us-east-2:123456789012:cluster:fictional',
+      secretArn:'arn:aws:secretsmanager:us-east-2:123456789012:secret:fictional-AbCdEf',databaseName:'clinical_core'};
+    const catalog=createRdsDataCatalogReaderDatabase(config,client);
+    const read=catalog.transaction(async()=>true);await vi.runAllTimersAsync();expect(await read).toBe(true);
+    expect(calls).toEqual(['BeginTransactionCommand','BeginTransactionCommand','BeginTransactionCommand',
+      'BeginTransactionCommand','BeginTransactionCommand','ExecuteStatementCommand','CommitTransactionCommand']);
+    calls.length=0;begun=0;
+    const general=createRdsDataClinicalCoreDatabase(config,client);
+    const denied=expect(general.transaction(async()=>true)).rejects.toThrow('transaction_failed');
+    await vi.runAllTimersAsync();await denied;
+    expect(calls.filter(name=>name==='BeginTransactionCommand')).toHaveLength(4);
   });
 });
