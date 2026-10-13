@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { createAwsGovernedCatalogApiHandler, type CatalogApiEvent } from "./aws-governed-catalog-api";
 import type { AwsGovernedCatalogReader } from "./aws-governed-catalog-reader";
+import { GovernedCatalogReadError } from "./aws-governed-catalog-reader";
 
 const configuration = {
   environment: "production-clinical" as const,
@@ -82,5 +83,16 @@ describe("AWS governed catalog API", () => {
       "GET /clinical-core/workforce/catalog/products", "workforce", { patientId: "x" },
     ));
     expect(unexpected.statusCode).toBe(400);
+  });
+  test("never caches a transient catalog outage or a refused identity", async () => {
+    const value = reader();
+    vi.mocked(value.listProducts).mockRejectedValue(new GovernedCatalogReadError("catalog_unavailable"));
+    const handler = createAwsGovernedCatalogApiHandler({ reader: value, configuration });
+    const unavailable = await handler(event("GET /clinical-core/consumer/catalog/products", "consumer"));
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.headers?.["cache-control"]).toBe("no-store");
+    const refused = await handler(event("GET /clinical-core/consumer/catalog/products", "workforce"));
+    expect(refused.statusCode).toBe(403);
+    expect(refused.headers?.["cache-control"]).toBe("no-store");
   });
 });

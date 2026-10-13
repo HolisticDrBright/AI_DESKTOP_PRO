@@ -74,15 +74,25 @@ export async function observeProgramCatalog(input: {
     const url = new URL(input.origin + '/clinical-core/workforce/catalog/products');
     url.searchParams.set('limit', String(PAGE_LIMIT));
     if (cursor) url.searchParams.set('cursor', cursor);
-    let response: Response;
-    try {
-      response = await fetchImpl(url.toString(), {
-        method: 'GET', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
-        headers: { authorization: 'Bearer ' + input.token, accept: 'application/json' },
-      });
-    } catch {
-      throw new CatalogObservationError('service_unavailable');
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetchImpl(url.toString(), {
+          method: 'GET', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
+          headers: { authorization: 'Bearer ' + input.token, accept: 'application/json' },
+        });
+      } catch {
+        throw new CatalogObservationError('service_unavailable');
+      }
+      // Aurora may still be resuming when a read-only page first reaches the catalog. Retry
+      // that same page once; never replay a mutation, a refused identity, or an invalid reply.
+      if (attempt === 0 && [429, 502, 503, 504].includes(response.status)) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      break;
     }
+    if (!response) throw new CatalogObservationError('service_unavailable');
     if (response.status === 401) throw new CatalogObservationError('reauth_required');
     if (response.status === 403) throw new CatalogObservationError('identity_refused');
     if (!response.ok) throw new CatalogObservationError('service_unavailable');
