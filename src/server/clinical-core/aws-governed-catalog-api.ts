@@ -136,7 +136,7 @@ function response(statusCode: number, payload: Record<string, unknown>): ApiGate
     statusCode,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": "private, max-age=60",
+      "cache-control": statusCode === 200 ? "private, max-age=60" : "no-store",
       "x-content-type-options": "nosniff",
     },
     body: JSON.stringify(payload),

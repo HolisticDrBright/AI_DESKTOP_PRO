@@ -70,6 +70,27 @@ describe('observing the governed catalog', () => {
     expect(result.complete).toBe(false);
     expect(result.catalogSize).toBe(2);
   });
+  it('retries a transient cold-start 503 once for a read-only page, then accepts the exact reviewed response', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ error: 'catalog_unavailable' }, 503))
+      .mockResolvedValueOnce(json(page([product('prd_fictional_magnesium')])));
+    const result = await read(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(fetchImpl.mock.calls[1]![0]);
+    expect(result.products.map((row) => row.stableId)).toEqual(['prd_fictional_magnesium']);
+  });
+  it('never retries a refused identity or an invalid catalog reply', async () => {
+    for (const reply of [json({ error: 'identity_refused' }, 403), json({ bad: true })]) {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply);
+      expect(await failure(fetchImpl)).not.toBe('none');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('does not hide a persistent cold-start failure as an empty catalog', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(json({ error: 'catalog_unavailable' }, 503));
+    expect(await failure(fetchImpl)).toBe('service_unavailable');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
   it.each([
     ['an expired session', () => json({ error: 'identity_refused' }, 401), 'reauth_required'],
     ['a refused identity', () => json({ error: 'identity_refused' }, 403), 'identity_refused'],
