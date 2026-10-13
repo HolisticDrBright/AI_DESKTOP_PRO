@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createAwsDailyGuidanceApiHandler, parseDailyGuidanceRuntimeMode } from "./aws-daily-guidance-api";
 import {
   DailyGuidanceError,
@@ -45,6 +46,14 @@ function modelValue() {
 }
 
 describe("governed daily guidance", () => {
+  it("routes synthetic Lambda error alarms only to the reviewed qualification topic", () => {
+    const template = JSON.parse(readFileSync(new URL("../../../infra/aws-clinical-core/daily-guidance-extension.json", import.meta.url), "utf8"));
+    const topic = "arn:aws:sns:us-east-2:588966314750:ai-clinical-core-qualification-alarms";
+    expect(template.Parameters.AlarmTopicArn.AllowedValues).toEqual([topic]);
+    expect(template.Resources.DailyGuidanceErrorAlarm.Properties.ActionsEnabled).toBe(true);
+    expect(template.Resources.DailyGuidanceErrorAlarm.Properties.AlarmActions).toEqual([{ Ref: "AlarmTopicArn" }]);
+  });
+
   it("refuses an unknown Lambda runtime mode instead of treating it as synthetic", () => {
     expect(parseDailyGuidanceRuntimeMode("synthetic")).toBe("synthetic");
     expect(parseDailyGuidanceRuntimeMode("production")).toBe("production");
