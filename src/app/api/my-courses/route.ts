@@ -5,6 +5,7 @@ import { sameBrowserOrigin } from '@/server/same-browser-origin';
 import { selectLearnerHost } from '@/server/learner/learner-host';
 import { EducationAccessError } from '@/server/commerce/education-access-service';
 import { EducationProgressError } from '@/server/commerce/education-progress-service';
+import { LearnerMediaError } from '@/server/programs/learner-media';
 import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity-consent';
 
 /**
@@ -22,6 +23,9 @@ import type { ClinicalRequestContext } from '@/server/clinical-core/aws-identity
  *   - Every answer is private and never stored: `Cache-Control: no-store, private`.
  *   - Claims are not taken here: an access code is redeemed in the app, so this route offers only
  *     the reads and the progress writes.
+ *   - Lesson media (`media`) is one slot of the open lesson, decided by the host's media service at
+ *     request time; a host without one answers `held`. Its short-lived capability is returned once,
+ *     never stored, and the reply is discarded like any other if the learner is no longer verified.
  */
 export const dynamic = 'force-dynamic';
 const PRIVATE = { 'Cache-Control': 'no-store, private', Vary: 'Cookie' };
@@ -33,6 +37,7 @@ const request = z.discriminatedUnion('service', [
     z.object({ action: z.literal('curriculum'), entitlementId: z.string().uuid() }).strict(),
   ]) }).strict(),
   z.object({ service: z.literal('progress'), body: z.unknown() }).strict(),
+  z.object({ service: z.literal('media'), body: z.unknown() }).strict(),
 ]);
 const same = (a: ClinicalRequestContext, b: ClinicalRequestContext | null) => !!b
   && a.actorPersonId === b.actorPersonId
@@ -59,9 +64,11 @@ export async function POST(req: Request) {
   let data: unknown;
   try {
     const services = host.services();
-    data = parsed.service === 'education' ? await services.education(context, parsed.body) : await services.progress(context, parsed.body);
+    data = parsed.service === 'education' ? await services.education(context, parsed.body)
+      : parsed.service === 'progress' ? await services.progress(context, parsed.body)
+      : services.media ? await services.media(context, parsed.body) : { outcome: 'held' };
   } catch (error) {
-    const category = error instanceof EducationAccessError || error instanceof EducationProgressError ? error.category : 'service_unavailable';
+    const category = error instanceof EducationAccessError || error instanceof EducationProgressError || error instanceof LearnerMediaError ? error.category : 'service_unavailable';
     // A refusal is re-checked too: an identity that lapsed meanwhile is told so, not shown a service error.
     const after = await host.identify(req).catch(() => null);
     if (!same(context, after)) return refuse(401, 'learner_signin_required');

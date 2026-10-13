@@ -5,6 +5,8 @@ import { PROGRAM_CHECKOUT_RECOVERY_SCHEMA_CANDIDATE_SHA256, PROGRAM_CHECKOUT_SCH
 import { PROGRAM_EDUCATION_DELIVERY_SCHEMA_CANDIDATE_SHA256, PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 } from '../program-education-ledger-sql';
 import { PROGRAM_COMMERCE_AUTHORITY_SCHEMA_CANDIDATE_SHA256 } from '../program-commerce-authority';
 import { PROGRAM_COMMERCE_RUNTIME_SESSIONS_SCHEMA_CANDIDATE_SHA256 } from './commerce-role-sessions';
+import { learnerMediaStorageConfig } from '../../programs/aws-learner-media-storage';
+import { PROGRAM_MEDIA_LEARNER_ADMISSION_SCHEMA_CANDIDATE_SHA256 } from '../../programs/learner-media';
 
 /**
  * The reviewed program-commerce host target (program-commerce-host-target/1): the ONE document that
@@ -23,7 +25,10 @@ import { PROGRAM_COMMERCE_RUNTIME_SESSIONS_SCHEMA_CANDIDATE_SHA256 } from './com
  *     here: an empty list holds purchasing;
  *   - the delivery sender and the sealing key reference (the key itself is a secret, never here);
  *   - Brandon's decisions as records. A decision that is not recorded as decided is HELD, and a held
- *     decision that purchasing needs keeps purchasing disabled. Nothing defaults.
+ *     decision that purchasing needs keeps purchasing disabled. Nothing defaults;
+ *   - optionally, learner lesson media (program-learner-media/1): the BLOCKED admission candidate's
+ *     identity, the dedicated educational bucket, its key, the reviewed read-only learner role and
+ *     the review receipt. Absent, every media read answers `held` and nothing is read.
  */
 export const PROGRAM_COMMERCE_HOST_TARGET = 'program-commerce-host-target/1' as const;
 const QUALIFICATION_ACCOUNT = '588966314750';
@@ -102,6 +107,12 @@ export const programCommerceHostTarget = z.object({
     /** How the storefronts classify a course purchase. V2 offers no purchase while held. */
     storefrontClassification: z.union([held, decided(z.string().min(1).max(120))]),
   }).strict(),
+  learnerMedia: z.object({
+    candidate: digest,
+    storage: learnerMediaStorageConfig,
+    /** The learner-delivery review receipt; the database's own delivery row must also be enabled by a reviewed change. */
+    evidenceSha256: digest,
+  }).strict().optional(),
 }).strict().superRefine((target, context) => {
   const fail = (message: string) => context.addIssue({ code: 'custom', message });
   const sessions = Object.values(target.database.sessions);
@@ -111,6 +122,7 @@ export const programCommerceHostTarget = z.object({
     if (target.candidates[name as keyof typeof target.candidates] !== pinned) fail(`candidate_mismatch:${name}`);
   }
   if (new Set(target.processor.priceRefs).size !== target.processor.priceRefs.length) fail('duplicate_price_ref');
+  if (target.learnerMedia && target.learnerMedia.candidate !== PROGRAM_MEDIA_LEARNER_ADMISSION_SCHEMA_CANDIDATE_SHA256) fail('candidate_mismatch:learnerMedia');
   const desktop = new URL(target.consumer.desktopOrigin).hostname;
   if (desktop === 'localhost' || /^[0-9.]+$/.test(desktop)) fail('desktop_origin_refused');
 });

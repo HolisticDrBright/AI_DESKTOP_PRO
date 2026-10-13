@@ -1,5 +1,6 @@
 import { isAccessActive, type EducationAccessView, type EducationCurriculumRead, type EducationEnrollment, type ProgramEntitlement } from '@/contracts/programEducationAccess';
 import { courseLessons, sameLesson, type EducationProgress, type EducationProgressRequest, type LessonRef, type ProgressRefusal } from '@/contracts/programEducationProgress';
+import { lessonMediaReferences, PROGRAM_LEARNER_MEDIA_CONTRACT, type LearnerMediaAvailable } from '@/contracts/programLearnerMedia';
 import { LearnerTransportError, type LearnerHostKind, type LearnerTransport, type ProgressBinding } from './learnerTransport';
 
 /**
@@ -17,6 +18,14 @@ import { LearnerTransportError, type LearnerHostKind, type LearnerTransport, typ
  *   - Returning to the page re-reads access, the course and progress from the service.
  * An empty course list and an unavailable service are different things, and are said differently.
  */
+/**
+ * One native media slot of the open lesson. `available` holds a short-lived playback capability; it is
+ * dropped (never kept, logged or stored) when the lesson changes, the page is hidden, the capability
+ * expires, or any sign-in or access refusal clears the page.
+ */
+export type MediaSlotState =
+  | { slot: number; state: 'loading' } | { slot: number; state: 'available'; reply: LearnerMediaAvailable }
+  | { slot: number; state: 'held' } | { slot: number; state: 'not_available' } | { slot: number; state: 'unavailable' } | { slot: number; state: 'expired' };
 export type WriteCommand = Extract<EducationProgressRequest, { action: 'complete' | 'position' }>;
 export type ProgressState = { state: 'none' } | { state: 'ready'; progress: EducationProgress } | { state: 'unavailable' } | { state: 'refused'; reason: ProgressRefusal };
 export type LearnerSnapshot = {
@@ -32,8 +41,10 @@ export type LearnerSnapshot = {
   error: string;
   notice: string;
   placeNote: string;
+  /** The open lesson's native media, slot by slot; empty when it has none or none is being shown. */
+  media: MediaSlotState[];
 };
-const empty = (phase: LearnerSnapshot['phase']): LearnerSnapshot => ({ phase, host: null, view: null, course: null, outline: null, progress: { state: 'none' }, lesson: null, pending: null, busy: false, error: '', notice: '', placeNote: '' });
+const empty = (phase: LearnerSnapshot['phase']): LearnerSnapshot => ({ phase, host: null, view: null, course: null, outline: null, progress: { state: 'none' }, lesson: null, pending: null, busy: false, error: '', notice: '', placeNote: '', media: [] });
 
 export function readBinding(entitlement: ProgramEntitlement, enrollments: readonly EducationEnrollment[]): ProgressBinding {
   const mine = enrollments.filter(enrollment => enrollment.entitlementId === entitlement.entitlementId);
@@ -42,11 +53,14 @@ export function readBinding(entitlement: ProgramEntitlement, enrollments: readon
 
 export function createLearnerController(deps: { transport: LearnerTransport; requestId: () => string; now?: () => Date; onChange: (snapshot: LearnerSnapshot) => void }) {
   let snapshot = empty('loading');
-  let generation = 0, working = false, lastOpened: string | null = null, subject: string | null = null, disposed = false;
+  let generation = 0, working = false, lastOpened: string | null = null, subject: string | null = null, disposed = false, mediaEpoch = 0;
   const now = deps.now ?? (() => new Date());
+  const expiries = new Set<ReturnType<typeof setTimeout>>();
   const emit = (next: Partial<LearnerSnapshot>) => { if (disposed) return; snapshot = { ...snapshot, ...next }; deps.onChange(snapshot); };
+  /** Forget every media answer and capability, and make any reply still in flight unusable. */
+  const dropMedia = () => { mediaEpoch += 1; for (const timer of expiries) clearTimeout(timer); expiries.clear(); };
   /** Drop everything private and start a new generation: nothing in flight may commit after this. */
-  const clear = (phase: LearnerSnapshot['phase'], error = '') => { generation += 1; working = false; snapshot = { ...empty(phase), host: snapshot.host, error }; if (!disposed) deps.onChange(snapshot); };
+  const clear = (phase: LearnerSnapshot['phase'], error = '') => { generation += 1; working = false; dropMedia(); snapshot = { ...empty(phase), host: snapshot.host, error }; if (!disposed) deps.onChange(snapshot); };
 
   async function run(work: (current: () => boolean) => Promise<void>) {
     if (working || disposed) return;
@@ -74,7 +88,8 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
 
   async function openCourse(entitlement: ProgramEntitlement, enrollments: readonly EducationEnrollment[], current: () => boolean) {
     // Opening another course drops the previous one first, so nothing of it can be shown under the new title.
-    emit({ course: null, outline: null, lesson: null, pending: null, placeNote: '', progress: { state: 'none' } });
+    dropMedia();
+    emit({ course: null, outline: null, lesson: null, pending: null, placeNote: '', progress: { state: 'none' }, media: [] });
     const { read, host } = await deps.transport.curriculum(entitlement.entitlementId, entitlement.curriculum);
     if (!current()) return;
     lastOpened = entitlement.entitlementId;
@@ -90,8 +105,47 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
     }
   }
 
+  /**
+   * Ask for each native media slot of the lesson now open, one at a time. Every answer is checked to
+   * still belong to the same generation, the same media epoch and the same open lesson before it is
+   * shown; a refusal of the session clears the page like any other read.
+   */
+  async function loadMedia(target: LessonRef, slots?: number[]) {
+    const course = snapshot.course, mine = generation, epoch = mediaEpoch;
+    const live = () => !disposed && generation === mine && mediaEpoch === epoch && !!snapshot.lesson && sameLesson(snapshot.lesson, target);
+    if (!course || course.read.outcome !== 'served' || !isAccessActive(course.entitlement, now())) return;
+    const lesson = snapshot.outline?.lessons.find(entry => sameLesson(entry.ref, target));
+    const refs = lesson?.released ? lessonMediaReferences(course.read.phases, target) : null;
+    if (!refs || refs.length === 0) return;
+    const wanted = slots ?? refs.map((_ref, index) => index);
+    const set = (slot: MediaSlotState) => { if (live()) emit({ media: [...snapshot.media.filter(entry => entry.slot !== slot.slot), slot].sort((a, b) => a.slot - b.slot) }); };
+    for (const slot of wanted) set({ slot, state: 'loading' });
+    for (const slot of wanted) {
+      const ref = refs[slot];
+      if (!ref || !live()) return;
+      try {
+        const { reply } = await deps.transport.media({ contractVersion: PROGRAM_LEARNER_MEDIA_CONTRACT, entitlementId: course.entitlement.entitlementId, curriculum: course.entitlement.curriculum,
+          lesson: target, slot, expected: { artifactId: ref.artifactId, version: ref.version, sha256: ref.sha256 } });
+        if (!live()) return;
+        if (reply.outcome !== 'available') { set({ slot, state: reply.outcome }); continue; }
+        set({ slot, state: 'available', reply });
+        // The capability is dropped when it lapses; the learner can ask again.
+        const timer = setTimeout(() => { expiries.delete(timer); set({ slot, state: 'expired' }); }, Math.max(0, Date.parse(reply.playback.expiresAt) - Date.now() - 5_000));
+        expiries.add(timer);
+      } catch (cause) {
+        if (!live()) return;
+        const reason = cause instanceof LearnerTransportError ? cause.reason : 'unavailable';
+        if (reason === 'signin') { lastOpened = null; subject = null; clear('signin', 'Sign in with your course account to see your courses.'); return; }
+        if (reason === 'access') { lastOpened = null; subject = null; clear('signin', 'Access changed. Sign in again to see your courses.'); return; }
+        if (reason === 'host_unavailable') { clear('host_unavailable'); return; }
+        set({ slot, state: 'unavailable' });
+      }
+    }
+  }
+
   const refresh = (reopen = false) => run(async current => {
-    emit({ course: null, outline: null, lesson: null, progress: { state: 'none' }, pending: null, placeNote: '' });
+    dropMedia();
+    emit({ course: null, outline: null, lesson: null, progress: { state: 'none' }, pending: null, placeNote: '', media: [] });
     const { view, host } = await deps.transport.access();
     if (!current() || !adopt(view)) return;
     emit({ phase: 'ready', host, view });
@@ -149,7 +203,9 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
     }),
     /** Show a lesson; when it is not already the recorded place, record it as the resume point (never a completion). */
     goTo: (target: LessonRef | null): Promise<void> => {
-      emit({ lesson: target, pending: null, error: '', notice: '' });
+      dropMedia();
+      emit({ lesson: target, pending: null, error: '', notice: '', media: [] });
+      if (target) void loadMedia(target);
       const course = snapshot.course, saved = ready();
       if (!target || !course || !saved || !usable() || !isAccessActive(course.entitlement, now())) return Promise.resolve();
       if (sameLesson(saved.position, target)) return Promise.resolve();
@@ -161,7 +217,11 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
       return send({ action: 'complete', entitlementId: course.entitlement.entitlementId, enrollmentId: saved.enrollmentId, curriculum: course.entitlement.curriculum, lesson: target, expectedRevision: saved.revision, requestId: deps.requestId() });
     },
     retry: (command: WriteCommand) => send(command),
-    dispose: () => { disposed = true; generation += 1; },
+    /** Ask again for media slots that lapsed or could not be read, for the lesson still open. */
+    reloadMedia: (slots: number[]) => { const target = snapshot.lesson; if (target) return loadMedia(target, slots); return Promise.resolve(); },
+    /** The page is hidden or being left: drop every media capability and transcript now; returning reads them again. */
+    hide: () => { dropMedia(); emit({ media: [] }); },
+    dispose: () => { disposed = true; generation += 1; dropMedia(); },
   };
 }
 export type LearnerController = ReturnType<typeof createLearnerController>;

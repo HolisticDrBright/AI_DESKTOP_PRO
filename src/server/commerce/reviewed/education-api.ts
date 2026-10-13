@@ -3,6 +3,7 @@ import type { ApiGatewayV2Event, ApiGatewayV2Response } from '../../clinical-cor
 import type { SyntheticRequestContext } from '../../clinical-core/aws-identity-consent';
 import { EducationAccessError, EDUCATION_ACCESS_ROUTE_SEAM } from '../education-access-service';
 import { EducationProgressError, EDUCATION_PROGRESS_ROUTE_SEAM } from '../education-progress-service';
+import { LearnerMediaError, LEARNER_MEDIA_ROUTE_SEAM } from '../../programs/learner-media';
 import { commerceFlagsOn, type ProgramCommerceHostTarget } from './commerce-host-target';
 import { commerceHostTargetFromEnvironment } from './commerce-host-target-source';
 import { createReviewedCommerceRuntime, type ReviewedCommerceInputs } from './reviewed-commerce-runtime';
@@ -13,6 +14,7 @@ import { createReviewedCommerceRuntime, type ReviewedCommerceInputs } from './re
  *
  *   POST /clinical-core/consumer/education            access view, claim, exact curriculum
  *   POST /clinical-core/consumer/education/progress   read, complete, position
+ *   POST /clinical-core/consumer/education/media      one lesson media slot (program-learner-media/1)
  *
  * Every request, in order: the process flags (qualification on, PHI off, production activation
  * blocked); the pinned target from this function's configuration; the route; the consumer session
@@ -29,7 +31,8 @@ import { createReviewedCommerceRuntime, type ReviewedCommerceInputs } from './re
 const ROUTES = {
   [EDUCATION_ACCESS_ROUTE_SEAM.route]: 'education',
   [EDUCATION_PROGRESS_ROUTE_SEAM.route]: 'progress',
-} as const satisfies Record<string, 'education' | 'progress'>;
+  [LEARNER_MEDIA_ROUTE_SEAM.route]: 'media',
+} as const satisfies Record<string, 'education' | 'progress' | 'media'>;
 export const REVIEWED_EDUCATION_API_ROUTES = Object.keys(ROUTES);
 export const CONSUMER_ACCESS_TOKEN_HEADER = 'x-alp-consumer-access-token';
 const MAX_BODY_BYTES = 16_384;
@@ -67,7 +70,7 @@ export function createReviewedEducationApiHandler(deps: EducationApiDeps = {}) {
     try { target = (deps.target ?? (() => commerceHostTargetFromEnvironment(env)))(); } catch { return refuse(503, 'education_api_disabled'); }
     const runtime = runtimeFor(target);
     if (!runtime.learner) return refuse(503, 'education_api_disabled');
-    const service = event.routeKey ? (ROUTES as Record<string, 'education' | 'progress'>)[event.routeKey] : undefined;
+    const service = event.routeKey ? (ROUTES as Record<string, 'education' | 'progress' | 'media'>)[event.routeKey] : undefined;
     if (!service) return refuse(404, 'not_found');
 
     const bearer = /^Bearer ([A-Za-z0-9_.-]{20,8192})$/.exec(header(event, 'authorization') ?? '')?.[1];
@@ -96,9 +99,11 @@ export function createReviewedEducationApiHandler(deps: EducationApiDeps = {}) {
     let data: unknown;
     try {
       const services = runtime.learner.services();
-      data = service === 'education' ? await services.education(before.context, body) : await services.progress(before.context, body);
+      data = service === 'education' ? await services.education(before.context, body)
+        : service === 'progress' ? await services.progress(before.context, body)
+        : await services.media(before.context, body);
     } catch (error) {
-      const category = error instanceof EducationAccessError || error instanceof EducationProgressError ? error.category : 'service_unavailable';
+      const category = error instanceof EducationAccessError || error instanceof EducationProgressError || error instanceof LearnerMediaError ? error.category : 'service_unavailable';
       const after = await verifyNow().catch(() => ({ state: 'unavailable' as const }));
       if (after.state !== 'verified' || !same(before.context, after.context)) return refuse(401, 'consumer_signin_required');
       return refuse(category === 'request_invalid' ? 400 : category === 'identity_refused' ? 403 : 503, category);

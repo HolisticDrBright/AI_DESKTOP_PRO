@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { educationAccessView, educationCurriculumRead, type CurriculumBinding } from '@/contracts/programEducationAccess';
 import { curriculumPin, educationProgressOutcome, educationProgressRead, educationProgressRequest, type EducationProgress, type EducationProgressRequest } from '@/contracts/programEducationProgress';
+import { learnerMediaAnswers, learnerMediaReply, learnerMediaRequest, type LearnerMediaRequest } from '@/contracts/programLearnerMedia';
 
 /**
  * The browser side of My courses: one same-origin route (`/api/my-courses`), one deadline
@@ -25,6 +26,7 @@ const progressReply = z.object({ data: z.union([
   z.object({ action: z.literal('read'), read: educationProgressRead }).strict(),
   z.object({ action: z.enum(['complete', 'position']), outcome: educationProgressOutcome }).strict(),
 ]), host }).strict();
+const mediaReply = z.object({ data: learnerMediaReply, host }).strict();
 export type LearnerHostKind = z.infer<typeof host>;
 export type ProgressReply = z.infer<typeof progressReply>['data'];
 export const progressBinding = z.object({ entitlementId: z.string().uuid(), enrollmentId: z.string().uuid().nullable(), curriculum: curriculumPin }).strict();
@@ -103,6 +105,14 @@ export function createLearnerTransport(deps: { fetch: typeof fetch; deadlineMs?:
       if (!commandFits(checked.data, bound.data)) throw new LearnerTransportError('invalid');
       const reply = progressReply.safeParse(await post({ service: 'progress', body: checked.data }));
       if (!reply.success || !answers(checked.data, bound.data, reply.data.data)) throw new LearnerTransportError('unavailable');
+      return { reply: reply.data.data, host: reply.data.host };
+    },
+    /** One media slot of the open lesson. The reply must answer exactly this request; its capability is never stored by this module. */
+    async media(command: LearnerMediaRequest) {
+      const checked = learnerMediaRequest.safeParse(command);
+      if (!checked.success) throw new LearnerTransportError('invalid');
+      const reply = mediaReply.safeParse(await post({ service: 'media', body: checked.data }));
+      if (!reply.success || !learnerMediaAnswers(checked.data, reply.data.data)) throw new LearnerTransportError('unavailable');
       return { reply: reply.data.data, host: reply.data.host };
     },
   };

@@ -20,6 +20,9 @@ import { cognitoConsumerSessionVerifier } from '../../learner/consumer-session';
 import { commerceReadiness, sealingKeyFromEnvironment, type CommerceReadiness, type ProgramCommerceHostTarget } from './commerce-host-target';
 import { commerceSessionsFromTarget } from './commerce-role-sessions';
 import { createKeyedClaimSealer, createSesClaimDeliveryProvider, createStripePurchaserContactAuthority, type SesSend } from './commerce-connectors';
+import { createLearnerMediaService, LearnerMediaError, type LearnerMediaLedger, type LearnerMediaStorage } from '../../programs/learner-media';
+import { createSqlLearnerMediaLedger } from '../../programs/learner-media-ledger-sql';
+import { createAwsLearnerMediaStorage } from '../../programs/aws-learner-media-storage';
 
 /**
  * The reviewed program-commerce runtime, composed from ONE verified target and this process's
@@ -47,8 +50,12 @@ export type ReviewedCommerceInputs = {
   fetch?: (input: string, init: RequestInit) => Promise<Response>;
   sesSend?: SesSend;
   consumerSessions?: ConsumerSessionVerifier;
+  /** Injected for tests; the AWS reader over the target's learner-media storage otherwise. */
+  learnerMediaStorage?: LearnerMediaStorage;
   now?: () => Date;
 };
+/** Used only when the target names no learner media: the service answers `held` before any ledger call. */
+const noMediaLedger: LearnerMediaLedger = { forLearner: async () => { throw new LearnerMediaError('service_unavailable'); }, forStaff: async () => { throw new LearnerMediaError('service_unavailable'); } };
 
 export function createReviewedCommerceRuntime(inputs: ReviewedCommerceInputs) {
   const env = inputs.env ?? process.env;
@@ -72,7 +79,11 @@ export function createReviewedCommerceRuntime(inputs: ReviewedCommerceInputs) {
   const accessService = createEducationAccessService({ settlement: readingSettlement, activation: evidence, checkoutCandidateSha256: PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, educationCandidateSha256: PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256, expectedCheckoutSha256: PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256, expectedEducationSha256: PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 });
   const progressService = createEducationProgressService({ ledger: education, activation: evidence, progressCandidateSha256: PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, expectedProgressSha256: PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256 });
   const verify = inputs.consumerSessions ?? cognitoConsumerSessionVerifier(target.consumer);
-  const learner = { verify, services: () => ({ education: accessService, progress: progressService }) } as const;
+  // Lesson media opens only when the target names it; then the ledger is the reviewed SQL read on the API session and storage is the scoped reader.
+  const media = createLearnerMediaService(target.learnerMedia
+    ? { ledger: createSqlLearnerMediaLedger({ database: sessions.api, candidateSha256: target.learnerMedia.candidate }), storage: inputs.learnerMediaStorage ?? createAwsLearnerMediaStorage({ config: target.learnerMedia.storage }) }
+    : { ledger: noMediaLedger, storage: null });
+  const learner = { verify, services: () => ({ education: accessService, progress: progressService, media }) } as const;
   if (!readiness.purchasing.enabled || !sealer || decidedDays === undefined || target.decisions.purchaserContactAuthority.state !== 'decided') {
     return { readiness, learner, purchasing: null, worker: null } as const;
   }

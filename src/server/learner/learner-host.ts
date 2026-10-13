@@ -12,6 +12,7 @@ import { PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, PROGRAM_EDUCATION_S
 import { selectProgramCheckout } from "../commerce/program-commerce-runtime";
 import { JOURNEY_FIXTURE, ensureJourneySeed, journeyFixtureAllowed } from "../commerce/journey-fixture";
 import { sqlAcceptanceAllowed } from "../commerce/sql-acceptance-gate";
+import type { LearnerMediaReply } from "../../contracts/programLearnerMedia";
 
 /**
  * The learner host: the narrow, server-only interface the Desktop "My courses" route reads and
@@ -40,6 +41,8 @@ import { sqlAcceptanceAllowed } from "../commerce/sql-acceptance-gate";
 export type LearnerServices = {
   education: (context: ClinicalRequestContext, body: unknown) => Promise<EducationAccessResponse>;
   progress: (context: ClinicalRequestContext, body: unknown) => Promise<EducationProgressResponse>;
+  /** One lesson media slot (program-learner-media/1). Absent on a host without learner media; the route then answers held. */
+  media?: (context: ClinicalRequestContext, body: unknown) => Promise<LearnerMediaReply>;
 };
 export type LearnerHost = {
   readonly kind: "reviewed" | "fictional_fixture" | "fictional_sql_fixture";

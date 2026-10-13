@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Btn } from "@/components/ui/Btn";
 import { isAccessActive, type EducationCurriculumRead, type ProgramEntitlement } from "@/contracts/programEducationAccess";
 import { isCompleted, neighbours, resumeLesson, sameLesson, type CourseLesson, type LessonRef } from "@/contracts/programEducationProgress";
-import { createLearnerController, progressRefusalMessage, type LearnerController, type LearnerSnapshot, type ProgressState, type WriteCommand } from "@/lib/learner/learnerController";
+import { createLearnerController, progressRefusalMessage, type LearnerController, type LearnerSnapshot, type MediaSlotState, type ProgressState, type WriteCommand } from "@/lib/learner/learnerController";
+import type { LearnerMediaAvailable, LearnerMediaText } from "@/contracts/programLearnerMedia";
 import { createLearnerTransport } from "@/lib/learner/learnerTransport";
 
 /**
- * My courses (see learnerController.ts for the lifecycle). Text lessons are the lesson as published;
- * lesson video is held, and the page says so rather than offering a preview address. Supplement steps
+ * My courses (see learnerController.ts for the lifecycle). Text lessons are the lesson as published.
+ * Lesson media is shown only from the course service's own answer for this learner (program-learner-
+ * media/1): a short-lived capability for one exact object version, with the publication's own caption
+ * and transcript text. Without that answer the page says media is held, not available or could not be
+ * checked, and the written lesson stands; a reference's address is never loaded. Supplement steps
  * are reviewed with a practitioner before anything is added; nothing here starts that, and there is
  * no purchase link, price or protocol action on this page.
  */
@@ -42,19 +47,22 @@ export function LearnerCourses() {
     void controller.start();
     // Back on this tab: everything is read again from the service, never from memory.
     let hidden = false;
+    // Hidden or leaving: media capabilities and transcripts are dropped from the page synchronously, before the browser can keep a frame of them.
+    const drop = () => flushSync(() => controller.hide());
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") hidden = true;
+      if (document.visibilityState === "hidden") { hidden = true; drop(); }
       else if (hidden) { hidden = false; void controller.resume(); }
     };
     document.addEventListener("visibilitychange", onVisibility);
-    return () => { document.removeEventListener("visibilitychange", onVisibility); controller.dispose(); };
+    window.addEventListener("pagehide", drop);
+    return () => { document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", drop); controller.dispose(); };
   }, [controller]);
   if (!controller || !snapshot) return <p className="text-[13px] text-subtle" data-testid="learner-loading">Reading your courses…</p>;
   return <LearnerView snapshot={snapshot} controller={controller} />;
 }
 
 function LearnerView({ snapshot, controller }: { snapshot: LearnerSnapshot; controller: LearnerController }) {
-  const { phase, view, course, outline, progress, lesson, pending, busy, error, notice, placeNote, host } = snapshot;
+  const { phase, view, course, outline, progress, lesson, pending, busy, error, notice, placeNote, host, media } = snapshot;
   const now = new Date();
   const ready = progress.state === "ready" ? progress.progress : null;
   const served = course?.read.outcome === "served" ? course.read : null;
@@ -113,8 +121,8 @@ function LearnerView({ snapshot, controller }: { snapshot: LearnerSnapshot; cont
         </div></Card>
       )}
       {course && current && (
-        <LessonView lesson={current} lessons={lessons} progress={progress} pending={pending} placeNote={placeNote} busy={busy} active={isAccessActive(course.entitlement, now)}
-          onGo={ref => void controller.goTo(ref)} onComplete={ref => void controller.complete(ref)} onRetry={command => void controller.retry(command)} />
+        <LessonView lesson={current} lessons={lessons} progress={progress} pending={pending} placeNote={placeNote} busy={busy} active={isAccessActive(course.entitlement, now)} media={media}
+          onGo={ref => void controller.goTo(ref)} onComplete={ref => void controller.complete(ref)} onRetry={command => void controller.retry(command)} onReloadMedia={slots => void controller.reloadMedia(slots)} />
       )}
     </div>
   );
@@ -153,7 +161,7 @@ function Outline({ lessons, progress, busy, onOpen }: { lessons: CourseLesson[];
   );
 }
 
-function LessonView({ lesson, lessons, progress, pending, placeNote, busy, active, onGo, onComplete, onRetry }: { lesson: CourseLesson; lessons: CourseLesson[]; progress: ProgressState; pending: LearnerSnapshot["pending"]; placeNote: string; busy: boolean; active: boolean; onGo: (ref: LessonRef | null) => void; onComplete: (ref: LessonRef) => void; onRetry: (command: WriteCommand) => void }) {
+function LessonView({ lesson, lessons, progress, pending, placeNote, busy, active, media, onGo, onComplete, onRetry, onReloadMedia }: { lesson: CourseLesson; lessons: CourseLesson[]; progress: ProgressState; pending: LearnerSnapshot["pending"]; placeNote: string; busy: boolean; active: boolean; media: MediaSlotState[]; onGo: (ref: LessonRef | null) => void; onComplete: (ref: LessonRef) => void; onRetry: (command: WriteCommand) => void; onReloadMedia: (slots: number[]) => void }) {
   const { previous, next } = neighbours(lessons, lesson.ref);
   const ready = progress.state === "ready" ? progress.progress : null;
   const done = isCompleted(ready, lesson.ref);
@@ -164,7 +172,8 @@ function LessonView({ lesson, lessons, progress, pending, placeNote, busy, activ
       <CardTitle className="mb-1"><span data-testid="learner-lesson-title">{lesson.title}</span></CardTitle>
       {lesson.kind === "supplement" && <p className="m-0 text-[12.5px] text-subtle" data-testid="learner-lesson-supplement">This is a supplement step. It is reviewed with your practitioner before anything is added, and it cannot be marked complete here.</p>}
       {lesson.released ? <p className="m-0 whitespace-pre-wrap text-[14px] text-body" data-testid="learner-lesson-text">{lesson.instructions}</p> : <p className="m-0 text-[13px] text-subtle" data-testid="learner-lesson-unreleased">This lesson is not released yet.</p>}
-      {lesson.released && lesson.hasMedia && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-media-held">Lesson media is not available here yet. The written lesson above is the lesson as published.</p>}
+      {lesson.released && lesson.hasMedia && media.length === 0 && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-media-held">Lesson media is not available here yet. The written lesson above is the lesson as published.</p>}
+      {lesson.released && media.map(slot => <MediaSlot key={slot.slot} slot={slot} onReload={() => onReloadMedia([slot.slot])} />)}
       {done && <p className="m-0 mt-2 text-[13px] text-body" data-testid="learner-lesson-completed">Completed.</p>}
       {mine?.state === "saving" && <p className="m-0 mt-2 text-[12.5px] text-subtle" data-testid="learner-lesson-pending">Saving… not marked complete until the course service confirms it.</p>}
       {mine?.state === "unsaved" && <div className="mt-2"><Btn type="button" size="sm" disabled={busy} onClick={() => onRetry(mine.command)} data-testid="learner-lesson-retry">Try saving again</Btn></div>}
@@ -177,5 +186,59 @@ function LessonView({ lesson, lessons, progress, pending, placeNote, busy, activ
         <button type="button" className="text-[13px] text-action underline" onClick={() => onGo(null)} data-testid="learner-lesson-overview">All lessons in this course</button>
       </div>
     </div></Card>
+  );
+}
+
+const MEDIA_WORDS: Record<Exclude<MediaSlotState["state"], "available">, string> = {
+  loading: "Checking this lesson's media for your account…",
+  held: "Lesson media is not available here yet. The written lesson above is the lesson as published.",
+  not_available: "This media is not available on your account now. The written lesson above is the lesson as published.",
+  unavailable: "This lesson's media could not be checked right now. This does not mean it has none; try again.",
+  expired: "The link for this media has lapsed. Open it again to keep watching.",
+};
+function MediaSlot({ slot, onReload }: { slot: MediaSlotState; onReload: () => void }) {
+  if (slot.state !== "available") {
+    return (
+      <div className="mt-2" data-testid={`learner-media-${slot.slot}`} data-media-state={slot.state}>
+        <p className="m-0 text-[12.5px] text-subtle" data-testid={`learner-media-${slot.slot}-note`}>{MEDIA_WORDS[slot.state]}</p>
+        {(slot.state === "unavailable" || slot.state === "expired") && <Btn type="button" size="sm" onClick={onReload} data-testid={`learner-media-${slot.slot}-reload`}>{slot.state === "expired" ? "Open the media again" : "Try again"}</Btn>}
+      </div>
+    );
+  }
+  return <MediaPlayer slot={slot.slot} reply={slot.reply} />;
+}
+function MediaPlayer({ slot, reply }: { slot: number; reply: LearnerMediaAvailable }) {
+  // Captions published as WebVTT become a track from the publication's own text; the object URL lives only while this player does.
+  const vtt = reply.caption.state === "available" && reply.caption.format === "vtt" ? reply.caption.text : null;
+  const [track, setTrack] = useState<string | null>(null);
+  useEffect(() => {
+    if (!vtt) { setTrack(null); return; }
+    const url = URL.createObjectURL(new Blob([vtt], { type: "text/vtt" }));
+    setTrack(url);
+    return () => URL.revokeObjectURL(url);
+  }, [vtt]);
+  return (
+    <div className="mt-2 flex flex-col gap-1" data-testid={`learner-media-${slot}`} data-media-state="available">
+      {reply.media.kind === "video" ? (
+        <video controls preload="metadata" playsInline className="max-w-full rounded-md" src={reply.playback.url} data-testid={`learner-media-${slot}-video`}>
+          {track && <track kind="captions" src={track} default label="Captions" />}
+        </video>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element -- a short-lived, exact-version capability; never optimized, cached or proxied
+        <img className="max-w-full rounded-md" src={reply.playback.url} alt={reply.caption.state === "available" ? reply.caption.text.slice(0, 240) : "Lesson image"} referrerPolicy="no-referrer" data-testid={`learner-media-${slot}-image`} />
+      )}
+      <MediaText label="Captions" text={reply.caption} testId={`learner-media-${slot}-caption`} />
+      {reply.media.kind === "video" && <MediaText label="Transcript" text={reply.transcript} testId={`learner-media-${slot}-transcript`} />}
+    </div>
+  );
+}
+function MediaText({ label, text, testId }: { label: string; text: LearnerMediaText; testId: string }) {
+  if (text.state === "none") return null;
+  if (text.state === "unavailable") return <p className="m-0 text-[12.5px] text-subtle" data-testid={`${testId}-unavailable`}>{label}: text was published with this media, but no verified copy of that version&apos;s text is available, so none is shown.</p>;
+  return (
+    <details className="text-[13px] text-body" data-testid={testId}>
+      <summary>{label} ({text.source === "supplied_vendor_file" ? "supplied as a vendor file" : "supplied by the author"})</summary>
+      <p className="m-0 whitespace-pre-wrap" data-testid={`${testId}-text`}>{text.text}</p>
+    </details>
   );
 }

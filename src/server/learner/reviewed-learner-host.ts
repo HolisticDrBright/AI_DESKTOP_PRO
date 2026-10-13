@@ -1,4 +1,5 @@
 if (typeof window !== 'undefined') throw new Error('learner/reviewed-learner-host is server-only.');
+import type { LearnerMediaReply } from '../../contracts/programLearnerMedia';
 import type { SyntheticRequestContext } from '../clinical-core/aws-identity-consent';
 import type { EducationAccessResponse } from '../commerce/education-access-service';
 import type { EducationProgressResponse } from '../commerce/education-progress-service';
@@ -28,6 +29,7 @@ export type ReviewedLearnerRuntime = {
   services: () => {
     education: (context: SyntheticRequestContext, body: unknown) => Promise<EducationAccessResponse>;
     progress: (context: SyntheticRequestContext, body: unknown) => Promise<EducationProgressResponse>;
+    media?: (context: SyntheticRequestContext, body: unknown) => Promise<LearnerMediaReply>;
   };
   /** The pool's hosted sign-in, the app client and this Desktop's origin, from the verified target. */
   consumer: { poolId: string; clientId: string; signInOrigin: string; desktopOrigin: string };
@@ -67,6 +69,11 @@ export function createReviewedLearnerHost(resolve: ReviewedLearnerResolver): Lea
       return {
         education: async (context, body) => (await current()).services().education(context as SyntheticRequestContext, body),
         progress: async (context, body) => (await current()).services().progress(context as SyntheticRequestContext, body),
+        media: async (context, body) => {
+          const media = (await current()).services().media;
+          // A runtime composed without learner media answers held, never a read.
+          return media ? media(context as SyntheticRequestContext, body) : { outcome: 'held' };
+        },
       };
     },
   };
