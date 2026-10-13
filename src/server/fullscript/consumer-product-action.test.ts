@@ -25,6 +25,7 @@ const DESTINATION = `https://us.fullscript.com/s/${SLUG}/shop/product/RklDVElPTk
 const release = (patch: Partial<ConsumerPurchaseRelease> = {}): ConsumerPurchaseRelease => ({
   contract: 'consumer-purchase-release/1', environment: 'synthetic-staging', tier: 'clinician_connected', jurisdictions: ['US-TX'],
   provider: { name: 'fullscript', host: HOST, dispensarySlug: SLUG, organizationId: CLINIC },
+  licensure: 'buyer_jurisdiction_verified', directProducts: 'withheld',
   disclosure: 'FICTIONAL disclosure for tests only.', effectiveFrom: '2026-01-01T00:00:00Z', ...patch,
 });
 const product = (patch: Partial<GovernedCatalogProduct> = {}): GovernedCatalogProduct => ({
@@ -324,5 +325,78 @@ describe('the mirrored contract holds its own boundaries', () => {
   it('keeps synthetic actions synthetic and production actions real', () => {
     expect(productActionIssued.safeParse(issuedEnvelope({}, { syntheticOnly: false })).success).toBe(false);
     expect(productActionIssued.safeParse(issuedEnvelope({ environment: 'production-clinical' })).success).toBe(false);
+  });
+});
+
+const ALL_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN',
+  'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'].map(s => `US-${s}`);
+describe('a consumer release for over-the-counter products', () => {
+  const otc = () => release({ tier: 'consumer', licensure: 'not_required_over_the_counter', jurisdictions: ALL_STATES });
+  it('admits a buyer in any listed state without a practitioner licence there, still by declaration only', async () => {
+    const w = world({ releases: [otc()] });
+    w.state.verified.set(CLINIC, ['US-CA']);
+    expect(await w.candidate.declare(w.session(), declaration({ jurisdiction: 'US-NY', practitioner: { relationship: 'none' } })))
+      .toMatchObject({ ok: true, status: { state: 'admitted', jurisdiction: 'US-NY' } });
+    expect(await w.candidate.issue(w.session(), request())).toMatchObject({ ok: true });
+    // A state the release does not list is still refused, and a wildcard list is not a release at all.
+    expect(await w.candidate.declare(w.session(), declaration({ jurisdiction: 'US-PR', practitioner: { relationship: 'none' } })))
+      .toMatchObject({ status: { state: 'refused', reason: 'jurisdiction_not_supported' } });
+    const wild = world({ releases: [release({ tier: 'consumer', licensure: 'not_required_over_the_counter', jurisdictions: ['US-*'] })] });
+    expect(await wild.candidate.admissionStatus(wild.session())).toEqual({ ok: false, refused: 'commerce_disabled' });
+  });
+  it('keeps the licensure requirement for the clinician-connected tier: such a release is refused outright', async () => {
+    const w = world({ releases: [release({ tier: 'clinician_connected', licensure: 'not_required_over_the_counter', jurisdictions: ALL_STATES })] });
+    expect(await w.candidate.admissionStatus(w.session())).toEqual({ ok: false, refused: 'commerce_disabled' });
+  });
+});
+
+describe('a brand-site product: its own reviewed page, never a brand-wide approval', () => {
+  const BRAND = 'https://shop.fictional-brand.example.com/products/fictional-one?ref=FICTIONAL';
+  const direct = (patch: Partial<ConsumerPurchaseRelease> = {}) => release({ tier: 'consumer', licensure: 'not_required_over_the_counter',
+    jurisdictions: ['US-TX'], directProducts: 'reviewed_offer_destination', ...patch });
+  const directRequest = () => request({ kind: 'direct_brand_product' });
+  it('stays withheld unless the release admits brand-site offers', async () => {
+    const w = await admitted(world({ releases: [direct({ directProducts: 'withheld' })] }));
+    w.state.offers = [offer({ destinationUrl: BRAND })];
+    expect(await w.candidate.issue(w.session(), directRequest())).toEqual({ ok: false, refused: 'direct_product_withheld' });
+  });
+  it('issues and redeems the exact reviewed product page, naming its host', async () => {
+    const w = await admitted(world({ releases: [direct()] }));
+    w.state.offers = [offer({ destinationUrl: BRAND })];
+    const issued = await w.candidate.issue(w.session(), directRequest());
+    if (!issued.ok) throw new Error(issued.refused);
+    expect(issued.issued.data.kind).toBe('direct_brand_product');
+    expect(await w.candidate.redeem(w.session(), { contract: 'fullscript-consumer-action/2', actionId: issued.issued.data.actionId }))
+      .toMatchObject({ ok: true, redeemed: { data: { kind: 'direct_brand_product', destinationUrl: BRAND, destinationHost: 'shop.fictional-brand.example.com' } } });
+  });
+  it.each([
+    ['a home page', 'https://shop.fictional-brand.example.com/?ref=FICTIONAL'],
+    ['an onward redirect', 'https://shop.fictional-brand.example.com/products/one?redirect=%2F%2Fevil.example'],
+    ['an address hidden in a parameter', 'https://shop.fictional-brand.example.com/products/one?ref=https%3A%2F%2Fevil.example'],
+    ['a fragment', 'https://shop.fictional-brand.example.com/products/one#x'],
+    ['credentials', 'https://user:pass@shop.fictional-brand.example.com/products/one'],
+    ['plain http', 'http://shop.fictional-brand.example.com/products/one'],
+    ['a Fullscript page sent as a brand page', DESTINATION],
+    ['a reserved test host', 'https://shop.fictional.test/products/one'],
+    ['an IP address', 'https://192.0.2.10/products/one'],
+  ])('refuses %s', async (_name, destinationUrl) => {
+    const w = await admitted(world({ releases: [direct()] }));
+    w.state.offers = [offer({ destinationUrl })];
+    expect(await w.candidate.issue(w.session(), directRequest())).toEqual({ ok: false, refused: 'destination_unverified' });
+  });
+  it('does not let one kind stand in for the other', async () => {
+    const w = await admitted(world({ releases: [direct()] }));
+    w.state.offers = [offer({ destinationUrl: BRAND })];
+    expect(await w.candidate.issue(w.session(), request())).toEqual({ ok: false, refused: 'destination_unverified' });
+    const v = await admitted(world({ releases: [direct()] }));
+    expect(await v.candidate.issue(v.session(), directRequest())).toEqual({ ok: false, refused: 'destination_unverified' });
+  });
+  it('refuses a redemption reply whose address does not match its kind and host', () => {
+    const data = { actionId: `act_${'a'.repeat(32)}`, kind: 'direct_brand_product', binding, destinationUrl: BRAND, destinationHost: 'shop.fictional-brand.example.com',
+      expiresAt: '2026-10-13T12:10:00Z', syntheticOnly: true };
+    const envelope = (patch: Record<string, unknown>) => ({ contractVersion: 'fullscript-consumer-action/2', environment: 'synthetic-staging', provider: 'fullscript', data: { ...data, ...patch } });
+    expect(productActionRedeemed.safeParse(envelope({})).success).toBe(true);
+    expect(productActionRedeemed.safeParse(envelope({ destinationHost: 'other.example.com' })).success).toBe(false);
+    expect(productActionRedeemed.safeParse(envelope({ kind: 'product_patient_action' })).success).toBe(false);
   });
 });

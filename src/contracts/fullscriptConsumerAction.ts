@@ -14,6 +14,11 @@ import { z } from 'zod';
  * product only, so a changed label or a second offer could not be detected; it is superseded, not
  * extended.
  *
+ * A `direct_brand_product` action is the same bound flow for an offer sold on the brand's own site. Its
+ * authority is the product's own reviewed offer, never a brand-wide approval: the address must be that
+ * offer's exact product page (not a home, collection or referral landing page), shared by no other
+ * product, and carry nothing that could send someone onward.
+ *
  * Purchase admission (purchase-admission/1) is what the person declared: where they live and, for the
  * clinician-connected tier, the care connection they are in. A declaration is not admission; the server
  * validates it against its own records. Nothing here comes from an IP address, a device locale or a time
@@ -41,9 +46,13 @@ export const productActionBinding = z.object({
 }).strict();
 export type ProductActionBinding = z.infer<typeof productActionBinding>;
 
+/** A Fullscript storefront product page, or a product page on the brand's own site. */
+export const productActionKind = z.enum(['product_patient_action', 'direct_brand_product']);
+export type ProductActionKind = z.infer<typeof productActionKind>;
+
 export const productActionRequest = z.object({
   contract: z.literal(FULLSCRIPT_CONSUMER_ACTION),
-  kind: z.literal('product_patient_action'),
+  kind: productActionKind,
   purpose: z.literal('supplement_purchase'),
   requestId: uuid,
   binding: productActionBinding,
@@ -75,7 +84,7 @@ export const productActionRefusal = z.enum([
   'commerce_disabled', 'request_invalid', 'session_stale', 'session_mismatch', 'other_account',
   ...admissionRefusal.options,
   'product_unavailable', 'product_restricted', 'product_changed', 'label_missing', 'label_changed',
-  'offer_unavailable', 'multiple_offers', 'offer_changed', 'destination_unverified',
+  'offer_unavailable', 'multiple_offers', 'offer_changed', 'destination_unverified', 'direct_product_withheld',
   'request_replayed', 'action_not_found', 'action_expired', 'action_used',
 ]);
 export type ProductActionRefusal = z.infer<typeof productActionRefusal>;
@@ -125,6 +134,33 @@ export function fullscriptProductDestination(value: string, host: string): { dis
   return { dispensarySlug: path[1]!, productRef: path[2]!, variantRef: variant };
 }
 
+/**
+ * A brand's own product page: https, already in its one serialised form, no credentials, port or fragment,
+ * not the site root, on a public host that is not Fullscript's (a Fullscript offer must use the Fullscript
+ * kind), and no parameter that could carry someone onward. Affiliate and tracking parameters may stay.
+ */
+const ONWARD = new Set(['redirect', 'redirect_uri', 'redirect_url', 'redirecturl', 'return', 'return_to', 'returnto', 'return_url',
+  'returnurl', 'next', 'url', 'continue', 'dest', 'destination', 'goto', 'target', 'to', 'out', 'r', 'u', 'link', 'forward', 'callback']);
+export function directProductDestination(value: string, host: string): { host: string; path: string } | null {
+  if (typeof value !== 'string' || value.length > 2048 || typeof host !== 'string') return null;
+  let url: URL;
+  try { url = new URL(value); } catch { return null; }
+  if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || url.hostname !== host) return null;
+  if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) || /(?:^|\.)fullscript\.(?:com|io)$/.test(host)
+    || /\.(?:local|localhost|internal|invalid|test|example)$/.test(host)) return null;
+  if (url.pathname === '/' || url.pathname === '') return null;
+  for (const key of url.searchParams.keys()) if (ONWARD.has(key.toLowerCase())) return null;
+  for (const v of url.searchParams.values()) if (/^(?:https?:)?\/\//i.test(decodeURIComponentSafe(v))) return null;
+  return { host, path: url.pathname };
+}
+function decodeURIComponentSafe(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+/** The address check for a kind: the Fullscript storefront rule or the brand product-page rule. */
+export function verifiedDestination(kind: ProductActionKind, value: string, host: string): boolean {
+  return kind === 'product_patient_action' ? fullscriptProductDestination(value, host) !== null : directProductDestination(value, host) !== null;
+}
+
 const header = { contractVersion: z.literal(FULLSCRIPT_CONSUMER_ACTION), environment, provider: z.literal('fullscript') };
 const syntheticBoundary = (value: { environment: string; data: { syntheticOnly: boolean } }, c: { addIssue: (issue: { code: 'custom'; message: string }) => void }) => {
   if (value.environment === 'synthetic-staging' && !value.data.syntheticOnly) c.addIssue({ code: 'custom', message: 'synthetic_boundary_widened' });
@@ -133,7 +169,7 @@ const syntheticBoundary = (value: { environment: string; data: { syntheticOnly: 
 export const productActionIssued = z.object({
   ...header,
   data: z.object({
-    actionId: productActionId, kind: z.literal('product_patient_action'), purpose: z.literal('supplement_purchase'),
+    actionId: productActionId, kind: productActionKind, purpose: z.literal('supplement_purchase'),
     binding: productActionBinding, issuedAt: instant, expiresAt: instant, syntheticOnly: z.boolean(),
     disclosure: z.string().min(1).max(500),
   }).strict(),
@@ -146,12 +182,12 @@ export type ProductActionIssued = z.infer<typeof productActionIssued>;
 export const productActionRedeemed = z.object({
   ...header,
   data: z.object({
-    actionId: productActionId, binding: productActionBinding, destinationUrl: z.string().max(2048),
+    actionId: productActionId, kind: productActionKind, binding: productActionBinding, destinationUrl: z.string().max(2048),
     destinationHost: z.string().max(253), expiresAt: instant, syntheticOnly: z.boolean(),
   }).strict(),
 }).strict().superRefine((value, c) => {
   syntheticBoundary(value, c);
-  if (!fullscriptProductDestination(value.data.destinationUrl, value.data.destinationHost)) c.addIssue({ code: 'custom', message: 'destination_unverified' });
+  if (!verifiedDestination(value.data.kind, value.data.destinationUrl, value.data.destinationHost)) c.addIssue({ code: 'custom', message: 'destination_unverified' });
 });
 export type ProductActionRedeemed = z.infer<typeof productActionRedeemed>;
 export const productActionRefused = z.object({ ...header, refused: productActionRefusal }).strict();

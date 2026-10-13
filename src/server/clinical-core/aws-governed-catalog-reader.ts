@@ -170,7 +170,23 @@ export function createAwsGovernedCatalogReader(
           // More than one active destination for one product is ambiguous; the consumer orders neither.
           const offerCount = new Map<string, number>();
           for (const row of offers) offerCount.set(row.product_stable_id, (offerCount.get(row.product_stable_id) ?? 0) + 1);
-          const consumerOrderable = (productId: string) => currentLabel.has(productId) && offerCount.get(productId) === 1;
+          // Each product needs its own destination. One address shared by two products (a sign-up page, a
+          // brand home page) cannot be bound to either, so neither orders it. The check reads every active
+          // approved offer in this environment, not just this page, so pagination cannot hide a sharer.
+          const sharedDestinations = input.audience !== "consumer" || offers.length === 0 ? new Set<string>() : new Set((await tx.query<{ destination: string }>(
+            `select lower(btrim(v.destination_url)) as destination
+             from commercial_reference.affiliate_offer_versions v
+             join commercial_reference.affiliate_offers o
+               on o.stable_id = v.offer_stable_id and o.active_version = v.version
+             where o.review_status = 'approved' and v.environment = $2
+               and lower(btrim(v.destination_url)) in (select lower(btrim(value)) from jsonb_array_elements_text($1::jsonb))
+             group by lower(btrim(v.destination_url))
+             having count(distinct v.product_stable_id) > 1`,
+            [JSON.stringify(offers.map((row) => row.destination_url)), environment],
+          )).rows.map((row) => row.destination));
+          const destinationOf = new Map(offers.map((row) => [row.product_stable_id, row.destination_url.trim().toLowerCase()]));
+          const consumerOrderable = (productId: string) => currentLabel.has(productId) && offerCount.get(productId) === 1
+            && !sharedDestinations.has(destinationOf.get(productId) ?? "");
           return {
             products: pageRows.map((row) => {
               const label = labelsByProduct.get(row.product_stable_id);
