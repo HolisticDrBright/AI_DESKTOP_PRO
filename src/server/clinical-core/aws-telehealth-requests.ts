@@ -2308,9 +2308,14 @@ async function sendAppointmentReminder(config: TelehealthConfiguration, event: R
   if (currentRefusal) return { sent: false, reason: currentRefusal };
   if (current.version !== item.version || current.consumerPersonId !== item.consumerPersonId
     || current.consumerEmail !== item.consumerEmail || current.joinUrl !== item.joinUrl) return { sent: false, reason: "stale" };
-  await mailAppointmentReminder(config, current);
+  const when = new Date(current.scheduledStart ?? "").toISOString();
+  const link = current.joinUrl ? `\nJoin your secure visit: ${current.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
+  await ses.send(new SendEmailCommand({ FromEmailAddress: config.reminderSender, ConfigurationSetName: config.reminderConfigurationSet,
+    Destination: { ToAddresses: [current.consumerEmail] }, Content: { Simple: { Subject: { Data: "Your AI Longevity Pro appointment reminder" },
+      Body: { Text: { Data: `Your telehealth appointment is scheduled for ${when}.${link}\n\nTo reschedule or cancel, open AI Longevity Pro. Do not reply with health information.` } } } } }));
   return { sent: true };
 }
+/** The same email, for the channel-aware path; always to the rechecked recipient. */
 async function mailAppointmentReminder(config: TelehealthConfiguration, current: AppointmentItem) {
   const when = new Date(current.scheduledStart ?? "").toISOString();
   const link = current.joinUrl ? `\nJoin your secure visit: ${current.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
