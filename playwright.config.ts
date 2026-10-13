@@ -1,5 +1,5 @@
 import { defineConfig } from "@playwright/test";
-import { devServerEnvironment } from "./scripts/e2e-dev-resources.mjs";
+import { devServerEnvironment, reuseExistingE2EServer } from "./scripts/e2e-dev-resources.mjs";
 import { EXPECT_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./e2e/support/budgets";
 
 /**
@@ -75,7 +75,7 @@ export default defineConfig({
     // local development keep their own configuration. Validate before boot.
     ...(DEV_SERVER ? { env: devServerEnvironment() } : {}),
     port: PORT,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: reuseExistingE2EServer(),
     timeout: DEV_SERVER ? 180_000 : 60_000,
   },
 });

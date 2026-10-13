@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { devServerEnvironment } from '../../../scripts/e2e-dev-resources.mjs';
+import { devServerEnvironment, reuseExistingE2EServer } from '../../../scripts/e2e-dev-resources.mjs';
 
 const GiB = 1024 ** 3;
 const memory = { totalBytes: 16 * GiB, constrainedBytes: 0 };
 const env = { E2E_DEV_SERVER: '1', E2E_DEV_HEAP_MB: '10240', NODE_ENV: 'development' } as const;
 
 describe('browser-only development resource budget', () => {
+  it('reuses only a runner-owned server when CI requires port ownership', () => {
+    expect(reuseExistingE2EServer({ CI: 'true', E2E_ORDER_OWNED_SERVER: '1' })).toBe(true);
+    expect(reuseExistingE2EServer({ CI: 'true' })).toBe(false);
+    expect(reuseExistingE2EServer({})).toBe(true);
+  });
   it('leaves ordinary development and production unchanged without explicit opt-in', () => {
     expect(devServerEnvironment({}, memory)).toEqual({});
     expect(devServerEnvironment({ NODE_ENV: 'production' }, memory)).toEqual({});

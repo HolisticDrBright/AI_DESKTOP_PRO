@@ -30,6 +30,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
+import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -76,13 +77,20 @@ function configFailure(what, fix) {
 /**
  * Everything the battery needs, set here rather than expected from the shell.
  *
- * An explicitly-set variable always wins: an operator pointing the suite at a
- * real backend must not have it silently redirected to the fixture.
+ * An explicitly-set variable is never silently redirected. Fixture targets
+ * and credentials are pinned below; external overrides are refused before
+ * any network request or fixture process starts.
  */
 function provisionEnv() {
   const defaults = {
     APP_EDITION: "clinical",
     E2E_LIVE: "1",
+    E2E_DEV_SERVER: "1",
+    CLINICAL_CONTRACT_FIXTURE: "1",
+    // The whole one-process battery retains many compiled routes. The
+    // existing resource helper refuses this budget on a machine without a
+    // separate 4 GiB OS/browser reserve; it never applies to production.
+    E2E_DEV_HEAP_MB: "10240",
     NEXT_PUBLIC_USE_LIVE_API: "true",
     TRPC_BASE_URL: `${STUB_BASE}/api/trpc`,
     CLINICAL_SUPABASE_URL: STUB_BASE,
@@ -105,7 +113,44 @@ function provisionEnv() {
       "Unset APP_EDITION and re-run, or set APP_EDITION=clinical.",
     );
   }
+  if (process.env.E2E_LIVE !== "1" || process.env.E2E_DEV_SERVER !== "1" ||
+      process.env.CLINICAL_CONTRACT_FIXTURE !== "1" || process.env.NODE_ENV === "production") {
+    configFailure(
+      "the local contract fixture requires a development browser server and cannot run in a production posture.",
+      "Unset NODE_ENV=production and set E2E_LIVE=1, E2E_DEV_SERVER=1 and CLINICAL_CONTRACT_FIXTURE=1.",
+    );
+  }
+  let stub;
+  try { stub = new URL(STUB_BASE); }
+  catch { configFailure("E2E_STUB_BASE is not a URL.", "Use a loopback HTTP fixture origin."); }
+  if (stub.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(stub.hostname) ||
+      stub.username || stub.password || stub.pathname !== "/" || stub.search || stub.hash) {
+    configFailure("E2E_STUB_BASE is not a loopback HTTP fixture origin.", "Use a loopback HTTP fixture origin without credentials or a path.");
+  }
+  const pinned = {
+    NEXT_PUBLIC_USE_LIVE_API: "true",
+    TRPC_BASE_URL: `${STUB_BASE}/api/trpc`,
+    CLINICAL_SUPABASE_URL: STUB_BASE,
+    CLINICAL_SUPABASE_ANON_KEY: "stub",
+    CLINICAL_DEMO_EMAIL: "demo@local",
+    CLINICAL_DEMO_PASSWORD: "demo",
+    CLINICAL_ORG_ID: "org-fixture",
+  };
+  for (const [key, expected] of Object.entries(pinned)) {
+    if (process.env[key] !== expected) {
+      configFailure(`${key} does not match this runner's fictional local fixture.`,
+        `Unset ${key} or set it to the documented local fixture value; do not point this runner at a live service.`);
+    }
+  }
   return applied;
+}
+
+function provisionDevServerEnvironment() {
+  try { return devServerEnvironment(); }
+  catch (error) {
+    configFailure(error instanceof Error ? error.message : String(error),
+      "Review E2E_DEV_HEAP_MB and NODE_OPTIONS; this budget applies only to the local development server.");
+  }
 }
 
 /**
@@ -173,13 +218,16 @@ function sourceSignature() {
   }
   hash.update(`edition=${process.env.APP_EDITION}`);
   hash.update(`live=${process.env.NEXT_PUBLIC_USE_LIVE_API}`);
+  hash.update("e2e-production-build-with-fixture-disabled/1");
   return hash.digest("hex");
 }
 
 const STAMP = ".next/.e2e-provision.json";
 
 /**
- * Build if there is no build, or if the build does not match these sources.
+ * Build the clinical production bundle with the local fixture disabled, then
+ * run the browser battery separately against a development server. A
+ * production-mode server categorically refuses the contract fixture.
  *
  * `E2E_REUSE_BUILD=1` skips the check for an operator who knows their build is
  * current and does not want to wait. Nothing else skips it: a battery that
@@ -217,7 +265,7 @@ function provisionBuild() {
   try {
     execFileSync(process.execPath, [NEXT_ENTRY, "build"], {
       stdio: ["ignore", "inherit", "inherit"],
-      env: process.env,
+      env: { ...process.env, CLINICAL_CONTRACT_FIXTURE: "", E2E_DEV_SERVER: "0" },
     });
   } catch {
     configFailure(
@@ -344,7 +392,8 @@ function run(label, files) {
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
+        env: { ...process.env, E2E_ORDER_OWNED_SERVER: "1" },
+        maxBuffer: 64 * 1024 * 1024,
       },
     );
   } catch (e) {
@@ -376,7 +425,7 @@ function run(label, files) {
 /**
  * Every top-level route the specs navigate to. Warmed up via HTTP once per
  * battery, BEFORE the first Playwright spec runs, so that Windows first-hit
- * `next start` latency is paid on the runner's clock instead of on an
+ * development compilation is paid on the runner's clock instead of on an
  * unlucky spec's 30s test timeout. Runner-side (not Playwright globalSetup)
  * so that:
  *   - it happens exactly once, not once per forward/reverse invocation
@@ -442,10 +491,10 @@ async function warmApp() {
   console.log(`[warmup] complete in ${Date.now() - battery0}ms`);
 }
 
-async function withApp(run) {
+async function withApp(run, devEnv) {
   const owned = spawn(
-    process.execPath, [NEXT_ENTRY, "start", "-p", String(APP_PORT)],
-    { stdio: ["ignore", "pipe", "pipe"], env: process.env },
+    process.execPath, [NEXT_ENTRY, "dev", "-p", String(APP_PORT)],
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...devEnv } },
   );
   const appLog = [];
   const push = (buf) => { appLog.push(String(buf)); if (appLog.length > 200) appLog.shift(); };
@@ -467,7 +516,7 @@ async function withApp(run) {
         .then((r) => r.ok).catch(() => false);
     }
     if (!ready) {
-      console.error(`[e2e-order] FAIL — next start never became ready on ${APP_PORT}. Its last output:`);
+      console.error(`[e2e-order] FAIL — next dev never became ready on ${APP_PORT}. Its last output:`);
       console.error(appLog.join(""));
       process.exit(1);
     }
@@ -481,6 +530,7 @@ async function withApp(run) {
 /* ------------------------------------------------------------------ run */
 
 const appliedDefaults = provisionEnv();
+const devServerEnv = provisionDevServerEnvironment();
 const chromium = provisionBrowser();
 console.log(
   `[e2e-order] configuration: edition=${process.env.APP_EDITION} live=1 ` +
@@ -497,7 +547,7 @@ const { forward, reverse } = await withStub(async () =>
   withApp(async () => ({
     forward: run("forward order", specs),
     reverse: run("reverse order", [...specs].reverse()),
-  })),
+  }), devServerEnv),
 );
 
 const problems = [];
