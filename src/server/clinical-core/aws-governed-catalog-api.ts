@@ -91,9 +91,37 @@ function productionEducationOnlyProjection(
   if (pool !== "consumer" || environment !== "production-clinical") return page;
   return {
     ...page,
-    products: page.products.map((product) => ({ ...product, directOrderAllowed: false })),
+    // The offer table is not the only place a product page lives: label evidence keeps the label's source
+    // page and the manufacturer's product page, and free text can quote a destination. What a person reads
+    // about the bottle stays; every link in the label and clinical payloads is withheld.
+    products: page.products.map((product) => ({
+      ...product,
+      directOrderAllowed: false,
+      clinical: withoutLinks(product.clinical),
+      ...(product.label
+        ? { label: { ...product.label, label: withoutLinks(product.label.label), crosscheck: withoutLinks(product.label.crosscheck) } }
+        : {}),
+    })),
     commercial: { offers: [] },
   };
+}
+
+const LINK = /\bhttps?:\/\/[^\s"'<>)\]]+|\bwww\.[^\s"'<>)\]]+/gi;
+const WHOLE_LINK = /^(?:https?:\/\/|www\.)\S+$/i;
+
+/** A copy with every link removed: a value that is only a link is dropped, a link inside text is replaced. */
+function withoutLinks<T>(value: T): T {
+  const strip = (input: unknown): unknown => {
+    if (typeof input === "string") return input.replace(LINK, "[link withheld]");
+    if (Array.isArray(input)) return input.filter((item) => !(typeof item === "string" && WHOLE_LINK.test(item.trim()))).map(strip);
+    if (input && typeof input === "object") {
+      return Object.fromEntries(Object.entries(input)
+        .filter(([, item]) => !(typeof item === "string" && WHOLE_LINK.test(item.trim())))
+        .map(([key, item]) => [key, strip(item)]));
+    }
+    return input;
+  };
+  return strip(value) as T;
 }
 
 class CatalogApiError extends Error {

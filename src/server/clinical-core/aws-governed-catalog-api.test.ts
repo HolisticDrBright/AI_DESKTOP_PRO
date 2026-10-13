@@ -90,6 +90,41 @@ describe("AWS governed catalog API", () => {
     });
   });
 
+  test("a production consumer page carries no product-page link in its label or clinical payloads (fails before: the label source and official product pages were returned)", async () => {
+    const product = {
+      stableId: "prd_fictional_glutaryl", version: 1, displayName: "Fictional glutaryl",
+      productType: "supplement" as const, accessTier: "open" as const,
+      declaredRestricted: false, directOrderAllowed: true,
+      clinical: { brand: "Fictional brand", normalizations: ["destination normalized from 'www.fictional-brand.example' to 'https://www.fictional-brand.example'"] },
+      sourceRefs: ["fictional:source"], reviewStatus: "approved" as const,
+      label: {
+        stableId: "lbl_fictional_glutaryl", version: 1, reviewStatus: "approved" as const,
+        label: { servingSize: "1 capsule", labelSourceUrl: "https://fictional-brand.example/products/glutaryl",
+          phase9f: { officialProductUrl: "https://fictional-brand.example/products/glutaryl?size=60", warnings: ["See http://fictional-brand.example/recall for details."] } },
+        crosscheck: { sources: [{ url: "https://fullscript.example.invalid/catalog/products/fictional-glutaryl", agrees: true }] },
+      },
+    };
+    const value = reader();
+    vi.mocked(value.listProducts).mockResolvedValue({ products: [product], commercial: { offers: [] } });
+    const consumer = await createAwsGovernedCatalogApiHandler({ reader: value, configuration })(event("GET /clinical-core/consumer/catalog/products", "consumer"));
+    expect(consumer.statusCode).toBe(200);
+    expect(consumer.body).not.toMatch(/https?:\/\/|www\./i);
+    const [served] = JSON.parse(consumer.body).data.products;
+    // What a person reads about the bottle stays; only the links go.
+    expect(served.label.label.servingSize).toBe("1 capsule");
+    expect(served.label.label).not.toHaveProperty("labelSourceUrl");
+    expect(served.label.label.phase9f).not.toHaveProperty("officialProductUrl");
+    expect(served.label.label.phase9f.warnings).toEqual(["See [link withheld] for details."]);
+    expect(served.clinical.brand).toBe("Fictional brand");
+    // Workforce reference and synthetic qualification keep the evidence links.
+    const workforce = await createAwsGovernedCatalogApiHandler({ reader: value, configuration })(event("GET /clinical-core/workforce/catalog/products", "workforce"));
+    expect(JSON.parse(workforce.body).data.products[0].label.label.labelSourceUrl).toBe(product.label.label.labelSourceUrl);
+    const syntheticEvent = event("GET /clinical-core/consumer/catalog/products", "consumer");
+    syntheticEvent.requestContext!.authorizer!.jwt!.claims!["custom:synthetic_attested"] = "true";
+    const synthetic = await createAwsGovernedCatalogApiHandler({ reader: value, configuration: { ...configuration, environment: "synthetic-staging" } })(syntheticEvent);
+    expect(JSON.parse(synthetic.body).data.products[0].label.label.labelSourceUrl).toBe(product.label.label.labelSourceUrl);
+  });
+
   test("allows protocol templates only on the workforce route", async () => {
     const value = reader();
     const handler = createAwsGovernedCatalogApiHandler({ reader: value, configuration });
