@@ -109,6 +109,37 @@ export function parseDailyGuidanceOpenAIResponse(input: { response: unknown; req
   return validateDailyGuidanceResult({ value: parsed, request: input.request, model: input.model, generatedAt: input.generatedAt });
 }
 
+export async function readDailyGuidanceOpenAIResponse(response: Response): Promise<unknown> {
+  const refuseEarly = async (): Promise<never> => {
+    await response.body?.cancel().catch(() => undefined);
+    throw new DailyGuidanceError("provider_unavailable");
+  };
+  if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json"))
+    return refuseEarly();
+  const length = response.headers.get("content-length");
+  if (length !== null && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length) > MAX_RESPONSE_BYTES))
+    return refuseEarly();
+  const reader = response.body?.getReader();
+  if (!reader) throw new DailyGuidanceError("provider_unavailable");
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) throw new DailyGuidanceError("provider_unavailable");
+      chunks.push(value);
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, received)));
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    throw new DailyGuidanceError("provider_unavailable");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function apiKey(secretArn: string): Promise<string> {
   const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }));
   if (typeof response.SecretString !== "string") throw new DailyGuidanceError("provider_unavailable");
@@ -127,11 +158,7 @@ export async function generateDailyGuidanceWithOpenAI(input: { request: DailyGui
       body: JSON.stringify(buildDailyGuidanceOpenAIRequest(input.request, input.model)),
     });
     if (response.status >= 300 && response.status < 400) throw new DailyGuidanceError("provider_unavailable");
-    const raw = await response.text();
-    if (!response.ok || Buffer.byteLength(raw, "utf8") > MAX_RESPONSE_BYTES
-      || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new DailyGuidanceError("provider_unavailable");
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new DailyGuidanceError("provider_unavailable"); }
+    const parsed = await readDailyGuidanceOpenAIResponse(response);
     return parseDailyGuidanceOpenAIResponse({ response: parsed, request: input.request, model: input.model });
   } catch (error) {
     if (error instanceof DailyGuidanceError) throw error;

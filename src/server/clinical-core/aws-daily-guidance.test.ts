@@ -8,7 +8,7 @@ import {
   validateDailyGuidanceResult,
   type DailyGuidanceInput,
 } from "./aws-daily-guidance";
-import { buildDailyGuidanceOpenAIRequest, parseDailyGuidanceOpenAIResponse } from "./aws-daily-guidance-openai";
+import { buildDailyGuidanceOpenAIRequest, parseDailyGuidanceOpenAIResponse, readDailyGuidanceOpenAIResponse } from "./aws-daily-guidance-openai";
 
 const ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_example";
 const AUDIENCE = "72aksm2dm4nf03l8d9nrp2dbh0";
@@ -85,6 +85,34 @@ describe("governed daily guidance", () => {
     expect(body.store).toBe(false);
     expect(body.text.format.strict).toBe(true);
     expect(() => parseDailyGuidanceOpenAIResponse({ response: { model: "substituted", status: "completed", output: [] }, request: request(), model: MODEL })).toThrow(DailyGuidanceError);
+  });
+
+  it("bounds OpenAI response bytes while streaming and cancels an oversized body", async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(300_000));
+        controller.enqueue(new Uint8Array(300_000));
+      },
+      cancel() { cancelled = true; },
+    }), { headers: { "content-type": "application/json" } });
+    await expect(readDailyGuidanceOpenAIResponse(response)).rejects.toThrow("provider_unavailable");
+    expect(cancelled).toBe(true);
+  });
+
+  it("refuses an oversized declared length, a non-JSON response, and malformed JSON", async () => {
+    await expect(readDailyGuidanceOpenAIResponse(new Response("{}", {
+      headers: { "content-type": "application/json", "content-length": "524289" },
+    }))).rejects.toThrow("provider_unavailable");
+    await expect(readDailyGuidanceOpenAIResponse(new Response("{}", {
+      headers: { "content-type": "text/plain" },
+    }))).rejects.toThrow("provider_unavailable");
+    await expect(readDailyGuidanceOpenAIResponse(new Response("{", {
+      headers: { "content-type": "application/json" },
+    }))).rejects.toThrow("provider_unavailable");
+    await expect(readDailyGuidanceOpenAIResponse(new Response('{"status":"completed"}', {
+      headers: { "content-type": "application/json" },
+    }))).resolves.toEqual({ status: "completed" });
   });
 
   it("authenticates a synthetic consumer and returns direct-to-consumer guidance", async () => {
