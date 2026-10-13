@@ -10,6 +10,11 @@ test("reviewed catalog alert is opt-in and passes the template gate", () => {
   assert.deepEqual(validateGovernedCatalogApi(foundation, extension), []);
 });
 
+test("catalog read allows the synthetic Aurora auto-resume to finish before the HTTP deadline", () => {
+  assert.equal(extension.Resources.CatalogApiFunction.Properties.Timeout, 29);
+  assert.equal(extension.Resources.CatalogApiIntegration.Properties.TimeoutInMillis, 30000);
+});
+
 for (const [name, mutate] of [
   ["topic default enabled", (copy) => { copy.Parameters.QualificationAlarmTopicArn.Default = "arn:aws:sns:us-east-2:588966314750:ai-clinical-core-qualification-alarms"; }],
   ["topic target widened", (copy) => { copy.Parameters.QualificationAlarmTopicArn.AllowedPattern = ".*"; }],
@@ -19,6 +24,8 @@ for (const [name, mutate] of [
   ["alarm name outside topic policy", (copy) => { copy.Resources.CatalogApiErrorAlarm.Properties.AlarmName["Fn::If"][1] = "synthetic-catalog-errors"; }],
   ["API 5xx alarm ungated", (copy) => { delete copy.Resources.SyntheticStagingApi5xxAlarm.Condition; }],
   ["API 5xx alarm replaced with Lambda errors", (copy) => { copy.Resources.SyntheticStagingApi5xxAlarm.Properties.MetricName = "Errors"; }],
+  ["Lambda deadline too short for auto-resume", (copy) => { copy.Resources.CatalogApiFunction.Properties.Timeout = 15; }],
+  ["HTTP deadline too short for auto-resume", (copy) => { copy.Resources.CatalogApiIntegration.Properties.TimeoutInMillis = 15000; }],
 ]) {
   test(`catalog alert gate refuses ${name}`, () => {
     const copy = structuredClone(extension);

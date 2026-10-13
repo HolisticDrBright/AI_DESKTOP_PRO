@@ -122,7 +122,7 @@
         "Handler": "index.handler",
         "Role": { "Fn::GetAtt": ["CatalogApiRole", "Arn"] },
         "MemorySize": 256,
-        "Timeout": 15,
+        "Timeout": 29,
         "LoggingConfig": {
           "LogGroup": { "Ref": "CatalogApiLogGroup" },
           "LogFormat": "JSON",
@@ -177,7 +177,7 @@
         "IntegrationType": "AWS_PROXY",
         "IntegrationUri": { "Fn::GetAtt": ["CatalogApiFunction", "Arn"] },
         "PayloadFormatVersion": "2.0",
-        "TimeoutInMillis": 15000
+        "TimeoutInMillis": 30000
       }
     },
     "WorkforceCatalogProductsRoute": {

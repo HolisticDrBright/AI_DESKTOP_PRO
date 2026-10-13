@@ -45,7 +45,8 @@ export function validateGovernedCatalogApi(foundation, extension) {
 
   const fn = resources.CatalogApiFunction?.Properties;
   assert(errors, fn?.Runtime === "nodejs22.x" && fn?.Architectures?.[0] === "arm64", "catalog Lambda runtime must be bounded");
-  assert(errors, fn?.Timeout === 15 && fn?.MemorySize === 256 && !fn?.VpcConfig, "catalog Lambda must use the bounded Data API shape");
+  assert(errors, fn?.Timeout === 29 && fn?.MemorySize === 256 && !fn?.VpcConfig, "catalog Lambda must allow a bounded Aurora auto-resume without widening data access");
+  assert(errors, resources.CatalogApiIntegration?.Properties?.TimeoutInMillis === 30000, "catalog HTTP integration must outlive the Lambda deadline");
   const env = fn?.Environment?.Variables ?? {};
   assert(errors, Object.keys(env).sort().join(",") === [
     "CLINICAL_CATALOG_ENVIRONMENT", "CLINICAL_CONSUMER_AUDIENCE", "CLINICAL_CONSUMER_ISSUER", "CLINICAL_DATABASE_CLUSTER_ARN",

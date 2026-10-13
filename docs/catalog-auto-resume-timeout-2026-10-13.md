@@ -1,0 +1,9 @@
+# Synthetic catalog first-read timeout
+
+The October 13 synthetic catalog code-only deployment exposed a first-request HTTP 503. CloudWatch recorded `platform.runtimeDone` with `status=timeout` at 15,001 ms for request `116881e9-f6e9-464d-a998-237295216a5b`. The catalog Lambda and HTTP integration were both limited to 15 seconds.
+
+The synthetic Aurora Serverless v2 cluster has `MinCapacity=0` and auto-pauses after 900 seconds. AWS RDS events recorded its pause completing at 15:32:25 UTC, resume starting at 15:35:47 UTC, and resume completing at 15:36:05 UTC. The Lambda timed out at 15:36:01 UTC while that same resume was in progress. A subsequent ten-item request succeeded, followed by a complete seven-page read (680 products, 16 labels and 16 offers). This identifies the paused-database resume as the cause of this observed timeout; it does not prove that every cold read will finish within a new deadline.
+
+The catalog extension now gives the Lambda 29 seconds and the HTTP integration 30 seconds, matching the existing synthetic identity API's bounded read profile. A negative gate rejects either old 15-second value. The only intended CloudFormation property changes are `CatalogApiFunction.Timeout` and `CatalogApiIntegration.TimeoutInMillis`; no database capacity, IAM, data, route, consent, PHI flag or source code changes are required. The production foundation already uses a nonzero Aurora minimum capacity, so this is a synthetic auto-resume reliability fix, not a proposal to alter production capacity.
+
+Before hosted acceptance, inspect the resolved change set and refuse any replacement or additional property. Then let the synthetic database auto-pause, make one authenticated fictional first-page request, and compare CloudWatch and RDS events. One warm request is insufficient evidence. A request that exceeds 30 seconds remains a finding; do not widen the limit or pay for always-on synthetic capacity without a separate review.
