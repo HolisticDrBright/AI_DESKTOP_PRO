@@ -529,6 +529,31 @@ jobs:
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
           npm run test:e2e -- commerce-journey
+      # Lesson media on My courses, under its OWN fixture flag on top of the
+      # journey fixture (LEARNER_MEDIA_FIXTURE=1): one fictional native media
+      # lesson, decided from the fixture's own purchase, signed by the real
+      # exact-version signer with fictional credentials. The bucket host is
+      # intercepted in the browser; nothing reaches any storage service.
+      - name: Fictional learner media journey (separately configured fixture)
+        if: matrix.shard == 1
+        run: |
+          curl -fsS -X POST http://127.0.0.1:3999/__control/reset-all
+          E2E_LIVE=1 \
+          E2E_DEV_SERVER=1 \
+          APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
+          COMMERCE_JOURNEY_FIXTURE=1 \
+          LEARNER_MEDIA_FIXTURE=1 \
+          STRIPE_TEST_MODE_ENABLED=1 \
+          STRIPE_TEST_SECRET_KEY=sk_test_fixture_journey_only \
+          STRIPE_TEST_WEBHOOK_SECRET=whsec_fixture_journey_only \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- learner-media-journey
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server

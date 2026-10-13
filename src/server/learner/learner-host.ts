@@ -10,7 +10,8 @@ import { PROGRAM_OFFER_SCHEMA_CANDIDATE_SHA256 } from "../commerce/program-comme
 import { PROGRAM_CHECKOUT_SCHEMA_CANDIDATE_SHA256 } from "../commerce/program-checkout-ledger-sql";
 import { PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, PROGRAM_EDUCATION_SCHEMA_CANDIDATE_SHA256 } from "../commerce/program-education-ledger-sql";
 import { selectProgramCheckout } from "../commerce/program-commerce-runtime";
-import { JOURNEY_FIXTURE, ensureJourneySeed, journeyFixtureAllowed } from "../commerce/journey-fixture";
+import { JOURNEY_FIXTURE, ensureJourneySeed, journeyFixtureAllowed, learnerMediaFixtureAllowed } from "../commerce/journey-fixture";
+import { createJourneyFixtureMediaService } from "../programs/learner-media-journey-fixture";
 import { sqlAcceptanceAllowed } from "../commerce/sql-acceptance-gate";
 import type { LearnerMediaReply } from "../../contracts/programLearnerMedia";
 
@@ -116,6 +117,8 @@ const fixtureHost: LearnerHost = {
         await ensureJourneySeed();
         return createEducationProgressService({ ledger: selection.education, activation: fixtureEvidence, progressCandidateSha256: PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256, expectedProgressSha256: PROGRAM_EDUCATION_PROGRESS_SCHEMA_CANDIDATE_SHA256 })(context, body);
       },
+      // Only under its own flag; without it the fixture host has no media service and the route answers held.
+      ...(learnerMediaFixtureAllowed() ? { media: async (context: ClinicalRequestContext, body: unknown) => { await ensureJourneySeed(); return createJourneyFixtureMediaService(selection.settlement)(context, body); } } : {}),
     };
   },
 };

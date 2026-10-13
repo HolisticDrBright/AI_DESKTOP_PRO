@@ -39,7 +39,10 @@ export function createSqlLearnerMediaLedger(deps: { database: ClinicalCoreDataba
     return [clinicalUuid(c.actorPersonId), clinicalUuid(c.organizationId), 'workforce', c.identitySubject, 'clinical_data', 'synthetic-staging', 'synthetic_only'];
   };
   const decode = <T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T => {
-    const parsed = schema.safeParse(value);
+    // The Data API returns jsonb as text; the embedded engine returns it parsed.
+    let raw: unknown = value;
+    if (typeof value === 'string') { try { raw = JSON.parse(value); } catch { throw new LearnerMediaError('service_unavailable'); } }
+    const parsed = schema.safeParse(raw);
     if (!parsed.success) throw new LearnerMediaError('service_unavailable');
     return parsed.data;
   };

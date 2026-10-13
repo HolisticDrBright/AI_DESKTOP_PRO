@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ClinicalRequestContext } from '../clinical-core/aws-identity-consent';
 import { PROGRAM_LEARNER_MEDIA_CONTRACT, type LearnerMediaRequest } from '@/contracts/programLearnerMedia';
-import { createLearnerMediaService, LearnerMediaError, type LearnerMediaDecision, type LearnerMediaLedger, type LearnerMediaStorage } from './learner-media';
+import { createLearnerMediaService, LearnerMediaError, type LearnerMediaDecision, type LearnerMediaGrant, type LearnerMediaLedger, type LearnerMediaStorage } from './learner-media';
 import { createFictionalLearnerMediaStorage } from './learner-media-fictional';
 
 /** The service's own rules over a fake ledger and the fictional storage reader (no database, no network). */
@@ -16,12 +16,13 @@ const curriculum = { versionId: version, version: 1, sourceDigest: 'b'.repeat(64
 const request: LearnerMediaRequest = { contractVersion: PROGRAM_LEARNER_MEDIA_CONTRACT, entitlementId: entitlement, curriculum, lesson: { phaseId: 'phase-1', itemId: 'lesson-a' }, slot: 0,
   expected: { artifactId: artifact, version: 3, sha256: bytes } };
 const TEXT = 'Fictional transcript.';
-const grant = (over: Partial<Extract<LearnerMediaDecision, { outcome: 'authorized' }>> = {}): LearnerMediaDecision => ({
+const base: LearnerMediaGrant = {
   outcome: 'authorized', entitlementId: entitlement, curriculum, admissionId: admission, publicationId: publication, lesson: { phaseId: 'phase-1', itemId: 'lesson-a' }, slot: 0,
   media: { artifactId: artifact, version: 3, sha256: bytes, kind: 'video', contentType: 'video/mp4', bytes: 1024 },
   object: { key: `program-media/${clinic}/${program}/${artifact}/${bytes}.mp4`, version: 'fictional-object-version-1', clinic, programId: program },
-  caption: { state: 'none' }, transcript: { state: 'available', source: 'supplied_vendor_file', format: 'plain', sha256: sha(TEXT), text: TEXT }, ...over,
-} as LearnerMediaDecision);
+  caption: { state: 'none' }, transcript: { state: 'available', source: 'supplied_vendor_file', format: 'plain', sha256: sha(TEXT), text: TEXT },
+};
+const grant = (over: Partial<LearnerMediaGrant> = {}): LearnerMediaDecision => ({ ...base, ...over });
 const ledgerOf = (...answers: (LearnerMediaDecision | (() => Promise<LearnerMediaDecision>))[]): LearnerMediaLedger & { calls: number } => {
   const l = { calls: 0, forLearner: async () => { const next = answers[Math.min(l.calls, answers.length - 1)]!; l.calls += 1; return typeof next === 'function' ? next() : next; }, forStaff: async () => { throw new Error('not used'); } };
   return l;
@@ -51,7 +52,7 @@ describe('learner media service', () => {
   it('says not_available for a refusal and for a grant that is not this request\'s answer, without touching storage', async () => {
     const storage = createFictionalLearnerMediaStorage();
     for (const answer of [{ outcome: 'refused' } as LearnerMediaDecision, grant({ entitlementId: id(40) }), grant({ curriculum: { ...curriculum, version: 2 } }),
-      grant({ lesson: { phaseId: 'phase-1', itemId: 'lesson-b' } }), grant({ slot: 1 }), grant({ media: { ...(grant() as { media: never }).media, version: 4 } })]) {
+      grant({ lesson: { phaseId: 'phase-1', itemId: 'lesson-b' } }), grant({ slot: 1 }), grant({ media: { ...base.media, version: 4 } })]) {
       expect(await createLearnerMediaService({ ledger: ledgerOf(answer), storage })(learner, request)).toEqual({ outcome: 'not_available' });
     }
     expect(storage.issued).toHaveLength(0);
@@ -60,7 +61,7 @@ describe('learner media service', () => {
     const storage = createFictionalLearnerMediaStorage();
     expect(await createLearnerMediaService({ ledger: ledgerOf(grant(), { outcome: 'refused' }), storage })(learner, request)).toEqual({ outcome: 'not_available' });
     expect(await createLearnerMediaService({ ledger: ledgerOf(grant(), grant({ admissionId: id(41) })), storage })(learner, request)).toEqual({ outcome: 'not_available' });
-    expect(await createLearnerMediaService({ ledger: ledgerOf(grant(), grant({ object: { ...(grant() as { object: never }).object, version: 'another-version' } })), storage })(learner, request)).toEqual({ outcome: 'not_available' });
+    expect(await createLearnerMediaService({ ledger: ledgerOf(grant(), grant({ object: { ...base.object, version: 'another-version' } })), storage })(learner, request)).toEqual({ outcome: 'not_available' });
     expect(await createLearnerMediaService({ ledger: ledgerOf(grant(), { outcome: 'held' }), storage })(learner, request)).toEqual({ outcome: 'held' });
     expect(storage.issued).toHaveLength(4);
   });

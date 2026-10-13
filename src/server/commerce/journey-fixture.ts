@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") {
   throw new Error("commerce/journey-fixture is server-only.");
 }
+import { createHash } from "node:crypto";
 import { funnelDefinition, publishedFunnel, type FunnelDefinition } from "../../funnels";
 import { isContractFixtureAllowed } from "../runtime/contractFixture";
 import { FICTIONAL_REVIEW_FIXTURE } from "./program-commerce-authority";
@@ -46,7 +47,33 @@ export const JOURNEY_FIXTURE = {
 export const JOURNEY_PURCHASER_ADDRESS = "fictional-purchaser@journey-fixture.example";
 
 export const JOURNEY_COURSE_TITLE = "Fictional journey course (test fixture)";
-export const journeyCoursePhases = (variant: "first" | "later" = "first") => [
+/**
+ * The separately flagged media slice of the fixture (LEARNER_MEDIA_FIXTURE=1 on top of the journey
+ * fixture): lesson C of the first version carries ONE fictional native publication identity. Without
+ * the flag the course is exactly the eight-case journey's, byte for byte.
+ */
+export const LEARNER_MEDIA_FIXTURE_FLAG = "LEARNER_MEDIA_FIXTURE";
+export function learnerMediaFixtureAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return journeyFixtureAllowed(env) && env[LEARNER_MEDIA_FIXTURE_FLAG] === "1";
+}
+const FIXTURE_MEDIA_SHA = "f1c7".padEnd(64, "0");
+export const JOURNEY_FIXTURE_MEDIA = {
+  artifactId: fixtureId(20), version: 4, sha256: FIXTURE_MEDIA_SHA, objectVersion: "fictional-fixture-object-version-1",
+  caption: "WEBVTT\n\n00:00.000 --> 00:03.000\nFictional caption for the journey fixture lesson.",
+  transcript: "Fictional transcript of the journey fixture lesson. Nothing here is advice.",
+} as const;
+export const journeyFixtureMediaReference = (sha: (text: string) => string) => ({
+  contractVersion: "program-media-reference/1" as const, artifactId: JOURNEY_FIXTURE_MEDIA.artifactId, version: JOURNEY_FIXTURE_MEDIA.version, sha256: JOURNEY_FIXTURE_MEDIA.sha256,
+  kind: "video" as const, contentType: "video/mp4" as const, bytes: 4096,
+  origin: { clinic: JOURNEY_FIXTURE.organizationId, programId: JOURNEY_FIXTURE.programId },
+  url: `https://lessons.fictional.example/program-media/${JOURNEY_FIXTURE.organizationId}/${JOURNEY_FIXTURE.programId}/${JOURNEY_FIXTURE_MEDIA.artifactId}/${JOURNEY_FIXTURE_MEDIA.sha256}.mp4`,
+  publishedAt: "2026-10-13T00:00:00.000Z",
+  caption: { source: "supplied_by_author" as const, sha256: sha(JOURNEY_FIXTURE_MEDIA.caption) },
+  transcript: { source: "supplied_vendor_file" as const, sha256: sha(JOURNEY_FIXTURE_MEDIA.transcript), format: "plain" as const },
+});
+const textSha = (text: string) => createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+
+export const journeyCoursePhases = (variant: "first" | "later" = "first", env: Record<string, string | undefined> = process.env) => [
   {
     id: "phase-1", title: "Fictional phase one", days: 7, transition: "scheduled", items: [
       { id: "lesson-a", title: "Fictional lesson A", kind: "lesson", instructions: variant === "first" ? "Fictional reading A for the journey fixture. Nothing here is advice." : "Fictional reading A, revised.", released: true },
@@ -55,7 +82,8 @@ export const journeyCoursePhases = (variant: "first" | "later" = "first") => [
   },
   {
     id: "phase-2", title: "Fictional phase two", days: 7, transition: "scheduled", items: [
-      { id: "lesson-c", title: "Fictional lesson C", kind: "lesson", instructions: "Fictional reading C for the journey fixture.", released: true },
+      { id: "lesson-c", title: "Fictional lesson C", kind: "lesson", instructions: "Fictional reading C for the journey fixture.", released: true,
+        ...(variant === "first" && learnerMediaFixtureAllowed(env) ? { nativeMedia: [journeyFixtureMediaReference(textSha)] } : {}) },
     ],
   },
 ];
@@ -127,7 +155,7 @@ export function ensureJourneySeed(env: Record<string, string | undefined> = proc
 export function publishCourse(variant: "first" | "later", env: Record<string, string | undefined> = process.env): void {
   const offers = selectProgramOfferLedger(env);
   if (offers.kind !== "fictional") throw new Error("journey fixture needs the fictional ledgers");
-  const phases = journeyCoursePhases(variant);
+  const phases = journeyCoursePhases(variant, env);
   const consumerProgram = { title: JOURNEY_COURSE_TITLE, phases };
   offers.registerCurriculum(JOURNEY_FIXTURE.organizationId, JOURNEY_FIXTURE.programId, {
     versionId: variant === "first" ? JOURNEY_FIXTURE.versionId : JOURNEY_FIXTURE.laterVersionId, version: variant === "first" ? 1 : 2,
