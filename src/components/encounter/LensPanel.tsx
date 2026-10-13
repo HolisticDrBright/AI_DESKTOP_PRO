@@ -237,23 +237,36 @@ export function LensPanel({
     };
   }, []);
 
+  // Only the newest read applies its result and ends the loading state: an older read that settles later (a paradigm
+  // change, a run's readback) must not overwrite a newer one or report "loaded" while the newer one is still pending.
+  const loadSeq = useRef(0);
   const loadEvaluation = useCallback(
-    async (p: string) => {
+    async (p: string): Promise<
+      { status: "loaded"; evaluation: Evaluation | null } | { status: "failed"; message: string } | { status: "superseded" }
+    > => {
+      const seq = ++loadSeq.current;
       setLoadingEval(true);
       setError(null);
       try {
         const res = await fetch(`/api/live/lens/evaluation?encounterId=${encounterId}&paradigm=${p}`);
         if (!res.ok) {
-          setError(await readError(res));
+          const message = await readError(res);
+          if (seq !== loadSeq.current) return { status: "superseded" };
+          setError(message);
           setEvaluation(null);
-          return;
+          return { status: "failed", message };
         }
         const json = (await res.json()) as { data: Evaluation | null };
+        if (seq !== loadSeq.current) return { status: "superseded" };
         setEvaluation(json.data);
+        return { status: "loaded", evaluation: json.data };
       } catch {
-        setError("The lens service is unreachable right now.");
+        if (seq !== loadSeq.current) return { status: "superseded" };
+        const message = "The lens service is unreachable right now.";
+        setError(message);
+        return { status: "failed", message };
       } finally {
-        setLoadingEval(false);
+        if (seq === loadSeq.current) setLoadingEval(false);
       }
     },
     [encounterId],
@@ -278,12 +291,23 @@ export function LensPanel({
         return;
       }
       const json = (await res.json()) as { data: { status: string; questionsInserted?: number; blockedRules?: number } };
+      // The run is claimed only once its result reads back. A readback that fails, finds nothing, or is overtaken by a
+      // newer read leaves no completion notice: the screen must not say "complete" over a panel still loading or empty.
+      const readback = await loadEvaluation(paradigm);
+      if (readback.status === "failed") {
+        setError(`The evaluation ran, but reading it back failed (${readback.message}). Refresh to see it.`);
+        return;
+      }
+      if (readback.status === "superseded") return;
+      if (!readback.evaluation) {
+        setError("The evaluation ran, but reading it back returned nothing. Refresh to check again.");
+        return;
+      }
       setNotice(
         json.data.status === "blocked"
           ? `Evaluation blocked by ${json.data.blockedRules ?? 0} safety rule(s) — output withheld for review.`
           : `Evaluation complete — ${json.data.questionsInserted ?? 0} question(s) generated.`,
       );
-      await loadEvaluation(paradigm);
     } catch {
       setError("The lens service is unreachable right now.");
     } finally {
@@ -511,7 +535,7 @@ export function LensPanel({
       )}
 
       {error && (
-        <p role="alert" className="m-0 mt-2 rounded-lg bg-critical-tint px-3 py-[6px] text-[12px] font-semibold text-critical">
+        <p role="alert" className="m-0 mt-2 rounded-lg bg-critical-tint px-3 py-[6px] text-[12px] font-semibold text-critical" data-testid="lens-error">
           {error}
         </p>
       )}
