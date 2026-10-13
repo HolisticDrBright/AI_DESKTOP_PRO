@@ -10,8 +10,9 @@ import { z } from 'zod';
  * person was shown and the server refuses if any of them is no longer current. The issue response carries
  * no address: the destination is returned once, by redemption, to the same account and session before
  * expiry, after the server has re-checked everything and verified that the address is the reviewed
- * offer's own Fullscript product page under the reviewed dispensary. Version 1 named a product only, so a
- * changed label or a second offer could not be detected; it is superseded, not extended.
+ * offer's own Fullscript product page in the reviewed storefront and dispensary. Version 1 named a
+ * product only, so a changed label or a second offer could not be detected; it is superseded, not
+ * extended.
  *
  * Purchase admission (purchase-admission/1) is what the person declared: where they live and, for the
  * clinician-connected tier, the care connection they are in. A declaration is not admission; the server
@@ -98,19 +99,23 @@ export const purchaseAdmissionStatus = z.object({
 export type PurchaseAdmissionStatus = z.infer<typeof purchaseAdmissionStatus>;
 
 /**
- * The only address an action may carry: a Fullscript dispensary product page, over https, with no
- * credentials, port or fragment, and no query other than one `variant`. A dispensary welcome or sign-up
- * page is not bound to a product and is refused; so is anything that could redirect onward.
+ * The only address an action may carry: a product page in one Fullscript storefront, over https, with no
+ * credentials, port or fragment, and no query other than one `variant`. Which storefront host and which
+ * dispensary are not written here: both come from the reviewed release, and the server names the host it
+ * verified alongside the address. A dispensary welcome or sign-up page is not bound to a product and is
+ * refused; so is anything that could redirect onward.
  */
 const reference = /^[A-Za-z0-9_-]{4,128}={0,2}$/;
-export const FULLSCRIPT_DESTINATION_HOST = 'us.fullscript.com' as const;
-export function fullscriptProductDestination(value: string): { dispensarySlug: string; productRef: string; variantRef: string | null } | null {
-  if (typeof value !== 'string' || value.length > 2048) return null;
+const storefrontHost = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.fullscript\.com$/;
+export function fullscriptStorefrontHost(host: string): boolean {
+  return typeof host === 'string' && storefrontHost.test(host);
+}
+export function fullscriptProductDestination(value: string, host: string): { dispensarySlug: string; productRef: string; variantRef: string | null } | null {
+  if (typeof value !== 'string' || value.length > 2048 || !fullscriptStorefrontHost(host)) return null;
   let url: URL;
   try { url = new URL(value); } catch { return null; }
   // The address must already be in its one serialised form, so no encoded variant of it passes.
-  if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
-    || url.hostname !== FULLSCRIPT_DESTINATION_HOST) return null;
+  if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || url.hostname !== host) return null;
   const path = /^\/s\/([a-z0-9][a-z0-9-]{1,62})\/shop\/product\/([^/]+)$/.exec(url.pathname);
   if (!path || !reference.test(path[2]!)) return null;
   const keys = [...url.searchParams.keys()];
@@ -142,11 +147,11 @@ export const productActionRedeemed = z.object({
   ...header,
   data: z.object({
     actionId: productActionId, binding: productActionBinding, destinationUrl: z.string().max(2048),
-    expiresAt: instant, syntheticOnly: z.boolean(),
+    destinationHost: z.string().max(253), expiresAt: instant, syntheticOnly: z.boolean(),
   }).strict(),
 }).strict().superRefine((value, c) => {
   syntheticBoundary(value, c);
-  if (!fullscriptProductDestination(value.data.destinationUrl)) c.addIssue({ code: 'custom', message: 'destination_unverified' });
+  if (!fullscriptProductDestination(value.data.destinationUrl, value.data.destinationHost)) c.addIssue({ code: 'custom', message: 'destination_unverified' });
 });
 export type ProductActionRedeemed = z.infer<typeof productActionRedeemed>;
 export const productActionRefused = z.object({ ...header, refused: productActionRefusal }).strict();

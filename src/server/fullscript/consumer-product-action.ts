@@ -2,7 +2,7 @@ if (typeof window !== 'undefined') throw new Error('Fullscript consumer product 
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ACTION_LIFETIME_SECONDS, FULLSCRIPT_CONSUMER_ACTION, PURCHASE_ADMISSION, PURCHASE_MAX_AUTH_AGE_SECONDS,
-  fullscriptProductDestination, productActionIssued, productActionRedeemed, productActionRedemptionRequest, productActionRequest,
+  fullscriptProductDestination, fullscriptStorefrontHost, productActionIssued, productActionRedeemed, productActionRedemptionRequest, productActionRequest,
   purchaseAdmissionDeclaration, purchaseAdmissionStatus,
   type AdmissionRefusal, type ProductActionBinding, type ProductActionIssued, type ProductActionRedeemed, type ProductActionRefusal,
   type PurchaseAdmissionDeclaration, type PurchaseAdmissionStatus,
@@ -25,7 +25,7 @@ import type { AwsGovernedCatalogReader, CatalogEnvironment, GovernedCatalogProdu
  *     care connection the person named. Never an IP address, a locale or a time zone: the ports carry
  *     none, and an unknown answer refuses;
  *  4. the exact product, label and single offer the person was shown are still the current ones;
- *  5. the offer's address is a Fullscript product page under the release's own dispensary;
+ *  5. the offer's address is a Fullscript product page in the release's own storefront and dispensary;
  *  6. issue: the request id has never been used; redemption: the action is this account's, from this
  *     session, unexpired and unused, and it is spent atomically.
  */
@@ -36,7 +36,8 @@ export type ConsumerPurchaseRelease = {
   tier: 'consumer' | 'clinician_connected';
   /** Recorded state codes this release covers. Never a wildcard. */
   jurisdictions: readonly string[];
-  provider: { name: 'fullscript'; dispensarySlug: string; organizationId: string };
+  /** The reviewed storefront host and dispensary an action may send someone to. */
+  provider: { name: 'fullscript'; host: string; dispensarySlug: string; organizationId: string };
   /** Reviewed copy shown with the action. This module writes none. */
   disclosure: string;
   effectiveFrom: string;
@@ -86,7 +87,8 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     const asOf = ports.clock.now().getTime();
     const effective = releases.filter(r => r.contract === 'consumer-purchase-release/1' && r.environment === environment
       && Number.isFinite(Date.parse(r.effectiveFrom)) && Date.parse(r.effectiveFrom) <= asOf && r.jurisdictions.length > 0
-      && r.jurisdictions.every(j => /^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(j)) && r.disclosure.trim().length > 0);
+      && r.jurisdictions.every(j => /^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(j)) && r.disclosure.trim().length > 0
+      && fullscriptStorefrontHost(r.provider.host) && /^[a-z0-9][a-z0-9-]{1,62}$/.test(r.provider.dispensarySlug));
     // Two releases in effect at once is a review error, not a choice to make here.
     return effective.length === 1 ? effective[0]! : null;
   };
@@ -132,7 +134,7 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     if (!product.directOrderAllowed || offers.length === 0) return refuse('offer_unavailable');
     const offer = offers[0]!;
     if (offer.stableId !== binding.offerStableId || offer.version !== binding.offerVersion) return refuse('offer_changed');
-    const destination = fullscriptProductDestination(offer.destinationUrl);
+    const destination = fullscriptProductDestination(offer.destinationUrl, r.provider.host);
     if (!destination || destination.dispensarySlug !== r.provider.dispensarySlug) return refuse('destination_unverified');
     return { ok: true, destinationUrl: offer.destinationUrl };
   }
@@ -207,7 +209,7 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       if (offer.destinationUrl !== record.destinationUrl) return refuse('destination_unverified');
       if (!(await ports.actions.spend(record.actionId, nowIso()))) return refuse('action_used');
       return { ok: true, redeemed: productActionRedeemed.parse({ contractVersion: FULLSCRIPT_CONSUMER_ACTION, environment, provider: 'fullscript',
-        data: { actionId: record.actionId, binding: record.binding, destinationUrl: record.destinationUrl, expiresAt: record.expiresAt,
+        data: { actionId: record.actionId, binding: record.binding, destinationUrl: record.destinationUrl, destinationHost: r.provider.host, expiresAt: record.expiresAt,
           syntheticOnly: environment === 'synthetic-staging' } }) };
     },
   };

@@ -16,7 +16,7 @@ it('Git preserves LF on checkout for the byte-pinned mirror', () => {
   expect(attributes).toContain(`${PATH}: eol: lf`);
 });
 it('carries the pinned bytes and the versions both apps speak', () => {
-  expect(createHash('sha256').update(readFileSync(PATH)).digest('hex')).toBe('02c9a6ba1b33b302a29580d2a4ca9bb3cbf42a27fe97a9df4105e9ea0b4da39c');
+  expect(createHash('sha256').update(readFileSync(PATH)).digest('hex')).toBe('585fe3f560da04a6d9c57a2a5a1e92f0168446d89f2a8ce4af61884d63f20ee8');
   expect(FULLSCRIPT_CONSUMER_ACTION).toBe('fullscript-consumer-action/2');
   expect(PURCHASE_ADMISSION).toBe('purchase-admission/1');
   // An issued action names what it binds and never where it goes; only redemption returns an address.

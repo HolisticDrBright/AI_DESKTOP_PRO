@@ -20,10 +20,11 @@ import {
 const CLINIC = '30000000-0000-4000-8000-000000000001';
 const CONNECTION = '40000000-0000-4000-8000-000000000001';
 const SLUG = 'fictional-test-dispensary';
+const HOST = 'us.fullscript.com';
 const DESTINATION = `https://us.fullscript.com/s/${SLUG}/shop/product/RklDVElPTkFMMQ==?variant=VkFSSUFOVDE=`;
 const release = (patch: Partial<ConsumerPurchaseRelease> = {}): ConsumerPurchaseRelease => ({
   contract: 'consumer-purchase-release/1', environment: 'synthetic-staging', tier: 'clinician_connected', jurisdictions: ['US-TX'],
-  provider: { name: 'fullscript', dispensarySlug: SLUG, organizationId: CLINIC },
+  provider: { name: 'fullscript', host: HOST, dispensarySlug: SLUG, organizationId: CLINIC },
   disclosure: 'FICTIONAL disclosure for tests only.', effectiveFrom: '2026-01-01T00:00:00Z', ...patch,
 });
 const product = (patch: Partial<GovernedCatalogProduct> = {}): GovernedCatalogProduct => ({
@@ -100,9 +101,11 @@ describe('disabled by default', () => {
       .filter(f => /consumer-product-action|createConsumerPurchaseCandidate|consumerPurchaseCandidate/.test(readFileSync(f, 'utf8')));
     expect(users).toEqual([]);
   });
-  it('refuses a release that is not yet in effect, covers a wildcard, has no reviewed disclosure, or is ambiguous', async () => {
+  it('refuses a release that is not yet in effect, covers a wildcard, lacks reviewed copy or a storefront, or is ambiguous', async () => {
     for (const releases of [[release({ effectiveFrom: '2027-01-01T00:00:00Z' })], [release({ jurisdictions: ['*'] })], [release({ jurisdictions: [] })],
-      [release({ disclosure: ' ' })], [release(), release({ jurisdictions: ['US-CA'] })], [release({ environment: 'production-clinical' })]]) {
+      [release({ disclosure: ' ' })], [release(), release({ jurisdictions: ['US-CA'] })], [release({ environment: 'production-clinical' })],
+      [release({ provider: { name: 'fullscript', host: 'evil.example', dispensarySlug: SLUG, organizationId: CLINIC } })],
+      [release({ provider: { name: 'fullscript', host: HOST, dispensarySlug: '', organizationId: CLINIC } })]]) {
       const w = world({ releases });
       expect(await w.candidate.declare(w.session(), declaration()), JSON.stringify(releases)).toEqual({ ok: false, refused: 'commerce_disabled' });
     }
@@ -259,17 +262,20 @@ describe('an action is one current product, label and offer for one account and 
     ['a javascript address', 'javascript:alert(1)'],
   ])('refuses an offer whose address is %s', async (name, destinationUrl) => {
     // The shape check cannot know which dispensary was reviewed; the server compares it with the release.
-    if (name === 'another dispensary') expect(fullscriptProductDestination(destinationUrl)).toMatchObject({ dispensarySlug: 'someone-else' });
-    else expect(fullscriptProductDestination(destinationUrl)).toBeNull();
+    if (name === 'another dispensary') expect(fullscriptProductDestination(destinationUrl, HOST)).toMatchObject({ dispensarySlug: 'someone-else' });
+    else expect(fullscriptProductDestination(destinationUrl, HOST)).toBeNull();
     const w = await admitted();
     w.state.offers = [offer({ destinationUrl })];
     expect(await w.candidate.issue(w.session(), request())).toEqual({ ok: false, refused: 'destination_unverified' });
     if (name !== 'another dispensary') expect(productActionRedeemed.safeParse({ contractVersion: 'fullscript-consumer-action/2', environment: 'synthetic-staging', provider: 'fullscript',
-      data: { actionId: `act_${'a'.repeat(32)}`, binding, destinationUrl, expiresAt: '2026-10-13T12:10:00Z', syntheticOnly: true } }).success).toBe(false);
+      data: { actionId: `act_${'a'.repeat(32)}`, binding, destinationUrl, destinationHost: HOST, expiresAt: '2026-10-13T12:10:00Z', syntheticOnly: true } }).success).toBe(false);
   });
   it('accepts the reviewed product page shape, with or without a variant', () => {
-    expect(fullscriptProductDestination(DESTINATION)).toEqual({ dispensarySlug: SLUG, productRef: 'RklDVElPTkFMMQ==', variantRef: 'VkFSSUFOVDE=' });
-    expect(fullscriptProductDestination(DESTINATION.split('?')[0]!)).toMatchObject({ variantRef: null });
+    expect(fullscriptProductDestination(DESTINATION, HOST)).toEqual({ dispensarySlug: SLUG, productRef: 'RklDVElPTkFMMQ==', variantRef: 'VkFSSUFOVDE=' });
+    expect(fullscriptProductDestination(DESTINATION.split('?')[0]!, HOST)).toMatchObject({ variantRef: null });
+    // The host is the release's, and only one storefront label under the provider's domain qualifies.
+    for (const host of ['fullscript.com', 'a.b.fullscript.com', 'us.fullscript.io', 'evil.example', 'US.fullscript.com', ''])
+      expect(fullscriptProductDestination(DESTINATION.replace(HOST, host), host), host).toBeNull();
   });
   it('never takes an address, a price or another purpose from the client', async () => {
     const w = await admitted();
