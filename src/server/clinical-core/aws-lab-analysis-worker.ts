@@ -480,6 +480,36 @@ type MeasuredSupplementConsideration = {
   citationIds: string[];
 };
 
+/** The measurement a consideration rests on, or that withheld one: which result (by the biomarker id the analysis
+ * returns), its value, unit and draw date, which bound it crossed and of what kind. Every value the worker reads still
+ * needs human review at source; the record says so rather than implying otherwise. */
+export type ConsiderationMeasurement = {
+  biomarkerId: string;
+  canonicalName: string;
+  value: number;
+  unit: string;
+  testDate: string | null;
+  direction: "below" | "above";
+  rangeKind: "governed_functional" | "reporting_laboratory";
+  bound: number;
+  verificationState: "needs_human_review";
+};
+
+/** A consideration a measurement suggested and the rule table withheld, with both sides of the reason. */
+export type WithheldMeasuredConsideration = {
+  rulesetVersion: typeof SUPPLEMENT_CONSIDERATION_RULESET_VERSION;
+  ruleKey: string;
+  ruleVersion: string;
+  reason: "iron_panel_above_range";
+  measurementsSuggesting: ConsiderationMeasurement[];
+  measurementsContradicting: ConsiderationMeasurement[];
+};
+
+/** Whether the completed result carries the measurement on each consideration and the withheld list. The V2 lab
+ * contract is strict and accepts both only from its additive revision on; a build that predates it would refuse the
+ * whole result, so this stays off until every supported V2 build parses them. The record is kept server-side either way. */
+export const CONSIDERATION_TRACE_IN_RESULT = false as const;
+
 type SupplementEvidenceCitation = {
   sourceId: string;
   sourceVersion: string;
@@ -537,18 +567,43 @@ function normalizedMarkerName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
+type ConsiderationInput = {
   canonicalName: string; value: number; unit: string; labMin: number | null; labMax?: number | null;
   functionalMin?: number | null; functionalMax?: number | null;
-}>): { recommendations: MeasuredSupplementConsideration[]; citations: SupplementEvidenceCitation[] } {
+  /** The analysis's own biomarker id and the panel's draw date, when the caller has them. */
+  biomarkerId?: string; testDate?: string | null;
+};
+
+function considerationMeasurement(biomarker: ConsiderationInput, direction: "below" | "above", rangeKind: ConsiderationMeasurement["rangeKind"], bound: number): ConsiderationMeasurement {
+  return {
+    biomarkerId: biomarker.biomarkerId ?? stableUuid(`biomarker:${biomarker.canonicalName}:${biomarker.unit}`),
+    canonicalName: biomarker.canonicalName, value: biomarker.value, unit: biomarker.unit, testDate: biomarker.testDate ?? null,
+    direction, rangeKind, bound, verificationState: "needs_human_review",
+  };
+}
+
+export function buildMeasuredSupplementConsiderations(biomarkers: ConsiderationInput[]): {
+  recommendations: MeasuredSupplementConsideration[]; citations: SupplementEvidenceCitation[];
+  /** For each consideration, by id, the measurement that triggered it. */
+  measurements: Record<string, ConsiderationMeasurement>;
+  withheld: WithheldMeasuredConsideration[];
+} {
   const recommendations: MeasuredSupplementConsideration[] = [];
   const citations: SupplementEvidenceCitation[] = [];
+  const measurements: Record<string, ConsiderationMeasurement> = {};
   const used = new Set<string>();
   // iron/2: any iron-panel marker above its printed or functional upper bound withholds the iron
   // consideration for the whole panel. A low marker beside a high one is a contradiction to review,
-  // not a signal to add iron (overload, inflammation and haemolysis all present this way).
-  const ironPanelHigh = biomarkers.some((biomarker) => IRON_PANEL_MARKERS.has(normalizedMarkerName(biomarker.canonicalName))
-    && [biomarker.labMax, biomarker.functionalMax].some((bound) => bound !== null && bound !== undefined && biomarker.value > bound));
+  // not a signal to add iron (overload, inflammation and haemolysis all present this way). The
+  // withholding is recorded with both sides, never silently omitted.
+  const ironPanelHigh = biomarkers.flatMap((biomarker) => {
+    if (!IRON_PANEL_MARKERS.has(normalizedMarkerName(biomarker.canonicalName))) return [];
+    const functional = biomarker.functionalMax ?? null, lab = biomarker.labMax ?? null;
+    if (functional !== null && biomarker.value > functional) return [considerationMeasurement(biomarker, "above", "governed_functional", functional)];
+    if (lab !== null && biomarker.value > lab) return [considerationMeasurement(biomarker, "above", "reporting_laboratory", lab)];
+    return [];
+  });
+  const ironSuggesting: ConsiderationMeasurement[] = [];
   for (const biomarker of biomarkers) {
     const markerName = normalizedMarkerName(biomarker.canonicalName);
     const matched = SUPPLEMENT_CONSIDERATION_RULES.flatMap((rule) => rule.signals.map((signal) => ({ rule, signal })))
@@ -562,7 +617,9 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
     const labTriggered = labBound !== null && labBound !== undefined
       && (signal.direction === "below" ? biomarker.value < labBound : biomarker.value > labBound);
     if ((!functionalTriggered && !labTriggered) || used.has(rule.key)) continue;
-    if (rule.key === "iron" && ironPanelHigh) continue;
+    const trigger = considerationMeasurement(biomarker, signal.direction, functionalTriggered ? "governed_functional" : "reporting_laboratory",
+      (functionalTriggered ? functionalBound : labBound) as number);
+    if (rule.key === "iron" && ironPanelHigh.length > 0) { ironSuggesting.push(trigger); continue; }
     used.add(rule.key);
     const sourceId = stableUuid(`supplement-evidence-source:${rule.key}`);
     // The claim names the actual trigger; the original below-reporting-range claim keeps its id.
@@ -574,8 +631,10 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
       title: rule.title,
       url: rule.url,
     });
+    const recommendationId = stableUuid(`supplement-consideration:${rule.key}:${biomarker.canonicalName}:${biomarker.unit}`);
+    measurements[recommendationId] = trigger;
     recommendations.push({
-      recommendationId: stableUuid(`supplement-consideration:${rule.key}:${biomarker.canonicalName}:${biomarker.unit}`),
+      recommendationId,
       kind: "supplement",
       rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION,
       ruleKey: rule.key,
@@ -595,7 +654,17 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
       citationIds: [claimId],
     });
   }
-  return { recommendations, citations };
+  const iron = SUPPLEMENT_CONSIDERATION_RULES.find((rule) => rule.key === "iron")!;
+  const withheld: WithheldMeasuredConsideration[] = ironSuggesting.length === 0 ? [] : [{
+    rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION, ruleKey: iron.key, ruleVersion: iron.version,
+    reason: "iron_panel_above_range", measurementsSuggesting: ironSuggesting, measurementsContradicting: ironPanelHigh,
+  }];
+  return { recommendations, citations, measurements, withheld };
+}
+/** The considerations as the completed result carries them: with each one's measurement only when the trace is on. */
+export function withConsiderationTrace(output: ReturnType<typeof buildMeasuredSupplementConsiderations>, traceInResult: boolean) {
+  return output.recommendations.map((row) => traceInResult && output.measurements[row.recommendationId]
+    ? { ...row, measurement: output.measurements[row.recommendationId] } : row);
 }
 export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string, panelName = "", context?: LabRangeContext): Biomarker[] {
   return sanitizeMeasuredLabBiomarkers(rows.map((row) => {
@@ -800,6 +869,7 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
     return rows.findIndex((candidate) => `${normalizedMarkerName(candidate.canonicalName)}|${candidate.unit.trim().toLowerCase()}` === key) === index;
   });
   const supplementConsiderations = buildMeasuredSupplementConsiderations(newestMeasurements);
+  const consideredForResult = withConsiderationTrace(supplementConsiderations, CONSIDERATION_TRACE_IN_RESULT);
   const inputSnapshotSha256 = createHash("sha256").update(JSON.stringify({
     biomarkers: currentForSynthesis,
     patientContext: job.patientContext ?? null,
@@ -809,7 +879,8 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
     analysisId, reviewState: "consumer_education", generatedAt,
     summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary}${aiSynthesis.relationshipFindings.length > 0 ? ` Related-marker review: ${aiSynthesis.relationshipFindings.map((finding) => `${finding.summary} Uncertainty: ${finding.uncertainty}`).join(" ")}` : ""} Uncertainty: ${aiSynthesis.uncertainty}`,
     biomarkers: resultBiomarkers,
-    recommendations: supplementConsiderations.recommendations,
+    recommendations: consideredForResult,
+    ...(CONSIDERATION_TRACE_IN_RESULT ? { withheldConsiderations: supplementConsiderations.withheld } : {}),
     priorityActions: aiSynthesis.priorityActions,
     generatedPlan: {
       planId: stableUuid(`generated-plan:${analysisId}`),
@@ -830,7 +901,7 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
         taskId: stableUuid(`generated-plan-task:${analysisId}:${index}`),
         ...task,
       })),
-      supplementRecommendations: supplementConsiderations.recommendations,
+      supplementRecommendations: consideredForResult,
       productSelectionState: "awaiting_governed_catalog_approval",
       safety: {
         medicationOrAllergyReviewRequired: Boolean((job.patientContext?.medications.length ?? 0) + (job.patientContext?.allergies.length ?? 0)),
@@ -859,6 +930,14 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
       },
     },
   };
+  // The full consideration record, withheld ones included, is kept with the job (and deleted with it) whatever the
+  // result carries, so a reviewer can always see why iron was not suggested.
+  await persistArtifact("supplement-considerations", {
+    rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION,
+    considerations: supplementConsiderations.recommendations.map((row) => ({ recommendationId: row.recommendationId, ruleKey: row.ruleKey,
+      ruleVersion: row.ruleVersion, measurement: supplementConsiderations.measurements[row.recommendationId] })),
+    withheld: supplementConsiderations.withheld,
+  });
   await persistArtifact("ai-synthesis", { ...aiSynthesis, referencedBiomarkerIds: aiSynthesis.referencedBiomarkerIds });
   await persistArtifact("result", result);
   return result;
