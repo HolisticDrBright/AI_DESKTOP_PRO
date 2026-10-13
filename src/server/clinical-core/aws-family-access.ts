@@ -34,13 +34,53 @@ export function createAwsFamilyAccessAdapter<Context extends ClinicalRequestCont
       [input.code, input.verifiedEmailSha256])),
     listDelegated: (context) => run(database, context, (tx) => scalar(tx,
       "select clinical_core.list_my_delegated_patient_access() as data", [])),
-    readDelegated: (context, input) => run(database, context, (tx) => scalar(tx,
-      "select clinical_core.get_delegated_patient_records($1,$2) as data",
-      [clinicalUuid(input.relationshipId), input.scope])),
+    readDelegated: (context, input) => run(database, context, async (tx) => {
+      const record = await scalar(tx,
+        "select clinical_core.get_delegated_patient_records($1,$2) as data",
+        [clinicalUuid(input.relationshipId), input.scope]);
+      return input.scope === "protocols_supplements" ? projectApprovedCaregiverProtocol(record) : record;
+    }),
     revoke: (context, input) => run(database, context, (tx) => scalar(tx,
       "select clinical_core.revoke_my_patient_relationship($1,$2) as data",
       [clinicalUuid(input.relationshipId), input.expectedVersion])),
   };
+}
+
+// The legacy database function returns every protocol field. Until the
+// delegated-protocol-records/2 candidate is registered and verified, fail
+// closed at this server boundary: no legacy protocol bytes reach the device.
+export function projectApprovedCaregiverProtocol(record: Record<string, unknown>): Record<string, unknown> {
+  const output = { relationshipId: record.relationshipId, patientDisplayName: record.patientDisplayName,
+    scope: "protocols_supplements", readOnly: true, generatedAt: record.generatedAt,
+    items: [] as Record<string, unknown>[] };
+  const protocol = Array.isArray(record.items) ? record.items[0] : undefined;
+  if (!isObject(protocol) || protocol.kind !== "active_protocol"
+    || protocol.approvalSource !== "clinic_practitioner"
+    || !isDate(protocol.approvedAt) || !isDate(protocol.activatedAt)
+    || !Array.isArray(protocol.items)) return output;
+  const items = protocol.items.filter(isObject).filter((item) => item.kind === "product"
+    && item.sourceProductType === "supplement" && item.practitionerApproved === true
+    && (item.verificationStatus === "label_verified" || item.verificationStatus === "structured_verified"))
+    .map((item) => ({ id: item.id, kind: "product", sourceProductType: "supplement",
+      practitionerApproved: true, verificationStatus: item.verificationStatus,
+      label: scrub(item.label), instructions: scrub(item.instructions),
+      dosageText: scrub(item.dosageText), timingText: scrub(item.timingText) }));
+  output.items = [{ kind: "active_protocol", id: protocol.id,
+    title: "Practitioner-approved supplement instructions", summary: null,
+    approvalSource: "clinic_practitioner", approvedAt: protocol.approvedAt,
+    activatedAt: protocol.activatedAt,
+    heldItems: Number.isSafeInteger(protocol.heldItems) && Number(protocol.heldItems) >= 0
+      && Number(protocol.heldItems) <= 200 ? protocol.heldItems : 0, items }];
+  return output;
+}
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isDate(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+function scrub(value: unknown): string | null {
+  return typeof value === "string" ? value.replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[link not shown]") : null;
 }
 
 async function scalar(tx: ClinicalCoreTransaction, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>> {
