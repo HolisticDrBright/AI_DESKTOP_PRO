@@ -255,6 +255,12 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
+  // Patient notifications (the BLOCKED patient-notifications candidate): refusal tokens only.
+  if (/\b(notification_identity_refused|notice_identity_refused|clinic_contact_refused|notice_item_not_visible)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\btext_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\b(notification_settings_conflict|clinic_contact_conflict|notice_delivery_not_sending|reminder_text_not_sending)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\bnotice_source_unverifiable\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(notification_preferences_invalid|time_zone_invalid|text_phone_invalid|text_consent_wording_unknown|notice_request_invalid|notice_batch_invalid|inbound_text_invalid|inbound_text_reused|reminder_request_invalid|notice_delivery_outcome_invalid|reminder_text_outcome_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\bcare_message_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bcare_message_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_message_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
