@@ -5,8 +5,10 @@ export async function boundedProviderJson(response: Response, limit: number, sig
   if (!Number.isSafeInteger(limit) || limit < 1 || !response.body) throw refuse();
   const rawLength = response.headers.get('content-length');
   const encoding = response.headers.get('content-encoding');
-  const rejectBeforeRead = async () => {
-    try { await response.body?.cancel(); } catch { /* refusal retained */ }
+  const rejectBeforeRead = () => {
+    // Cancellation is best-effort transport cleanup, never an awaited remote
+    // acknowledgement: a provider must not extend the refusal deadline.
+    try { void response.body?.cancel().catch(() => {}); } catch { /* refusal retained */ }
     throw refuse();
   };
   if (signal?.aborted) return rejectBeforeRead();
@@ -55,7 +57,7 @@ export async function boundedProviderJson(response: Response, limit: number, sig
     signal?.removeEventListener('abort', abort);
     if (!completed) {
       // Cancellation failure must not turn a refused body into success.
-      try { if (!signal?.aborted) await reader.cancel(); } catch { /* original refusal retained */ }
+      try { if (!signal?.aborted) void reader.cancel().catch(() => {}); } catch { /* original refusal retained */ }
     }
     try { reader.releaseLock(); } catch { /* pending transport read cannot authorize success */ }
   }

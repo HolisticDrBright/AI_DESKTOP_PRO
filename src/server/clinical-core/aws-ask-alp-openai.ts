@@ -6,6 +6,7 @@ import { ModelVendorAuthorityRefusal } from "./model-vendor-authority";
 import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {KNOWLEDGE_MODEL_BOUNDARY,verifyPresentedKnowledge,assertKnowledgeCitations} from './reviewed-knowledge';
 import { AskAlpError, validateAskAlpResult, type AskAlpGenerationRequest, type AskAlpGenerationResult } from "./aws-ask-alp";
+import { boundedProviderJson } from "./bounded-provider-json";
 
 const secrets = new SecretsManagerClient({});
 const RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -83,8 +84,18 @@ export function parseAskAlpOpenAIResponse(responseValue: unknown, model: string)
   return validateAskAlpResult(parsed, model);
 }
 
-async function apiKey(secretArn: string): Promise<string> {
-  const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }));
+export async function readAskAlpOpenAIResponse(response: Response, signal?: AbortSignal): Promise<unknown> {
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!response.ok || mediaType !== "application/json") {
+    try { void response.body?.cancel().catch(() => {}); } catch { /* refusal retained */ }
+    throw new AskAlpError("provider_unavailable");
+  }
+  try { return await boundedProviderJson(response, MAX_RESPONSE_BYTES, signal); }
+  catch { throw new AskAlpError("provider_unavailable"); }
+}
+
+async function apiKey(secretArn: string, signal: AbortSignal): Promise<string> {
+  const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }), { abortSignal: signal });
   if (typeof response.SecretString !== "string") throw new AskAlpError("provider_unavailable");
   // A withdrawn vendor authority reads as an unavailable provider to the asker; the operator log keeps the reason.
   try { return parseOpenAISecret(response.SecretString); }
@@ -101,19 +112,15 @@ export async function generateAskAlpWithOpenAI(input: { request: AskAlpGeneratio
     const request={...input.request,context:{...input.request.context,reviewedKnowledge}};
     const response = await fetch(RESPONSES_URL, {
       method: "POST", redirect: "manual", signal: controller.signal,
-      headers: { Authorization: `Bearer ${await apiKey(input.secretArn)}`, "content-type": "application/json", accept: "application/json" },
+      headers: { Authorization: `Bearer ${await apiKey(input.secretArn, controller.signal)}`, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(buildAskAlpOpenAIRequest(request, input.model)),
     });
-    if (response.status >= 300 && response.status < 400) throw new AskAlpError("provider_unavailable");
-    const raw = await response.text();
-    if (!response.ok || Buffer.byteLength(raw, "utf8") > MAX_RESPONSE_BYTES
-      || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new AskAlpError("provider_unavailable");
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new AskAlpError("provider_unavailable"); }
+    const parsed = await readAskAlpOpenAIResponse(response, controller.signal);
     const result=parseAskAlpOpenAIResponse(parsed,input.model);
     assertKnowledgeCitations(result.answer,reviewedKnowledge);
     return result;
   } catch (error) {
+    controller.abort();
     if (error instanceof AskAlpError) throw error;
     throw new AskAlpError("provider_unavailable");
   } finally { clearTimeout(timer); }

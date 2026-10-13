@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { boundedProviderJson } from './bounded-provider-json';
 
 function streamed(chunks: Uint8Array[], headers: Record<string, string> = {}) {
@@ -66,5 +66,23 @@ describe('bounded provider JSON', () => {
     const fixture = streamed([bytes('{}')]); const controller = new AbortController(); controller.abort();
     await expect(boundedProviderJson(fixture.response, 20, controller.signal)).rejects.toThrow(/^provider_body_refused$/);
     expect(fixture.observations()).toEqual({ reads: 0, cancelled: true });
+  });
+  it.each(['declaration', 'overrun'] as const)('does not wait for a stalled cancellation after %s refusal', async path => {
+    vi.useFakeTimers();
+    let settleCancellation: (() => void) | undefined;
+    const cancellation = new Promise<void>(resolve => { settleCancellation = resolve; });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(bytes('123456')); },
+      cancel() { cancelled = true; return cancellation; },
+    }, { highWaterMark: 0 });
+    const response = new Response(body, { headers: path === 'declaration' ? { 'content-length': '9999' } : {} });
+    const observed = boundedProviderJson(response, 5).then(() => 'accepted', error => error.message);
+    const boundedObservation = Promise.race([observed, new Promise<string>(resolve => setTimeout(() => resolve('still_pending'), 1))]);
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await boundedObservation).toBe('provider_body_refused');
+      expect(cancelled).toBe(true);
+    } finally { settleCancellation?.(); await observed; vi.useRealTimers(); }
   });
 });
