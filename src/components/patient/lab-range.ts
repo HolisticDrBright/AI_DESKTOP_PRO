@@ -9,11 +9,20 @@ export type ImportedLabRange = {
 
 export type LabRangeStatus = "below" | "within" | "above" | "critical" | "unknown";
 
-export function importedLabStatus(input: ImportedLabRange): {
+/** Where a `sourceStatus` came from. A patient-app import carries the app's (or its AI analyzer's) reading of an
+ * unreviewed result, not a flag the laboratory printed, and is labelled as such. */
+export type SourceStatusOrigin = "laboratory" | "patient_app_unreviewed";
+const SOURCE_WORD: Record<string, string> = { critical: "critical", low: "low", high: "high", normal: "normal", optimal: "optimal" };
+
+export function importedLabStatus(input: ImportedLabRange, origin: SourceStatusOrigin = "laboratory"): {
   status: LabRangeStatus;
   label: string;
   basis: "functional" | "laboratory" | "source" | "none";
 } {
+  const normalizedSource = String(input.sourceStatus ?? "").toLowerCase();
+  const app = origin === "patient_app_unreviewed";
+  // An app flag never sets a status on its own; beside a range it is named for what it is.
+  const appNote = app && SOURCE_WORD[normalizedSource] ? ` · app flag ${SOURCE_WORD[normalizedSource]} (unreviewed)` : "";
   const functional = Number.isFinite(input.functionalMin) && Number.isFinite(input.functionalMax)
     && Number(input.functionalMax) >= Number(input.functionalMin);
   const low = functional ? Number(input.functionalMin) : input.referenceMin;
@@ -21,16 +30,21 @@ export function importedLabStatus(input: ImportedLabRange): {
   const basis = functional ? "functional" : (Number.isFinite(low) || Number.isFinite(high)) ? "laboratory" : "none";
 
   if (Number.isFinite(low) && input.value < Number(low)) {
-    return { status: input.sourceStatus === "critical" ? "critical" : "below", label: functional ? "Below functional range" : "Below lab range", basis };
+    return { status: !app && input.sourceStatus === "critical" ? "critical" : "below", label: (functional ? "Below functional range" : "Below lab range") + appNote, basis };
   }
   if (Number.isFinite(high) && input.value > Number(high)) {
-    return { status: input.sourceStatus === "critical" ? "critical" : "above", label: functional ? "Above functional range" : "Above lab range", basis };
+    return { status: !app && input.sourceStatus === "critical" ? "critical" : "above", label: (functional ? "Above functional range" : "Above lab range") + appNote, basis };
   }
   if (Number.isFinite(low) || Number.isFinite(high)) {
-    return { status: "within", label: functional ? "Within functional range" : "Within lab range", basis };
+    return { status: "within", label: (functional ? "Within functional range" : "Within lab range") + appNote, basis };
   }
 
-  const normalized = String(input.sourceStatus ?? "").toLowerCase();
+  const normalized = normalizedSource;
+  if (app) {
+    return SOURCE_WORD[normalized]
+      ? { status: "unknown", label: `Range not provided · app flag ${SOURCE_WORD[normalized]} (unreviewed, not a laboratory flag)`, basis: "none" }
+      : { status: "unknown", label: "Range unavailable", basis: "none" };
+  }
   if (normalized === "critical") return { status: "critical", label: "Critical source flag", basis: "source" };
   if (normalized === "low") return { status: "below", label: "Low source flag", basis: "source" };
   if (normalized === "high") return { status: "above", label: "High source flag", basis: "source" };

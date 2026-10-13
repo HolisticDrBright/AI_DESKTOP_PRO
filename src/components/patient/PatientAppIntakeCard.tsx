@@ -45,7 +45,8 @@ function LabRangeDisplay({ entry }: { entry: ImportedLab }) {
     functionalMax: entry.functionalMax,
     sourceStatus: entry.sourceStatus,
   };
-  const interpretation = importedLabStatus(range);
+  // Every entry on this card came from the patient app: its status is the app's reading of an unreviewed result.
+  const interpretation = importedLabStatus(range, "patient_app_unreviewed");
   const geometry = rangeGeometry(range);
   const labText = rangeText(entry.referenceMin, entry.referenceMax);
   const functionalText = rangeText(entry.functionalMin, entry.functionalMax);
