@@ -11,13 +11,13 @@ let policy:ReturnType<typeof createOwnedLabAuthorization>['policy']|undefined;
 export async function handler(event:{jobId?:string;pass?:number;fail?:boolean;failureCategory?:string}){
   const env=process.env;
   if(env.LAB_OBJECT_PREFIX!=='personal-labs')throw new Error('owned_lab_namespace_required');
-  // Personal documents are classified only against a signed reviewed range release. The shared worker reads an
-  // unset mode as the synthetic fixture (adult test ranges for anyone), so the entry refuses rather than relying on the template.
-  if(env.LAB_RANGE_MODE!=='reviewed_release')throw new Error('lab_range_release_required');
   // Production activation, or qualification execution (jobs exist only for admitted fixture identities; consent is re-verified per pass).
   const activation=env.PERSONAL_LAB_ACTIVATION==='approved'?'approved':'blocked';
   const qualification=resolveQualificationExecution(env,activation);
   if(!(env.PHI_ALLOWED==='true'&&activation==='approved')&&qualification===undefined)throw new Error('production_not_activated');
+  // Personal documents are classified only against a signed reviewed range release. The shared worker reads an
+  // unset mode as the synthetic fixture (adult test ranges for anyone), so the entry refuses rather than relying on the template.
+  if(env.LAB_RANGE_MODE!=='reviewed_release')throw new Error('lab_range_release_required');
   const adapter=ownedLabAdapterFromEnv(env);
   policy??=createOwnedLabAuthorization(adapter).policy;
   const verify=policy;
