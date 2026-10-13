@@ -79,6 +79,19 @@ describe('a funnel page', () => {
       expect(markup.replaceAll(consultHref, ''), funnel.slug).not.toMatch(/https?:\/\//);
     }
   });
+  it('with the campaign sign-up page configured, its outbound addresses are exactly the consult page and the sign-up page, and it still has no form', () => {
+    const updatesHref = 'https://updates.fictional.example/signup/longevity-program';
+    for (const funnel of [withEverySection(), ...FUNNELS]) {
+      const element = createElement(FunnelPage, { funnel, consultHref, purchase: held, buyHref, updatesHref });
+      const markup = renderToMarkup(element);
+      expect(markup, funnel.slug).not.toMatch(/<(form|input|textarea|select|button|img|script|iframe|video|audio|object|embed)\b/i);
+      expect(new Set([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1])), funnel.slug).toEqual(new Set([consultHref, updatesHref]));
+      expect(markup.replaceAll(consultHref, '').replaceAll(updatesHref, ''), funnel.slug).not.toMatch(/https?:\/\//);
+      expect(renderToText(element), funnel.slug).toContain('Get updates about this program');
+    }
+    const live = renderToMarkup(createElement(FunnelPage, { funnel: longevityProgram, consultHref, purchase: available, buyHref, updatesHref }));
+    expect(new Set([...live.matchAll(/href="([^"]*)"/g)].map(m => m[1]))).toEqual(new Set([consultHref, buyHref, updatesHref]));
+  });
   it('falls back to a same-origin consult path when no public address is configured', () => {
     const markup = renderToMarkup(render(longevityProgram, '/consult/longevity-program'));
     const hrefs = [...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]);

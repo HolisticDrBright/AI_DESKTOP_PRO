@@ -13,12 +13,13 @@ const H2 = 'm-0 text-[22px] font-bold leading-tight text-body';
 const P = 'm-0 mt-3 text-[15px] leading-relaxed text-body';
 const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
-export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string };
+/** `updatesHref`: the campaign service's sign-up page for this program, when one is configured; never a form on this page. */
+export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string; updatesHref?: string | null };
 
-export function FunnelPage({ funnel, consultHref, purchase, buyHref }: FunnelPageProps) {
+export function FunnelPage({ funnel, consultHref, purchase, buyHref, updatesHref = null }: FunnelPageProps) {
   return (
     <article data-testid="funnel-page" data-slug={funnel.slug} data-purchase={purchase.available ? 'available' : purchase.reason} className="w-full">
-      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} purchase={purchase} buyHref={buyHref} />)}
+      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} purchase={purchase} buyHref={buyHref} updatesHref={updatesHref} />)}
       <footer className={`${SECTION} border-t border-line`} data-testid="funnel-footer">
         <p className="m-0 text-[12.5px] leading-relaxed text-subtle">
           {funnel.programLabel} is offered by The Holistic Approach LLC. This page describes a program and offers two choices: to request a consultation, or to buy the program when it is available. It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. No payment details are entered on this page; any purchase is completed on a separate secure checkout page.
@@ -45,7 +46,7 @@ export function PurchaseChoice({ purchase, buyHref, place }: { purchase: Purchas
   );
 }
 
-function Section({ section, consultHref, programLabel, purchase, buyHref }: { section: FunnelSection; consultHref: string; programLabel: string; purchase: PurchaseAvailability; buyHref: string }) {
+function Section({ section, consultHref, programLabel, purchase, buyHref, updatesHref }: { section: FunnelSection; consultHref: string; programLabel: string; purchase: PurchaseAvailability; buyHref: string; updatesHref: string | null }) {
   switch (section.kind) {
     case 'hero':
       return (
@@ -117,6 +118,7 @@ function Section({ section, consultHref, programLabel, purchase, buyHref }: { se
           <h2 className={H2}>{section.heading}</h2>
           <p className={P}>{section.detail}</p>
           <p className="mt-5 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta">{section.buttonLabel}</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="bottom" /></p>
+          {updatesHref ? <p className="mt-4 text-[14px]"><a href={updatesHref} className="text-action underline" data-testid="funnel-updates">Get updates about this program</a></p> : null}
         </section>
       );
   }

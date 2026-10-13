@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { FunnelPage } from "@/components/funnels/FunnelPage";
 import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
+import { leadSignupUrl } from "@/lib/leadSignupUrl";
 import { funnelPageUrl, indexingAllowed, publicSiteOrigin } from "@/lib/publicSite";
 import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
 
@@ -36,5 +37,5 @@ export default async function FunnelRoute({ params }: { params: Promise<{ slug: 
   if (!funnel) notFound();
   const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
   const purchase = await funnelPurchaseAvailability(funnel);
-  return <FunnelPage funnel={funnel} consultHref={consultHref} purchase={purchase} buyHref={`/buy/${funnel.slug}`} />;
+  return <FunnelPage funnel={funnel} consultHref={consultHref} purchase={purchase} buyHref={`/buy/${funnel.slug}`} updatesHref={leadSignupUrl(funnel.slug, process.env.LEAD_SIGNUP_ORIGIN)} />;
 }
