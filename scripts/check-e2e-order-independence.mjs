@@ -17,7 +17,9 @@
  * hiding will surface later as a product bug that is not one.
  *
  * The runtime is `next dev` with the contract fixture, as in CI's live-fixture
- * job; why, and which specs run, is in scripts/e2e-order-config.mjs. Each order
+ * job; why, and which specs run, is in scripts/e2e-order-config.mjs. The
+ * clinical production bundle is still built, with the fixture disabled, so the
+ * battery also proves the bundle a deployment would ship builds. Each order
  * gets a FRESH dev server and a reset fixture backend, so both start from the
  * same state. Outcomes are read from Playwright's JSON report by test identity:
  * a declared skip is reported with its reason and never counted as a pass, a
@@ -26,6 +28,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -33,6 +36,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -157,10 +161,99 @@ function provisionBrowser() {
 }
 
 /**
+ * A build signature over the sources the running server is made of.
+ *
+ * Path + size + mtime rather than content: this runs on every invocation, and
+ * hashing the whole tree would cost more than it saves. It catches every edit
+ * that matters and errs towards rebuilding.
+ */
+function sourceSignature() {
+  const hash = createHash("sha256");
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const st = statSync(full);
+        hash.update(`${full}:${st.size}:${Math.floor(st.mtimeMs)}`);
+      }
+    }
+  };
+  walk("src");
+  for (const file of ["next.config.ts", "package.json", "postcss.config.mjs"]) {
+    if (existsSync(file)) {
+      const st = statSync(file);
+      hash.update(`${file}:${st.size}:${Math.floor(st.mtimeMs)}`);
+    }
+  }
+  hash.update(`edition=${process.env.APP_EDITION}`);
+  hash.update(`live=${process.env.NEXT_PUBLIC_USE_LIVE_API}`);
+  hash.update("e2e-production-build-with-fixture-disabled/1");
+  return hash.digest("hex");
+}
+
+const STAMP = ".next/.e2e-provision.json";
+
+/**
+ * Build the clinical production bundle with the local fixture disabled, then
+ * run the browser battery separately against a development server. A
+ * production-mode server categorically refuses the contract fixture.
+ *
+ * `E2E_REUSE_BUILD=1` skips the check for an operator who knows their build is
+ * current and does not want to wait. Nothing else skips it: a battery that
+ * silently tests a stale bundle is worse than one that takes two minutes.
+ */
+function provisionBuild() {
+  const signature = sourceSignature();
+  const built = existsSync(".next/BUILD_ID");
+  let stamped = null;
+  try {
+    stamped = JSON.parse(readFileSync(STAMP, "utf8")).signature;
+  } catch {
+    stamped = null;
+  }
+
+  if (process.env.E2E_REUSE_BUILD === "1") {
+    if (!built) {
+      configFailure(
+        "E2E_REUSE_BUILD=1 was set, but there is no build in .next to reuse.",
+        "Unset E2E_REUSE_BUILD so this script builds, or run the build yourself first.",
+      );
+    }
+    console.log("[e2e-order] reusing the existing build (E2E_REUSE_BUILD=1)");
+    return;
+  }
+
+  if (built && stamped === signature) {
+    console.log("[e2e-order] the existing build matches these sources");
+    return;
+  }
+
+  console.log(
+    `[e2e-order] building the clinical live bundle (${built ? "sources changed" : "no build present"})`,
+  );
+  try {
+    execFileSync(process.execPath, [NEXT_ENTRY, "build"], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...process.env, CLINICAL_CONTRACT_FIXTURE: "", E2E_DEV_SERVER: "0" },
+    });
+  } catch {
+    configFailure(
+      "the clinical live build failed.",
+      "Fix the build error above, then re-run. The battery cannot prove anything about a bundle that does not exist.",
+    );
+  }
+  writeFileSync(STAMP, JSON.stringify({ signature, builtAt: new Date().toISOString() }, null, 2));
+}
+
+/**
  * The app port must be ours, for the same reason the stub must be.
  *
  * Playwright reuses whatever answers on the port (`reuseExistingServer`, and
- * E2E_ORDER_OWNS_SERVER=1 keeps that true under CI too), so a server left over
+ * E2E_ORDER_OWNED_SERVER=1 keeps that true under CI too), so a server left over
  * from another configuration would be silently reused and the battery would
  * report on a server nobody in this run started.
  */
@@ -275,7 +368,8 @@ function run(label, files) {
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile },
+        // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs).
+        env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1" },
         maxBuffer: 256 * 1024 * 1024,
       },
     );
@@ -437,6 +531,7 @@ if (appliedDefaults.length > 0) {
 console.log(`[e2e-order] battery: ${specs.length} live- specs; ${battery.excluded.length} separately configured specs are not run here and are not counted:`);
 for (const { spec, reason } of battery.excluded) console.log(`    - ${spec}: ${reason}`);
 await assertAppPortFree();
+provisionBuild();
 
 const orders = [["forward order", specs], ["reverse order", [...specs].reverse()]];
 const results = await withStub(async () => {

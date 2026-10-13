@@ -1,5 +1,5 @@
 import { defineConfig } from "@playwright/test";
-import { devServerEnvironment } from "./scripts/e2e-dev-resources.mjs";
+import { devServerEnvironment, reuseExistingE2EServer } from "./scripts/e2e-dev-resources.mjs";
 import { EXPECT_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./e2e/support/budgets";
 
 /**
@@ -75,9 +75,9 @@ export default defineConfig({
     // local development keep their own configuration. Validate before boot.
     ...(DEV_SERVER ? { env: devServerEnvironment() } : {}),
     port: PORT,
-    // The order battery (scripts/check-e2e-order-independence.mjs) starts, probes and owns its server, under CI too;
-    // it refuses to run if anything else already answers on the port.
-    reuseExistingServer: !process.env.CI || process.env.E2E_ORDER_OWNS_SERVER === "1",
+    // The order battery (scripts/check-e2e-order-independence.mjs) starts, probes and owns its server, under CI too
+    // (E2E_ORDER_OWNED_SERVER=1 for its children only); it refuses to run if anything else already answers on the port.
+    reuseExistingServer: reuseExistingE2EServer(),
     timeout: DEV_SERVER ? 180_000 : 60_000,
   },
 });

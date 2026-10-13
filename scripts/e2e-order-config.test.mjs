@@ -17,28 +17,38 @@ test('the battery is the live- set, every other spec is excluded by name with it
   assert.deepEqual(selectOrderBattery([...specs, 'new-feature.spec.ts']).unclassified, ['new-feature.spec.ts']);
 });
 
-test('the environment runs the development server with the fixture, and refuses what would make the battery a different claim', () => {
+test('the environment runs the development server with the fixture, pins the fictional targets and credentials, and refuses anything else', () => {
   const result = orderBatteryEnvironment({}, options);
   assert.ok('env' in result);
   assert.equal(result.env.E2E_DEV_SERVER, '1');
   assert.equal(result.env.CLINICAL_CONTRACT_FIXTURE, '1');
-  assert.equal(result.env.E2E_ORDER_OWNS_SERVER, '1');
+  assert.equal(result.env.E2E_DEV_HEAP_MB, '10240');
   assert.equal(result.env.CLINICAL_SUPABASE_URL, 'http://127.0.0.1:3999');
+  assert.equal(result.env.CLINICAL_SUPABASE_ANON_KEY, 'stub');
   assert.equal(result.env.NODE_ENV, undefined);
-  // An operator's explicit loopback values win.
-  const explicit = orderBatteryEnvironment({ CLINICAL_ORG_ID: 'org-other', CLINICAL_SUPABASE_URL: 'http://localhost:3999' }, options);
-  assert.equal(explicit.env.CLINICAL_ORG_ID, 'org-other');
+  // An explicit value is never silently redirected: a non-fictional one is refused, the documented one accepted.
+  assert.ok('env' in orderBatteryEnvironment({ CLINICAL_ORG_ID: 'org-fixture', CLINICAL_SUPABASE_ANON_KEY: 'stub' }, options));
   for (const [env, pattern] of [
-    [{ NODE_ENV: 'production' }, /NODE_ENV=production/],
-    [{ CLINICAL_CONTRACT_FIXTURE: '0' }, /CLINICAL_CONTRACT_FIXTURE/],
-    [{ E2E_DEV_SERVER: '0' }, /E2E_DEV_SERVER/],
+    [{ NODE_ENV: 'production' }, /development browser server/],
+    [{ CLINICAL_CONTRACT_FIXTURE: '0' }, /development browser server/],
+    [{ E2E_DEV_SERVER: '0' }, /development browser server/],
+    [{ E2E_LIVE: '0' }, /development browser server/],
     [{ APP_EDITION: 'demo' }, /clinical edition/],
-    [{ CLINICAL_SUPABASE_URL: 'https://urcjiehlxoehievobezf.supabase.co' }, /not a loopback/],
-    [{ CLINICAL_SUPABASE_URL: 'http://10.0.0.5:3999' }, /not a loopback/],
+    [{ CLINICAL_SUPABASE_URL: 'https://urcjiehlxoehievobezf.supabase.co' }, /CLINICAL_SUPABASE_URL/],
+    [{ CLINICAL_SUPABASE_URL: 'http://10.0.0.5:3999' }, /CLINICAL_SUPABASE_URL/],
+    [{ CLINICAL_SUPABASE_URL: 'http://localhost:3999' }, /CLINICAL_SUPABASE_URL/],
+    [{ CLINICAL_SUPABASE_ANON_KEY: 'a'.repeat(46) }, /CLINICAL_SUPABASE_ANON_KEY/],
+    [{ CLINICAL_ORG_ID: 'org-other' }, /CLINICAL_ORG_ID/],
+    [{ TRPC_BASE_URL: 'https://example.com/api/trpc' }, /TRPC_BASE_URL/],
   ]) {
     const refused = orderBatteryEnvironment(env, options);
     assert.ok('refusal' in refused, JSON.stringify(env));
     assert.match(refused.refusal, pattern);
+  }
+  for (const stubBase of ['https://example.com', 'http://user:pass@127.0.0.1:3999', 'http://127.0.0.1:3999/path', 'not a url']) {
+    const refused = orderBatteryEnvironment({}, { ...options, stubBase });
+    assert.ok('refusal' in refused, stubBase);
+    assert.match(refused.refusal, /loopback HTTP fixture origin/);
   }
 });
 
@@ -111,6 +121,9 @@ test('the driver runs the development server it configured, never `next start`, 
   const boundary = readFileSync('src/server/runtime/contractFixture.ts', 'utf8');
   assert.match(boundary, /const posture = detectDeploymentPosture\(\);\n  if \(posture\.isDeployed\) \{/);
   assert.match(boundary, /refusal: "deployed_runtime"/);
+  // The production bundle is still built, with the fixture disabled.
+  assert.match(driver, /CLINICAL_CONTRACT_FIXTURE: "", E2E_DEV_SERVER: "0"/);
   const config = readFileSync('playwright.config.ts', 'utf8');
-  assert.match(config, /reuseExistingServer: !process\.env\.CI \|\| process\.env\.E2E_ORDER_OWNS_SERVER === "1"/);
+  assert.match(config, /reuseExistingServer: reuseExistingE2EServer\(\)/);
+  assert.match(driver, /E2E_ORDER_OWNED_SERVER: "1"/);
 });

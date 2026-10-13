@@ -44,33 +44,28 @@ export function selectOrderBattery(files) {
   return { run, excluded, unclassified };
 }
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const POSTURE_REFUSAL = 'the local contract fixture requires a development browser server and cannot run in a production posture.';
 
 /**
- * The environment for the battery's own dev server and for its Playwright children. An explicitly set value wins,
- * except where the battery cannot be what it claims to be: a production NODE_ENV (the fixture is refused there by
- * design), an opted-out fixture flag, or a backend that is not loopback. Each of those is a refusal naming its fix.
+ * The environment for the battery's own processes. Unset values are provisioned; the fixture's targets and
+ * credentials are then PINNED to the fictional local values, and anything else is refused before any network request
+ * or process starts — an operator's value is never silently redirected, and the runner is never pointed at a live
+ * service or handed a real credential (Codex 34330b2c). Each refusal names its fix.
  *
  * @param {Record<string, string | undefined>} env
  * @param {{ stubBase: string, port: number }} options
  * @returns {{ env: Record<string, string>, applied: string[] } | { refusal: string, fix: string }}
  */
 export function orderBatteryEnvironment(env, { stubBase, port }) {
-  if (env.NODE_ENV === 'production') {
-    return {
-      refusal: 'NODE_ENV=production is set. A production-mode server is a deployed runtime, and the contract fixture is refused there by design.',
-      fix: 'Unset NODE_ENV for this battery. Do not weaken the refusal: the battery runs `next dev`, where the fixture is allowed.',
-    };
-  }
-  if (env.CLINICAL_CONTRACT_FIXTURE !== undefined && env.CLINICAL_CONTRACT_FIXTURE !== '' && env.CLINICAL_CONTRACT_FIXTURE !== '1') {
-    return { refusal: `CLINICAL_CONTRACT_FIXTURE is "${env.CLINICAL_CONTRACT_FIXTURE}".`, fix: 'Unset it; this battery sets it to 1 for its own server only.' };
-  }
-  if (env.E2E_DEV_SERVER !== undefined && env.E2E_DEV_SERVER !== '' && env.E2E_DEV_SERVER !== '1') {
-    return { refusal: `E2E_DEV_SERVER is "${env.E2E_DEV_SERVER}".`, fix: 'Unset it; this battery always runs the development server.' };
-  }
   const defaults = {
     APP_EDITION: 'clinical',
     E2E_LIVE: '1',
+    E2E_DEV_SERVER: '1',
+    CLINICAL_CONTRACT_FIXTURE: '1',
+    // The whole battery retains many compiled routes on one development server. The resource helper refuses this
+    // budget without a separate 4 GiB reserve, and it never applies to a production process.
+    E2E_DEV_HEAP_MB: '10240',
     NEXT_PUBLIC_USE_LIVE_API: 'true',
     TRPC_BASE_URL: `${stubBase}/api/trpc`,
     CLINICAL_SUPABASE_URL: stubBase,
@@ -86,16 +81,31 @@ export function orderBatteryEnvironment(env, { stubBase, port }) {
     if (out[key] === undefined || out[key] === '') { out[key] = value; applied.push(key); }
   }
   if (out.APP_EDITION !== 'clinical') {
-    return { refusal: `APP_EDITION is "${out.APP_EDITION}", but this battery only runs against the clinical edition.`, fix: 'Unset APP_EDITION or set APP_EDITION=clinical.' };
+    return { refusal: `APP_EDITION is "${out.APP_EDITION}", but this battery only runs against the clinical edition.`, fix: 'Unset APP_EDITION and re-run, or set APP_EDITION=clinical.' };
   }
-  let host = '';
-  try { host = new URL(out.CLINICAL_SUPABASE_URL).hostname.toLowerCase(); } catch { host = ''; }
-  if (!LOOPBACK.has(host)) {
-    return { refusal: `CLINICAL_SUPABASE_URL (${out.CLINICAL_SUPABASE_URL}) is not a loopback fixture backend.`, fix: `Unset it; the battery owns its fixture backend at ${stubBase}.` };
+  if (out.E2E_LIVE !== '1' || out.E2E_DEV_SERVER !== '1' || out.CLINICAL_CONTRACT_FIXTURE !== '1' || out.NODE_ENV === 'production') {
+    return { refusal: POSTURE_REFUSAL, fix: 'Unset NODE_ENV=production and set E2E_LIVE=1, E2E_DEV_SERVER=1 and CLINICAL_CONTRACT_FIXTURE=1. Do not weaken the refusal: a production-mode server must keep refusing the fixture.' };
   }
-  // Always set for the battery's own processes, never exported beyond them.
-  for (const [key, value] of [['E2E_DEV_SERVER', '1'], ['CLINICAL_CONTRACT_FIXTURE', '1'], ['E2E_ORDER_OWNS_SERVER', '1']]) {
-    if (out[key] !== value) { out[key] = value; applied.push(key); }
+  let stub = null;
+  try { stub = new URL(stubBase); } catch { stub = null; }
+  if (!stub || stub.protocol !== 'http:' || !LOOPBACK.has(stub.hostname) || stub.username || stub.password
+    || stub.pathname !== '/' || stub.search || stub.hash) {
+    return { refusal: 'E2E_STUB_BASE is not a loopback HTTP fixture origin.', fix: 'Use a loopback HTTP fixture origin without credentials or a path.' };
+  }
+  const pinned = {
+    NEXT_PUBLIC_USE_LIVE_API: 'true',
+    TRPC_BASE_URL: `${stubBase}/api/trpc`,
+    CLINICAL_SUPABASE_URL: stubBase,
+    CLINICAL_SUPABASE_ANON_KEY: 'stub',
+    CLINICAL_DEMO_EMAIL: 'demo@local',
+    CLINICAL_DEMO_PASSWORD: 'demo',
+    CLINICAL_ORG_ID: 'org-fixture',
+  };
+  for (const [key, expected] of Object.entries(pinned)) {
+    if (out[key] !== expected) {
+      return { refusal: `${key} does not match this runner's fictional local fixture.`,
+        fix: `Unset ${key} or set it to the documented local fixture value; do not point this runner at a live service.` };
+    }
   }
   return { env: out, applied };
 }

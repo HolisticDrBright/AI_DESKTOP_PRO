@@ -6,6 +6,16 @@ const MIB = 1024 * 1024;
 const RESERVE_MIB = 4096;
 
 /**
+ * The order runner has already checked that its app port was free and then
+ * started that exact server. Only that runner may reuse an existing server in
+ * CI; other CI browser jobs must start their own and refuse a stray listener.
+ * @param {Record<string, string | undefined>} env
+ */
+export function reuseExistingE2EServer(env = process.env) {
+  return env.E2E_ORDER_OWNED_SERVER === '1' || !env.CI;
+}
+
+/**
  * Explicit budget only for the local dev-server browser harness, never deployment.
  * @param {Record<string, string | undefined>} env
  * @param {{totalBytes: number, constrainedBytes: number}} memory
