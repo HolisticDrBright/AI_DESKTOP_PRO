@@ -40,7 +40,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { appendFileSync, createWriteStream } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
