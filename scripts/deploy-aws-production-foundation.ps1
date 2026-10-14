@@ -35,6 +35,16 @@ try {
     --region $Region `
     --template-body file://dist/aws-clinical-core/production-foundation.json | Out-Null
 
+  # A regular foundation deploy must not silently overwrite manually reviewed
+  # Cognito email/MFA/sign-up settings or change app-client claim permissions.
+  # Apply any identity change through its separately reviewed change set first.
+  node scripts/check-aws-production-identity-template-drift.mjs `
+    --profile $Profile `
+    --region $Region `
+    --stack $StackName `
+    --candidate dist/aws-clinical-core/production-foundation.json
+  if ($LASTEXITCODE -ne 0) { throw "Identity template differs from deployed stack; review a change set before deployment." }
+
   aws s3control put-public-access-block `
     --profile $Profile `
     --region $Region `

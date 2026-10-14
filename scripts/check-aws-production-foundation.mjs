@@ -127,11 +127,43 @@ export function validateProductionFoundation(template) {
     assert(errors, pool?.DeletionProtection === "ACTIVE", `${poolName} deletion protection is required`);
     assert(errors, pool?.UserPoolAddOns?.AdvancedSecurityMode === "ENFORCED", `${poolName} threat protection must be enforced`);
     assert(errors, !pool?.Schema?.some((attribute) => attribute.Name === "synthetic_attested"), `${poolName} must not contain a synthetic-only claim`);
+    const schemaNames = Array.isArray(pool?.Schema) ? pool.Schema.map((attribute) => attribute.Name) : [];
+    assert(errors, schemaNames.length > 0 && new Set(schemaNames).size === schemaNames.length,
+      `${poolName} schema attributes must be unique`);
     const productionBound = pool?.Schema?.find((attribute) => attribute.Name === "production_bound");
     assert(errors, productionBound?.Mutable === false && productionBound?.Required === false
       && productionBound?.StringAttributeConstraints?.MinLength === "4"
       && productionBound?.StringAttributeConstraints?.MaxLength === "4",
     `${poolName} must carry an immutable production-bound claim`);
+    const email = pool?.EmailConfiguration;
+    assert(errors, email?.EmailSendingAccount === "DEVELOPER"
+      && email?.SourceArn?.["Fn::Sub"] === "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/ailongevitypro.app"
+      && email?.From === "AI Longevity Pro <info@AILongevityPro.app>"
+      && email?.ReplyToEmailAddress === "info@AILongevityPro.app"
+      && email?.ConfigurationSet === "alp-transactional",
+    `${poolName} must preserve the approved SES sender and configuration set`);
+    assert(errors, pool?.VerificationMessageTemplate?.DefaultEmailOption === "CONFIRM_WITH_CODE"
+      && pool?.VerificationMessageTemplate?.EmailMessage === "Your AI Longevity Pro code is {####}. Enter it in the app to complete the request. Do not share this code.",
+    `${poolName} approved code message must be preserved`);
+    assert(errors, pool?.AdminCreateUserConfig?.AllowAdminCreateUserOnly === false,
+      `${poolName} must preserve approved self-sign-up policy`);
+  }
+  assert(errors, resources.WorkforceUserPool?.Properties?.AdminCreateUserConfig?.InviteMessageTemplate?.EmailMessage
+    === "Your sign-in username is {username} and your temporary password is {####}. Sign in and change the password when prompted.",
+  "WorkforceUserPool approved invitation message must be preserved");
+  for (const [clientName, poolName] of [
+    ["WorkforceUserPoolClient", "WorkforceUserPool"],
+    ["ConsumerUserPoolClient", "ConsumerUserPool"],
+  ]) {
+    const client = resources[clientName]?.Properties;
+    const readable = client?.ReadAttributes;
+    const customNames = new Set(resources[poolName]?.Properties?.Schema?.map((attribute) => `custom:${attribute.Name}`) ?? []);
+    assert(errors, Array.isArray(readable) && !readable.includes("custom:synthetic_attested")
+      && readable.every((attribute) => !attribute.startsWith("custom:") || customNames.has(attribute)),
+    `${clientName} must not read synthetic-only attributes or absent production claims`);
+    assert(errors, Array.isArray(client?.WriteAttributes)
+      && client.WriteAttributes.length === 1 && client.WriteAttributes[0] === "email",
+    `${clientName} may write only the email attribute`);
   }
 
   return errors;

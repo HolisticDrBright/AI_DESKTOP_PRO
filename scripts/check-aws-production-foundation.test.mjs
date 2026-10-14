@@ -8,6 +8,43 @@ const source = JSON.parse(readFileSync(resolve("infra/aws-clinical-core/template
 const production = buildProductionFoundation(source);
 
 assert.deepEqual(validateProductionFoundation(production), []);
+for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
+  assert.equal(production.Resources[poolName].Properties.Schema.filter((attribute) => attribute.Name === "production_bound").length, 1,
+    `${poolName} must declare the production-bound attribute exactly once`);
+  const duplicate = structuredClone(production);
+  duplicate.Resources[poolName].Properties.Schema.push(structuredClone(
+    duplicate.Resources[poolName].Properties.Schema.find((attribute) => attribute.Name === "production_bound"),
+  ));
+  assert(validateProductionFoundation(duplicate).some((error) => error.includes(`${poolName} schema attributes must be unique`)));
+}
+for (const clientName of ["WorkforceUserPoolClient", "ConsumerUserPoolClient"]) {
+  assert(!production.Resources[clientName].Properties.ReadAttributes.includes("custom:synthetic_attested"),
+    `${clientName} must not read a synthetic-only attribute absent from its production pool`);
+  const syntheticRead = structuredClone(production);
+  syntheticRead.Resources[clientName].Properties.ReadAttributes.push("custom:synthetic_attested");
+  assert(validateProductionFoundation(syntheticRead).some((error) => error.includes(`${clientName} must not read synthetic-only attributes`)));
+}
+const approvedCode = "Your AI Longevity Pro code is {####}. Enter it in the app to complete the request. Do not share this code.";
+const approvedInvite = "Your sign-in username is {username} and your temporary password is {####}. Sign in and change the password when prompted.";
+for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
+  const pool = production.Resources[poolName].Properties;
+  assert.equal(pool.EmailConfiguration?.EmailSendingAccount, "DEVELOPER");
+  assert.equal(pool.EmailConfiguration?.SourceArn?.["Fn::Sub"],
+    "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/ailongevitypro.app");
+  assert.equal(pool.EmailConfiguration?.From, "AI Longevity Pro <info@AILongevityPro.app>");
+  assert.equal(pool.EmailConfiguration?.ReplyToEmailAddress, "info@AILongevityPro.app");
+  assert.equal(pool.EmailConfiguration?.ConfigurationSet, "alp-transactional");
+  assert.deepEqual(pool.VerificationMessageTemplate,
+    { DefaultEmailOption: "CONFIRM_WITH_CODE", EmailMessage: approvedCode });
+  assert.equal(pool.AdminCreateUserConfig?.AllowAdminCreateUserOnly, false);
+  const stale = structuredClone(production);
+  stale.Resources[poolName].Properties.VerificationMessageTemplate.EmailMessage = "Outdated {####}";
+  assert(validateProductionFoundation(stale).some((error) => error.includes(`${poolName} approved code message`)));
+}
+assert.equal(production.Resources.WorkforceUserPool.Properties.AdminCreateUserConfig.InviteMessageTemplate.EmailMessage, approvedInvite);
+const staleInvite = structuredClone(production);
+staleInvite.Resources.WorkforceUserPool.Properties.AdminCreateUserConfig.InviteMessageTemplate.EmailMessage = "Outdated {####}";
+assert(validateProductionFoundation(staleInvite).some((error) => error.includes("WorkforceUserPool approved invitation message")));
 
 const enabled = structuredClone(production);
 enabled.Outputs.PhiAllowed.Value = "true";

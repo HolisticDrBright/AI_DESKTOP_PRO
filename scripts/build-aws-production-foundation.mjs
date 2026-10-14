@@ -148,7 +148,8 @@ export function buildProductionFoundation(source) {
 
   for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
     const pool = resources[poolName].Properties;
-    pool.Schema = pool.Schema.filter((attribute) => attribute.Name !== "synthetic_attested");
+    pool.Schema = pool.Schema.filter((attribute) =>
+      attribute.Name !== "synthetic_attested" && attribute.Name !== "production_bound");
     pool.Schema.push({
       Name: "production_bound",
       AttributeDataType: "String",
@@ -157,6 +158,29 @@ export function buildProductionFoundation(source) {
       StringAttributeConstraints: { MinLength: "4", MaxLength: "4" },
     });
     pool.UserPoolAddOns = { AdvancedSecurityMode: "ENFORCED" };
+    pool.EmailConfiguration = {
+      EmailSendingAccount: "DEVELOPER",
+      SourceArn: { "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/ailongevitypro.app" },
+      From: "AI Longevity Pro <info@AILongevityPro.app>",
+      ReplyToEmailAddress: "info@AILongevityPro.app",
+      ConfigurationSet: "alp-transactional",
+    };
+    pool.VerificationMessageTemplate = {
+      DefaultEmailOption: "CONFIRM_WITH_CODE",
+      EmailMessage: "Your AI Longevity Pro code is {####}. Enter it in the app to complete the request. Do not share this code.",
+    };
+    pool.AdminCreateUserConfig = {
+      AllowAdminCreateUserOnly: false,
+      ...(poolName === "WorkforceUserPool" ? {
+        InviteMessageTemplate: {
+          EmailMessage: "Your sign-in username is {username} and your temporary password is {####}. Sign in and change the password when prompted.",
+        },
+      } : {}),
+    };
+  }
+  for (const clientName of ["WorkforceUserPoolClient", "ConsumerUserPoolClient"]) {
+    const client = resources[clientName].Properties;
+    client.ReadAttributes = client.ReadAttributes.filter((attribute) => attribute !== "custom:synthetic_attested");
   }
 
   resources.GuardDutyDetector = {
