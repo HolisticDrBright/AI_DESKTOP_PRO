@@ -8,6 +8,7 @@ import {
   type PurchaseAdmissionDeclaration, type PurchaseAdmissionStatus,
 } from '@/contracts/fullscriptConsumerAction';
 import type { AwsGovernedCatalogReader, CatalogEnvironment, GovernedCatalogProduct, GovernedCommercialOffer } from '../clinical-core/aws-governed-catalog-reader';
+import type { ProgramStepBinding } from '@/contracts/programStepPurchase';
 
 /**
  * Consumer Fullscript product actions and purchase admission: a source-only candidate, disabled.
@@ -29,6 +30,13 @@ import type { AwsGovernedCatalogReader, CatalogEnvironment, GovernedCatalogProdu
  *     for a brand-site offer the release admits, that product's own reviewed product page;
  *  6. issue: the request id has never been used; redemption: the action is this account's, from this
  *     session, unexpired and unused, and it is spent atomically.
+ *
+ * Program steps (program-step-purchase/1, src/server/fullscript/program-step-purchase.ts) are additive: an action
+ * issued for a step records that step's binding, and only the program path can redeem it, after re-reading the
+ * server's current program review. On this plain path, an action carrying a program step does not exist, and a product
+ * one of the person's current programs HOLDS (a lab hold, a conflict, any step not available in its review) is
+ * unavailable — so an older client or a crafted request cannot buy a held step around its hold. Every other product
+ * behaves exactly as before.
  */
 export type ConsumerPurchaseRelease = {
   contract: 'consumer-purchase-release/1';
@@ -64,7 +72,11 @@ export type ProductActionRecord = {
   actionId: string; requestId: string; requestSha256: string; accountId: string; sessionId: string; environment: CatalogEnvironment;
   kind: ProductActionKind; binding: ProductActionBinding; connectionId: string | null; destinationUrl: string; destinationHost: string;
   issuedAt: string; expiresAt: string; redeemedAt: string | null;
+  /** The program step this action was issued for, recorded with it; null for every non-program action. */
+  programStep: ProgramStepBinding | null;
 };
+/** Why the program path refused a step, or null when the current review shows it available. */
+export type ProgramStepCheck = (step: ProgramStepBinding) => Promise<string | null>;
 export type ConsumerPurchasePorts = {
   /** Consumer-audience catalog: null when the product is not openly available to consumers. */
   catalog: { current(productStableId: string): Promise<CurrentCatalogOffer | null> };
@@ -72,6 +84,8 @@ export type ConsumerPurchasePorts = {
   patientLinks: { forAccount(accountId: string): Promise<PatientLink[]> };
   /** Jurisdictions in which the clinic's dispensary practitioner's authority has been verified. */
   practitionerAuthority: { verifiedJurisdictions(organizationId: string): Promise<readonly string[]> };
+  /** Catalog stable ids a current program of this account holds now (from the server's own program review). */
+  programHolds: { heldProductStableIds(accountId: string): Promise<readonly string[]> };
   admissions: { current(accountId: string): Promise<AdmissionRecord | null>; record(record: AdmissionRecord): Promise<void> };
   actions: {
     /** Inserts unless the request id was ever used, by anyone. False means it was. */
@@ -188,6 +202,26 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
     },
 
     async issue(session: ConsumerSession, raw: unknown): Promise<{ ok: true; issued: ProductActionIssued } | Refused> {
+      const result = await issueFor(session, raw, null);
+      // A step refusal comes only from the program path; the plain path never has one.
+      return result.ok || 'refused' in result ? result : refuse('request_invalid');
+    },
+    /** For the program path only, which has already read the step as available in the current review. */
+    async issueForProgramStep(session: ConsumerSession, raw: unknown, step: ProgramStepBinding, check: ProgramStepCheck): Promise<{ ok: true; issued: ProductActionIssued } | Refused | { ok: false; step: string }> {
+      return issueFor(session, raw, { step, check });
+    },
+
+    async redeem(session: ConsumerSession, raw: unknown): Promise<{ ok: true; redeemed: ProductActionRedeemed } | Refused> {
+      const result = await redeemFor(session, raw, null);
+      return result.ok || 'refused' in result ? result : refuse('request_invalid');
+    },
+    /** For the program path only: the action must have been issued for a step, which is re-checked before it is spent. */
+    async redeemForProgramStep(session: ConsumerSession, raw: unknown, check: ProgramStepCheck): Promise<{ ok: true; redeemed: ProductActionRedeemed } | Refused | { ok: false; step: string }> {
+      return redeemFor(session, raw, check);
+    },
+  };
+
+  async function issueFor(session: ConsumerSession, raw: unknown, program: { step: ProgramStepBinding; check: ProgramStepCheck } | null): Promise<{ ok: true; issued: ProductActionIssued } | Refused | { ok: false; step: string }> {
       const r = release();
       if (!r) return refuse('commerce_disabled');
       if (!sessionFresh(session)) return refuse('session_stale');
@@ -196,6 +230,12 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       const request = parsed.data;
       const admitted = await admission(session.accountId, r);
       if (!admitted.ok) return refuse(admitted.refused);
+      if (program) {
+        const reason = await program.check(program.step);
+        if (reason) return { ok: false, step: reason };
+      } else if ((await ports.programHolds.heldProductStableIds(session.accountId)).includes(request.binding.productStableId)) {
+        return refuse('product_unavailable');
+      }
       const offer = await currentOffer(request.binding, r, request.kind);
       if (!offer.ok) return offer;
       const issuedAt = ports.clock.now(), expiresAt = new Date(issuedAt.getTime() + ACTION_LIFETIME_SECONDS * 1000);
@@ -203,14 +243,15 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
         actionId: `act_${randomBytes(24).toString('base64url')}`, requestId: request.requestId, requestSha256: sha256(canonical(request)),
         accountId: session.accountId, sessionId: session.sessionId, environment, kind: request.kind, binding: request.binding, connectionId: admitted.connectionId,
         destinationUrl: offer.destinationUrl, destinationHost: offer.destinationHost, issuedAt: issuedAt.toISOString(), expiresAt: expiresAt.toISOString(), redeemedAt: null,
+        programStep: program ? structuredClone(program.step) : null,
       };
       if (!(await ports.actions.insertIfNew(record))) return refuse('request_replayed');
       return { ok: true, issued: productActionIssued.parse({ contractVersion: FULLSCRIPT_CONSUMER_ACTION, environment, provider: 'fullscript',
         data: { actionId: record.actionId, kind: record.kind, purpose: 'supplement_purchase', binding: record.binding,
           issuedAt: record.issuedAt, expiresAt: record.expiresAt, syntheticOnly: environment === 'synthetic-staging', disclosure: r.disclosure } }) };
-    },
+  }
 
-    async redeem(session: ConsumerSession, raw: unknown): Promise<{ ok: true; redeemed: ProductActionRedeemed } | Refused> {
+  async function redeemFor(session: ConsumerSession, raw: unknown, check: ProgramStepCheck | null): Promise<{ ok: true; redeemed: ProductActionRedeemed } | Refused | { ok: false; step: string }> {
       const r = release();
       if (!r) return refuse('commerce_disabled');
       if (!sessionFresh(session)) return refuse('session_stale');
@@ -222,10 +263,19 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       if (record.sessionId !== session.sessionId) return refuse('session_mismatch');
       if (ports.clock.now().getTime() >= Date.parse(record.expiresAt)) return refuse('action_expired');
       if (record.redeemedAt !== null) return refuse('action_used');
+      // A program step's action exists only on the program path, and a plain action only on the plain one.
+      if ((record.programStep !== null) !== (check !== null)) return refuse('action_not_found');
       // Everything that held at issue is checked again: a link revoked or a product changed since then wins.
       const admitted = await admission(session.accountId, r);
       if (!admitted.ok) return refuse(admitted.refused);
       if (admitted.connectionId !== record.connectionId) return refuse('patient_link_not_found');
+      if (check && record.programStep) {
+        // The step must still be available in the review as it stands now, not as it stood at issue.
+        const reason = await check(record.programStep);
+        if (reason) return { ok: false, step: reason };
+      } else if ((await ports.programHolds.heldProductStableIds(session.accountId)).includes(record.binding.productStableId)) {
+        return refuse('product_unavailable');
+      }
       const offer = await currentOffer(record.binding, r, record.kind);
       if (!offer.ok) return offer;
       if (offer.destinationUrl !== record.destinationUrl || offer.destinationHost !== record.destinationHost) return refuse('destination_unverified');
@@ -233,8 +283,7 @@ export function createConsumerPurchaseCandidate(ports: ConsumerPurchasePorts, en
       return { ok: true, redeemed: productActionRedeemed.parse({ contractVersion: FULLSCRIPT_CONSUMER_ACTION, environment, provider: 'fullscript',
         data: { actionId: record.actionId, kind: record.kind, binding: record.binding, destinationUrl: record.destinationUrl, destinationHost: record.destinationHost, expiresAt: record.expiresAt,
           syntheticOnly: environment === 'synthetic-staging' } }) };
-    },
-  };
+  }
 }
 
 /** What a route would construct. There is no release parameter, on purpose. */

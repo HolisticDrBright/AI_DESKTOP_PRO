@@ -58,6 +58,7 @@ function world(options: { releases?: ConsumerPurchaseRelease[] } = {}) {
     catalog: { current: async id => state.product && state.product.stableId === id ? { product: state.product, offers: state.offers } : null },
     patientLinks: { forAccount: async account => state.links.get(account) ?? [] },
     practitionerAuthority: { verifiedJurisdictions: async org => state.verified.get(org) ?? [] },
+    programHolds: { heldProductStableIds: async () => [] },
     admissions: { current: async account => state.admissions.get(account) ?? null, record: async r => { state.admissions.set(r.accountId, r); } },
     actions: {
       insertIfNew: async r => { if (state.requestIds.has(r.requestId)) return false; state.requestIds.add(r.requestId); state.actions.set(r.actionId, { ...r }); return true; },

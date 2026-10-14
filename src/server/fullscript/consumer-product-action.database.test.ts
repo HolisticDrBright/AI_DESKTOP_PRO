@@ -78,6 +78,7 @@ function candidate() {
     catalog: consumerCatalogFromReader(createAwsGovernedCatalogReader(driver('clinical_core_api'), 'synthetic-staging')),
     patientLinks: { forAccount: async () => [] },
     practitionerAuthority: { verifiedJurisdictions: async org => org === CLINIC ? ['US-TX'] : [] },
+    programHolds: { heldProductStableIds: async () => [] },
     admissions: { current: async a => admissions.get(a) ?? null, record: async r => { admissions.set(r.accountId, r); } },
     actions: {
       insertIfNew: async r => { if (used.has(r.requestId)) return false; used.add(r.requestId); actions.set(r.actionId, { ...r }); return true; },

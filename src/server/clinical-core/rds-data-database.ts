@@ -13,6 +13,7 @@ import {
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
 import { PROGRAM_REFUSAL_REASONS, type ProgramRefusalReason } from "../../contracts/programAssignments";
 import { labAttestationRefusalReason, type LabAttestationRefusal } from "../../contracts/labAttestationReview";
+import { PROGRAM_STEP_REFUSALS } from "../../contracts/programStepPurchase";
 import {retryDatabaseResume} from './rds-resume-retry';
 import { createSingleAttemptRdsClient } from './rds-single-attempt-client';
 
@@ -280,6 +281,10 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   const message = record.message;
   const labAttestation = labAttestationRefusalReason(message);
   if (labAttestation) return new ClinicalCoreDatabaseRejection(LAB_ATTESTATION_CATEGORY[labAttestation], labAttestation);
+  // Program-step purchase refusals (the BLOCKED program-step-purchase candidate), by token only.
+  const programStep = /\b(program_step_[a-z_]+)\b/.exec(message)?.[1];
+  if (programStep && (PROGRAM_STEP_REFUSALS as readonly string[]).includes(programStep)) return new ClinicalCoreDatabaseRejection(
+    programStep === "program_step_refused" ? "identity_refused" : programStep === "program_step_purchase_disabled" ? "operation_refused" : "conflict", programStep);
   if (/\bcare_message_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bcare_message_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_message_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

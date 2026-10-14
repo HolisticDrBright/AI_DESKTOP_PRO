@@ -486,3 +486,23 @@ describe("authenticated synthetic identity API", () => {
     expect(desktopCompatibilityAdapter.execute).not.toHaveBeenCalled();
   });
 });
+
+describe('no unreleased purchase or attestation route is mounted',()=>{
+ test.each([
+  'POST /clinical-core/consumer/fullscript/actions','POST /clinical-core/consumer/fullscript/actions/redeem',
+  'POST /clinical-core/consumer/programs/step-purchase','POST /clinical-core/consumer/programs/step-purchase/redeem',
+ ])('a crafted consumer request to %s finds no route and reaches no adapter, so no destination exists to return',async routeKey=>{
+  const {run,service}=handler();
+  const result=await run(event(routeKey,'consumer',{contract:'program-step-purchase/1',actionId:'act_'+'a'.repeat(32),
+   step:{enrollmentId:PERSON,itemId:'supp-iron'},action:{contract:'fullscript-consumer-action/2'}}));
+  expect(result.statusCode).toBe(404);
+  expect(JSON.parse(String(result.body))).toEqual({error:'route_not_found'});
+  expect(String(result.body)).not.toMatch(/destinationUrl|fullscript\.com|purchaseUrl|orderingLink/);
+  for(const fn of Object.values(service))if(typeof fn==='function'&&'mock' in fn)expect(fn).not.toHaveBeenCalled();
+ });
+ test.each(['POST /clinical-core/workforce/lab-attestations','POST /clinical-core/workforce/lab-attestations/review'])(
+  'the reviewer attestation route %s is not mounted until its registration is reviewed',async routeKey=>{
+  const result=await handler().run(event(routeKey,'workforce',{contract:'lab-attestation-review/1'}));
+  expect(result.statusCode).toBe(404);
+ });
+});
