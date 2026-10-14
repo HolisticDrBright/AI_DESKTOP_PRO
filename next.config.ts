@@ -115,18 +115,6 @@ const FUNNEL_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  /**
-   * The browser harness's development server only (E2E_DEV_SERVER=1; ignored by `next build` and `next start`). By
-   * default `next dev` disposes any route idle for 60 s beyond the 5 most recent and recompiles it on the next visit.
-   * Across a full battery that is a recompile every few seconds, and the dev server's retained heap grows with each one
-   * until Next restarts its own worker at 80 % of the heap limit, dropping whatever requests are in flight (measured
-   * over the battery's own routes without a browser: 292 compiles and 0.6 → 5.8 GiB retained in 10 minutes, then a
-   * restart; with this setting, 63 compiles, about 2.0–2.7 GiB, no restart). Keeping each route compiled once removes
-   * that churn; it changes no route, response, timeout or test.
-   */
-  ...(process.env.E2E_DEV_SERVER === "1"
-    ? { onDemandEntries: { maxInactiveAge: 24 * 60 * 60 * 1000, pagesBufferLength: 10_000 } }
-    : {}),
   // Keep standalone tracing anchored to this repository. Developer machines
   // may have unrelated lockfiles above the checkout; those must not widen the
   // deployment trace or create invalid cross-workspace symlinks.

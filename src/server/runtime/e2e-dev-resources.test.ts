@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -72,29 +72,6 @@ describe('browser-only development resource budget', () => {
 });
 
 /**
- * The browser harness's development server keeps every route compiled once (next.config.ts). Next's default disposes a
- * route idle for 60 s beyond the 5 most recent and recompiles it on the next visit; across a full battery the retained
- * heap grew with every recompile until Next restarted its own worker mid-test. Nothing else is affected: the setting is
- * absent unless E2E_DEV_SERVER=1, and `next build` / `next start` never read it.
- */
-describe('E2E development server keeps compiled routes', () => {
-  afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
-  const load = async (flag: string | undefined) => {
-    vi.resetModules();
-    vi.stubEnv('APP_EDITION', 'clinical');
-    vi.stubEnv('E2E_DEV_SERVER', flag);
-    return (await import('../../../next.config')).default;
-  };
-  it('pins compiled routes only for the E2E development server', async () => {
-    expect((await load('1')).onDemandEntries).toEqual({ maxInactiveAge: 24 * 60 * 60 * 1000, pagesBufferLength: 10_000 });
-  });
-  it('leaves ordinary development and production builds on Next defaults', async () => {
-    expect((await load(undefined)).onDemandEntries).toBeUndefined();
-    expect((await load('0')).onDemandEntries).toBeUndefined();
-  });
-});
-
-/**
  * React's development server renderer (bundled by Next 15.5) records every promise created during a render through an
  * async_hooks hook; across the battery that retained memory until Next restarted its own worker. The harness preload
  * leaves only that hook disabled. Fictional modules stand in for the renderer and for an unrelated library: both create
@@ -128,7 +105,8 @@ const other = require(${JSON.stringify(join(dir, 'other-library.js'))});
     expect(Object.keys(JSON.parse(notes[0])).sort()).toEqual(['check', 'event', 'pid']);
   });
   it('changes nothing outside the harness development server', () => {
-    for (const extra of [{ NODE_ENV: 'production' }, { E2E_DEV_SERVER: '0' }, { NEXT_PRIVATE_WORKER: '0' }]) {
+    const outside: Record<string, string>[] = [{ NODE_ENV: 'production' }, { E2E_DEV_SERVER: '0' }, { NEXT_PRIVATE_WORKER: '0' }];
+    for (const extra of outside) {
       const result = run(extra);
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout).renderer).toBeGreaterThan(0);
