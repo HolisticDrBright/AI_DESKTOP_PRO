@@ -122,6 +122,9 @@ test('the driver runs the development server it configured, never `next start`, 
   assert.match(driver, /spawn\(process\.execPath, \[PLAYWRIGHT_ENTRY, "test"/);
   assert.doesNotMatch(driver, /execFileSync\(\s*process\.execPath,\s*\[PLAYWRIGHT_ENTRY/);
   assert.match(driver, /withStub\(async \(\) => withApp\(heap, async \(\) => \{/);
+  // The server runs in its own process group and the whole group is stopped: no worker is orphaned on the port.
+  assert.match(driver, /env: \{ \.\.\.process\.env, \.\.\.heap \}, detached: true \}/);
+  assert.match(driver, /process\.kill\(-owned\.pid, "SIGKILL"\)/);
   assert.doesNotMatch(driver, /NEXT_ENTRY, "start"/);
   assert.doesNotMatch(driver, /NODE_ENV\s*[:=]/);
   assert.match(driver, /orderBatteryEnvironment\(/);

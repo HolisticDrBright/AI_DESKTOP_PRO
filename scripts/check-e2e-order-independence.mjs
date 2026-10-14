@@ -485,7 +485,9 @@ async function warmApp() {
 async function withApp(heap, run) {
   const owned = spawn(
     process.execPath, [NEXT_ENTRY, "dev", "-p", String(APP_PORT)],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap } },
+    // Its own process group: `next dev` runs the server in a worker process, and killing only the CLI orphans that
+    // worker on the port, so the next run refuses ("something is already listening") for a reason it did not cause.
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap }, detached: true },
   );
   const appLog = [];
   const serverLog = createWriteStream(join(EVIDENCE, "dev-server.log"), { flags: "a" });
@@ -501,7 +503,9 @@ async function withApp(heap, run) {
   let died = null;
   owned.on("exit", (code, signal) => { if (died === null) died = { code, signal }; });
 
-  const killOwned = () => { try { owned.kill("SIGKILL"); } catch { /* already gone */ } };
+  const killOwned = () => {
+    try { process.kill(-owned.pid, "SIGKILL"); } catch { try { owned.kill("SIGKILL"); } catch { /* already gone */ } }
+  };
   const onSignal = (sig) => { killOwned(); process.exit(sig === "SIGINT" ? 130 : 143); };
   process.once("SIGINT", () => onSignal("SIGINT"));
   process.once("SIGTERM", () => onSignal("SIGTERM"));
