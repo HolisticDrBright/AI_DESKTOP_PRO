@@ -5,6 +5,9 @@ import {
   passwordSignIn,
   readAuthSession,
   refreshSession,
+  registerPractitioner,
+  confirmPractitionerEmail,
+  resendPractitionerCode,
   signOutSession,
 } from "./auth.server";
 
@@ -22,6 +25,46 @@ beforeEach(() => {
 });
 
 describe("Desktop-owned practitioner auth", () => {
+  test("self-sign-up sends only email, with no clinic or production-bound claims", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ UserConfirmed: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    await registerPractitioner("new@example.test", "NotARealPassword!123");
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.headers?.["x-amz-target"]).toBe("AWSCognitoIdentityProviderService.SignUp");
+    expect(JSON.parse(init?.body)).toEqual({
+      ClientId: "clientexample123",
+      Username: "new@example.test",
+      Password: "NotARealPassword!123",
+      UserAttributes: [{ Name: "email", Value: "new@example.test" }],
+    });
+  });
+
+  test("existing email is indistinguishable from accepted registration to the caller", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ __type: "UsernameExistsException" }, 400)));
+    await expect(registerPractitioner("existing@example.test", "NotARealPassword!123")).resolves.toBeUndefined();
+  });
+
+  test("confirmation and resend use the workforce client without issuing a session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({}));
+    vi.stubGlobal("fetch", fetchMock);
+    await confirmPractitionerEmail("new@example.test", "123456");
+    await resendPractitionerCode("new@example.test");
+    expect(fetchMock.mock.calls.map((call) => call[1]?.headers?.["x-amz-target"])).toEqual([
+      "AWSCognitoIdentityProviderService.ConfirmSignUp",
+      "AWSCognitoIdentityProviderService.ResendConfirmationCode",
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body)).toEqual({
+      ClientId: "clientexample123", Username: "new@example.test", ConfirmationCode: "123456",
+    });
+  });
+
+  test("resend gives no account-state clue for missing or already confirmed accounts", async () => {
+    for (const code of ["UserNotFoundException", "InvalidParameterException"]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ __type: code }, 400)));
+      await expect(resendPractitionerCode("unavailable@example.test")).resolves.toBeUndefined();
+    }
+  });
+
   test("password sign-in uses the Cognito workforce flow without returning tokens to the browser", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       AuthenticationResult: {

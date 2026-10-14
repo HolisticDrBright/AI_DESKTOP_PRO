@@ -1,0 +1,24 @@
+# Workforce self-sign-up: identity-binding blocker (14 October 2026)
+
+Owner decision: practitioners may create their own account, but a clinic must approve membership before patient access. This is **not yet a working production path**. The registration screen, email-code adapter and route are source-only and compile-time disabled by `WORKFORCE_SELF_SIGNUP_READY = false`. The route refuses before contacting Cognito. No live account was created in this work.
+
+Brandon chose both requesting to join an existing clinic and requesting a new clinic for review. He chose to leave direct Cognito self-sign-up enabled while this application journey is withheld. The two public production app clients were separately narrowed to email-only writes by a reviewed CloudFormation change set; the secret-backed consumer registration client was not changed. This narrows claim injection but does not populate the immutable claims needed for workforce clinical access.
+
+## Observed conflict
+
+Read-only `DescribeUserPool` in account `173535830222`, region `us-east-2`, workforce pool `us-east-2_AZMa5gxSZ`: `custom:person_id`, `custom:organization_id` and `custom:production_bound` are all immutable. The production clinical API checks all three JWT claims and currently pins the organization to the pilot clinic. The two public app clients initially had no explicit `ReadAttributes` or `WriteAttributes`. Brandon approved email-only writes, and the reviewed production foundation change set applied that exact property to both public clients. Readback confirmed `WriteAttributes = ["email"]` and unchanged other client settings. This removes applicant write access to authorization attributes, but does not solve the immutable-claim binding problem.
+
+A normal public `SignUp` must not take those clinical claims from an applicant. But if it creates the user with only an email, the immutable fields cannot later be populated when a clinic approves membership. Therefore it would create a verified account that cannot enter the current clinical API. Clinic membership alone does not repair a missing immutable token claim. Do not switch the registration release constant or deploy the source-only route as an open path.
+
+AWS documents both that an immutable attribute can be set at sign-up and that a self-service app client must not allow an applicant to write authorization attributes: [attribute-based access control](https://docs.aws.amazon.com/cognito/latest/developerguide/attributes-for-access-control.html). AWS also says custom-attribute schema properties cannot be changed after creation: [working with user attributes](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html).
+
+## Required design and acceptance before opening registration
+
+1. Select a reviewed identity model. For a multi-clinic Desktop product, the preferred direction is to derive person and selected organization from the clinical identity/membership database on every authorized request, rather than permanently pin an applicant's clinic in an immutable Cognito attribute. Preserve the current pilot boundary until a migration and negative tests prove the successor. A separate pre-clinical application pool with administrator-created workforce identity after approval is another option, but changes the applicant journey and needs owner review.
+2. Preserve the email-only write scope on both public production clients and review any other client separately before using it for this workflow. Do not expose `person_id`, `organization_id` or `production_bound` to the applicant. Recheck the live client settings and CloudFormation drift before each deployment.
+3. Define how a practitioner requests a named clinic or creates a new practice; make the clinic administrator's approval an audited, revocable action. Email verification and account creation must never imply approval.
+4. Test a fictional applicant through sign-up, code confirmation and mandatory MFA. Before approval, every patient, program, message, export and clinic endpoint must refuse. After one clinic approves, access must be only to that clinic. Removal, cross-clinic requests, stale tokens, replay, different devices and duplicate email attempts must refuse or converge correctly.
+5. Add shared abuse controls at the public edge. The source route's bounded body, same-origin check and per-process throttle are useful defenses, but not a distributed rate limit or bot protection.
+6. Re-run the production foundation identity drift review and deploy only a reviewed change set. Keep PHI and production activation blocked. Observe the actual SES confirmation and invitation messages with fictional identities before patient use.
+
+Source tests for the blocked route and Cognito request shape are local evidence only. They do not qualify a production identity model, hosted email, membership approval, or clinical access.

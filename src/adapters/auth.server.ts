@@ -124,8 +124,16 @@ async function cognitoRequest<T>(operation: string, body: Record<string, unknown
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { __type?: string; code?: string };
     const code = String(data.__type ?? data.code ?? "").split("#").pop() ?? "";
-    if (["NotAuthorizedException", "UserNotFoundException", "CodeMismatchException", "ExpiredCodeException"].includes(code)) {
+    if (["NotAuthorizedException", "UserNotFoundException", "UserNotConfirmedException", "CodeMismatchException", "ExpiredCodeException"].includes(code)) {
       throw new AdapterError("unauthenticated", "Sign-in or verification failed. Check your details and try again.");
+    }
+    if (code === "UsernameExistsException") {
+      // Only the public registration route consumes this distinction; its
+      // response is deliberately identical to a newly created account.
+      throw new AdapterError("conflict", "Registration could not be completed.", code);
+    }
+    if (operation === "ResendConfirmationCode" && code === "InvalidParameterException") {
+      throw new AdapterError("conflict", "Registration code could not be resent.", "ResendNotAllowed");
     }
     if (["TooManyRequestsException", "LimitExceededException"].includes(code)) {
       throw new AdapterError("unavailable", "Too many attempts. Wait a moment and try again.");
@@ -148,6 +156,47 @@ function tokensFrom(result: CognitoAuthenticationResult | undefined, refreshToke
     expiresAt: Date.now() + (result.ExpiresIn ?? 900) * 1000,
     email,
   };
+}
+
+/** Account creation is identity-only. It never creates a clinic membership. */
+export async function registerPractitioner(email: string, password: string): Promise<void> {
+  const { clientId } = cognitoConfig();
+  try {
+    await cognitoRequest("SignUp", {
+      ClientId: clientId,
+      Username: email,
+      Password: password,
+      UserAttributes: [{ Name: "email", Value: email }],
+    });
+  } catch (error) {
+    // Never tell a public caller whether the email already has an account.
+    if (error instanceof AdapterError && error.detail === "UsernameExistsException") return;
+    throw error;
+  }
+}
+
+export async function confirmPractitionerEmail(email: string, code: string): Promise<void> {
+  const { clientId } = cognitoConfig();
+  await cognitoRequest("ConfirmSignUp", {
+    ClientId: clientId,
+    Username: email,
+    ConfirmationCode: code,
+  });
+}
+
+export async function resendPractitionerCode(email: string): Promise<void> {
+  const { clientId } = cognitoConfig();
+  try {
+    await cognitoRequest("ResendConfirmationCode", {
+      ClientId: clientId,
+      Username: email,
+    });
+  } catch (error) {
+    // Unknown or already-confirmed accounts receive the same public response.
+    if (error instanceof AdapterError &&
+      (error.code === "unauthenticated" || error.detail === "ResendNotAllowed")) return;
+    throw error;
+  }
 }
 
 export async function passwordSignIn(email: string, password: string): Promise<AuthTokens | MfaChallenge | MfaSetupChallenge> {

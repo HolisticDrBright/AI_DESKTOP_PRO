@@ -6,6 +6,7 @@ import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
 import { localReturnPath } from "@/lib/local-return-path";
 import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
+import { WORKFORCE_SELF_SIGNUP_READY } from "@/server/clinical-core/workforce-self-signup-release";
 
 /**
  * Email/password sign-in form (live mode). Credentials go only to the
@@ -260,6 +261,10 @@ export function LoginForm() {
           </button>
         )}
       </div>
+      {WORKFORCE_SELF_SIGNUP_READY ? <p className="mb-0 mt-3 text-[12px] text-subtle">
+        New practitioner? <Link href="/register" className="font-semibold text-action hover:underline">Create an account</Link>.
+        A clinic administrator must approve membership before patient access.
+      </p> : null}
     </Card>
   );
 }
