@@ -207,17 +207,28 @@ export function testTimeline(report) {
   return rows.sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
 }
 
-/** The development server's own memory samples (scripts/e2e-dev-memory-probe.mjs) from its retained log. */
+/**
+ * The development server's own memory samples (scripts/e2e-dev-memory-probe.mjs) from its retained log. A window's
+ * event-loop delay and major-collection pauses are carried when the probe reported them; `heapAfterMajorGcMiB`
+ * approximates the retained heap, which `heapUsedMiB` alone cannot separate from uncollected garbage.
+ */
 export function memorySamples(log) {
   const out = [];
+  const mib = (bytes) => (typeof bytes === 'number' ? Math.round(bytes / 1048576) : null);
   for (const line of String(log).split('\n')) {
     const at = line.indexOf('{"check":"e2e_next_dev_memory"');
     if (at < 0) continue;
-    const stamp = line.slice(0, at).trim().replace(/^\[|\]$/g, '');
+    const stamp = /^\[([^\]]+)\]/.exec(line.slice(0, at).trim())?.[1] ?? null;
     try {
       const sample = JSON.parse(line.slice(at));
-      out.push({ at: stamp || null, event: sample.event, pid: sample.pid, heapUsedMiB: Math.round(sample.heapUsedBytes / 1048576),
-        heapLimitMiB: Math.round(sample.heapLimitBytes / 1048576), rssMiB: Math.round(sample.rssBytes / 1048576) });
+      out.push({
+        at: stamp, event: sample.event, pid: sample.pid, heapUsedMiB: mib(sample.heapUsedBytes),
+        heapLimitMiB: mib(sample.heapLimitBytes), rssMiB: mib(sample.rssBytes),
+        ...(typeof sample.eventLoopDelayMaxMs === 'number' ? {
+          eventLoopDelayMaxMs: sample.eventLoopDelayMaxMs, gcMajorCount: sample.gcMajorCount,
+          gcMajorPauseMaxMs: sample.gcMajorPauseMaxMs, heapAfterMajorGcMiB: mib(sample.heapAfterMajorGcBytes),
+        } : {}),
+      });
     } catch { /* a truncated line is not a sample */ }
   }
   return out;

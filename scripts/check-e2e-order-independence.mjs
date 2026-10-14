@@ -386,9 +386,11 @@ function playwright(files, reportFile) {
       // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs).
       env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1" },
     });
+    // Echoed as it arrives so a long order's progress (and the moment a test fails) is visible in the runner's own log,
+    // and kept for the failure path below.
     const chunks = [];
-    child.stdout.on("data", (b) => chunks.push(b));
-    child.stderr.on("data", (b) => chunks.push(b));
+    child.stdout.on("data", (b) => { chunks.push(b); process.stdout.write(b); });
+    child.stderr.on("data", (b) => { chunks.push(b); process.stderr.write(b); });
     child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
   });
 }

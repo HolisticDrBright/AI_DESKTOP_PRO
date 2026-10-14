@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -65,5 +65,28 @@ describe('browser-only development resource budget', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
+  });
+});
+
+/**
+ * The browser harness's development server keeps every route compiled once (next.config.ts). Next's default disposes a
+ * route idle for 60 s beyond the 5 most recent and recompiles it on the next visit; across a full battery the retained
+ * heap grew with every recompile until Next restarted its own worker mid-test. Nothing else is affected: the setting is
+ * absent unless E2E_DEV_SERVER=1, and `next build` / `next start` never read it.
+ */
+describe('E2E development server keeps compiled routes', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
+  const load = async (flag: string | undefined) => {
+    vi.resetModules();
+    vi.stubEnv('APP_EDITION', 'clinical');
+    vi.stubEnv('E2E_DEV_SERVER', flag);
+    return (await import('../../../next.config')).default;
+  };
+  it('pins compiled routes only for the E2E development server', async () => {
+    expect((await load('1')).onDemandEntries).toEqual({ maxInactiveAge: 24 * 60 * 60 * 1000, pagesBufferLength: 10_000 });
+  });
+  it('leaves ordinary development and production builds on Next defaults', async () => {
+    expect((await load(undefined)).onDemandEntries).toBeUndefined();
+    expect((await load('0')).onDemandEntries).toBeUndefined();
   });
 });

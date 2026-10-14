@@ -153,8 +153,13 @@ test('the timeline and memory samples are read from the report and the retained 
     '[2026-10-14T00:00:01.000Z] [forward order] ○ Compiling /login ...',
     '[2026-10-14T00:00:31.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":1048576000,"heapLimitBytes":9663676416,"rssBytes":2097152000}',
     '[2026-10-14T00:00:32.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample"',
+    '[2026-10-14T00:01:01.000Z] [reverse order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":2097152000,"heapLimitBytes":9663676416,"rssBytes":3145728000,"eventLoopDelayMaxMs":20125,"gcMajorCount":2,"gcMajorPauseMaxMs":18400,"gcMajorPauseTotalMs":19000,"heapAfterMajorGcBytes":1572864000}',
   ].join('\n');
-  assert.deepEqual(memorySamples(log), [{ at: '2026-10-14T00:00:31.000Z] [forward order', event: 'sample', pid: 7, heapUsedMiB: 1000, heapLimitMiB: 9216, rssMiB: 2000 }]);
+  assert.deepEqual(memorySamples(log), [
+    { at: '2026-10-14T00:00:31.000Z', event: 'sample', pid: 7, heapUsedMiB: 1000, heapLimitMiB: 9216, rssMiB: 2000 },
+    { at: '2026-10-14T00:01:01.000Z', event: 'sample', pid: 7, heapUsedMiB: 2000, heapLimitMiB: 9216, rssMiB: 3000,
+      eventLoopDelayMaxMs: 20125, gcMajorCount: 2, gcMajorPauseMaxMs: 18400, heapAfterMajorGcMiB: 1500 },
+  ]);
 });
 
 // The mechanism the repair removes, reproduced without Next: a server that logs every request to a pipe its parent
