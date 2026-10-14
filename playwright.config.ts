@@ -78,6 +78,8 @@ export default defineConfig({
     // local development keep their own configuration. Validate before boot.
     ...(DEV_SERVER ? { env: devServerEnvironment() } : {}),
     port: PORT,
+    // The order battery (scripts/check-e2e-order-independence.mjs) starts, probes and owns its server, under CI too
+    // (E2E_ORDER_OWNED_SERVER=1 for its children only); it refuses to run if anything else already answers on the port.
     reuseExistingServer: reuseExistingE2EServer(),
     timeout: DEV_SERVER ? 180_000 : 60_000,
   },

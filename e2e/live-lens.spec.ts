@@ -358,3 +358,40 @@ test("steps 12–14: fixture AI is explicit (never silent production), injection
   await expect(page.getByTestId("composition-conflicts")).toBeVisible();
   await expect(page.getByTestId("composition-conflicts")).toContainText("No position is hidden");
 });
+
+/**
+ * Honest state (follow-up 2026-10-13). A run's completion notice must wait for its own readback: while the evaluation
+ * is still being read back the panel is loading, and a readback that fails never claims the run completed. The
+ * readback is held and refused here by intercepting the browser's own GET — the fixture backend is untouched.
+ * Fails before: the notice was set from the POST reply, before the readback was even requested.
+ */
+test("honest state: completion is claimed only after the evaluation reads back, and a failed readback never claims it", async ({ page }) => {
+  await page.goto(LENS_ENCOUNTER);
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId("lens-core")).toBeVisible();
+  const readback = /\/api\/live\/lens\/evaluation\?/;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let heldReads = 0;
+  await page.route(readback, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    heldReads += 1;
+    await held;
+    await route.continue();
+  });
+  await page.getByTestId("run-evaluation").click();
+  await expect.poll(() => heldReads).toBeGreaterThan(0);
+  await expect(page.getByTestId("lens-notice")).toHaveCount(0);
+  release();
+  await expect(page.getByTestId("lens-notice")).toContainText("Evaluation complete");
+  await expect(page.getByTestId("lens-core")).toBeVisible();
+  await page.unroute(readback);
+
+  await page.route(readback, (route) => route.request().method() === "GET"
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Lens service unavailable." }) })
+    : route.continue());
+  await page.getByTestId("run-evaluation").click();
+  await expect(page.getByTestId("lens-error")).toContainText("The evaluation ran, but reading it back failed");
+  await expect(page.getByTestId("lens-notice")).toHaveCount(0);
+  await page.unroute(readback);
+});

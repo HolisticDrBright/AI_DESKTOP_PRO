@@ -237,8 +237,17 @@ export function LensPanel({
     };
   }, []);
 
+  // Only the newest read applies its result and ends the loading state: an older read that settles later (a paradigm
+  // change, a run's readback) must not overwrite a newer one or report "loaded" while the newer one is still pending.
+  const loadSeq = useRef(0);
   const loadEvaluation = useCallback(
-    async (p: string, expected?: { evaluationId: string; status: "complete" | "blocked" }): Promise<boolean> => {
+    async (p: string, expected?: { evaluationId: string; status: "complete" | "blocked" }): Promise<
+      | { status: "loaded"; evaluation: Evaluation | null }
+      | { status: "failed"; message: string }
+      | { status: "unconfirmed" }
+      | { status: "superseded" }
+    > => {
+      const seq = ++loadSeq.current;
       setLoadingEval(true);
       setError(null);
       try {
@@ -246,24 +255,30 @@ export function LensPanel({
           signal: AbortSignal.timeout(30_000),
         });
         if (!res.ok) {
-          setError(await readError(res));
+          const message = await readError(res);
+          if (seq !== loadSeq.current) return { status: "superseded" };
+          setError(message);
           setEvaluation(null);
-          return false;
+          return { status: "failed", message };
         }
         const json = (await res.json()) as { data: Evaluation | null };
+        if (seq !== loadSeq.current) return { status: "superseded" };
+        // A run's readback must show that run's own evaluation; an older or different result cannot confirm it.
         if (expected && (json.data?.evaluationId !== expected.evaluationId || json.data.status !== expected.status)) {
           setError("The evaluation was saved, but its latest result could not be confirmed for display. Refresh the page to try again.");
           setEvaluation(null);
-          return false;
+          return { status: "unconfirmed" };
         }
         setEvaluation(json.data);
-        return true;
+        return { status: "loaded", evaluation: json.data };
       } catch {
-        setError("The lens service is unreachable right now.");
+        if (seq !== loadSeq.current) return { status: "superseded" };
+        const message = "The lens service is unreachable right now.";
+        setError(message);
         setEvaluation(null);
-        return false;
+        return { status: "failed", message };
       } finally {
-        setLoadingEval(false);
+        if (seq === loadSeq.current) setLoadingEval(false);
       }
     },
     [encounterId],
@@ -294,7 +309,15 @@ export function LensPanel({
         setEvaluation(null);
         return;
       }
-      if (!await loadEvaluation(paradigm, { evaluationId: json.data.evaluationId, status: json.data.status })) return;
+      // The run is claimed only once its own result reads back. A readback that fails, shows another result, or is
+      // overtaken by a newer read leaves no completion notice: the screen must not say "complete" over a panel still
+      // loading, empty, or showing something else.
+      const readback = await loadEvaluation(paradigm, { evaluationId: json.data.evaluationId, status: json.data.status });
+      if (readback.status === "failed") {
+        setError(`The evaluation ran, but reading it back failed (${readback.message}). Refresh to see it.`);
+        return;
+      }
+      if (readback.status !== "loaded") return;
       setNotice(
         json.data.status === "blocked"
           ? `Evaluation blocked by ${json.data.blockedRules ?? 0} safety rule(s) — output withheld for review.`
@@ -527,7 +550,7 @@ export function LensPanel({
       )}
 
       {error && (
-        <p role="alert" className="m-0 mt-2 rounded-lg bg-critical-tint px-3 py-[6px] text-[12px] font-semibold text-critical">
+        <p role="alert" className="m-0 mt-2 rounded-lg bg-critical-tint px-3 py-[6px] text-[12px] font-semibold text-critical" data-testid="lens-error">
           {error}
         </p>
       )}

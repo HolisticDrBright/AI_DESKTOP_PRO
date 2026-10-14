@@ -22,6 +22,8 @@ export async function runBoundedChild(executable, args, options = {}) {
 
   const collect = (chunk) => {
     if (limitExceeded) return;
+    // Optional progress echo (the order runner streams Playwright's list output into its own log).
+    options.onData?.(chunk);
     bytes += chunk.length;
     if (bytes > maxBytes) {
       limitExceeded = true;

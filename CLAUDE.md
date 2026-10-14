@@ -85,24 +85,58 @@ These are not style preferences. Each has a test that fails if it is broken.
 It runs in ONE process and must pass in **any spec order**:
 
 ```bash
-APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build
-
-APP_EDITION=clinical E2E_LIVE=1 \
-  TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
-  CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
-  CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo \
-  CLINICAL_ORG_ID=org-fixture \
-  npm run test:e2e:order    # forward + reverse, must match
-
+PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npm run test:e2e:order   # forward + reverse
 npm run check:stub-reset    # every mutable stub binding is reset
 ```
 
-**Run it with that whole environment or not at all.** A bare
-`npm run test:e2e:order` reports `0 passed, 216 skipped` and exits non-zero —
-every live spec is gated on `E2E_LIVE`. `APP_EDITION` is needed twice: once for
-the build, and again for the Playwright web server, which starts its own
-`next start` and refuses to guess an edition. Set `PW_CHROMIUM_PATH` where a
-Chromium is pre-installed rather than downloaded.
+The runner provisions everything else and owns its fixture backend and servers.
+The battery is **every spec**, in one Playwright process per order, each order
+on a **fresh `next dev` server with `CLINICAL_CONTRACT_FIXTURE=1`** and the
+loopback fixture backend reset between them — the runtime CI's live-fixture job
+uses. **Playwright sorts the files it collects**, so a reversed file list is not
+a reversed run: numbered aliases (`scripts/e2e-ordered-specs.mjs`) force each
+order and `--list` proves it before any browser starts. It cannot run under `next start`: production
+mode is a deployed runtime, and the contract fixture is refused there by design
+(`src/server/runtime/contractFixture.ts`). **Do not weaken that refusal to get
+browser coverage.** The runner observes the posture before any spec runs (a
+signed-out `/today` renders only when the fixture is allowed) and stops with
+one line if it was refused. Fixture targets and credentials are pinned to the
+fictional local values; anything else is refused, never redirected.
+
+**Playwright must run as an asynchronous child.** The runner owns the dev
+server's stdout and stderr pipes, and Next puts its stdio into blocking mode.
+A synchronous child (`execFileSync`) stops the runner draining them, so once the
+pipe fills the server blocks mid-write and answers nothing — the long-run
+`/login` timeout and the lens readback stuck on "Loading evaluation…". A test
+in `scripts/e2e-order-config.test.mjs` holds the driver to this.
+
+**The whole app is compiled before any spec and kept compiled.** The runner
+requests every `page` and `route` entry under `src/app` 24 at a time
+(`precompileApp`; 293 entries, about 13 compilations), and the harness's dev
+server keeps them (`next.config.ts`, `onDemandEntries`, only when
+`E2E_DEV_SERVER=1`). Next's default disposes idle routes and recompiles them;
+across the battery that grew the worker heap until Next restarted its own
+worker at 80 % of the limit, mid-test. Kept without the precompile, each first
+compile carries every entry and a test waits on it. The harness preload
+(`scripts/e2e-dev-preload.mjs`, the only `--import`: `next dev` keeps one value
+per Node option for its worker) also leaves React's development async-debug
+hook off in that server; it recorded every promise of every render. A worker
+restart fails the battery. Do not "fix"
+a stall by splitting specs into fresh processes, raising timeouts or raising
+the heap: find the mechanism in the evidence directory first.
+
+Outcomes come from Playwright's JSON report by test identity: both orders must
+pass the **same** tests; a skip the spec declared is listed with its reason and
+never counted as a pass; a test a failed hook never ran is a failure ("did not
+run"). Specs that need a posture of their own are listed in
+`SEPARATELY_CONFIGURED_SPECS` (`scripts/e2e-order-config.mjs`) with their CI
+job; a new spec must be `live-*` or be listed there, or the runner refuses.
+
+Evidence goes to `e2e-order-evidence/<run>/` (or `E2E_ORDER_EVIDENCE`): the
+stamped server log with memory samples, a 15 s latency canary, each order's
+report and timeline, and `summary.json`. Set `E2E_DEV_HEAP_MB` (2048–12288,
+with 4096 MiB to spare) alone — never a heap in `NODE_OPTIONS` as well — or
+leave it unset for the 10 GiB default. The same command works with `CI=1`.
 
 Per-spec commands are for debugging only. A battery that passes only when each
 suite runs alone has stopped testing what one suite leaves for the next — which
@@ -132,3 +166,4 @@ Every spec calls `resetBackend()` in `beforeAll`. If you add mutable state to
 | `docs/claude-core-release-overnight-2026-10-13.md` | Core release overnight: the adopted lab plan held under education-only Core, consumer offers bound to the current label and one destination with the offer coverage audit, the lab-derived supplement candidate behind its OFF gate, the disabled bound purchase action and purchase admission, the evidence per package, and the ordered Codex hand-back |
 | `docs/claude-core-purchase-clinical-followup-2026-10-13.md` | Core purchase and clinical follow-up: brand-site offers bound per product, OTC licensure, shared-destination refusal, Takesumi accounting and the non-supplement hold, the recorded iron veto and consideration trace (off in results), the lab candidate as the Plan's one composer, the delegate view held, release prerequisites and the ordered Codex hand-back |
 | `docs/claude-core-safety-release-preflight-2026-10-13.md` | Core safety and release preflight: program supplement steps held against saved labs for clinician review, unreviewed lab provenance (the patient-app intake card names an app flag, never a laboratory flag), the entitlement and account-switch audit, the Core disclosure drafts for Brandon and counsel, the single-build preflight manifest and unfilled device worksheet, blocked candidates and the ordered Codex hand-back |
+| `docs/claude-browser-acceptance-runner-2026-10-13.md` | The order battery's runtime: why `next start` refuses the contract fixture (correctly), the runner that froze its own `next dev` server (a synchronous Playwright child left Next's blocking stdout undrained) and the repair, posture observation, identity-based accounting, the evidence directory, and the LensPanel honest-state fix |

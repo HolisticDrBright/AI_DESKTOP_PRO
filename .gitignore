@@ -66,3 +66,4 @@ next-env.d.ts
 infra/aws-clinical-core/qualification-parameters/*.filled.json
 # Reproducible local AST graph; the shared project map remains in the vault.
 /graphify-out/
+/e2e-order-evidence/
