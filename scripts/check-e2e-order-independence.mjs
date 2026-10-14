@@ -21,6 +21,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { connect } from "node:net";
 import {
   existsSync,
   openSync,
@@ -107,7 +108,7 @@ function provisionEnv() {
     // The whole one-process battery retains many compiled routes. The
     // existing resource helper refuses this budget on a machine without a
     // separate 4 GiB OS/browser reserve; it never applies to production.
-    E2E_DEV_HEAP_MB: "10240",
+    E2E_DEV_HEAP_MB: "12288",
     NEXT_PUBLIC_USE_LIVE_API: "true",
     TRPC_BASE_URL: `${STUB_BASE}/api/trpc`,
     CLINICAL_SUPABASE_URL: STUB_BASE,
@@ -300,11 +301,24 @@ function provisionBuild() {
  * over from a demo-edition build would be silently reused and the battery
  * would report on a bundle nobody in this run produced.
  */
+function appPortListening() {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port: APP_PORT });
+    let settled = false;
+    const finish = (listening) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(1500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
 async function assertAppPortFree() {
-  const reachable = await fetch(`http://127.0.0.1:${APP_PORT}/api/health`)
-    .then(() => true)
-    .catch(() => false);
-  if (reachable) {
+  if (await appPortListening()) {
     configFailure(
       `something is already listening on port ${APP_PORT}, and Playwright would reuse it.`,
       `Stop it and re-run, or set E2E_PORT to a free port.`,
@@ -396,6 +410,16 @@ async function withStub(run) {
       console.error(readFileSync(STUB_LOG, "utf8").slice(-4000));
     }
     killOwned();
+  }
+}
+
+async function resetOwnedStub() {
+  const response = await fetch(`${STUB_BASE}/__control/reset-all`, {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new Error(`The owned fictional backend refused its between-pass reset (${response.status}).`);
   }
 }
 
@@ -513,7 +537,11 @@ async function warmApp() {
 async function withApp(run, devEnv) {
   const owned = spawn(
     process.execPath, [NEXT_ENTRY, "dev", "-p", String(APP_PORT)],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...devEnv } },
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...devEnv },
+      detached: process.platform !== "win32",
+    },
   );
   const appLog = [];
   const push = (buf) => { appLog.push(String(buf)); if (appLog.length > 200) appLog.shift(); };
@@ -522,7 +550,20 @@ async function withApp(run, devEnv) {
   let died = null;
   owned.on("exit", (code, signal) => { if (died === null) died = { code, signal }; });
 
-  const killOwned = () => { try { owned.kill("SIGKILL"); } catch { /* already gone */ } };
+  const killOwned = () => {
+    if (!owned.pid) return;
+    try {
+      if (process.platform === "win32") {
+        // Terminate only this runner's spawned Next tree, including its route
+        // worker. Killing the launcher alone leaves a listener on APP_PORT.
+        execFileSync("taskkill", ["/PID", String(owned.pid), "/T", "/F"], { stdio: "ignore" });
+      } else {
+        process.kill(-owned.pid, "SIGKILL");
+      }
+    } catch {
+      try { owned.kill("SIGKILL"); } catch { /* already gone */ }
+    }
+  };
   const onSignal = (sig) => { killOwned(); process.exit(sig === "SIGINT" ? 130 : 143); };
   process.once("SIGINT", () => onSignal("SIGINT"));
   process.once("SIGTERM", () => onSignal("SIGTERM"));
@@ -535,14 +576,18 @@ async function withApp(run, devEnv) {
         .then((r) => r.ok).catch(() => false);
     }
     if (!ready) {
-      console.error(`[e2e-order] FAIL — next dev never became ready on ${APP_PORT}. Its last output:`);
-      console.error(appLog.join(""));
-      process.exit(1);
+      throw new Error(`[e2e-order] Next dev never became ready on ${APP_PORT}. Its last output:\n${appLog.join("")}`);
     }
     await warmApp();
     return await run();
   } finally {
     killOwned();
+    for (let attempt = 0; attempt < 30 && await appPortListening(); attempt += 1) {
+      await sleep(250);
+    }
+    if (await appPortListening()) {
+      throw new Error(`Owned Next server still listens on ${APP_PORT} after termination; refusing to reuse it.`);
+    }
   }
 }
 
@@ -576,13 +621,17 @@ try {
   generated = createOrderedAliases("e2e", [...forwardPlan, ...reversePlan]);
   proveCollectedOrder(forwardPlan);
   proveCollectedOrder(reversePlan);
-  ({ forward, reverse } = await withStub(async () =>
-    withApp(async () => {
-      const first = await run("forward order", forwardPlan.map((item) => item.alias));
-      const second = await run("reverse order", reversePlan.map((item) => item.alias));
-      return { forward: first, reverse: second };
-    }, devServerEnv),
-  ));
+  ({ forward, reverse } = await withStub(async () => {
+    const first = await withApp(
+      () => run("forward order", forwardPlan.map((item) => item.alias)), devServerEnv,
+    );
+    await resetOwnedStub();
+    console.log("[e2e-order] fictional backend reset; starting a fresh browser server for reverse order");
+    const second = await withApp(
+      () => run("reverse order", reversePlan.map((item) => item.alias)), devServerEnv,
+    );
+    return { forward: first, reverse: second };
+  }));
 } finally {
   cleanupGenerated();
 }
