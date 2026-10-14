@@ -14,11 +14,20 @@ const MAX_REQUEST_BODY = 384 * 1024;
 const MAX_NOTE_CONTENT = 256 * 1024;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
-/** GET ?noteId= → authoritative note detail (composer load + recovery). */
+/** GET ?noteId= → authoritative note detail; ?encounterId=&saveRequestId= → scoped save receipt. */
 export async function GET(req: NextRequest) {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {
+    const saveRequestId = req.nextUrl.searchParams.get("saveRequestId");
+    if (saveRequestId !== null) {
+      const encounterId = req.nextUrl.searchParams.get("encounterId");
+      if (!encounterId || !UUID.test(encounterId) || !UUID.test(saveRequestId) || req.nextUrl.searchParams.has("noteId")) {
+        throw new AdapterError("invalid", "A valid save request and encounter are required.");
+      }
+      const session = await getRequestSession();
+      return encountersLive.getSaveReceipt(encounterId, saveRequestId, session.token, session.orgId);
+    }
     const noteId = req.nextUrl.searchParams.get("noteId");
     if (!noteId || !UUID.test(noteId)) throw new AdapterError("invalid", "A valid note is required.");
     const session = await getRequestSession();
@@ -45,10 +54,12 @@ export async function POST(req: NextRequest) {
     const noteType = typeof body.noteType === "string" ? body.noteType : "";
     const expectedVersion = Number(body.expectedVersion);
     const noteId = typeof body.noteId === "string" && body.noteId ? body.noteId : undefined;
+    const requestId = typeof body.requestId === "string" && body.requestId ? body.requestId : undefined;
     const saveKind = body.saveKind === "manual" ? "manual" : "autosave";
 
     if (!UUID.test(encounterId)) throw new AdapterError("invalid", "A valid encounter is required.");
     if (noteId && !UUID.test(noteId)) throw new AdapterError("invalid", "A valid note is required.");
+    if (requestId && !UUID.test(requestId)) throw new AdapterError("invalid", "A valid save request is required.");
     if (!NOTE_TYPES.includes(noteType)) throw new AdapterError("invalid", "Choose a valid note type.");
     if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
       throw new AdapterError("invalid", "A valid version is required.");
@@ -109,6 +120,7 @@ export async function POST(req: NextRequest) {
         noteId,
         saveKind,
         provenance,
+        requestId,
       },
       session.token,
       session.orgId,

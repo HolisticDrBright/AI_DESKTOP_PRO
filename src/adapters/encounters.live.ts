@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 import { resolveOrgId } from "./config";
 import { getClinicalAccessToken } from "./session.server";
 import { clinicalRpc } from "./aws-clinical-data.server";
+import { AdapterError } from "./errors";
 
 /**
  * Desktop-owned EMR namespace (server-only): encounters + clinical notes.
@@ -259,16 +260,21 @@ export const encountersLive = {
       noteId?: string;
       saveKind: "autosave" | "manual";
       provenance: ProvenanceRef[];
+      requestId?: string;
     },
     sessionToken?: string | null,
     orgId?: string | null,
   ): Promise<{ noteId: string; version: number; savedAt: string }> {
     const token = await getClinicalAccessToken(sessionToken);
+    const settled = process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED === "true";
+    if (settled && !input.requestId && !input.noteId) {
+      throw new AdapterError("invalid", "Update the Desktop app before creating a new clinical note.");
+    }
     const result = await clinicalRpc<{
       note_id: string;
       version: number;
       saved_at: string;
-    }>("save_note_draft", {
+    }>(settled && input.requestId ? "save_note_draft_idempotent" : "save_note_draft", {
       _organization_id: resolveOrgId(orgId),
       _encounter_id: input.encounterId,
       _note_type: input.noteType,
@@ -277,11 +283,40 @@ export const encountersLive = {
       _note_id: input.noteId ?? null,
       _save_kind: input.saveKind,
       _provenance: input.provenance,
+      ...(settled && input.requestId ? { _request_id: input.requestId } : {}),
     }, token);
     return {
       noteId: result.note_id,
       version: result.version,
       savedAt: result.saved_at,
+    };
+  },
+
+  async getSaveReceipt(
+    encounterId: string,
+    requestId: string,
+    sessionToken?: string | null,
+    orgId?: string | null,
+  ): Promise<{ state: "unconfirmed" | "saved"; noteId?: string; version?: number; savedAt?: string }> {
+    if (process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED !== "true") {
+      throw new AdapterError("unavailable", "Note-save reconciliation is not enabled on this deployment.");
+    }
+    const token = await getClinicalAccessToken(sessionToken);
+    const result = await clinicalRpc<{
+      state: "unconfirmed" | "saved";
+      note_id?: string;
+      version?: number;
+      saved_at?: string;
+    }>("get_note_save_receipt", {
+      _organization_id: resolveOrgId(orgId),
+      _encounter_id: encounterId,
+      _request_id: requestId,
+    }, token);
+    return {
+      state: result.state,
+      ...(result.state === "saved"
+        ? { noteId: result.note_id, version: result.version, savedAt: result.saved_at }
+        : {}),
     };
   },
 

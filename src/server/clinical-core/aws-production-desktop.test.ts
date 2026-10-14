@@ -865,6 +865,44 @@ describe("AWS production Desktop adapter", () => {
     }]));
   });
 
+  it("keeps the blocked receipt functions off and binds the exact request when enabled", async () => {
+    const requestId = "25252525-2525-4252-8252-252525252525";
+    const args = {
+      _organization_id: ORG, _encounter_id: ENCOUNTER, _note_type: "soap",
+      _content: { S: "Fictional history" }, _expected_version: 0, _note_id: null,
+      _save_kind: "manual", _provenance: [], _request_id: requestId,
+    };
+    const blocked = harness({});
+    await expect(blocked.adapter.execute(context, {
+      kind: "rpc", functionName: "save_note_draft_idempotent", args,
+    })).rejects.toThrow();
+    expect(blocked.calls.some(call => call.sql.includes("save_note_draft_idempotent"))).toBe(false);
+
+    process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED = "true";
+    try {
+      const save = harness({ note_id: NOTE, version: 1, saved_at: "2026-10-14T21:00:00Z" });
+      await expect(save.adapter.execute(context, {
+        kind: "rpc", functionName: "save_note_draft_idempotent", args,
+      })).resolves.toMatchObject({ note_id: NOTE, version: 1 });
+      expect(save.calls[1]?.sql).toContain("clinical_core.save_note_draft_idempotent");
+      expect(save.calls[1]?.values[8]).toEqual({ kind: "uuid", value: requestId });
+
+      const receipt = harness({ state: "saved", note_id: NOTE, version: 1 });
+      await expect(receipt.adapter.execute(context, {
+        kind: "rpc", functionName: "get_note_save_receipt",
+        args: { _organization_id: ORG, _encounter_id: ENCOUNTER, _request_id: requestId },
+      })).resolves.toMatchObject({ state: "saved", note_id: NOTE, version: 1 });
+      expect(receipt.calls[1]?.sql).toContain("clinical_core.get_note_save_receipt");
+      expect(receipt.calls[1]?.values).toEqual([
+        { kind: "uuid", value: ORG },
+        { kind: "uuid", value: ENCOUNTER },
+        { kind: "uuid", value: requestId },
+      ]);
+    } finally {
+      delete process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED;
+    }
+  });
+
   it("moves a note through review, idempotent signing, addendum, and error functions", async () => {
     const ready = harness({});
     await expect(ready.adapter.execute(context, {

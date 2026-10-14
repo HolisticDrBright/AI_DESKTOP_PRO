@@ -6,6 +6,7 @@ const ORG_ID = "10000000-0000-4000-8000-000000000001";
 const PATIENT_ID = "20000000-0000-4000-8000-000000000001";
 const ENCOUNTER_ID = "30000000-0000-4000-8000-000000000001";
 const NOTE_ID = "40000000-0000-4000-8000-000000000001";
+const SAVE_REQUEST_ID = "50000000-0000-4000-8000-000000000001";
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -19,6 +20,7 @@ function requestBody(fetchMock: ReturnType<typeof vi.fn>, index = 0) {
 }
 
 beforeEach(() => {
+  delete process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED;
   process.env.CLINICAL_CONTRACT_FIXTURE = "1";
   process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
@@ -26,6 +28,35 @@ beforeEach(() => {
 });
 
 describe("encountersLive Desktop AWS clinical boundary", () => {
+  test("uses the blocked receipt RPC only when explicitly enabled and binds its request identity", async () => {
+    process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED = "true";
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(response({ note_id: NOTE_ID, version: 1, saved_at: "2026-10-14T21:00:00Z" }))
+        .mockResolvedValueOnce(response({ state: "saved", note_id: NOTE_ID, version: 1, saved_at: "2026-10-14T21:00:00Z" }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(encountersLive.saveNote({
+        encounterId: ENCOUNTER_ID, noteType: "soap", content: { S: "Fictional" },
+        expectedVersion: 0, saveKind: "manual", provenance: [], requestId: SAVE_REQUEST_ID,
+      }, TOKEN, ORG_ID)).resolves.toEqual({ noteId: NOTE_ID, version: 1, savedAt: "2026-10-14T21:00:00Z" });
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/rpc/save_note_draft_idempotent");
+      expect(requestBody(fetchMock)._request_id).toBe(SAVE_REQUEST_ID);
+      await expect(encountersLive.getSaveReceipt(ENCOUNTER_ID, SAVE_REQUEST_ID, TOKEN, ORG_ID))
+        .resolves.toEqual({ state: "saved", noteId: NOTE_ID, version: 1, savedAt: "2026-10-14T21:00:00Z" });
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/rpc/get_note_save_receipt");
+      expect(requestBody(fetchMock, 1)).toEqual({
+        _organization_id: ORG_ID, _encounter_id: ENCOUNTER_ID, _request_id: SAVE_REQUEST_ID,
+      });
+      await expect(encountersLive.saveNote({
+        encounterId: ENCOUNTER_ID, noteType: "soap", content: { S: "Fictional" },
+        expectedVersion: 0, saveKind: "manual", provenance: [],
+      }, TOKEN, ORG_ID)).rejects.toThrow("Update the Desktop app");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED;
+    }
+  });
+
   test("starts and transitions an encounter through the audited database state machine", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(ENCOUNTER_ID))

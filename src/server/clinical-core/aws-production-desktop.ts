@@ -154,6 +154,8 @@ const CORE_RPCS = new Set([
   "start_encounter",
   "set_encounter_status",
   "save_note_draft",
+  "save_note_draft_idempotent",
+  "get_note_save_receipt",
   "mark_note_ready",
   "sign_note",
   "add_note_addendum",
@@ -583,20 +585,39 @@ async function executeCoreRpc(
     ]);
     return null;
   }
-  if (name === "save_note_draft") {
+  if (name === "save_note_draft" || name === "save_note_draft_idempotent") {
+    const settled = name === "save_note_draft_idempotent";
+    if (settled && process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED !== "true") throw invalid();
     exactKeys(args, [
       "_organization_id", "_encounter_id", "_note_type", "_content", "_expected_version",
-      "_note_id", "_save_kind", "_provenance",
+      "_note_id", "_save_kind", "_provenance", ...(settled ? ["_request_id"] : []),
     ]);
     if (args._organization_id !== context.organizationId) throw invalid();
     const noteId = optionalUuid(args._note_id);
     const row = first(await tx.query<{ data: unknown }>(
-      "select clinical_core.save_note_draft($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb) as data",
+      settled
+        ? "select clinical_core.save_note_draft_idempotent($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9) as data"
+        : "select clinical_core.save_note_draft($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb) as data",
       [
         clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._encounter_id)),
         requiredString(args._note_type, 32), JSON.stringify(boundedNoteContent(args._content)),
         boundedInteger(args._expected_version, 0, 1_000_000), noteId ? clinicalUuid(noteId) : null,
         requiredString(args._save_kind, 16), JSON.stringify(boundedProvenance(args._provenance)),
+        ...(settled ? [clinicalUuid(requiredUuid(args._request_id))] : []),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_note_save_receipt") {
+    if (process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED !== "true") throw invalid();
+    exactKeys(args, ["_organization_id", "_encounter_id", "_request_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_note_save_receipt($1,$2,$3) as data",
+      [
+        clinicalUuid(context.organizationId),
+        clinicalUuid(requiredUuid(args._encounter_id)),
+        clinicalUuid(requiredUuid(args._request_id)),
       ],
     ));
     return decodeJson(row.data);

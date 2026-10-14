@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, FileSignature, Printer } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ReasonDialog } from "./ReasonDialog";
+import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 /**
  * Clinical note composer (Phase 2 slice 1). Manual authoring, autosave with
@@ -90,6 +91,56 @@ interface NoteDetail {
   provenance: ProvenanceRef[];
 }
 
+interface SaveAttempt {
+  requestId: string;
+  editRevision: number;
+  noteId: string | null;
+  expectedVersion: number;
+  content: Record<string, string>;
+  provenance: ProvenanceRef[];
+  saveKind: "autosave" | "manual";
+}
+
+const SAVE_DEADLINE_MS = 12_000;
+const SETTLEMENT_DEADLINE_MS = 8_000;
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+function validSaveResult(
+  value: { noteId?: string; version?: number; savedAt?: string },
+): value is { noteId: string; version: number; savedAt: string } {
+  return Boolean(value.noteId && UUID.test(value.noteId)
+    && Number.isInteger(value.version) && (value.version ?? 0) > 0
+    && value.savedAt && Number.isFinite(Date.parse(value.savedAt)));
+}
+
+/** The deadline covers both response headers and the body, not just fetch(). */
+async function boundedJson<T>(url: string, init: RequestInit = {}, deadlineMs = SETTLEMENT_DEADLINE_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal, cache: "no-store" });
+    const body = await response.json() as T;
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sameContent(a: Record<string, string>, b: Record<string, string>) {
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+  return keys.every(key => (a[key] ?? "") === (b[key] ?? ""));
+}
+
+function sameProvenance(a: ProvenanceRef[], b: ProvenanceRef[]) {
+  if (a.length !== b.length) return false;
+  const canonical = (item: ProvenanceRef) => JSON.stringify([
+    item.sectionKey, item.refType, item.refId ?? null, item.label,
+  ]);
+  const left = a.map(canonical).sort();
+  const right = b.map(canonical).sort();
+  return left.every((item, index) => item === right[index]);
+}
+
 async function readError(res: Response): Promise<{ code: string; message: string }> {
   const json = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };
   return {
@@ -128,6 +179,10 @@ export function NoteComposer({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [checkingSave, setCheckingSave] = useState(false);
+  const [receiptAvailable, setReceiptAvailable] = useState(false);
+  const [sessionInvalid, setSessionInvalid] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<NoteDetail | null>(null);
   const [signature, setSignature] = useState<NoteDetail["signature"]>(null);
@@ -146,11 +201,61 @@ export function NoteComposer({
   const [provLabel, setProvLabel] = useState("");
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlight = useRef(false);
+  const uncertainAttempt = useRef<SaveAttempt | null>(null);
+  const followupAutosave = useRef(false);
+  const editRevision = useRef(0);
+  const lifecycleEpoch = useRef(0);
+  const mounted = useRef(true);
   const latest = useRef({ content, provenance, serverVersion, noteId: noteIdState, dirty });
   latest.current = { content, provenance, serverVersion, noteId: noteIdState, dirty };
 
   const sections = SECTION_SETS[noteType];
-  const editable = encounterOpen && (status === "draft" || status === "ready_for_review") && !conflict;
+  const editable = encounterOpen && !sessionInvalid && !busy
+    && (status === "draft" || status === "ready_for_review") && !conflict;
+
+  useEffect(() => {
+    mounted.current = true;
+    const invalidate = () => {
+      lifecycleEpoch.current += 1;
+      if (timer.current) clearTimeout(timer.current);
+      uncertainAttempt.current = null;
+      followupAutosave.current = false;
+      editRevision.current += 1;
+      latest.current = { content: {}, provenance: [], serverVersion: 0, noteId: null, dirty: false };
+      setSessionInvalid(true);
+      setLoading(false);
+      setLoadError(null);
+      setContent({});
+      setProvenance([]);
+      setNoteIdState(null);
+      setStatus("draft");
+      setServerVersion(0);
+      setSavedAt(null);
+      setStatusReason(null);
+      setSignature(null);
+      setAddenda([]);
+      setDirty(false);
+      setSaving(false);
+      setCheckingSave(false);
+      setUnconfirmed(false);
+      setReceiptAvailable(false);
+      setBusy(false);
+      setSignOpen(false);
+      setErrorOpen(false);
+      setNotice(null);
+      setConflict(null);
+      setSaveError("Your sign-in or organization changed. Reopen this note under the current session.");
+    };
+    const stop = onWorkforceSessionChange(invalidate);
+    return () => {
+      mounted.current = false;
+      lifecycleEpoch.current += 1;
+      if (timer.current) clearTimeout(timer.current);
+      followupAutosave.current = false;
+      stop();
+    };
+  }, []);
 
   const applyDetail = useCallback((d: NoteDetail) => {
     setNoteIdState(d.note.noteId);
@@ -168,6 +273,7 @@ export function NoteComposer({
   // Initial load / post-refresh recovery: the server's copy is authoritative.
   useEffect(() => {
     let alive = true;
+    const epoch = lifecycleEpoch.current;
     if (!initialNoteId) {
       setLoading(false);
       return;
@@ -179,12 +285,12 @@ export function NoteComposer({
         return res.json() as Promise<{ data: NoteDetail }>;
       })
       .then((json) => {
-        if (!alive) return;
+        if (!alive || lifecycleEpoch.current !== epoch) return;
         applyDetail(json.data);
         setLoading(false);
       })
       .catch((e: Error) => {
-        if (!alive) return;
+        if (!alive || lifecycleEpoch.current !== epoch) return;
         setLoadError(e.message);
         setLoading(false);
       });
@@ -193,76 +299,179 @@ export function NoteComposer({
     };
   }, [initialNoteId, applyDetail]);
 
-  const doSave = useCallback(
-    async (
-      saveKind: "autosave" | "manual",
-      options?: { expectedVersion?: number },
-    ) => {
-      const snap = {
-        ...latest.current,
-        serverVersion: options?.expectedVersion ?? latest.current.serverVersion,
-      };
-      setSaving(true);
-      setSaveError(null);
-      try {
-        const res = await fetch("/api/live/emr/note", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            encounterId,
-            noteType,
-            content: snap.content,
-            expectedVersion: snap.serverVersion,
-            noteId: snap.noteId ?? undefined,
-            saveKind,
-            provenance: snap.provenance,
-          }),
-        });
-        if (res.status === 409) {
-          // The authoritative copy moved on — load it and let the
-          // practitioner resolve side by side. Local edits are preserved.
-          const authoritative = await fetch(`/api/live/emr/note?noteId=${snap.noteId}`);
-          if (authoritative.ok) {
-            const json = (await authoritative.json()) as { data: NoteDetail };
-            setConflict(json.data);
-          } else {
-            setSaveError("This note changed elsewhere and the latest copy could not be loaded.");
-          }
-          return;
-        }
-        if (!res.ok) {
-          setSaveError((await readError(res)).message);
-          return;
-        }
-        const json = (await res.json()) as { data: { noteId: string; version: number; savedAt: string } };
-        setServerVersion(json.data.version);
-        setSavedAt(json.data.savedAt);
-        setStatus("draft");
-        if (!snap.noteId) {
-          setNoteIdState(json.data.noteId);
-          onNoteCreated(json.data.noteId);
-        }
-        // Edits made while the request was in flight stay unsaved.
-        setDirty(latest.current.content !== snap.content || latest.current.provenance !== snap.provenance);
-        onStateChanged();
-      } catch {
-        setSaveError("The save service is unreachable. Your text is still here — retry when connected.");
-      } finally {
-        setSaving(false);
+  const confirmSaved = useCallback((attempt: SaveAttempt, noteId: string, version: number, savedAt: string) => {
+    uncertainAttempt.current = null;
+    setUnconfirmed(false);
+    setReceiptAvailable(false);
+    setSaveError(null);
+    setServerVersion(version);
+    setSavedAt(savedAt);
+    setStatus("draft");
+    if (!attempt.noteId) {
+      setNoteIdState(noteId);
+      onNoteCreated(noteId);
+    }
+    // A newer keystroke is never marked as saved by an older completion.
+    const newerEdits = editRevision.current !== attempt.editRevision;
+    setDirty(newerEdits);
+    followupAutosave.current = newerEdits;
+    onStateChanged();
+  }, [onNoteCreated, onStateChanged]);
+
+  const checkAttempt = useCallback(async (attempt: SaveAttempt, epoch: number): Promise<boolean> => {
+    if (uncertainAttempt.current !== attempt || lifecycleEpoch.current !== epoch || !mounted.current) return false;
+    setCheckingSave(true);
+    try {
+      const params = new URLSearchParams({ encounterId, saveRequestId: attempt.requestId });
+      const receipt = await boundedJson<{
+        data?: { state: "unconfirmed" | "saved"; noteId?: string; version?: number; savedAt?: string };
+      }>(`/api/live/emr/note?${params}`);
+      if (uncertainAttempt.current !== attempt || lifecycleEpoch.current !== epoch || !mounted.current) return false;
+      if (!receipt.response.ok || !receipt.body.data) throw new Error("receipt_unavailable");
+      setReceiptAvailable(true);
+      const saved = receipt.body.data;
+      if (saved.state !== "saved") {
+        setSaveError("Save status is not confirmed yet. Check again before leaving or signing.");
+        return false;
       }
-    },
-    [encounterId, noteType, onNoteCreated, onStateChanged],
-  );
+      if (!validSaveResult(saved)) throw new Error("receipt_incomplete");
+      const detail = await boundedJson<{ data?: NoteDetail }>(
+        `/api/live/emr/note?noteId=${encodeURIComponent(saved.noteId)}`,
+      );
+      if (uncertainAttempt.current !== attempt || lifecycleEpoch.current !== epoch || !mounted.current) return false;
+      if (!detail.response.ok || !detail.body.data) throw new Error("note_unavailable");
+      const server = detail.body.data;
+      if (server.note.noteId === saved.noteId && server.contentVersion === saved.version
+        && server.note.noteType === noteType && server.note.status === "draft"
+        && sameContent(server.content, attempt.content)
+        && sameProvenance(server.provenance, attempt.provenance)) {
+        confirmSaved(attempt, saved.noteId, saved.version, saved.savedAt);
+        return true;
+      }
+      // The write has a receipt, but another version or a different payload is
+      // authoritative now. Show both copies; do not silently replace edits.
+      uncertainAttempt.current = null;
+      setUnconfirmed(false);
+      setReceiptAvailable(false);
+      setConflict(server);
+      setSaveError(null);
+      return false;
+    } catch {
+      if (uncertainAttempt.current === attempt && lifecycleEpoch.current === epoch && mounted.current) {
+        setSaveError("The save may have completed, but its status could not be verified. Keep this page open and check status; do not start a new save or sign.");
+      }
+      return false;
+    } finally {
+      if (lifecycleEpoch.current === epoch && mounted.current) setCheckingSave(false);
+    }
+  }, [encounterId, noteType, confirmSaved]);
+
+  const sendAttempt = useCallback(async (attempt: SaveAttempt): Promise<boolean> => {
+    if (saveInFlight.current || sessionInvalid || !mounted.current) return false;
+    saveInFlight.current = true;
+    const epoch = lifecycleEpoch.current;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const result = await boundedJson<{
+        data?: { noteId: string; version: number; savedAt: string };
+        error?: { message?: string };
+      }>("/api/live/emr/note", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          encounterId, noteType, content: attempt.content,
+          expectedVersion: attempt.expectedVersion, noteId: attempt.noteId ?? undefined,
+          saveKind: attempt.saveKind, provenance: attempt.provenance,
+          requestId: attempt.requestId,
+        }),
+      }, SAVE_DEADLINE_MS);
+      if (lifecycleEpoch.current !== epoch || !mounted.current) return false;
+      if (result.response.status === 409) {
+        if (!attempt.noteId) {
+          setSaveError("A new note could not be created because the server state changed. Review the encounter before trying again.");
+          return false;
+        }
+        try {
+          const authoritative = await boundedJson<{ data?: NoteDetail }>(
+            `/api/live/emr/note?noteId=${encodeURIComponent(attempt.noteId)}`,
+          );
+          if (lifecycleEpoch.current !== epoch || !mounted.current) return false;
+          if (!authoritative.response.ok || !authoritative.body.data) throw new Error("note_unavailable");
+          setConflict(authoritative.body.data);
+        } catch {
+          setSaveError("This note changed elsewhere and the latest copy could not be loaded.");
+        }
+        return false;
+      }
+      if (!result.response.ok && result.response.status < 500) {
+        setSaveError(result.body.error?.message ?? "This save was refused. Your edits are still here.");
+        return false;
+      }
+      if (!result.response.ok || !result.body.data || !validSaveResult(result.body.data)) {
+        uncertainAttempt.current = attempt;
+        setReceiptAvailable(false);
+        setUnconfirmed(true);
+        return await checkAttempt(attempt, epoch);
+      }
+      // A repeat of a previously uncertain write needs the authoritative
+      // version and payload check, even if the replay itself returned 200.
+      if (uncertainAttempt.current === attempt) return await checkAttempt(attempt, epoch);
+      confirmSaved(attempt, result.body.data.noteId, result.body.data.version, result.body.data.savedAt);
+      return true;
+    } catch {
+      if (lifecycleEpoch.current !== epoch || !mounted.current) return false;
+      uncertainAttempt.current = attempt;
+      setReceiptAvailable(false);
+      setUnconfirmed(true);
+      return await checkAttempt(attempt, epoch);
+    } finally {
+      saveInFlight.current = false;
+      if (lifecycleEpoch.current === epoch && mounted.current) setSaving(false);
+    }
+  }, [encounterId, noteType, sessionInvalid, checkAttempt, confirmSaved]);
+
+  const doSave = useCallback(async (
+    saveKind: "autosave" | "manual", options?: { expectedVersion?: number },
+  ): Promise<boolean> => {
+    if (saveInFlight.current || uncertainAttempt.current || sessionInvalid) return false;
+    const snap = latest.current;
+    const attempt: SaveAttempt = {
+      requestId: crypto.randomUUID(),
+      editRevision: editRevision.current,
+      noteId: snap.noteId,
+      expectedVersion: options?.expectedVersion ?? snap.serverVersion,
+      content: snap.content,
+      provenance: snap.provenance,
+      saveKind,
+    };
+    return sendAttempt(attempt);
+  }, [sendAttempt, sessionInvalid]);
 
   const scheduleAutosave = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      if (latest.current.dirty) void doSave("autosave");
+      if (latest.current.dirty && !saveInFlight.current && !uncertainAttempt.current) {
+        void doSave("autosave");
+      }
     }, 1500);
   }, [doSave]);
 
+  // Only a CONFIRMED save with newer edits may schedule a follow-up. A refused
+  // save must not enter an automatic retry loop.
+  useEffect(() => {
+    if (followupAutosave.current && dirty && !saving && !unconfirmed && !conflict && !sessionInvalid) {
+      followupAutosave.current = false;
+      scheduleAutosave();
+    }
+  }, [dirty, saving, unconfirmed, conflict, sessionInvalid, scheduleAutosave]);
+
   const edit = (key: string, value: string) => {
-    setContent((c) => ({ ...c, [key]: value }));
+    if (busy || sessionInvalid) return;
+    editRevision.current += 1;
+    const next = { ...latest.current.content, [key]: value };
+    latest.current = { ...latest.current, content: next, dirty: true };
+    setContent(next);
     setDirty(true);
     setNotice(null);
     scheduleAutosave();
@@ -290,25 +499,35 @@ export function NoteComposer({
       return;
     }
     const firstKey = sections[0].key;
-    setContent((c) => ({
-      ...c,
-      [firstKey]: `${(c[firstKey] ?? "").trimEnd()}${(c[firstKey] ?? "").trim() ? "\n" : ""}${insert.text}`,
-    }));
-    setProvenance((p) => [
-      ...p,
+    editRevision.current += 1;
+    const current = latest.current;
+    const nextContent = {
+      ...current.content,
+      [firstKey]: `${(current.content[firstKey] ?? "").trimEnd()}${(current.content[firstKey] ?? "").trim() ? "\n" : ""}${insert.text}`,
+    };
+    const nextProvenance = [
+      ...current.provenance,
       {
         sectionKey: firstKey,
         refType: insert.provenance.refType,
         refId: insert.provenance.refId ?? null,
         label: insert.provenance.label,
       },
-    ]);
+    ];
+    latest.current = { ...current, content: nextContent, provenance: nextProvenance, dirty: true };
+    setContent(nextContent);
+    setProvenance(nextProvenance);
     setDirty(true);
     setNotice("Inserted from the lens panel — review, then save.");
     scheduleAutosave();
   }, [insert, editable, sections, scheduleAutosave]);
 
   const noteAction = async (payload: Record<string, unknown>, failLabel: string) => {
+    if (saveInFlight.current || uncertainAttempt.current || sessionInvalid) {
+      setSaveError("Confirm the note save and current sign-in before changing its review or signature state.");
+      return null;
+    }
+    const epoch = lifecycleEpoch.current;
     setBusy(true);
     setSaveError(null);
     try {
@@ -317,23 +536,33 @@ export function NoteComposer({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ noteId: noteIdState, ...payload }),
       });
+      if (lifecycleEpoch.current !== epoch || !mounted.current) return null;
       if (!res.ok) {
-        setSaveError((await readError(res)).message);
+        const error = await readError(res);
+        if (lifecycleEpoch.current === epoch && mounted.current) setSaveError(error.message);
         return null;
       }
-      return (await res.json()) as { data: Record<string, unknown> };
+      const reply = (await res.json()) as { data: Record<string, unknown> };
+      return lifecycleEpoch.current === epoch && mounted.current ? reply : null;
     } catch {
-      setSaveError(`${failLabel} — the service is unreachable.`);
+      if (lifecycleEpoch.current === epoch && mounted.current) {
+        setSaveError(`${failLabel} — the service is unreachable.`);
+      }
       return null;
     } finally {
-      setBusy(false);
+      if (lifecycleEpoch.current === epoch && mounted.current) setBusy(false);
     }
   };
 
   const markReady = async () => {
-    if (dirty) {
-      await doSave("manual");
-      if (latest.current.dirty) return; // save failed; keep editing state
+    if (saveInFlight.current || uncertainAttempt.current || sessionInvalid) return;
+    if (latest.current.dirty) {
+      const confirmed = await doSave("manual");
+      if (!confirmed) return;
+      // The React note identity/version update may not have committed yet.
+      // A second deliberate click keeps review bound to the saved version.
+      setNotice("Draft saved. Select Ready for review again after the saved version appears.");
+      return;
     }
     const ok = await noteAction({ action: "ready" }, "Could not mark ready");
     if (ok) {
@@ -345,6 +574,7 @@ export function NoteComposer({
 
   const sign = async () => {
     setSignOpen(false);
+    if (saveInFlight.current || uncertainAttempt.current || sessionInvalid || latest.current.dirty) return;
     const res = await noteAction(
       { action: "sign", expectedVersion: serverVersion },
       "Could not sign",
@@ -400,10 +630,13 @@ export function NoteComposer({
 
   const addProvenanceRef = () => {
     if (!provSection || !provLabel.trim()) return;
-    setProvenance((p) => [
-      ...p,
+    editRevision.current += 1;
+    const nextProvenance = [
+      ...latest.current.provenance,
       { sectionKey: provSection, refType: provType, label: provLabel.trim() },
-    ]);
+    ];
+    latest.current = { ...latest.current, provenance: nextProvenance, dirty: true };
+    setProvenance(nextProvenance);
     setProvLabel("");
     setDirty(true);
     scheduleAutosave();
@@ -423,13 +656,17 @@ export function NoteComposer({
     );
   }
 
-  const saveState = saving
-    ? "Saving…"
-    : dirty
-      ? "Unsaved changes"
-      : savedAt
-        ? `Saved ${new Date(savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · v${serverVersion}`
-        : "Not saved yet";
+  const saveState = checkingSave
+    ? "Checking save status…"
+    : saving
+      ? "Saving…"
+      : unconfirmed
+        ? "Save status unconfirmed"
+        : dirty
+          ? "Unsaved changes"
+          : savedAt
+            ? `Saved ${new Date(savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · v${serverVersion}`
+            : "Not saved yet";
 
   return (
     <div className="min-w-0" data-testid="note-composer">
@@ -559,14 +796,32 @@ export function NoteComposer({
       {saveError && (
         <p role="alert" className="m-0 mt-2 rounded-lg bg-critical-tint px-3 py-[8px] text-[12px] font-semibold text-critical">
           {saveError}{" "}
-          <button
-            type="button"
-            onClick={() => void doSave("manual")}
-            className="cursor-pointer border-none bg-transparent p-0 font-bold text-critical underline"
-          >
-            Retry save
-          </button>
+          {!unconfirmed && !sessionInvalid && (
+            <button type="button" onClick={() => void doSave("manual")}
+              className="cursor-pointer border-none bg-transparent p-0 font-bold text-critical underline">
+              Retry save
+            </button>
+          )}
         </p>
+      )}
+      {unconfirmed && (
+        <div role="alert" className="mt-2 rounded-lg border border-[rgba(191,70,52,0.4)] bg-critical-tint px-3 py-2 text-[12px] text-critical">
+          <p className="m-0 font-semibold">The last save may have completed. Your edits remain on this screen; do not sign or start a new save until its status is confirmed.</p>
+          <div className="mt-2 flex gap-3">
+            <button type="button" disabled={saving || checkingSave || sessionInvalid}
+              onClick={() => { const attempt = uncertainAttempt.current; if (attempt) void checkAttempt(attempt, lifecycleEpoch.current); }}
+              className="cursor-pointer border-none bg-transparent p-0 font-bold text-critical underline disabled:opacity-50">
+              Check save status
+            </button>
+            {receiptAvailable && (
+              <button type="button" disabled={saving || checkingSave || sessionInvalid}
+                onClick={() => { const attempt = uncertainAttempt.current; if (attempt) void sendAttempt(attempt); }}
+                className="cursor-pointer border-none bg-transparent p-0 font-bold text-critical underline disabled:opacity-50">
+                Retry this same save
+              </button>
+            )}
+          </div>
+        </div>
       )}
       {notice && (
         <p role="status" className="m-0 mt-2 rounded-lg bg-positive-tint px-3 py-[8px] text-[12px] font-medium text-ink">
@@ -579,7 +834,7 @@ export function NoteComposer({
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3 print:hidden">
           <button
             type="button"
-            disabled={saving || !dirty}
+            disabled={saving || unconfirmed || sessionInvalid || !dirty}
             onClick={() => void doSave("manual")}
             className="h-9 cursor-pointer rounded-lg border border-line bg-card px-3 text-[12.5px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
           >
@@ -588,7 +843,7 @@ export function NoteComposer({
           {status === "draft" && (
             <button
               type="button"
-              disabled={busy || serverVersion < 1}
+              disabled={busy || saving || unconfirmed || sessionInvalid || serverVersion < 1}
               onClick={() => void markReady()}
               className="flex h-9 cursor-pointer items-center gap-[6px] rounded-lg border border-line bg-card px-3 text-[12.5px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
             >
@@ -598,7 +853,7 @@ export function NoteComposer({
           )}
           <button
             type="button"
-            disabled={busy || serverVersion < 1 || dirty}
+            disabled={busy || saving || unconfirmed || sessionInvalid || serverVersion < 1 || dirty}
             onClick={() => setSignOpen(true)}
             className="flex h-9 cursor-pointer items-center gap-[6px] rounded-lg border-none bg-action px-3 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-50"
             title={dirty ? "Save before signing" : undefined}
@@ -609,7 +864,7 @@ export function NoteComposer({
           {noteIdState && (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || saving || unconfirmed || sessionInvalid}
               onClick={() => setErrorOpen(true)}
               className="ml-auto h-9 cursor-pointer rounded-lg border border-line bg-card px-3 text-[12px] font-semibold text-critical hover:border-critical focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
             >

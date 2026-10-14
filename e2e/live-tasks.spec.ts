@@ -711,6 +711,174 @@ test("EMR conflict recovery saves local edits against the selected server versio
   });
 });
 
+test("EMR lost save response settles from receipt and authoritative note", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/today$/);
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as { data: { encounterId: string } }).data.encounterId;
+  let committed: { noteId: string; version: number; savedAt: string } | null = null;
+  let posts = 0;
+  await page.route("**/api/live/emr/note**", async route => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      posts += 1;
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      committed = ((await response.json()) as { data: typeof committed }).data;
+      await route.abort("failed"); // the server committed, but the browser lost its reply
+    } else if (new URL(request.url()).searchParams.has("saveRequestId")) {
+      expect(committed).not.toBeNull();
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ data: { state: "saved", ...committed } }) });
+    } else {
+      await route.continue(); // the authoritative note is read from the fixture backend
+    }
+  });
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await page.getByLabel("Subjective").fill("A lost response must not lose this note.");
+  await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v1/, { timeout: 15_000 });
+  expect(posts).toBe(1);
+  expect(committed).not.toBeNull();
+  const authoritative = await page.request.get(`/api/live/emr/note?noteId=${committed!.noteId}`);
+  expect(authoritative.status()).toBe(200);
+  expect(((await authoritative.json()) as { data: { content: { S: string } } }).data.content.S)
+    .toBe("A lost response must not lose this note.");
+});
+
+test("EMR uncertain save never reports success, retries blindly, or signs", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/today$/);
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as { data: { encounterId: string } }).data.encounterId;
+  let posts = 0;
+  let receiptReads = 0;
+  await page.route("**/api/live/emr/note**", async route => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      posts += 1;
+      await route.abort("failed"); // no server commit; outcome is still unknown to the client
+    } else if (new URL(request.url()).searchParams.has("saveRequestId")) {
+      receiptReads += 1;
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ data: { state: "unconfirmed" } }) });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await page.getByLabel("Subjective").fill("Never claim this saved.");
+  await expect(page.getByTestId("save-state")).toHaveText("Save status unconfirmed", { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Sign note" })).toBeDisabled();
+  await page.waitForTimeout(2_000);
+  expect(posts).toBe(1);
+  expect(receiptReads).toBe(1);
+  await page.getByRole("button", { name: "Check save status" }).click();
+  await expect.poll(() => receiptReads).toBe(2);
+  expect(posts).toBe(1);
+  await page.evaluate(() => window.dispatchEvent(new Event("alp-workforce-session-change")));
+  await expect(page.getByLabel("Subjective")).toHaveCount(0);
+  await expect(page.getByText(/sign-in or organization changed/i)).toBeVisible();
+});
+
+test("EMR save deadline ends an unanswered request without calling it failed", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/today$/);
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as { data: { encounterId: string } }).data.encounterId;
+  let postStarted = 0;
+  let posts = 0;
+  await page.route("**/api/live/emr/note**", async route => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      posts += 1;
+      postStarted = Date.now();
+      await new Promise(resolve => setTimeout(resolve, 20_000));
+      try { await route.abort("failed"); } catch { /* client deadline closed it */ }
+    } else if (new URL(request.url()).searchParams.has("saveRequestId")) {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ data: { state: "unconfirmed" } }) });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await page.getByLabel("Subjective").fill("No response from the service.");
+  await expect(page.getByTestId("save-state")).toHaveText("Save status unconfirmed", { timeout: 20_000 });
+  expect(postStarted).toBeGreaterThan(0);
+  expect(Date.now() - postStarted).toBeGreaterThanOrEqual(11_000);
+  expect(posts).toBe(1);
+  await expect(page.getByRole("button", { name: "Sign note" })).toBeDisabled();
+});
+
+test("EMR explicit retry reuses the same first-create request ID", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/today$/);
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as { data: { encounterId: string } }).data.encounterId;
+  const requestIds: string[] = [];
+  let committed: { noteId: string; version: number; savedAt: string } | null = null;
+  await page.route("**/api/live/emr/note**", async route => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      requestIds.push((JSON.parse(request.postData() ?? "{}") as { requestId: string }).requestId);
+      if (requestIds.length === 1) {
+        await route.abort("failed");
+      } else {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        committed = ((await response.json()) as { data: typeof committed }).data;
+        await route.fulfill({ response });
+      }
+    } else if (new URL(request.url()).searchParams.has("saveRequestId")) {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ data: committed ? { state: "saved", ...committed } : { state: "unconfirmed" } }) });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await page.getByLabel("Subjective").fill("Same request on deliberate retry.");
+  await expect(page.getByTestId("save-state")).toHaveText("Save status unconfirmed", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Retry this same save" }).click();
+  await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v1/, { timeout: 15_000 });
+  expect(requestIds).toHaveLength(2);
+  expect(requestIds[0]).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(requestIds[1]).toBe(requestIds[0]);
+  expect(committed).not.toBeNull();
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
