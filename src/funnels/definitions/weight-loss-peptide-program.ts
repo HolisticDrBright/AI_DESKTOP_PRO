@@ -15,6 +15,8 @@ export const weightLossPeptideProgram: FunnelDefinition = {
   indexable: true,
   programLabel: 'Weight loss program',
   consultSlug: 'weight-loss-program',
+  channelConsultSlugs: { email: 'weight-loss-program-email' },
+  updates: { programKey: 'weight-loss-program' },
   programBinding: null,
   sections: [
     { kind: 'hero', heading: 'Weight loss with a clinician, not a checkout page',

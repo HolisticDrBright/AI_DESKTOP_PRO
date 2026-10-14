@@ -15,6 +15,8 @@ export const diabetesProgram: FunnelDefinition = {
   indexable: true,
   programLabel: 'Diabetes program',
   consultSlug: 'diabetes-program',
+  channelConsultSlugs: { email: 'diabetes-program-email' },
+  updates: { programKey: 'diabetes-program' },
   programBinding: null,
   sections: [
     { kind: 'hero', heading: 'A structured lifestyle program for adults living with diabetes',

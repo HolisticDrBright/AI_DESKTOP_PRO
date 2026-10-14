@@ -79,6 +79,32 @@ describe('a funnel page', () => {
       expect(markup.replaceAll(consultHref, ''), funnel.slug).not.toMatch(/https?:\/\//);
     }
   });
+  it('with the campaign sign-up page configured, its outbound addresses are exactly the consult page and the sign-up page, and it still has no form', () => {
+    const updatesUrl = 'https://updates.fictional.example/signup/longevity-program';
+    for (const funnel of [withEverySection(), ...FUNNELS]) {
+      const element = createElement(FunnelPage, { funnel, consultHref, purchase: held, buyHref, updatesUrl });
+      const markup = renderToMarkup(element);
+      expect(markup, funnel.slug).not.toMatch(/<(form|input|textarea|select|button|img|script|iframe|video|audio|object|embed)\b/i);
+      expect(markup, funnel.slug).not.toMatch(/\bsrc=/i);
+      expect(new Set([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1])), funnel.slug).toEqual(new Set([consultHref, updatesUrl]));
+      expect(markup.replaceAll(consultHref, '').replaceAll(updatesUrl, ''), funnel.slug).not.toMatch(/https?:\/\//);
+      expect(markup, funnel.slug).toContain('data-testid="funnel-updates-top"');
+      expect(markup, funnel.slug).toContain('data-testid="funnel-updates-bottom"');
+      const text = renderToText(element);
+      expect(text, funnel.slug).toContain('Get updates about this program');
+      expect(text, funnel.slug).toContain('You can also ask for email updates about this program on a separate sign-up page; nothing is entered on this page.');
+    }
+    // With the offer available the buy page joins them, and nothing else does.
+    const live = renderToMarkup(createElement(FunnelPage, { funnel: longevityProgram, consultHref, purchase: available, buyHref, updatesUrl }));
+    expect(new Set([...live.matchAll(/href="([^"]*)"/g)].map(m => m[1]))).toEqual(new Set([consultHref, buyHref, updatesUrl]));
+  });
+  it('shows no updates link, and no word of one, when the sign-up page is not configured', () => {
+    for (const updatesUrl of [undefined, null]) {
+      const element = createElement(FunnelPage, { funnel: longevityProgram, consultHref, purchase: held, buyHref, updatesUrl });
+      expect(renderToMarkup(element)).not.toContain('funnel-updates');
+      expect(renderToText(element)).not.toMatch(/Get updates|email updates/);
+    }
+  });
   it('falls back to a same-origin consult path when no public address is configured', () => {
     const markup = renderToMarkup(render(longevityProgram, '/consult/longevity-program'));
     const hrefs = [...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]);
