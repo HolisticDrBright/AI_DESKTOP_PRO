@@ -115,10 +115,6 @@ const FUNNEL_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Keep Webpack's retained module graph below Next dev's worker-restart
-  // threshold during the one-process browser qualification. This changes
-  // compilation memory behavior, not the clinical fixture or runtime gates.
-  experimental: { webpackMemoryOptimizations: true },
   // Keep standalone tracing anchored to this repository. Developer machines
   // may have unrelated lockfiles above the checkout; those must not widen the
   // deployment trace or create invalid cross-workspace symlinks.

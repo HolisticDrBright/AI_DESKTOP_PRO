@@ -85,9 +85,41 @@ failed Playwright child; its earlier terminal code zero despite one failed test
 must not be read as a passing diagnostic. Diagnostic artifacts are ignored by
 Git, not deleted.
 
-Next.js 15's documented `experimental.webpackMemoryOptimizations` is enabled
-for Webpack compilation. Typecheck and the 11 focused runner tests pass. The
-canonical build plus one-process forward **and** reverse browser battery is
-being rerun from that source; until its terminal result is inspected, this
-gate remains open. No fixture posture, test timeout, skip, production PHI
-setting or clinical release condition was changed.
+Next.js 15's documented `experimental.webpackMemoryOptimizations` was tested
+for Webpack compilation. Typecheck and the 11 focused runner tests passed.
+No fixture posture, test timeout, skip, production PHI setting or clinical
+release condition was changed.
+
+The first canonical rerun with `webpackMemoryOptimizations` compiled the
+production bundle, but its forward-order browser battery recorded at least
+three failures: one Lens result never reached its success notice, and both
+login-readiness cases timed out. A direct loopback `/login` request also timed
+out after eight seconds while the original development worker stayed alive but
+idle. That confirmed-red run was interrupted before reverse order; do not
+report a forward total or reverse conclusion for it. The bounded Webpack
+memory option alone did not close the gate. CI for the source commit
+`40a718e39f7a94a7661c4257241c721d28e58301` succeeded, but its partitioned
+browser jobs are not this one-process proof.
+
+A second diagnostic started the same one-process battery under Next 15.5's
+`next dev --turbopack`, retaining the separate clinical production build and
+fixture refusal. The forward run recorded a billing inventory assertion
+failure and a Lens run that remained at “Running…” past its 15-second notice
+check. A direct loopback `/login` request then timed out while the fixture
+backend answered and the original Turbopack worker stayed alive but idle at
+about 4 GiB RSS. That confirmed-red run was interrupted before reverse order;
+it has no complete totals. The bundler switch did not close the stall and was
+removed from the canonical runner. Its unresolved root cause remains a release
+gate. The billing test also lacked an authoritative save/finalize wait; a
+separate focused run will determine whether that is the entire inventory
+failure or whether the product has a defect. With explicit waits for the
+server-adopted “Draft saved” receipt and the finalized “Open” status, the
+void/reservation case passed alone and the entire 21-test billing file passed
+against a fresh fictional local fixture. This supports a test/navigation race
+for the billing observation; it does not make the stalled full battery pass or
+prove the real billing provider path.
+
+Because neither Webpack memory optimization nor Turbopack closed the full-run
+stall, both trial configuration changes were removed. The runner's stricter
+exit-code and skipped-count checks stay in place. A separate trace or worker
+diagnostic is needed before the browser gate can be called stable.
