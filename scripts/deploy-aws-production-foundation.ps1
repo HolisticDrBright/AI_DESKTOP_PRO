@@ -29,11 +29,14 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
 try {
   bun run build:aws-production-foundation
+  if ($LASTEXITCODE -ne 0) { throw "Production foundation build failed." }
   bun run check:aws-production-foundation
+  if ($LASTEXITCODE -ne 0) { throw "Production foundation source check failed." }
   aws cloudformation validate-template `
     --profile $Profile `
     --region $Region `
     --template-body file://dist/aws-clinical-core/production-foundation.json | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Production foundation template validation failed." }
 
   # A regular foundation deploy must not silently overwrite manually reviewed
   # Cognito email/MFA/sign-up settings or change app-client claim permissions.
@@ -50,6 +53,7 @@ try {
     --region $Region `
     --account-id $ProductionAccountId `
     --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  if ($LASTEXITCODE -ne 0) { throw "Account public-access-block update failed." }
 
   aws cloudformation deploy `
     --profile $Profile `
