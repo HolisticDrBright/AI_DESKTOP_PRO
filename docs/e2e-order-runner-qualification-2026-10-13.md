@@ -123,3 +123,12 @@ Because neither Webpack memory optimization nor Turbopack closed the full-run
 stall, both trial configuration changes were removed. The runner's stricter
 exit-code and skipped-count checks stay in place. A separate trace or worker
 diagnostic is needed before the browser gate can be called stable.
+
+The stalled Lens screen exposed a separate user-facing recovery defect: its
+evaluation POST had no deadline, so a lost response left “Running…” indefinitely.
+The request now has a 30-second browser deadline and clears the running state
+with an error without claiming completion. The new lost-reply browser test
+failed against the prior code (no error after 33 seconds), then passed with the
+deadline; all eight Lens browser tests passed on the patched source. This is
+an error-recovery improvement, **not** a fix or a pass for the one-process
+browser gate or evidence about the production server under load.
