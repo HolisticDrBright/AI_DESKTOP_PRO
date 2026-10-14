@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
-import { orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
+import { failedTestTitles, orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
 import { runBoundedChild } from "./e2e-child-process.mjs";
 
 /**
@@ -405,11 +405,7 @@ async function run(label, files) {
   );
   if (result.failed > 0) {
     // Print the failing test titles so the diagnosis does not require a re-run.
-    for (const line of out.split("\n")) {
-      if (line.includes("✘") || line.trimStart().startsWith("1)")) {
-        console.error(`    ${line.trim()}`);
-      }
-    }
+    for (const line of failedTestTitles(out)) console.error(`    ${line}`);
   }
   if (!result.exitOk && result.failed === 0) {
     console.error(`[e2e-order] ${label} process failed without a Playwright failure summary. Last output:`);

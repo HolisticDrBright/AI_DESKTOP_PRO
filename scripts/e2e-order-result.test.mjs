@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
+import { failedTestTitles, orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
 
 test("a crash after a passing summary cannot pass the order gate", () => {
   const output = "  307 passed (28m)\n  19 skipped\n";
@@ -32,4 +32,13 @@ test("count and skip drift remain failures even when both processes exit zero", 
 test("a complete symmetric result passes", () => {
   const result = summarizePlaywrightResult("  307 passed\n  19 skipped", true);
   assert.deepEqual(orderResultProblems(result, result), []);
+});
+
+test("the diagnostic names every failing test, not just the first", () => {
+  assert.deepEqual(failedTestTitles("  ✘  7 e2e/first.spec.ts\n  1) e2e/first.spec.ts\n  2) e2e/second.spec.ts\n  3) e2e/third.spec.ts\n  298 passed\n"), [
+    "✘  7 e2e/first.spec.ts",
+    "1) e2e/first.spec.ts",
+    "2) e2e/second.spec.ts",
+    "3) e2e/third.spec.ts",
+  ]);
 });

@@ -15,6 +15,12 @@ export function summarizePlaywrightResult(output, exitOk) {
   };
 }
 
+export function failedTestTitles(output) {
+  return output.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.includes("✘") || /^\d+\)\s/.test(line));
+}
+
 export function orderResultProblems(forward, reverse) {
   const problems = [];
   if (!forward.exitOk) problems.push("forward Playwright process exited non-zero");
