@@ -22,8 +22,11 @@
  *        npx next start -p 3114
  */
 import { createServer } from "node:http";
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID as randomUUIDFixture } from "node:crypto";
 import { fixtureJsonResponse as json } from "./fixture-json-response.mjs";
+import {
+  FICTIONAL_REPORT_SHA256, LAB_ATTESTATION_DRAWN, LAB_ATTESTATION_LEGACY_OBSERVATION, LAB_ATTESTATION_OBSERVATION, LAB_ATTESTATION_PATIENT,
+} from "./lab-attestation-fixture.mjs";
 
 const PORT = Number(process.env.STUB_PORT ?? 3999);
 
@@ -794,6 +797,49 @@ const labMarkers = [
 const labReports = [
   { id: "ffffffff-1111-2222-3333-444444444401", name: "Fixture panel — July", lab: "Fixture Lab", collectedAt: iso(15 * 864e5), uploadedAt: iso(6 * 864e5), markerCount: 3 },
 ];
+
+/**
+ * Reviewer value attestation (lab-attestation-review/1) over two fictional clinic readings, with the semantics of the
+ * BLOCKED successor infra/aws-clinical-core/production-candidates/lab-attestation-review.sql: one patient binding, a
+ * reading revision, the recorded document digest, restated fields compared exactly, compare-and-set on the current
+ * attestation, an append-only history and idempotent replay by request id. Its activation is OFF at every reset; a
+ * spec turns it on through /__control/lab-attestation. PostgreSQL authorization is NOT proved here.
+ */
+const labAttestationReadings = new Map([
+  [LAB_ATTESTATION_OBSERVATION, { observationId: LAB_ATTESTATION_OBSERVATION, patientRecordId: LAB_ATTESTATION_PATIENT,
+    reading: { marker: "Ferritin", value: 420, valueText: "420", unit: "ng/mL", observedAt: LAB_ATTESTATION_DRAWN }, reviewStatus: "accepted",
+    transfer: { contract: "lab-result/2", origin: "uploaded_report_analysis", documents: [FICTIONAL_REPORT_SHA256],
+      reportedVerification: "analysis_cross_checked", appAssessment: null, laboratoryFlag: null } }],
+  [LAB_ATTESTATION_LEGACY_OBSERVATION, { observationId: LAB_ATTESTATION_LEGACY_OBSERVATION, patientRecordId: LAB_ATTESTATION_PATIENT,
+    reading: { marker: "Ferritin", value: 900, valueText: "900", unit: "ng/mL", observedAt: LAB_ATTESTATION_DRAWN }, reviewStatus: "accepted",
+    transfer: { contract: "lab-result/1", origin: "not_recorded", documents: [], reportedVerification: "not_recorded", appAssessment: "critical", laboratoryFlag: null } }],
+]);
+const labAttestations = [];
+const labAttestationControl = new Map([["enabled", false]]);
+function labAttestationCurrent(observationId) {
+  const history = labAttestations.filter((a) => a.observationId === observationId);
+  return history.find((a) => !history.some((b) => b.supersedes === a.attestationId)) ?? null;
+}
+function labAttestationView(reading) {
+  const current = labAttestationCurrent(reading.observationId);
+  const history = labAttestations.filter((a) => a.observationId === reading.observationId).reverse().slice(0, 50).map((a) => ({
+    attestationId: a.attestationId, outcome: a.outcome, scope: "measured_value", documentSha256: a.documentSha256,
+    reviewerRole: "practitioner", supersedes: a.supersedes, attestedAt: a.attestedAt }));
+  const blockedBy = reading.reviewStatus === "rejected" ? "reading_rejected" : reading.transfer.documents.length === 0 ? "document_unknown"
+    : reading.reading.unit === null ? "unit_unknown" : null;
+  const state = current?.outcome === "verified" && blockedBy !== "reading_rejected" ? "verified" : current?.outcome === "refuted" ? "refuted" : "needs_human_review";
+  const view = { contract: "lab-attestation-review/1", patientRecordId: reading.patientRecordId, observationId: reading.observationId,
+    reading: { ...reading.reading }, reviewStatus: reading.reviewStatus, transfer: { ...reading.transfer, documents: [...reading.transfer.documents] },
+    supersededBy: null, verification: { observationId: reading.observationId, state, current: current?.attestationId ?? null, rangeVerified: false, history },
+    attestable: blockedBy === null, blockedBy };
+  const revision = createHash("sha256").update(JSON.stringify({ reading: view.reading, reviewStatus: view.reviewStatus, transfer: view.transfer,
+    current: view.verification.current, state })).digest("hex");
+  return { ...view, readingRevision: revision };
+}
+function labAttestationReceipt(saved, reading, duplicate) {
+  return { attestationId: saved.attestationId, observationId: saved.observationId, outcome: saved.outcome, scope: "measured_value",
+    rangeVerified: false, attestedAt: saved.attestedAt, duplicate, patientRecordId: saved.patientRecordId, view: labAttestationView(reading) };
+}
 
 function labObservationRows() {
   return [
@@ -2823,6 +2869,7 @@ resetCopilotFixtures();
 
 const SNAPSHOT_COLLECTIONS = {
   revokedBearers, members, patientRelationships, queue, labMarkers, labReports,
+  labAttestationReadings, labAttestations, labAttestationControl,
   encounters, emrNotes,
   scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
   scribeTranscripts, scribeGenerations, scribeAccessLog,
@@ -3098,6 +3145,22 @@ createServer(async (req, res) => {
   if (url.pathname === "/__control/reset-all" && req.method === "POST") {
     resetAllFixtures();
     return json(res, 200, { ok: true });
+  }
+  // Value attestation fixture: switch its activation, or record another reviewer's attestation between a view and a
+  // submit (a race the browser cannot stage by itself).
+  if (url.pathname === "/__control/lab-attestation" && req.method === "POST") {
+    const body = await readBody(req);
+    if (typeof body.enabled === "boolean") labAttestationControl.set("enabled", body.enabled);
+    if (body.attestAsColleague) {
+      const reading = labAttestationReadings.get(body.attestAsColleague.observationId);
+      if (!reading) return json(res, 404, { error: "not_found" });
+      const current = labAttestationCurrent(reading.observationId);
+      labAttestations.push({ attestationId: randomUUIDFixture(), observationId: reading.observationId, patientRecordId: reading.patientRecordId,
+        requestId: randomUUIDFixture(), reviewer: "colleague", outcome: body.attestAsColleague.outcome === "refuted" ? "refuted" : "verified",
+        documentSha256: reading.transfer.documents[0] ?? FICTIONAL_REPORT_SHA256, supersedes: current?.attestationId ?? null,
+        attestedAt: nowIso(), binding: null });
+    }
+    return json(res, 200, { ok: true, enabled: labAttestationControl.get("enabled") });
   }
 
   if (url.pathname === "/__control/import-reset" && req.method === "POST") {
@@ -11666,6 +11729,54 @@ createServer(async (req, res) => {
     }
 
     return json(res, 404, { code: "PGRST202", message: "fixture route not found" });
+  }
+
+  // ===== Reviewer value attestation (the AWS routes a registration would add; see lab-attestation-review.ts) =====
+  if (url.pathname === "/clinical-core/workforce/lab-attestations/review" || url.pathname === "/clinical-core/workforce/lab-attestations") {
+    const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (req.method !== "POST" || !bearer) return json(res, 403, { error: { code: "lab_attestation_refused" } });
+    if (!memberOrgIdsForBearer(bearer).includes("org-fixture")) return json(res, 404, { error: { code: "lab_attestation_review_refused" } });
+    if (labAttestationControl.get("enabled") !== true) return json(res, 409, { error: { code: "lab_attestation_disabled" } });
+    let body;
+    try { body = await readBody(req); } catch { return json(res, 400, { error: { code: "lab_attestation_invalid" } }); }
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const keys = (value, allowed) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every((k) => allowed.includes(k));
+    if (url.pathname.endsWith("/review")) {
+      if (!keys(body, ["contract", "patientRecordId", "observationId"]) || body.contract !== "lab-attestation-review/1"
+        || !UUID_RE.test(body.patientRecordId ?? "") || !UUID_RE.test(body.observationId ?? "")) return json(res, 400, { error: { code: "lab_attestation_invalid" } });
+      const reading = labAttestationReadings.get(body.observationId);
+      if (!reading || reading.patientRecordId !== body.patientRecordId) return json(res, 404, { error: { code: "lab_attestation_review_refused" } });
+      return json(res, 200, { data: labAttestationView(reading) });
+    }
+    const statement = body?.attestation;
+    if (!keys(body, ["contract", "patientRecordId", "readingRevision", "attestation"]) || body.contract !== "lab-attestation-review/1"
+      || !UUID_RE.test(body.patientRecordId ?? "") || !/^[0-9a-f]{64}$/.test(body.readingRevision ?? "")
+      || !keys(statement, ["statement", "requestId", "observationId", "outcome", "reading", "documentSha256", "supersedes"])
+      || statement.statement !== "lab-reading-attestation/1" || !UUID_RE.test(statement.requestId ?? "") || !["verified", "refuted"].includes(statement.outcome)
+      || !keys(statement.reading, ["marker", "value", "unit", "observedAt"]) || typeof statement.reading?.value !== "number"
+      || !/^[0-9a-f]{64}$/.test(statement.documentSha256 ?? "")) return json(res, 400, { error: { code: "lab_attestation_invalid" } });
+    const reading = labAttestationReadings.get(statement.observationId);
+    if (!reading || reading.patientRecordId !== body.patientRecordId) return json(res, 404, { error: { code: "lab_attestation_review_refused" } });
+    const binding = JSON.stringify({ observationId: statement.observationId, outcome: statement.outcome, reading: statement.reading,
+      documentSha256: statement.documentSha256, supersedes: statement.supersedes, patientRecordId: body.patientRecordId });
+    const replay = labAttestations.find((a) => a.requestId === statement.requestId);
+    if (replay) {
+      if (replay.binding !== binding) return json(res, 409, { error: { code: "lab_attestation_conflict" } });
+      return json(res, 200, { data: labAttestationReceipt(replay, reading, true) });
+    }
+    const view = labAttestationView(reading);
+    if (view.readingRevision !== body.readingRevision) return json(res, 409, { error: { code: "lab_attestation_stale" } });
+    if (reading.transfer.documents.length === 0) return json(res, 409, { error: { code: "lab_attestation_document_unknown" } });
+    if (!reading.transfer.documents.includes(statement.documentSha256)) return json(res, 409, { error: { code: "lab_attestation_document_mismatch" } });
+    const stored = reading.reading;
+    if (statement.reading.marker !== stored.marker || statement.reading.value !== stored.value || statement.reading.unit !== stored.unit
+      || Date.parse(statement.reading.observedAt) !== Date.parse(stored.observedAt)) return json(res, 409, { error: { code: "lab_attestation_mismatch" } });
+    if ((labAttestationCurrent(reading.observationId)?.attestationId ?? null) !== statement.supersedes) return json(res, 409, { error: { code: "lab_attestation_stale" } });
+    const saved = { attestationId: randomUUIDFixture(), observationId: reading.observationId, patientRecordId: reading.patientRecordId,
+      requestId: statement.requestId, reviewer: "practitioner", outcome: statement.outcome, documentSha256: statement.documentSha256,
+      supersedes: statement.supersedes, attestedAt: nowIso(), binding };
+    labAttestations.push(saved);
+    return json(res, 200, { data: labAttestationReceipt(saved, reading, false) });
   }
 
   // ===== AWS telehealth boundary (workforce routes of the telehealth Lambda) =====

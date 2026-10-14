@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from './database';
 import type { ClinicalRequestContext } from './aws-identity-consent';
+import { labReadingAttestationReceipt, labReadingAttestationStatement, type LabReadingAttestationReceipt,
+  type LabReadingAttestationStatement } from '../../contracts/labAttestationReview';
 
 /**
  * Reviewer attestation of one clinic lab reading (lab-reading-attestation/1): a SEPARATE, default-disabled adapter over
@@ -17,26 +19,10 @@ import type { ClinicalRequestContext } from './aws-identity-consent';
 export const LAB_RESULT_TRANSFER_V2_CANDIDATE_SHA256 = 'fa6ee162a03a85ab23543371d9d1dbaf8ee6dd486b4a8cc64b5545fc16be3b94';
 export const LAB_OBSERVATION_ATTESTATION_CANDIDATE_SHA256 = 'd0423bcec5067a668f3522bbba65d096f642f083c1ef95448da190b38494bb83';
 
-const uuid = z.string().uuid();
-export const labReadingAttestationRequest = z.object({
-  statement: z.literal('lab-reading-attestation/1'),
-  requestId: uuid,
-  observationId: uuid,
-  outcome: z.enum(['verified', 'refuted']),
-  reading: z.object({
-    marker: z.string().min(1).max(200), value: z.number().finite(), unit: z.string().min(1).max(80),
-    observedAt: z.string().datetime({ offset: true }),
-  }).strict(),
-  documentSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  /** The current attestation this one replaces, or null for the first. A stale view is refused by the database. */
-  supersedes: uuid.nullable(),
-}).strict();
-export type LabReadingAttestationRequest = z.infer<typeof labReadingAttestationRequest>;
-export const labReadingAttestationReceipt = z.object({
-  attestationId: uuid, observationId: uuid, outcome: z.enum(['verified', 'refuted']), scope: z.literal('measured_value'),
-  rangeVerified: z.literal(false), attestedAt: z.string().min(1), duplicate: z.boolean(),
-}).strict();
-export type LabReadingAttestationReceipt = z.infer<typeof labReadingAttestationReceipt>;
+/** The reviewed statement and receipt, defined once in the shared contract (src/contracts/labAttestationReview.ts). */
+export const labReadingAttestationRequest = labReadingAttestationStatement;
+export type LabReadingAttestationRequest = LabReadingAttestationStatement;
+export { labReadingAttestationReceipt, type LabReadingAttestationReceipt };
 
 /** Activation evidence (lab-attestation-activation/1): a record of a review that happened elsewhere. Default disabled. */
 const digest = z.string().regex(/^[a-f0-9]{64}$/);

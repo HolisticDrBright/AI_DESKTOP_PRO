@@ -31,8 +31,10 @@ export interface ClinicalCoreDatabase {
 
 /** A database-authored refusal with all provider and SQL text removed. */
 export class ClinicalCoreDatabaseRejection extends Error {
-  /** `reason` is set only from a closed allow-list of program refusal names the consumer app understands (see
-   * `programRefusalReason` in rds-data-database.ts); it never carries SQL text, identifiers or provider messages. */
+  /** `reason` is set only from a closed allow-list: the program refusal names the consumer app understands
+   * (`programRefusalReason`) or the lab attestation refusals the Desktop reviewer understands
+   * (`labAttestationRefusalReason`), as classified in rds-data-database.ts. It never carries SQL text, identifiers
+   * or provider messages. */
   constructor(readonly category: "identity_refused" | "operation_refused" | "consent_required" | "conflict" | "request_invalid" | "legal_hold" | "account_deletion_write_blocked" | "release_required", readonly reason?: string) {
     super(category);
     this.name = "ClinicalCoreDatabaseRejection";

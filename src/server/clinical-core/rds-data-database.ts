@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/client-rds-data";
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
 import { PROGRAM_REFUSAL_REASONS, type ProgramRefusalReason } from "../../contracts/programAssignments";
+import { labAttestationRefusalReason, type LabAttestationRefusal } from "../../contracts/labAttestationReview";
 import {retryDatabaseResume} from './rds-resume-retry';
 import { createSingleAttemptRdsClient } from './rds-single-attempt-client';
 
@@ -260,12 +261,25 @@ export function programRefusalReason(message: string): ProgramRefusalReason | un
   return reason && (PROGRAM_REFUSAL_REASONS as readonly string[]).includes(reason) ? reason : undefined;
 }
 
+/** Reviewer attestation refusals (the BLOCKED lab-attestation candidates), named in the Desktop's closed vocabulary so a
+ * stale view or a superseded reading reaches the reviewer as what it is, not as an unavailable service. Only the token
+ * travels; the message itself never leaves this function. */
+const LAB_ATTESTATION_CATEGORY: Readonly<Record<LabAttestationRefusal, ClinicalCoreDatabaseRejection["category"]>> = {
+  lab_attestation_disabled: "operation_refused", lab_attestation_review_refused: "identity_refused",
+  lab_attestation_refused: "identity_refused", clinical_role_required: "identity_refused", lab_attestation_invalid: "request_invalid",
+  lab_attestation_stale: "conflict", lab_attestation_reading_superseded: "conflict", lab_attestation_mismatch: "conflict",
+  lab_attestation_document_unknown: "conflict", lab_attestation_document_mismatch: "conflict", lab_attestation_unit_unknown: "conflict",
+  lab_attestation_reading_rejected: "conflict", lab_attestation_conflict: "conflict",
+};
+
 /** Exported for embedded-database tests that stand the production dispatch in front of a real PGlite: the same classification, no other mapping. */
 export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
+  const labAttestation = labAttestationRefusalReason(message);
+  if (labAttestation) return new ClinicalCoreDatabaseRejection(LAB_ATTESTATION_CATEGORY[labAttestation], labAttestation);
   if (/\bcare_message_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bcare_message_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_message_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
