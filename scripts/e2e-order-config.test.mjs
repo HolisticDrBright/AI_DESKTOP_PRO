@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync as write } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  SEPARATELY_CONFIGURED_SPECS, appEntryUrls, compareOrders, fixturePostureFromProbe, memorySamples, orderBatteryEnvironment, selectOrderBattery,
+  NEXT_BUILTIN_ENTRY_URLS, SEPARATELY_CONFIGURED_SPECS, appEntryUrls, compareOrders, fixturePostureFromProbe, memorySamples, orderBatteryEnvironment, selectOrderBattery,
   summarizeReport, testTimeline, workerRestarts,
 } from './e2e-order-config.mjs';
 
@@ -169,7 +169,9 @@ test('every app entry is compiled before any spec: one URL per page or route, pl
     '_components/page.tsx', 'layout.tsx', 'patients/[patientId]/loading.tsx', 'api\\auth\\login\\route.ts',
     'api/live/lens/evaluation/route.ts',
   ]), ['/', '/api/auth/login', '/api/live/lens/evaluation', '/learn/warmup', '/patients/warmup', '/patients/warmup/encounter/warmup', '/settings']);
+  assert.deepEqual([...NEXT_BUILTIN_ENTRY_URLS], ['/__e2e-order-precompile-not-found', '/_error']);
   const driver = readFileSync('scripts/check-e2e-order-independence.mjs', 'utf8');
+  assert.match(driver, /\.\.\.appEntryUrls\(.*\), \.\.\.NEXT_BUILTIN_ENTRY_URLS\]/);
   const precompile = driver.indexOf('await precompileApp(');
   assert.ok(precompile > 0 && precompile < driver.indexOf('await warmApp()') && driver.indexOf('await warmApp()') < driver.indexOf('const canary = startCanary()'),
     'the whole app is compiled before the warm-up and before any spec');

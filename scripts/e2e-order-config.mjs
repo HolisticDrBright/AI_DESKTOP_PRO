@@ -228,6 +228,13 @@ export function appEntryUrls(files) {
   return [...urls].sort();
 }
 
+/**
+ * Next's own entries a battery reaches without any file under src/app: the not-found page (compiled on the first
+ * missing URL) and the pages-router error page (compiled when a request fails or is aborted). Observed compiling
+ * mid-battery at 11–16 s each, with a 28 s readback beside the second; requested with the rest so neither happens.
+ */
+export const NEXT_BUILTIN_ENTRY_URLS = Object.freeze(['/__e2e-order-precompile-not-found', '/_error']);
+
 /** Worker restarts Next reported itself (its 80 % heap threshold), from the retained server log. */
 export function workerRestarts(log) {
   return String(log).split('\n').filter((line) => line.includes('Server is approaching the used memory threshold')).length;

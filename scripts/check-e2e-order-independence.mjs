@@ -45,6 +45,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 import {
+  NEXT_BUILTIN_ENTRY_URLS,
   appEntryUrls,
   compareOrders,
   fixturePostureFromProbe,
@@ -461,7 +462,7 @@ const PRECOMPILE_CONCURRENCY = 24;
 const PRECOMPILE_CAP_MS = 15 * 60_000;
 
 async function precompileApp(compilations) {
-  const urls = appEntryUrls(readdirSync("src/app", { recursive: true }).map(String));
+  const urls = [...appEntryUrls(readdirSync("src/app", { recursive: true }).map(String)), ...NEXT_BUILTIN_ENTRY_URLS];
   const before = compilations();
   const t0 = Date.now();
   const statuses = {};
