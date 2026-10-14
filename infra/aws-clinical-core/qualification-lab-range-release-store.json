@@ -1,0 +1,109 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Empty, retained lab-range release store for fictional qualification only; no signed clinical release is supplied or activated",
+  "Parameters": {
+    "SourceCommit": {
+      "Type": "String",
+      "AllowedPattern": "^[a-f0-9]{40}$"
+    },
+    "ReleaseKmsKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:kms:us-east-2:588966314750:key/[a-f0-9-]{36}$"
+    },
+    "PhiAllowed": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["false"]
+    }
+  },
+  "Rules": {
+    "SyntheticAccountOnly": {
+      "Assertions": [{
+        "Assert": { "Fn::Equals": [{ "Ref": "AWS::AccountId" }, "588966314750"] },
+        "AssertDescription": "This empty qualification store may only be deployed in account 588966314750."
+      }]
+    }
+  },
+  "Resources": {
+    "LabRangeReleaseBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": { "Fn::Sub": "ai-clinical-core-releases-${AWS::AccountId}" },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "ObjectLockEnabled": true,
+        "ObjectLockConfiguration": { "ObjectLockEnabled": "Enabled" },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [{
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "aws:kms",
+              "KMSMasterKeyID": { "Ref": "ReleaseKmsKeyArn" }
+            },
+            "BucketKeyEnabled": true
+          }]
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": "qualification" },
+          { "Key": "DataScope", "Value": "fictional-reviewed-range-releases-only" },
+          { "Key": "PhiAllowed", "Value": "false" }
+        ]
+      }
+    },
+    "LabRangeReleaseBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "LabRangeReleaseBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::GetAtt": ["LabRangeReleaseBucket", "Arn"] },
+                { "Fn::Sub": "${LabRangeReleaseBucket.Arn}/*" }
+              ],
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            },
+            {
+              "Sid": "DenyUnencryptedObjectWrites",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${LabRangeReleaseBucket.Arn}/*" },
+              "Condition": { "StringNotEquals": { "s3:x-amz-server-side-encryption": "aws:kms" } }
+            },
+            {
+              "Sid": "DenyWrongObjectKey",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${LabRangeReleaseBucket.Arn}/*" },
+              "Condition": {
+                "StringNotEquals": {
+                  "s3:x-amz-server-side-encryption-aws-kms-key-id": { "Ref": "ReleaseKmsKeyArn" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "LabRangeReleaseBucketName": { "Value": { "Ref": "LabRangeReleaseBucket" } },
+    "ReleaseKmsKeyArn": { "Value": { "Ref": "ReleaseKmsKeyArn" } },
+    "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } },
+    "SourceCommit": { "Value": { "Ref": "SourceCommit" } }
+  }
+}
