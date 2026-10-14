@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
 const root = process.cwd();
@@ -18,6 +19,7 @@ const productionManifestPath = path.join(
   "aws-clinical-core",
   "desktop-production-operations.json",
 );
+const blockedCandidateDir = path.join(root, "infra", "aws-clinical-core", "production-candidates");
 
 function fail(message) {
   console.error(`[aws-desktop-compatibility] FAIL — ${message}`);
@@ -102,6 +104,64 @@ function legacyFunctionDefinitions() {
   return names;
 }
 
+function blockedCandidateNames(value, productionNativeRpc) {
+  if (!Array.isArray(value)) {
+    fail("blockedCandidateRpcs must be an explicit array");
+    return [];
+  }
+  const names = [];
+  for (const entry of value) {
+    if (!entry || typeof entry.name !== "string" || !/^[a-z][a-z0-9_]{1,127}$/.test(entry.name)
+      || typeof entry.source !== "string" || typeof entry.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/.test(entry.sha256)
+      || entry.activation !== "blocked"
+      || entry.featureFlag !== "CLINICAL_EMR_SAVE_RECEIPT_ENABLED") {
+      fail("blocked candidate RPC entry is malformed or not explicitly disabled");
+      continue;
+    }
+    const candidatePath = path.resolve(root, entry.source);
+    if (path.dirname(candidatePath) !== blockedCandidateDir || !fs.existsSync(candidatePath)) {
+      fail(`blocked candidate ${entry.name} must use a source in production-candidates`);
+      continue;
+    }
+    const bytes = fs.readFileSync(candidatePath);
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) {
+      fail(`blocked candidate ${entry.name} source digest changed`);
+      continue;
+    }
+    const sql = bytes.toString("utf8");
+    if (!new RegExp(`create\\s+or\\s+replace\\s+function\\s+clinical_core\\.${entry.name}\\s*\\(`, "i").test(sql)) {
+      fail(`blocked candidate ${entry.name} has no matching SQL function`);
+      continue;
+    }
+    if (productionNativeRpc.has(entry.name)) {
+      fail(`blocked candidate ${entry.name} is already marked production-native`);
+      continue;
+    }
+    const productionSqlDir = path.join(root, "infra", "aws-clinical-core", "production-migrations");
+    if (fs.readdirSync(productionSqlDir).some(filename => filename.endsWith(".sql")
+      && new RegExp(`create\\s+or\\s+replace\\s+function\\s+clinical_core\\.${entry.name}\\s*\\(`, "i")
+        .test(fs.readFileSync(path.join(productionSqlDir, filename), "utf8")))) {
+      fail(`blocked candidate ${entry.name} is already in a production migration`);
+      continue;
+    }
+    names.push(entry.name);
+  }
+  const canonical = [...new Set(names)].sort();
+  if (JSON.stringify(names) !== JSON.stringify(canonical)) {
+    fail("blocked candidate RPCs must be sorted and duplicate-free");
+  }
+  if (canonical.length) {
+    const adapter = fs.readFileSync(path.join(adaptersDir, "encounters.live.ts"), "utf8");
+    const dispatcher = fs.readFileSync(path.join(root, "src", "server", "clinical-core", "aws-production-desktop.ts"), "utf8");
+    if (!adapter.includes('process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED === "true"')
+      || !dispatcher.includes('process.env.CLINICAL_EMR_SAVE_RECEIPT_ENABLED !== "true"')) {
+      fail("blocked candidate RPCs must remain behind the explicit adapter and dispatcher gates");
+    }
+  }
+  return canonical;
+}
+
 let manifest;
 let productionManifest;
 try {
@@ -140,8 +200,12 @@ const reviewed = {
   rpc: assertReviewedList("rpc", manifest.operations?.rpc),
   select: assertReviewedList("select", manifest.operations?.select),
 };
+const blockedRpcs = blockedCandidateNames(manifest.blockedCandidateRpcs, productionNativeRpc);
+for (const name of blockedRpcs) {
+  if (reviewed.rpc.includes(name)) fail(`blocked candidate ${name} must not be in the active reviewed RPC list`);
+}
 const actual = sourceOperations();
-compare("rpc", reviewed.rpc, actual.rpc);
+compare("rpc", [...new Set([...reviewed.rpc, ...blockedRpcs])].sort(), actual.rpc);
 compare("select", reviewed.select, actual.select);
 
 const legacyFunctions = legacyFunctionDefinitions();
@@ -154,7 +218,7 @@ if (undefinedRpc.length) {
 
 if (!process.exitCode) {
   console.log(
-    `[aws-desktop-compatibility] PASS — ${reviewed.rpc.length} RPCs and ${reviewed.select.length} `
-      + "read models are explicitly reviewed; every RPC has an authored legacy or native-production PostgreSQL definition.",
+    `[aws-desktop-compatibility] PASS — ${reviewed.rpc.length} active RPCs, ${blockedRpcs.length} blocked candidate RPCs, and ${reviewed.select.length} `
+      + "read models are explicitly reviewed; active RPCs have authored legacy or native-production PostgreSQL definitions.",
   );
 }

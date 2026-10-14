@@ -174,7 +174,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 357,
+          "line": 392,
           "argumentKeys": [
             "_content",
             "_note_id",
@@ -3640,7 +3640,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 232,
+          "line": 233,
           "argumentKeys": [
             "_encounter_id"
           ]
@@ -3746,7 +3746,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 290,
+          "line": 325,
           "argumentKeys": [
             "_note_id"
           ]
@@ -3801,7 +3801,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 379,
+          "line": 414,
           "argumentKeys": [
             "_limit",
             "_patient_id"
@@ -5800,7 +5800,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 246,
+          "line": 247,
           "argumentKeys": [
             "_limit",
             "_patient_id"
@@ -6750,7 +6750,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 370,
+          "line": 405,
           "argumentKeys": [
             "_note_id",
             "_reason"
@@ -6800,7 +6800,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 326,
+          "line": 361,
           "argumentKeys": [
             "_note_id"
           ]
@@ -9903,7 +9903,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 267,
+          "line": 273,
           "argumentKeys": [
             "_content",
             "_encounter_id",
@@ -10395,7 +10395,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 219,
+          "line": 220,
           "argumentKeys": [
             "_encounter_id",
             "_reason",
@@ -10991,7 +10991,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 335,
+          "line": 370,
           "argumentKeys": [
             "_expected_version",
             "_note_id"
@@ -11153,7 +11153,7 @@
         {
           "adapter": "encounters.live.ts",
           "domain": "encounters",
-          "line": 205,
+          "line": 206,
           "argumentKeys": [
             "_appointment_id",
             "_organization_id",
@@ -12380,7 +12380,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
+        "sourceSha256": "eabfcecd1ecbd625bddc5a26f650e2314f63162388db23e58dce525805510c5c",
         "activationState": "phi_disabled"
       }
     },
@@ -12408,7 +12408,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
+        "sourceSha256": "eabfcecd1ecbd625bddc5a26f650e2314f63162388db23e58dce525805510c5c",
         "activationState": "phi_disabled"
       }
     },
@@ -12436,7 +12436,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
+        "sourceSha256": "eabfcecd1ecbd625bddc5a26f650e2314f63162388db23e58dce525805510c5c",
         "activationState": "phi_disabled"
       }
     },
@@ -12464,7 +12464,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
+        "sourceSha256": "eabfcecd1ecbd625bddc5a26f650e2314f63162388db23e58dce525805510c5c",
         "activationState": "phi_disabled"
       }
     },
@@ -12505,7 +12505,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "64941ee4b52332f81214e5119c35cca8227c273ecebe8f2957273f94f2439915",
+        "sourceSha256": "eabfcecd1ecbd625bddc5a26f650e2314f63162388db23e58dce525805510c5c",
         "activationState": "phi_disabled"
       }
     }

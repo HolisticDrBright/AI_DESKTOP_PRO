@@ -1,6 +1,22 @@
 {
   "schemaVersion": "desktop-aws-compatibility/1",
   "authorization": "cognito-workforce-membership-required",
+  "blockedCandidateRpcs": [
+    {
+      "name": "get_note_save_receipt",
+      "source": "infra/aws-clinical-core/production-candidates/emr-note-save-settlement.sql",
+      "sha256": "68cdc0e1c5738be53083ba07b9a2d9d8f8c7e26bd57cf57033bf9e86d55d7cd2",
+      "activation": "blocked",
+      "featureFlag": "CLINICAL_EMR_SAVE_RECEIPT_ENABLED"
+    },
+    {
+      "name": "save_note_draft_idempotent",
+      "source": "infra/aws-clinical-core/production-candidates/emr-note-save-settlement.sql",
+      "sha256": "68cdc0e1c5738be53083ba07b9a2d9d8f8c7e26bd57cf57033bf9e86d55d7cd2",
+      "activation": "blocked",
+      "featureFlag": "CLINICAL_EMR_SAVE_RECEIPT_ENABLED"
+    }
+  ],
   "operations": {
     "rpc": [
       "activate_my_memberships",
