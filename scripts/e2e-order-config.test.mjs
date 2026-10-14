@@ -6,8 +6,8 @@ import { mkdtempSync, writeFileSync as write } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  SEPARATELY_CONFIGURED_SPECS, compareOrders, fixturePostureFromProbe, memorySamples, orderBatteryEnvironment, selectOrderBattery,
-  summarizeReport, testTimeline,
+  SEPARATELY_CONFIGURED_SPECS, appEntryUrls, compareOrders, fixturePostureFromProbe, memorySamples, orderBatteryEnvironment, selectOrderBattery,
+  summarizeReport, testTimeline, workerRestarts,
 } from './e2e-order-config.mjs';
 
 const options = { stubBase: 'http://127.0.0.1:3999', port: 3114 };
@@ -160,6 +160,25 @@ test('the timeline and memory samples are read from the report and the retained 
     { at: '2026-10-14T00:01:01.000Z', event: 'sample', pid: 7, heapUsedMiB: 2000, heapLimitMiB: 9216, rssMiB: 3000,
       eventLoopDelayMaxMs: 20125, gcMajorCount: 2, gcMajorPauseMaxMs: 18400, heapAfterMajorGcMiB: 1500 },
   ]);
+});
+
+test('every app entry is compiled before any spec: one URL per page or route, placeholders for dynamic segments', () => {
+  assert.deepEqual(appEntryUrls([
+    'page.tsx', 'patients/[patientId]/page.tsx', 'patients/[patientId]/encounter/[encounterId]/page.tsx',
+    'api/live/lens/evaluation/route.ts', '(marketing)/learn/[slug]/page.tsx', '@modal/settings/page.tsx',
+    '_components/page.tsx', 'layout.tsx', 'patients/[patientId]/loading.tsx', 'api\\auth\\login\\route.ts',
+    'api/live/lens/evaluation/route.ts',
+  ]), ['/', '/api/auth/login', '/api/live/lens/evaluation', '/learn/warmup', '/patients/warmup', '/patients/warmup/encounter/warmup', '/settings']);
+  const driver = readFileSync('scripts/check-e2e-order-independence.mjs', 'utf8');
+  const precompile = driver.indexOf('await precompileApp(');
+  assert.ok(precompile > 0 && precompile < driver.indexOf('await warmApp()') && driver.indexOf('await warmApp()') < driver.indexOf('const canary = startCanary()'),
+    'the whole app is compiled before the warm-up and before any spec');
+});
+
+test('a worker restart Next reports itself is counted, and fails the battery', () => {
+  assert.equal(workerRestarts(['[t] [forward order]  ⚠ Server is approaching the used memory threshold, restarting...', '[t] GET /login 200', '[t] [reverse order]  ⚠ Server is approaching the used memory threshold, restarting...'].join('\n')), 2);
+  assert.equal(workerRestarts('[t] GET /login 200'), 0);
+  assert.match(readFileSync('scripts/check-e2e-order-independence.mjs', 'utf8'), /if \(!verdict\.ok \|\| restarts > 0\)/);
 });
 
 // The mechanism the repair removes, reproduced without Next: a server that logs every request to a pipe its parent

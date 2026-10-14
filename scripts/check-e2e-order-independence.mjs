@@ -45,6 +45,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 import {
+  appEntryUrls,
   compareOrders,
   fixturePostureFromProbe,
   memorySamples,
@@ -52,6 +53,7 @@ import {
   selectOrderBattery,
   summarizeReport,
   testTimeline,
+  workerRestarts,
 } from "./e2e-order-config.mjs";
 
 /**
@@ -449,6 +451,47 @@ const WARMUP_ROUTES = [
   "/team", "/templates", "/wearables",
   "/login", "/reset",
 ];
+/**
+ * Compile the whole app once, before any spec: every entry (scripts/e2e-order-config.mjs, appEntryUrls) requested 24 at
+ * a time, so `next dev` batches them into a handful of compilations. The harness's server keeps routes compiled
+ * (next.config.ts), so after this no test waits on a compile. Status codes do not matter here — an API route asked
+ * with GET answers 405 after it has compiled. A bounded step: past its cap the battery stops, loudly.
+ */
+const PRECOMPILE_CONCURRENCY = 24;
+const PRECOMPILE_CAP_MS = 15 * 60_000;
+
+async function precompileApp(compilations) {
+  const urls = appEntryUrls(readdirSync("src/app", { recursive: true }).map(String));
+  const before = compilations();
+  const t0 = Date.now();
+  const statuses = {};
+  let next = 0;
+  let slowestMs = 0;
+  const worker = async () => {
+    while (next < urls.length) {
+      const url = urls[next++];
+      const started = Date.now();
+      let status = "error";
+      try {
+        const res = await fetch(`http://localhost:${APP_PORT}${url}`, { redirect: "manual", signal: AbortSignal.timeout(PRECOMPILE_CAP_MS) });
+        await res.arrayBuffer().catch(() => null);
+        status = String(res.status);
+      } catch { /* counted as an error below */ }
+      statuses[status] = (statuses[status] ?? 0) + 1;
+      slowestMs = Math.max(slowestMs, Date.now() - started);
+    }
+  };
+  await Promise.all(Array.from({ length: PRECOMPILE_CONCURRENCY }, worker));
+  const result = { entries: urls.length, ms: Date.now() - t0, slowestMs, compilations: compilations() - before, statuses };
+  writeFileSync(join(EVIDENCE, "precompile.json"), JSON.stringify(result, null, 2) + "\n");
+  console.log(`[e2e-order] compiled ${result.entries} app entries in ${result.ms} ms (${result.compilations} compilations; statuses ${JSON.stringify(statuses)})`);
+  if (result.ms > PRECOMPILE_CAP_MS || statuses.error) {
+    console.error(`[e2e-order] FAIL — the app did not compile within ${PRECOMPILE_CAP_MS} ms, or a request got no answer. No spec ran.`);
+    process.exit(1);
+  }
+  return result;
+}
+
 const WARMUP_HARD_CAP_MS = 55_000;
 const WARMUP_SOFT_CAP_MS = 8_000;
 
@@ -498,10 +541,12 @@ async function withApp(heap, run) {
     { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap }, detached: true },
   );
   const appLog = [];
+  let compiled = 0;
   const serverLog = createWriteStream(join(EVIDENCE, "dev-server.log"), { flags: "a" });
   const push = (buf) => {
     const text = String(buf);
     appLog.push(text); if (appLog.length > 200) appLog.shift();
+    compiled += (text.match(/ Compiled /g) ?? []).length;
     // Every line is kept, stamped, for the whole battery: a stall is diagnosed from what the server said at the time.
     const stamp = new Date().toISOString();
     serverLog.write(text.split("\n").filter((line) => line.length > 0).map((line) => `[${stamp}] [${currentOrder}] ${line}`).join("\n") + "\n");
@@ -543,6 +588,7 @@ async function withApp(heap, run) {
       process.exit(1);
     }
     console.log("[e2e-order] contract fixture allowed by this server (observed: a signed-out page rendered)");
+    await precompileApp(() => compiled);
     await warmApp();
     const canary = startCanary();
     try {
@@ -630,7 +676,11 @@ const results = await withStub(async () => withApp(heap, async () => {
 const forward = results["forward order"], reverse = results["reverse order"];
 const verdict = compareOrders(forward, reverse);
 
-const memory = memorySamples(readFileSync(join(EVIDENCE, "dev-server.log"), "utf8"));
+const serverLogText = readFileSync(join(EVIDENCE, "dev-server.log"), "utf8");
+const memory = memorySamples(serverLogText);
+const windows = memory.filter((m) => typeof m.eventLoopDelayMaxMs === "number");
+const restarts = workerRestarts(serverLogText);
+const precompile = existsSync(join(EVIDENCE, "precompile.json")) ? JSON.parse(readFileSync(join(EVIDENCE, "precompile.json"), "utf8")) : null;
 const canary = readFileSync(join(EVIDENCE, "canary.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 const slowest = [...canary].sort((a, b) => b.ms - a.ms).slice(0, 5);
 writeFileSync(SUMMARY, JSON.stringify({
@@ -638,10 +688,16 @@ writeFileSync(SUMMARY, JSON.stringify({
   runtime: { server: "next dev (one process, both orders)", contractFixture: true, stub: STUB_BASE, heapMiB: process.env.E2E_DEV_HEAP_MB ?? null },
   battery: specs, separatelyConfigured: battery.separatelyConfigured,
   forward, reverse, verdict,
-  memory: { samples: memory.length, maxHeapUsedMiB: Math.max(0, ...memory.map((m) => m.heapUsedMiB)), maxRssMiB: Math.max(0, ...memory.map((m) => m.rssMiB)) },
+  memory: {
+    samples: memory.length, maxHeapUsedMiB: Math.max(0, ...memory.map((m) => m.heapUsedMiB)), maxRssMiB: Math.max(0, ...memory.map((m) => m.rssMiB)),
+    maxHeapAfterMajorGcMiB: Math.max(0, ...windows.map((m) => m.heapAfterMajorGcMiB ?? 0)), maxEventLoopDelayMs: Math.max(0, ...windows.map((m) => m.eventLoopDelayMaxMs)),
+    workerRestarts: restarts,
+  },
+  precompile,
   canary: { requests: canary.length, failures: canary.filter((c) => c.status < 0 || c.status >= 500).length, slowest },
 }, null, 2) + "\n");
-console.log(`[e2e-order] memory: ${memory.length} samples, max heap used ${Math.max(0, ...memory.map((m) => m.heapUsedMiB))} MiB, max RSS ${Math.max(0, ...memory.map((m) => m.rssMiB))} MiB`);
+console.log(`[e2e-order] memory: ${memory.length} samples, max heap used ${Math.max(0, ...memory.map((m) => m.heapUsedMiB))} MiB, max RSS ${Math.max(0, ...memory.map((m) => m.rssMiB))} MiB, ` +
+  `max retained ${Math.max(0, ...windows.map((m) => m.heapAfterMajorGcMiB ?? 0))} MiB, longest event-loop delay ${Math.max(0, ...windows.map((m) => m.eventLoopDelayMaxMs))} ms, worker restarts ${restarts}`);
 console.log(`[e2e-order] canary: ${canary.length} requests; slowest ${slowest.map((c) => `${c.path} ${c.ms}ms (${c.order}${c.error ? ", " + c.error : ""})`).join("; ")}`);
 
 if (forward.skipped.length > 0) {
@@ -651,9 +707,11 @@ if (forward.skipped.length > 0) {
   for (const [reason, count] of reasons) console.log(`    - ${count} × ${reason}`);
 }
 
-if (!verdict.ok) {
+if (!verdict.ok || restarts > 0) {
   console.error(`\n[e2e-order] FAIL (details in ${SUMMARY})`);
   for (const p of verdict.problems) console.error(`  - ${p}`);
+  // A restart drops whatever was in flight; a battery that survived one has not shown the server holds up.
+  if (restarts > 0) console.error(`  - the development server restarted its own worker ${restarts} time(s) at its heap threshold`);
   for (const id of verdict.forwardOnly.slice(0, 20)) console.error(`    passed only forward: ${id}`);
   for (const id of verdict.reverseOnly.slice(0, 20)) console.error(`    passed only reverse: ${id}`);
   process.exit(1);

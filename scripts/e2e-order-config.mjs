@@ -208,6 +208,32 @@ export function testTimeline(report) {
 }
 
 /**
+ * Every app entry as one URL to request before any spec runs: each `page` or `route` file under src/app, with route
+ * groups, parallel slots and private folders removed and each dynamic segment filled with a placeholder. Requested a
+ * few at a time, they let `next dev` compile the whole app in a handful of batched compilations (measured: 293 entries
+ * in 16 compilations) instead of one compilation per route in the middle of whichever test first visits it — a compile
+ * that, with every route kept, carries every entry already compiled (8.8 s for one route, observed mid-battery).
+ * @param {string[]} files paths relative to src/app
+ */
+export function appEntryUrls(files) {
+  const urls = new Set();
+  for (const file of files) {
+    const match = /^(?:(.*)\/)?(?:page|route)\.(?:tsx|ts|jsx|js)$/.exec(String(file).replaceAll('\\', '/'));
+    if (!match) continue;
+    const segments = (match[1] ?? '').split('/').filter(Boolean);
+    if (segments.some((segment) => segment.startsWith('_'))) continue;
+    const kept = segments.filter((segment) => !/^\(.*\)$/.test(segment) && !segment.startsWith('@'));
+    urls.add('/' + kept.map((segment) => (segment.startsWith('[') ? 'warmup' : segment)).join('/'));
+  }
+  return [...urls].sort();
+}
+
+/** Worker restarts Next reported itself (its 80 % heap threshold), from the retained server log. */
+export function workerRestarts(log) {
+  return String(log).split('\n').filter((line) => line.includes('Server is approaching the used memory threshold')).length;
+}
+
+/**
  * The development server's own memory samples (scripts/e2e-dev-memory-probe.mjs) from its retained log. A window's
  * event-loop delay and major-collection pauses are carried when the probe reported them; `heapAfterMajorGcMiB`
  * approximates the retained heap, which `heapUsedMiB` alone cannot separate from uncollected garbage.
