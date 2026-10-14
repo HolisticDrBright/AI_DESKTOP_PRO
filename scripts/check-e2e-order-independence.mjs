@@ -248,7 +248,13 @@ function provisionBuild() {
   try {
     execFileSync(process.execPath, [NEXT_ENTRY, "build"], {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...process.env, CLINICAL_CONTRACT_FIXTURE: "", E2E_DEV_SERVER: "0" },
+      // The fixture is off for this build. It gets the same explicit heap as the development server (which starts only
+      // after it): with E2E_DEV_HEAP_MB set, NODE_OPTIONS carries no heap of its own, and Node's default is too small for
+      // the type-check pass (observed: out of memory at about 2 GiB).
+      env: {
+        ...process.env, CLINICAL_CONTRACT_FIXTURE: "", E2E_DEV_SERVER: "0",
+        ...(process.env.E2E_DEV_HEAP_MB ? { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${process.env.E2E_DEV_HEAP_MB}`.trim() } : {}),
+      },
     });
   } catch {
     configFailure(
