@@ -1,12 +1,54 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import {
+  assertListedSpecOrder,
+  createOrderedAliases,
+  orderedAliasPlan,
+  removeOrderedAliases,
+} from "./e2e-ordered-specs.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const runner = join(root, "scripts", "check-e2e-order-independence.mjs");
+const playwright = join(root, "node_modules", "@playwright", "test", "cli.js");
+
+test("the order proof reverses Playwright's observed collection order, not just CLI arguments", () => {
+  const specs = readdirSync(join(root, "e2e")).filter((name) => name.endsWith(".spec.ts")).sort();
+  const forward = orderedAliasPlan(specs, "forward");
+  const reverse = orderedAliasPlan([...specs].reverse(), "reverse");
+  const created = createOrderedAliases(join(root, "e2e"), [...forward, ...reverse]);
+  try {
+    for (const [plan, expected] of [[forward, specs], [reverse, [...specs].reverse()]]) {
+      const result = spawnSync(
+        process.execPath,
+        [playwright, "test", ...plan.map((item) => `e2e/${item.alias}`), "--list"],
+        { cwd: root, encoding: "utf8", timeout: 20_000, env: { ...process.env, E2E_ORDER_ALIASES: "1" } },
+      );
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.deepEqual(assertListedSpecOrder(result.stdout, expected), expected);
+    }
+    const ignored = spawnSync(
+      process.execPath,
+      [playwright, "test", `e2e/${forward[0].alias}`, "--list"],
+      { cwd: root, encoding: "utf8", timeout: 20_000, env: { ...process.env, E2E_ORDER_ALIASES: "0" } },
+    );
+    assert.notEqual(ignored.status, 0, "ordinary browser runs must ignore generated aliases");
+    assert.match(`${ignored.stdout}\n${ignored.stderr}`, /No tests found/);
+  } finally {
+    removeOrderedAliases(created);
+  }
+});
+
+test("the order proof refuses an incomplete or incorrectly sorted Playwright list", () => {
+  assert.throws(
+    () => assertListedSpecOrder("Listing tests:\n  a.spec.ts:1:1 › test\n", ["b.spec.ts"]),
+    /did not collect the intended spec order/,
+  );
+});
 
 function refusal(overrides) {
   const env = {

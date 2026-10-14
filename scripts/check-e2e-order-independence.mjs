@@ -2,9 +2,11 @@
 /**
  * Order-independence proof for the E2E battery.
  *
- * Runs the canonical one-process battery TWICE — once in Playwright's default
- * order, once with the spec list reversed — and requires both to report the
- * same passing total with zero failures.
+ * Runs the canonical one-process battery TWICE — once with the spec files in
+ * alphabetical order, once with those files reversed — and requires both to
+ * report the same passing total with zero failures. Numbered temporary import
+ * aliases force the collection order, which is checked with Playwright --list
+ * before either browser run. CLI file arguments alone do not control order.
  *
  * Why reversed rather than random: a shuffled run that passes once proves
  * nothing repeatable, and a failure would be hard to reproduce. Reversal is
@@ -33,6 +35,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 import { failedTestTitles, orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
 import { runBoundedChild } from "./e2e-child-process.mjs";
+import {
+  assertListedSpecOrder,
+  createOrderedAliases,
+  isOrderedAlias,
+  orderedAliasPlan,
+  removeOrderedAliases,
+} from "./e2e-ordered-specs.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -49,8 +58,14 @@ const PLAYWRIGHT_ENTRY = join(
   process.cwd(), "node_modules", "@playwright", "test", "cli.js",
 );
 
-const specs = readdirSync("e2e")
-  .filter((f) => f.endsWith(".spec.ts"))
+const e2eEntries = readdirSync("e2e");
+const staleAliases = e2eEntries.filter(isOrderedAlias);
+if (staleAliases.length > 0) {
+  console.error(`[e2e-order] FAIL — generated order aliases remain from an interrupted run: ${staleAliases.join(", ")}`);
+  process.exit(1);
+}
+const specs = e2eEntries
+  .filter((f) => f.endsWith(".spec.ts") && !isOrderedAlias(f))
   .sort();
 
 if (specs.length === 0) {
@@ -393,7 +408,7 @@ async function run(label, files) {
     process.execPath,
     [PLAYWRIGHT_ENTRY, "test", ...files.map((f) => `e2e/${f}`)],
     {
-      env: { ...process.env, E2E_ORDER_OWNED_SERVER: "1" },
+      env: { ...process.env, E2E_ORDER_OWNED_SERVER: "1", E2E_ORDER_ALIASES: "1" },
       maxBytes: 64 * 1024 * 1024,
     },
   );
@@ -414,6 +429,16 @@ async function run(label, files) {
     if (child.error) console.error(`[e2e-order] Child start failed: ${child.error.message}`);
   }
   return result;
+}
+
+function proveCollectedOrder(plan) {
+  const listed = execFileSync(
+    process.execPath,
+    [PLAYWRIGHT_ENTRY, "test", ...plan.map((item) => `e2e/${item.alias}`), "--list"],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, env: { ...process.env, E2E_ORDER_ALIASES: "1" } },
+  );
+  const observed = assertListedSpecOrder(listed, plan.map((item) => item.spec));
+  console.log(`[e2e-order] verified ${plan[0].alias.includes("_forward_") ? "forward" : "reverse"} collection order: ${observed.length} specs, ${observed[0]} → ${observed.at(-1)}`);
 }
 
 /**
@@ -537,13 +562,30 @@ if (appliedDefaults.length > 0) {
 await assertAppPortFree();
 provisionBuild();
 
-const { forward, reverse } = await withStub(async () =>
-  withApp(async () => {
-    const forward = await run("forward order", specs);
-    const reverse = await run("reverse order", [...specs].reverse());
-    return { forward, reverse };
-  }, devServerEnv),
-);
+const forwardPlan = orderedAliasPlan(specs, "forward");
+const reversePlan = orderedAliasPlan([...specs].reverse(), "reverse");
+let generated = [];
+const cleanupGenerated = () => {
+  removeOrderedAliases(generated);
+  generated = [];
+};
+process.on("exit", cleanupGenerated);
+let forward;
+let reverse;
+try {
+  generated = createOrderedAliases("e2e", [...forwardPlan, ...reversePlan]);
+  proveCollectedOrder(forwardPlan);
+  proveCollectedOrder(reversePlan);
+  ({ forward, reverse } = await withStub(async () =>
+    withApp(async () => {
+      const first = await run("forward order", forwardPlan.map((item) => item.alias));
+      const second = await run("reverse order", reversePlan.map((item) => item.alias));
+      return { forward: first, reverse: second };
+    }, devServerEnv),
+  ));
+} finally {
+  cleanupGenerated();
+}
 
 const problems = orderResultProblems(forward, reverse);
 

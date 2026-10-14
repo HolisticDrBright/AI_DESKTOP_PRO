@@ -26,6 +26,7 @@ yarn-error.log*
 /test-results/
 /playwright-report/
 /.forensic/
+/e2e/__e2e_order_*.spec.ts
 
 # typescript
 *.tsbuildinfo
