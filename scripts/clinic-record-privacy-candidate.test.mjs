@@ -6,6 +6,16 @@ import { clinicRecordPrivacyCandidate, CLINIC_RECORD_PRIVACY_FILE } from './clin
 const parent = JSON.parse(execFileSync(process.execPath, ['scripts/build-telehealth-transfer-key-fence-candidate.mjs', '--json'],
   { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000, windowsHide: true }));
 const sql = readFileSync('infra/aws-clinical-core/production-candidates/clinic-record-privacy.sql', 'utf8').replace(/\r\n?/g, '\n');
+const auditActions = source => {
+  const statement = source.match(/add constraint events_action_check check\(action in\(([\s\S]*?)\)\);/i);
+  assert.ok(statement, 'audit action constraint must be present');
+  const actions = [...statement[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+  assert.equal(new Set(actions).size, actions.length, 'audit actions must be unique');
+  return new Set(actions);
+};
+const assertAuditSuperset = (earlier, later) => {
+  for (const action of earlier) assert.ok(later.has(action), `later candidate drops audit action ${action}`);
+};
 test('copies all 115 parent bytes unchanged and appends exactly one blocked forward migration', () => {
   const a = clinicRecordPrivacyCandidate(parent, sql);
   assert.equal(a.manifest.migrations.length, 116);
@@ -17,6 +27,23 @@ test('copies all 115 parent bytes unchanged and appends exactly one blocked forw
   assert.equal(a.candidate.seededDisclosureReleases, false); assert.equal(a.candidate.seededRequests, false);
   assert.equal(a.candidate.parentMigrationReleaseSha256, parent.candidate.migrationReleaseSha256);
   assert.deepEqual(clinicRecordPrivacyCandidate(parent, sql.replaceAll('\n', '\r\n')), a);
+});
+test('the later clinic audit constraint preserves every earlier telehealth action', () => {
+  const lifecycle = parent.manifest.migrations[112];
+  assert.match(lifecycle.file, /telehealth_chart_lifecycle\.sql$/);
+  assert.equal(parent.manifest.migrations[115], undefined);
+  const earlier = auditActions(parent.files[lifecycle.file]);
+  const later = auditActions(sql);
+  assertAuditSuperset(earlier, later);
+  for (const action of ['telehealth.note_transferred', 'clinic_record.request_submitted',
+    'clinic_record.request_withdrawn', 'clinic_record.request_superseded', 'clinic_record.review_started',
+    'clinic_record.copy_fulfilled', 'clinic_record.request_refused', 'clinic_record.correction_amended',
+    'clinic_record.correction_declined', 'clinic_record.copy_read']) {
+    assert.ok(later.has(action), `expected retained audit action ${action}`);
+  }
+  const withoutTelehealth = new Set(later);
+  withoutTelehealth.delete('telehealth.note_transferred');
+  assert.throws(() => assertAuditSuperset(earlier, withoutTelehealth), /drops audit action telehealth.note_transferred/);
 });
 for (const [name, mutate] of [
   ['missing activation', p => { delete p.candidate.activation; }],

@@ -14,7 +14,8 @@ const valid=()=>({schemaVersion:'lab-result/2',provider:'alp_patient_sync',provi
  provenance:{origin:'uploaded_report_analysis',documents:['d'.repeat(64)],reportedVerification:'analysis_cross_checked'}});
 describe('lab-result/2 (mirrored contract)',()=>{
  it('is byte-identical to the pinned mirror and is not accepted',()=>{
-  expect(createHash('sha256').update(readFileSync('src/contracts/labResultTransfer.ts')).digest('hex')).toBe(PIN);
+  const contract=readFileSync('src/contracts/labResultTransfer.ts','utf8').replace(/\r\n/g,'\n');
+  expect(createHash('sha256').update(contract).digest('hex')).toBe(PIN);
   expect(LAB_RESULT_TRANSFER_V2_ACCEPTED).toBe(false);
  });
  it('carries provenance and nothing that could read as a laboratory flag or as verification',()=>{
