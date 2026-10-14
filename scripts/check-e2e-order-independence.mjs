@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 import { orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
+import { runBoundedChild } from "./e2e-child-process.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -383,26 +384,21 @@ async function withStub(run) {
   }
 }
 
-function run(label, files) {
+async function run(label, files) {
   console.log(`\n[e2e-order] ${label} (${files.length} specs)`);
-  let out = "";
-  let exitOk = true;
-  try {
-    out = execFileSync(
-      process.execPath,
-      [PLAYWRIGHT_ENTRY, "test", ...files.map((f) => `e2e/${f}`)],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, E2E_ORDER_OWNED_SERVER: "1" },
-        maxBuffer: 64 * 1024 * 1024,
-      },
-    );
-  } catch (e) {
-    out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
-    exitOk = false;
-  }
-  const result = summarizePlaywrightResult(out, exitOk);
+  // A synchronous wait here starves the parent's event loop, including the
+  // handlers that drain the separately owned Next dev server's pipes. Once
+  // that pipe fills, a live server can stop answering even /login.
+  const child = await runBoundedChild(
+    process.execPath,
+    [PLAYWRIGHT_ENTRY, "test", ...files.map((f) => `e2e/${f}`)],
+    {
+      env: { ...process.env, E2E_ORDER_OWNED_SERVER: "1" },
+      maxBytes: 64 * 1024 * 1024,
+    },
+  );
+  const out = child.output;
+  const result = summarizePlaywrightResult(out, child.exitOk);
   console.log(
     `[e2e-order] ${label}: ${result.passed} passed, ${result.failed} failed, ` +
       `${result.skipped} skipped, process=${result.exitOk ? "success" : "failed"}`,
@@ -418,6 +414,8 @@ function run(label, files) {
   if (!result.exitOk && result.failed === 0) {
     console.error(`[e2e-order] ${label} process failed without a Playwright failure summary. Last output:`);
     console.error(out.slice(-4000));
+    if (child.limitExceeded) console.error('[e2e-order] Playwright output exceeded the 64 MiB limit.');
+    if (child.error) console.error(`[e2e-order] Child start failed: ${child.error.message}`);
   }
   return result;
 }
@@ -544,10 +542,11 @@ await assertAppPortFree();
 provisionBuild();
 
 const { forward, reverse } = await withStub(async () =>
-  withApp(async () => ({
-    forward: run("forward order", specs),
-    reverse: run("reverse order", [...specs].reverse()),
-  }), devServerEnv),
+  withApp(async () => {
+    const forward = await run("forward order", specs);
+    const reverse = await run("reverse order", [...specs].reverse());
+    return { forward, reverse };
+  }, devServerEnv),
 );
 
 const problems = orderResultProblems(forward, reverse);

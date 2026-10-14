@@ -132,3 +132,24 @@ failed against the prior code (no error after 33 seconds), then passed with the
 deadline; all eight Lens browser tests passed on the patched source. This is
 an error-recovery improvement, **not** a fix or a pass for the one-process
 browser gate or evidence about the production server under load.
+
+## October 13 runner backpressure finding — full gate still running
+
+The canonical runner spawned `next dev` with stdout and stderr pipes drained by
+its own event loop, then called `execFileSync` to wait for the entire Playwright
+battery. That synchronous wait prevents the same event loop from draining the
+server pipes for the duration of the 39-spec battery. A full pipe can block a
+live dev worker's writes and make even `/login` stop answering. This is a
+specific runner defect consistent with the previously observed idle-worker
+stall; whether it explains every failure must be decided by the full run.
+
+The runner now waits for each Playwright process asynchronously while draining
+both the browser-child output and the dev-server output. It preserves the
+64 MiB browser-output cap, child exit-code requirement, one-process suite per
+order, and forward/reverse count checks. A focused test proves the parent
+event loop keeps advancing during the child wait, and tests still reject a
+nonzero child that printed a passing summary and an oversized child output.
+The development-only numeric probe now records event-loop utilization and
+delay beside heap/RSS, without request paths, headers or payloads. Fourteen
+focused runner tests and lint pass. This is **not** yet a passing full browser
+battery or a production-hosted/device observation.
