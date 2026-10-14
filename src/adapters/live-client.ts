@@ -134,7 +134,7 @@ interface Envelope<T> {
 
 async function liveFetch<T>(
   path: string,
-  init: { method: "GET" | "POST" | "PUT"; body?: unknown; form?: FormData },
+  init: { method: "GET" | "POST" | "PUT"; body?: unknown; form?: FormData; signal?: AbortSignal },
 ): Promise<T> {
   let res: Response;
   try {
@@ -146,6 +146,7 @@ async function liveFetch<T>(
           ? { "content-type": "application/json" }
           : undefined,
       body: init.form ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
+      signal: init.signal,
     });
   } catch (e) {
     throw new AdapterError("unavailable", undefined, e instanceof Error ? e.message : undefined);
@@ -194,10 +195,10 @@ export const liveClient = {
 
   telehealthDay: (date: string, timeZone: string) =>
     liveFetch<TelehealthDay>(`telehealth/day?date=${encodeURIComponent(date)}&timeZone=${encodeURIComponent(timeZone)}`, { method: "GET" }),
-  telehealthVisit: (appointmentId: string, date: string, timeZone: string) =>
+  telehealthVisit: (appointmentId: string, date: string, timeZone: string, signal?: AbortSignal) =>
     liveFetch<TelehealthDayVisit>(
       `telehealth/visit?appointmentId=${encodeURIComponent(appointmentId)}&date=${encodeURIComponent(date)}&timeZone=${encodeURIComponent(timeZone)}`,
-      { method: "GET" },
+      { method: "GET", signal },
     ),
   telehealthConsentArtifact: () =>
     liveFetch<TelehealthConsentArtifact>("telehealth/consent-artifact", { method: "GET" }),
@@ -209,8 +210,8 @@ export const liveClient = {
     liveFetch<TelehealthStartResult>("telehealth/start", { method: "POST", body: input }),
   telehealthEnd: (input: TelehealthEndInput) =>
     liveFetch<TelehealthVisit>("telehealth/end", { method: "POST", body: input }),
-  telehealthNote: (appointmentId: string) =>
-    liveFetch<TelehealthVisit>(`telehealth/note?appointmentId=${encodeURIComponent(appointmentId)}`, { method: "GET" }),
+  telehealthNote: (appointmentId: string, signal?: AbortSignal) =>
+    liveFetch<TelehealthVisit>(`telehealth/note?appointmentId=${encodeURIComponent(appointmentId)}`, { method: "GET", signal }),
   telehealthImportNote: (appointmentId: string, date: string, timeZone: string) =>
     liveFetch<TelehealthImportResult>("telehealth/note/import", { method: "POST", body: { appointmentId, date, timeZone } }),
   telehealthSignNote: (input: TelehealthSignInput) =>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { api } from "@/adapters";
-import { isAdapterError } from "@/adapters/errors";
+import { AdapterError, isAdapterError } from "@/adapters/errors";
 import type {
   TelehealthConsentArtifact,
   TelehealthDayVisit,
@@ -91,10 +91,31 @@ export function isFullNote(note: TelehealthVisitNote | TelehealthVisitNoteSummar
  * read it from the note route, which returns the whole visit.
  */
 export async function loadVisitRow(appointmentId: string, date: string): Promise<TelehealthDayVisit> {
-  const row = await api.telehealth.visit(appointmentId, date, viewerTimeZone());
-  if (!row.visit) return row;
-  const full = await api.telehealth.note(appointmentId);
-  return { ...row, visit: full };
+  // The visit projection and retained note are read-only, but either service
+  // can stall. Never leave the practitioner on an indefinite loading screen.
+  // Abort the browser request too; a late result cannot be adopted.
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new AdapterError("unavailable", "The visit did not load in time. Please try again."));
+    }, 20_000);
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        const row = await api.telehealth.visit(appointmentId, date, viewerTimeZone(), controller.signal);
+        if (!row.visit) return row;
+        const full = await api.telehealth.note(appointmentId, controller.signal);
+        return { ...row, visit: full };
+      })(),
+      deadline,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    controller.abort();
+  }
 }
 
 export type VisitPhase =

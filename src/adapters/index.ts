@@ -151,13 +151,13 @@ export const api = {
      * embedded-meeting session is signed server-side and returned once.
      */
     day: async (date: string, timeZone: string) => liveClient.telehealthDay(date, timeZone),
-    visit: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthVisit(appointmentId, date, timeZone),
+    visit: async (appointmentId: string, date: string, timeZone: string, signal?: AbortSignal) => liveClient.telehealthVisit(appointmentId, date, timeZone, signal),
     consentArtifact: async () => liveClient.telehealthConsentArtifact(),
     recordConsent: async (input: TelehealthConsentInput) => liveClient.telehealthRecordConsent(input),
     withdrawConsent: async (input: TelehealthWithdrawInput) => liveClient.telehealthWithdrawConsent(input),
     start: async (input: TelehealthStartInput) => liveClient.telehealthStart(input),
     end: async (input: TelehealthEndInput) => liveClient.telehealthEnd(input),
-    note: async (appointmentId: string) => liveClient.telehealthNote(appointmentId),
+    note: async (appointmentId: string, signal?: AbortSignal) => liveClient.telehealthNote(appointmentId, signal),
     importNote: async (appointmentId: string, date: string, timeZone: string) => liveClient.telehealthImportNote(appointmentId, date, timeZone),
     signNote: async (input: TelehealthSignInput) => liveClient.telehealthSignNote(input),
     /** Explicit, practitioner-initiated placement of a SIGNED visit record into the chart as an UNSIGNED draft; safe to repeat. */
