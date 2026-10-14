@@ -1,19 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync as write } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  SEPARATELY_CONFIGURED_SPECS, compareOrders, fixturePostureFromProbe, orderBatteryEnvironment, selectOrderBattery, summarizeReport,
+  SEPARATELY_CONFIGURED_SPECS, compareOrders, fixturePostureFromProbe, memorySamples, orderBatteryEnvironment, selectOrderBattery,
+  summarizeReport, testTimeline,
 } from './e2e-order-config.mjs';
 
 const options = { stubBase: 'http://127.0.0.1:3999', port: 3114 };
 
-test('the battery is the live- set, every other spec is excluded by name with its own CI job, and an unclassified spec is an error', () => {
+test('the battery runs every spec; the separately configured ones are named with their CI job, and an unclassified spec is an error', () => {
   const specs = readdirSync('e2e').filter(file => file.endsWith('.spec.ts'));
-  const { run, excluded, unclassified } = selectOrderBattery(specs);
+  const { run, separatelyConfigured, unclassified } = selectOrderBattery(specs);
   assert.deepEqual(unclassified, []);
-  assert.ok(run.length >= 25 && run.every(file => file.startsWith('live-')));
-  assert.equal(run.length + excluded.length, specs.length);
-  for (const { spec, reason } of excluded) assert.equal(reason, SEPARATELY_CONFIGURED_SPECS[spec]);
+  assert.deepEqual(run, [...specs].sort());
+  assert.ok(separatelyConfigured.length > 0 && separatelyConfigured.every(({ spec }) => !spec.startsWith('live-')));
+  for (const { spec, reason } of separatelyConfigured) assert.equal(reason, SEPARATELY_CONFIGURED_SPECS[spec]);
   assert.deepEqual(selectOrderBattery([...specs, 'new-feature.spec.ts']).unclassified, ['new-feature.spec.ts']);
 });
 
@@ -112,6 +117,11 @@ test('the verdict compares identities, not totals, and refuses an unexercised or
 test('the driver runs the development server it configured, never `next start`, and the fixture boundary still refuses a deployed runtime', () => {
   const driver = readFileSync('scripts/check-e2e-order-independence.mjs', 'utf8');
   assert.match(driver, /\[NEXT_ENTRY, "dev", "-p", String\(APP_PORT\)\]/);
+  // Playwright is never a synchronous child (it would stop this process draining the server's pipes), and one
+  // development server carries both orders.
+  assert.match(driver, /spawn\(process\.execPath, \[PLAYWRIGHT_ENTRY, "test"/);
+  assert.doesNotMatch(driver, /execFileSync\(\s*process\.execPath,\s*\[PLAYWRIGHT_ENTRY/);
+  assert.match(driver, /withStub\(async \(\) => withApp\(heap, async \(\) => \{/);
   assert.doesNotMatch(driver, /NEXT_ENTRY, "start"/);
   assert.doesNotMatch(driver, /NODE_ENV\s*[:=]/);
   assert.match(driver, /orderBatteryEnvironment\(/);
@@ -126,4 +136,50 @@ test('the driver runs the development server it configured, never `next start`, 
   const config = readFileSync('playwright.config.ts', 'utf8');
   assert.match(config, /reuseExistingServer: reuseExistingE2EServer\(\)/);
   assert.match(driver, /E2E_ORDER_OWNED_SERVER: "1"/);
+});
+
+test('the timeline and memory samples are read from the report and the retained server log', () => {
+  assert.deepEqual(testTimeline({ suites: [{ title: 'live-a.spec.ts', specs: [
+    { title: 'later', file: 'live-a.spec.ts', line: 9, tests: [{ status: 'expected', results: [{ status: 'passed', startTime: '2026-10-14T00:00:05.000Z', duration: 1200 }] }] },
+    { title: 'earlier', file: 'live-a.spec.ts', line: 3, tests: [{ status: 'skipped', results: [] }] },
+  ] }] }), [
+    { id: 'live-a.spec.ts:9 › later', status: 'passed', startTime: '2026-10-14T00:00:05.000Z', durationMs: 1200 },
+    { id: 'live-a.spec.ts:3 › earlier', status: 'did_not_run', startTime: null, durationMs: null },
+  ].sort((a, b) => String(a.startTime).localeCompare(String(b.startTime))));
+  const log = [
+    '[2026-10-14T00:00:01.000Z] [forward order] ○ Compiling /login ...',
+    '[2026-10-14T00:00:31.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":1048576000,"heapLimitBytes":9663676416,"rssBytes":2097152000}',
+    '[2026-10-14T00:00:32.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample"',
+  ].join('\n');
+  assert.deepEqual(memorySamples(log), [{ at: '2026-10-14T00:00:31.000Z] [forward order', event: 'sample', pid: 7, heapUsedMiB: 1000, heapLimitMiB: 9216, rssMiB: 2000 }]);
+});
+
+// The mechanism the repair removes, reproduced without Next: a server that logs every request to a pipe its parent
+// owns, with its stdout in BLOCKING mode — exactly what Next does when it loads its SWC bindings
+// (node_modules/next/dist/build/swc/index.js sets process.stdout/stderr._handle.setBlocking(true)). While the parent
+// waits in a SYNCHRONOUS child, nothing drains the pipe and the server stops mid-write; with an asynchronous child the
+// parent keeps draining and every request is answered.
+test('a synchronous child stalls a chatty piped server; an asynchronous one does not (the order runner stall)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-order-pipe-'));
+  write(join(dir, 'server.mjs'), `import { createServer } from 'node:http';
+process.stdout._handle?.setBlocking?.(true);
+const line = 'x'.repeat(2048);
+createServer((q, r) => { process.stdout.write('GET ' + q.url + ' ' + line + '\\n'); r.end('ok'); }).listen(0, '127.0.0.1', function () { process.stderr.write('PORT ' + this.address().port + '\\n'); });`);
+  write(join(dir, 'client.mjs'), `const port = process.argv[2]; let answered = 0;
+for (let i = 0; i < 400; i += 1) { try { await (await fetch('http://127.0.0.1:' + port + '/' + i, { signal: AbortSignal.timeout(2000) })).text(); answered += 1; } catch { break; } }
+console.log(answered);`);
+  const attempt = async (synchronous) => {
+    const server = spawn(process.execPath, [join(dir, 'server.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
+    server.stdout.on('data', () => {});
+    const port = await new Promise((resolve) => server.stderr.on('data', (b) => { const m = /PORT (\d+)/.exec(String(b)); if (m) resolve(m[1]); }));
+    try {
+      if (synchronous) return Number(execFileSync(process.execPath, [join(dir, 'client.mjs'), port], { encoding: 'utf8' }).trim());
+      return await new Promise((resolve) => { const c = spawn(process.execPath, [join(dir, 'client.mjs'), port]); let o = '';
+        c.stdout.on('data', (b) => { o += b; }); c.on('close', () => resolve(Number(o.trim()))); });
+    } finally { server.kill('SIGKILL'); }
+  };
+  const stalled = await attempt(true);
+  const drained = await attempt(false);
+  assert.ok(stalled < 400, `synchronous child: the server answered all ${stalled} requests`);
+  assert.equal(drained, 400);
 });

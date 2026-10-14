@@ -12,10 +12,11 @@
  */
 
 /**
- * The battery is the `live-` set: the specs that run together under one live-fixture configuration. Every other
- * spec needs a server posture of its own and has its own CI job; running it here could only skip it, and a skip is
- * not a pass. A new spec that is neither `live-` nor listed below is a configuration error, so nothing silently
- * falls out of every battery.
+ * The battery is EVERY spec, in one process per order, as the one-process proof has always been: nothing is dropped to
+ * lighten the load the battery is meant to measure. The specs below need a server posture of their own (and have their
+ * own CI job), so under this configuration their tests skip by their own declaration; they are listed so that a skip is
+ * expected, reported with its reason, and never counted as a pass. A new spec that is neither `live-` nor listed is a
+ * configuration error, so no spec's outcome goes unclassified.
  */
 export const SEPARATELY_CONFIGURED_SPECS = Object.freeze({
   'aws-recording-capture.spec.ts': 'needs E2E_RECORDING_AWS=1 (CI: "Recording and care messages browser suites")',
@@ -33,7 +34,7 @@ export const SEPARATELY_CONFIGURED_SPECS = Object.freeze({
 /** @param {string[]} files every `*.spec.ts` in e2e/ */
 export function selectOrderBattery(files) {
   const sorted = [...files].filter(file => file.endsWith('.spec.ts')).sort();
-  const run = sorted.filter(file => file.startsWith('live-'));
+  const run = sorted;
   const excluded = [];
   const unclassified = [];
   for (const file of sorted) {
@@ -41,7 +42,7 @@ export function selectOrderBattery(files) {
     if (Object.hasOwn(SEPARATELY_CONFIGURED_SPECS, file)) excluded.push({ spec: file, reason: SEPARATELY_CONFIGURED_SPECS[file] });
     else unclassified.push(file);
   }
-  return { run, excluded, unclassified };
+  return { run, separatelyConfigured: excluded, unclassified };
 }
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -183,4 +184,41 @@ export function compareOrders(forward, reverse) {
     problems.push('different tests were skipped in each order');
   }
   return { ok: problems.length === 0, problems, forwardOnly, reverseOnly };
+}
+
+/**
+ * When each test ran and for how long, from the same JSON report, so a stall can be laid beside the server's memory
+ * and latency samples taken at the same time. Titles and timings only; no request data.
+ *
+ * @param {any} report
+ */
+export function testTimeline(report) {
+  const rows = [];
+  const visit = (suite, titles) => {
+    const path = suite.title && !suite.title.endsWith('.spec.ts') ? [...titles, suite.title] : titles;
+    for (const spec of suite.specs ?? []) for (const test of spec.tests ?? []) {
+      const last = (test.results ?? []).at(-1);
+      rows.push({ id: `${spec.file}:${spec.line} › ${[...path, spec.title].join(' › ')}`, status: last?.status ?? 'did_not_run',
+        startTime: last?.startTime ?? null, durationMs: last?.duration ?? null });
+    }
+    for (const child of suite.suites ?? []) visit(child, path);
+  };
+  for (const suite of report?.suites ?? []) visit(suite, []);
+  return rows.sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
+}
+
+/** The development server's own memory samples (scripts/e2e-dev-memory-probe.mjs) from its retained log. */
+export function memorySamples(log) {
+  const out = [];
+  for (const line of String(log).split('\n')) {
+    const at = line.indexOf('{"check":"e2e_next_dev_memory"');
+    if (at < 0) continue;
+    const stamp = line.slice(0, at).trim().replace(/^\[|\]$/g, '');
+    try {
+      const sample = JSON.parse(line.slice(at));
+      out.push({ at: stamp || null, event: sample.event, pid: sample.pid, heapUsedMiB: Math.round(sample.heapUsedBytes / 1048576),
+        heapLimitMiB: Math.round(sample.heapLimitBytes / 1048576), rssMiB: Math.round(sample.rssBytes / 1048576) });
+    } catch { /* a truncated line is not a sample */ }
+  }
+  return out;
 }

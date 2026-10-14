@@ -39,6 +39,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { appendFileSync, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -46,9 +47,11 @@ import { devServerEnvironment } from "./e2e-dev-resources.mjs";
 import {
   compareOrders,
   fixturePostureFromProbe,
+  memorySamples,
   orderBatteryEnvironment,
   selectOrderBattery,
   summarizeReport,
+  testTimeline,
 } from "./e2e-order-config.mjs";
 
 /**
@@ -76,7 +79,14 @@ if (specs.length === 0) {
 
 const STUB_BASE = process.env.E2E_STUB_BASE ?? "http://127.0.0.1:3999";
 const APP_PORT = Number(process.env.E2E_PORT ?? 3114);
-const SUMMARY = process.env.E2E_ORDER_SUMMARY ?? join("test-results", "e2e-order-summary.json");
+/**
+ * Evidence kept OUTSIDE test-results/, which Playwright empties at the start of every run: the development server's
+ * whole log (with its memory samples), a latency canary, each order's JSON report and test timeline, and the summary.
+ * Titles, timings, status codes and memory figures only — no request bodies, headers or credentials.
+ */
+const EVIDENCE = process.env.E2E_ORDER_EVIDENCE ?? join("e2e-order-evidence", new Date().toISOString().replace(/[:.]/g, "-"));
+const SUMMARY = join(EVIDENCE, "summary.json");
+let currentOrder = "startup";
 
 /**
  * ONE precise configuration error, and then stop.
@@ -356,26 +366,32 @@ async function withStub(run) {
   }
 }
 
-function run(label, files) {
+/**
+ * Playwright runs as an ASYNCHRONOUS child. It must: this process owns the development server's stdout and stderr
+ * pipes, and on Linux a server's write to a full pipe blocks it. A synchronous child (execFileSync, as this runner
+ * used) froze this process's event loop for the whole order, so nothing drained the server's pipes; `next dev` logs
+ * every request, and once about 64 KiB had accumulated the server stopped mid-write — navigations timed out, a
+ * readback stayed "Loading", and the stall arrived only after enough suites had run.
+ */
+function playwright(files, reportFile) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [PLAYWRIGHT_ENTRY, "test", "--reporter=list,json", ...files.map((f) => `e2e/${f}`)], {
+      stdio: ["ignore", "pipe", "pipe"],
+      // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs).
+      env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1" },
+    });
+    const chunks = [];
+    child.stdout.on("data", (b) => chunks.push(b));
+    child.stderr.on("data", (b) => chunks.push(b));
+    child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  });
+}
+
+async function run(label, files) {
   console.log(`\n[e2e-order] ${label} (${files.length} specs)`);
   const reportFile = join(tmpdir(), `e2e-order-${label.replace(/\W+/g, "-")}-${process.pid}.json`);
   rmSync(reportFile, { force: true });
-  let out = "";
-  try {
-    out = execFileSync(
-      process.execPath,
-      [PLAYWRIGHT_ENTRY, "test", "--reporter=list,json", ...files.map((f) => `e2e/${f}`)],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs).
-        env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1" },
-        maxBuffer: 256 * 1024 * 1024,
-      },
-    );
-  } catch (e) {
-    out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
-  }
+  const out = await playwright(files, reportFile);
   let report;
   try {
     report = JSON.parse(readFileSync(reportFile, "utf8"));
@@ -385,6 +401,9 @@ function run(label, files) {
     process.exit(1);
   }
   const result = summarizeReport(report);
+  const slug = label.replace(/\W+/g, "-");
+  writeFileSync(join(EVIDENCE, `${slug}.report.json`), JSON.stringify(report));
+  writeFileSync(join(EVIDENCE, `${slug}.timeline.jsonl`), testTimeline(report).map((row) => JSON.stringify(row)).join("\n") + "\n");
   console.log(
     `[e2e-order] ${label}: ${result.passed.length} passed, ${result.failed.length} failed or did not run, ` +
       `${result.skipped.length} skipped by declaration (not counted as passes)`,
@@ -469,7 +488,14 @@ async function withApp(heap, run) {
     { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap } },
   );
   const appLog = [];
-  const push = (buf) => { appLog.push(String(buf)); if (appLog.length > 200) appLog.shift(); };
+  const serverLog = createWriteStream(join(EVIDENCE, "dev-server.log"), { flags: "a" });
+  const push = (buf) => {
+    const text = String(buf);
+    appLog.push(text); if (appLog.length > 200) appLog.shift();
+    // Every line is kept, stamped, for the whole battery: a stall is diagnosed from what the server said at the time.
+    const stamp = new Date().toISOString();
+    serverLog.write(text.split("\n").filter((line) => line.length > 0).map((line) => `[${stamp}] [${currentOrder}] ${line}`).join("\n") + "\n");
+  };
   owned.stdout.on("data", push);
   owned.stderr.on("data", push);
   let died = null;
@@ -506,12 +532,52 @@ async function withApp(heap, run) {
     }
     console.log("[e2e-order] contract fixture allowed by this server (observed: a signed-out page rendered)");
     await warmApp();
-    return await run();
+    const canary = startCanary();
+    try {
+      return await run();
+    } finally {
+      await canary.stop();
+    }
   } finally {
     killOwned();
-    // Let the port and the dev compiler's file handles go before the next order starts its own server.
     for (let i = 0; i < 40 && died === null; i += 1) await sleep(250);
+    serverLog.end();
   }
+}
+
+/**
+ * A latency canary beside the battery: every 15 s, sequentially (never more than one request in flight), the sign-in
+ * page, the health route and the lens evaluation readback the specs exercise. It measures the server under exactly the
+ * accumulated load the battery puts on it; it changes no state and asserts nothing.
+ */
+const CANARY_PATHS = [
+  "/login",
+  "/api/health",
+  "/api/live/lens/evaluation?encounterId=eeeeeeee-2222-3333-4444-444444444777&paradigm=western_conventional",
+];
+function startCanary() {
+  let stopped = false;
+  const file = join(EVIDENCE, "canary.jsonl");
+  const loop = (async () => {
+    while (!stopped) {
+      for (const path of CANARY_PATHS) {
+        if (stopped) break;
+        const t0 = Date.now();
+        let status = -1, error = null;
+        try {
+          const res = await fetch(`http://localhost:${APP_PORT}${path}`, { redirect: "manual", signal: AbortSignal.timeout(120_000) });
+          status = res.status;
+          await res.text().catch(() => "");
+        } catch (e) {
+          error = e instanceof Error ? e.name : "error";
+        }
+        appendFileSync(file, JSON.stringify({ at: new Date(t0).toISOString(), order: currentOrder,
+          path: path.split("?")[0], status, ms: Date.now() - t0, ...(error ? { error } : {}) }) + "\n");
+      }
+      for (let i = 0; i < 15 && !stopped; i += 1) await sleep(1000);
+    }
+  })();
+  return { stop: async () => { stopped = true; await loop; } };
 }
 
 /* ------------------------------------------------------------------ run */
@@ -528,31 +594,43 @@ console.log(
 if (appliedDefaults.length > 0) {
   console.log(`[e2e-order] provisioned by this script: ${appliedDefaults.join(", ")}`);
 }
-console.log(`[e2e-order] battery: ${specs.length} live- specs; ${battery.excluded.length} separately configured specs are not run here and are not counted:`);
-for (const { spec, reason } of battery.excluded) console.log(`    - ${spec}: ${reason}`);
+console.log(`[e2e-order] battery: all ${specs.length} specs in one development server for both orders; ` +
+  `${battery.separatelyConfigured.length} need a posture of their own, so their tests skip by declaration and are not counted:`);
+for (const { spec, reason } of battery.separatelyConfigured) console.log(`    - ${spec}: ${reason}`);
+mkdirSync(EVIDENCE, { recursive: true });
+console.log(`[e2e-order] evidence: ${EVIDENCE}`);
 await assertAppPortFree();
 provisionBuild();
 
 const orders = [["forward order", specs], ["reverse order", [...specs].reverse()]];
-const results = await withStub(async () => {
+// ONE development server carries both orders: the battery measures what accumulated load does to it, so it is never
+// restarted between suites or orders. Only the fixture backend is reset before each order.
+const results = await withStub(async () => withApp(heap, async () => {
   const out = {};
   for (const [label, files] of orders) {
-    // Both orders start from the same backend state and a fresh server.
+    currentOrder = label;
     await fetch(`${STUB_BASE}/__control/reset-all`, { method: "POST" });
-    out[label] = await withApp(heap, async () => run(label, files));
+    out[label] = await run(label, files);
   }
+  currentOrder = "shutdown";
   return out;
-});
+}));
 const forward = results["forward order"], reverse = results["reverse order"];
 const verdict = compareOrders(forward, reverse);
 
-mkdirSync(dirname(SUMMARY), { recursive: true });
+const memory = memorySamples(readFileSync(join(EVIDENCE, "dev-server.log"), "utf8"));
+const canary = readFileSync(join(EVIDENCE, "canary.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+const slowest = [...canary].sort((a, b) => b.ms - a.ms).slice(0, 5);
 writeFileSync(SUMMARY, JSON.stringify({
-  contract: "e2e-order-summary/1",
-  runtime: { server: "next dev", contractFixture: true, stub: STUB_BASE },
-  battery: specs, excluded: battery.excluded,
+  contract: "e2e-order-summary/2",
+  runtime: { server: "next dev (one process, both orders)", contractFixture: true, stub: STUB_BASE, heapMiB: process.env.E2E_DEV_HEAP_MB ?? null },
+  battery: specs, separatelyConfigured: battery.separatelyConfigured,
   forward, reverse, verdict,
+  memory: { samples: memory.length, maxHeapUsedMiB: Math.max(0, ...memory.map((m) => m.heapUsedMiB)), maxRssMiB: Math.max(0, ...memory.map((m) => m.rssMiB)) },
+  canary: { requests: canary.length, failures: canary.filter((c) => c.status < 0 || c.status >= 500).length, slowest },
 }, null, 2) + "\n");
+console.log(`[e2e-order] memory: ${memory.length} samples, max heap used ${Math.max(0, ...memory.map((m) => m.heapUsedMiB))} MiB, max RSS ${Math.max(0, ...memory.map((m) => m.rssMiB))} MiB`);
+console.log(`[e2e-order] canary: ${canary.length} requests; slowest ${slowest.map((c) => `${c.path} ${c.ms}ms (${c.order}${c.error ? ", " + c.error : ""})`).join("; ")}`);
 
 if (forward.skipped.length > 0) {
   console.log(`\n[e2e-order] ${forward.skipped.length} skipped by declaration in each order (not passes):`);
