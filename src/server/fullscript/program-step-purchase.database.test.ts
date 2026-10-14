@@ -8,7 +8,7 @@ import type {ClinicalCoreDatabase} from '../clinical-core/database';
 import {ClinicalCoreDatabaseRejection} from '../clinical-core/database';
 import {classifyDatabaseRejection} from '../clinical-core/rds-data-database';
 import type {ProductionClinicalRequestContext} from '../clinical-core/aws-identity-consent';
-import {createProductionProgramAssignments,PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256} from '../clinical-core/production-program-assignments';
+import {createProductionProgramAssignments,PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256} from '../clinical-core/production-program-assignments';
 import type {ProgramAssignmentRequest} from '../../contracts/programAssignments';
 import type {GovernedCatalogProduct,GovernedCommercialOffer} from '../clinical-core/aws-governed-catalog-reader';
 import {CONSUMER_PURCHASE_RELEASES,consumerPurchaseCandidate,createConsumerPurchaseCandidate,type AdmissionRecord,type ConsumerPurchasePorts,
@@ -24,7 +24,9 @@ import {PROGRAM_STEP_PURCHASE_RELEASED,type ProgramStepBinding} from '../../cont
  * only. Nothing here is registered, applied or released; the education-only Core release has no purchase release.
  */
 const CANDIDATES=['infra/aws-clinical-core/production-candidates/lab-result-transfer-v2.sql','infra/aws-clinical-core/production-candidates/lab-observation-attestation.sql',
- 'infra/aws-clinical-core/production-candidates/production-program-assignments.sql'];
+ 'infra/aws-clinical-core/production-candidates/production-program-assignments.sql',
+ // The program family is reached only through its consumer boundary (independent of the step candidate).
+ 'infra/aws-clinical-core/production-candidates/production-program-consumer-boundary.sql'];
 const STEP_CANDIDATE='infra/aws-clinical-core/production-candidates/program-step-purchase.sql';
 const IRON='prd_fictional_iron',OTHER='prd_fictional_other',HOST='us.fullscript.com',SLUG='fictional-test-dispensary';
 const DESTINATION=`https://${HOST}/s/${SLUG}/shop/product/RklDVElPTkFMMQ==`;
@@ -45,7 +47,9 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
  }});
 })};
 const programs=createProductionProgramAssignments({database,verifyConsumerCore:vi.fn(async()=>undefined),activation:{contract:'production-program-activation/1',enabled:true,
- target:'production-clinical',schemaCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-11T00:00:00Z'}});
+ target:'production-clinical',schemaCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-11T00:00:00Z'},
+ boundaryActivation:{contract:'program-consumer-boundary-activation/1',enabled:true,target:'production-clinical',programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,
+  boundaryCandidateSha256:PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256,evidenceSha256:'d'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-14T00:00:00Z'}});
 const call=(input:ProgramAssignmentRequest,context=production(consumer,'consumer'))=>programs(context,input,'Bearer fictional-token');
 const evidence=(parts:Record<string,unknown>={})=>({contract:'program-step-purchase-activation/1',enabled:true,target:'production-clinical',
  programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,stepCandidateSha256:PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),
@@ -157,7 +161,7 @@ beforeAll(async()=>{
  for(const candidate of [...CANDIDATES,STEP_CANDIDATE])await db.exec(readFileSync(candidate,'utf8'));
  for(const scope of ['protocols_supplements','lab_history'])await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
   values($1,'program-fixture','FICTIONAL ONLY',encode(public.digest('FICTIONAL ONLY','sha256'),'hex'),'FIXTURE NOT APPROVAL',now()-interval '1 day')`,[scope]);
- for(const table of ['production_program_activation','lab_result_transfer_v2_activation','lab_observation_attestation_activation'])
+ for(const table of ['production_program_activation','program_consumer_boundary_activation','lab_result_transfer_v2_activation','lab_observation_attestation_activation'])
   await db.query(`update clinical_core.${table} set enabled=true,evidence_sha256=repeat('e',64),reviewed_by='FICTIONAL REVIEW FIXTURE',reviewed_at=now()`);
 },120_000);
 afterAll(async()=>{await db?.close();});

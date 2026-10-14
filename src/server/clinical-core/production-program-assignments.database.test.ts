@@ -8,8 +8,10 @@ import type {ClinicalCoreDatabase} from './database';
 import {ClinicalCoreDatabaseRejection} from './database';
 import {classifyDatabaseRejection} from './rds-data-database';
 import type {ClinicalRequestContext,ProductionClinicalRequestContext,SyntheticRequestContext} from './aws-identity-consent';
-import {createProductionProgramAssignments,activationState,PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,ProductionProgramAssignmentError} from './production-program-assignments';
+import {createProductionProgramAssignments,activationState,boundaryActivationState,PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256,
+ DISABLED_PRODUCTION_PROGRAM_BOUNDARY_ACTIVATION,ProductionProgramAssignmentError} from './production-program-assignments';
 import type {ProgramAssignmentRequest} from '../../contracts/programAssignments';
+import type {ProgramBoundCompletionRequest} from '../../contracts/programCompletion';
 import {DISABLED_PRODUCTION_PROGRAM_ACTIVATION} from '../../contracts/productionProgramActivation';
 
 /**
@@ -20,6 +22,8 @@ import {DISABLED_PRODUCTION_PROGRAM_ACTIVATION} from '../../contracts/production
  * The rest exercises every authority the candidate re-checks once it is enabled in this test.
  */
 const CANDIDATE='infra/aws-clinical-core/production-candidates/production-program-assignments.sql';
+// The API role reaches this family only through its consumer boundary (the BLOCKED successor), applied after the parent.
+const BOUNDARY='infra/aws-clinical-core/production-candidates/production-program-consumer-boundary.sql';
 // The lab-aware review reads attested clinic readings, so the two lab candidates come first (their documented order).
 const LAB_CANDIDATES=['infra/aws-clinical-core/production-candidates/lab-result-transfer-v2.sql','infra/aws-clinical-core/production-candidates/lab-observation-attestation.sql'];
 let db:PGlite,org:string,otherOrg:string,staff:string,outsider:string,consumer:string,other:string,patient:string,connection:string,program:string,version:string,draft:string,product:string,productVersion:string,batch:string;
@@ -46,10 +50,13 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
 })};
 const enabledEvidence=()=>({contract:'production-program-activation/1',enabled:true,target:'production-clinical',
  schemaCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-11T00:00:00Z'});
+const boundaryEvidence=()=>({contract:'program-consumer-boundary-activation/1',enabled:true,target:'production-clinical',
+ programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,boundaryCandidateSha256:PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256,
+ evidenceSha256:'d'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-14T00:00:00Z'});
 const core=vi.fn<(authorization:string)=>Promise<void>>();
-const service=(activation:unknown=enabledEvidence())=>createProductionProgramAssignments({database,activation,verifyConsumerCore:core});
-const call=(input:ProgramAssignmentRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown)=>service(activation)(context,input,'Bearer fictional-token');
-async function refusal(input:ProgramAssignmentRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown){
+const service=(activation:unknown=enabledEvidence(),boundaryActivation:unknown=boundaryEvidence())=>createProductionProgramAssignments({database,activation,boundaryActivation,verifyConsumerCore:core});
+const call=(input:ProgramAssignmentRequest|ProgramBoundCompletionRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown)=>service(activation)(context,input,'Bearer fictional-token');
+async function refusal(input:ProgramAssignmentRequest|ProgramBoundCompletionRequest,context:ClinicalRequestContext=production(consumer,'consumer'),activation?:unknown){
  try{await call(input,context,activation);}catch(error){if(error instanceof ProductionProgramAssignmentError)return error;throw error;}
  throw new Error('expected a refusal');
 }
@@ -61,8 +68,8 @@ async function publish(content:unknown,versionId=version){
  await db.query(`update clinical_core.program_versions set content=$2::jsonb,content_sha256=encode(public.digest(convert_to(($2::jsonb)::text,'UTF8'),'sha256'),'hex') where id=$1`,
   [versionId,JSON.stringify({title:'Fictional',modules:[],consumerProgram:{title:'Fictional thyroid guide',phases:content}})]);
 }
-async function setActivation(enabled:boolean){
- await db.query(`update clinical_core.production_program_activation set enabled=$1,evidence_sha256=case when $1 then repeat('e',64) else null end,reviewed_by=case when $1 then 'FICTIONAL REVIEW FIXTURE' else null end,reviewed_at=case when $1 then now() else null end`,[enabled]);
+async function setActivation(enabled:boolean,table='production_program_activation'){
+ await db.query(`update clinical_core.${table} set enabled=$1,evidence_sha256=case when $1 then repeat('e',64) else null end,reviewed_by=case when $1 then 'FICTIONAL REVIEW FIXTURE' else null end,reviewed_at=case when $1 then now() else null end`,[enabled]);
 }
 async function adoptPlan(entries:unknown[]){
  const record=randomUUID(),request=randomUUID();
@@ -94,6 +101,7 @@ beforeAll(async()=>{
  for(const migration of manifest.migrations)await db.exec(files[migration.file]);
  for(const candidate of LAB_CANDIDATES)await db.exec(readFileSync(candidate,'utf8'));
  await db.exec(readFileSync(CANDIDATE,'utf8'));
+ await db.exec(readFileSync(BOUNDARY,'utf8'));
  for(const scope of ['protocols_supplements','lab_history'])await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
   values($1,'program-fixture','FICTIONAL ONLY',encode(public.digest('FICTIONAL ONLY','sha256'),'hex'),'FIXTURE NOT APPROVAL',now()-interval '1 day')`,[scope]);
 },120_000);
@@ -102,7 +110,7 @@ beforeEach(async()=>{
  core.mockReset();core.mockResolvedValue(undefined);
  [org,otherOrg,staff,outsider,consumer,other,patient,connection,program,version,draft,productVersion,batch]=Array.from({length:13},()=>randomUUID());
  product='prd_fixture_'+randomUUID().replaceAll('-','');
- await setActivation(true);
+ await setActivation(true);await setActivation(true,'program_consumer_boundary_activation');
  await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL CLINIC A'),($2,'FICTIONAL CLINIC B')",[org,otherOrg]);
  for(const [person,pool] of [[staff,'workforce'],[outsider,'workforce'],[consumer,'consumer'],[other,'consumer']] as const){
   await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[person,'subject_'+person.replaceAll('-','')]);
@@ -126,6 +134,11 @@ beforeEach(async()=>{
 describe('disabled by default, at both locks',()=>{
  it('the adapter is built against the exact candidate on disk, and absent, disabled or mismatched evidence leaves it disabled without touching the database',async()=>{
   expect(sha(CANDIDATE)).toBe(PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256);
+  expect(sha(BOUNDARY)).toBe(PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256);
+  expect(boundaryActivationState(undefined)).toEqual(DISABLED_PRODUCTION_PROGRAM_BOUNDARY_ACTIVATION);
+  expect(boundaryActivationState({...boundaryEvidence(),boundaryCandidateSha256:'f'.repeat(64)})).toEqual(DISABLED_PRODUCTION_PROGRAM_BOUNDARY_ACTIVATION);
+  expect(boundaryActivationState({...boundaryEvidence(),programCandidateSha256:'f'.repeat(64)})).toEqual(DISABLED_PRODUCTION_PROGRAM_BOUNDARY_ACTIVATION);
+  expect(boundaryActivationState(boundaryEvidence()).enabled).toBe(true);
   expect(activationState(undefined)).toEqual(DISABLED_PRODUCTION_PROGRAM_ACTIVATION);
   expect(activationState({contract:'production-program-activation/1',enabled:true,target:'production-clinical'})).toEqual(DISABLED_PRODUCTION_PROGRAM_ACTIVATION);
   expect(activationState({...enabledEvidence(),schemaCandidateSha256:'f'.repeat(64)})).toEqual(DISABLED_PRODUCTION_PROGRAM_ACTIVATION);
@@ -137,13 +150,22 @@ describe('disabled by default, at both locks',()=>{
     .rejects.toMatchObject({category:'activation_refused'});
   }
   expect(spy.transaction).not.toHaveBeenCalled();expect(core).not.toHaveBeenCalled();
+  // The parent's evidence alone is not enough: without the boundary's own, the family is disabled.
+  for(const boundaryActivation of [undefined,DISABLED_PRODUCTION_PROGRAM_BOUNDARY_ACTIVATION,{...boundaryEvidence(),boundaryCandidateSha256:'f'.repeat(64)}]){
+   await expect(createProductionProgramAssignments({database:spy,activation:enabledEvidence(),boundaryActivation,verifyConsumerCore:core})(production(staff,'workforce'),{action:'programs'},'Bearer x'))
+    .rejects.toMatchObject({category:'activation_refused'});
+  }
+  expect(spy.transaction).not.toHaveBeenCalled();
  });
  it('the database refuses every request while its own activation row is disabled, whatever the adapter was told, and the API role cannot flip the row',async()=>{
   await setActivation(false);
   expect((await refusal({action:'programs'},production(staff,'workforce'))).category).toBe('identity_refused');
   await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');await tx.exec('update clinical_core.production_program_activation set enabled=true');})).rejects.toThrow(/permission denied/);
   await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');await tx.exec("select clinical_private.set_request_context('"+staff+"','"+org+"','workforce','"+subject(staff)+"','clinical_data','production-clinical','clinical_phi')");
-   await tx.query("select clinical_core.production_program_assignment_request('{\"action\":\"programs\"}'::jsonb)");})).rejects.toThrow(/production_program_disabled/);
+   await tx.query("select clinical_core.production_program_bounded_request('{\"action\":\"programs\"}'::jsonb)");})).rejects.toThrow(/production_program_disabled/);
+  // With the boundary applied, the API role cannot reach the parent's unredacted request function at all.
+  await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');
+   await tx.query("select clinical_core.production_program_assignment_request('{\"action\":\"programs\"}'::jsonb)");})).rejects.toThrow(/permission denied/);
  });
  it('the identity API still refuses program routes outside the synthetic boundary; this family is not wired in',()=>{
   const api=readFileSync('src/server/clinical-core/aws-identity-api.ts','utf8');
@@ -186,6 +208,19 @@ describe('authority once enabled in this test',()=>{
   const stored=await db.query<{content:{items:{product:{purchaseUrl:string}}[]}[]}>(
    'select content from clinical_core.program_assignments where id=$1',[offered.enrollmentId]);
   expect(stored.rows[0]?.content[0]?.items[0]?.product.purchaseUrl).toBe('https://shop.example.test/fictional-product');
+  // The workforce preview shows what a consumer would see, and so carries no destination either.
+  const preview=await call({action:'preview',programVersionId:version},production(staff,'workforce'));
+  expect(JSON.stringify(preview)).not.toContain('https://shop.example.test/fictional-product');
+ });
+ it('a completion must name the plan revision it was made against: the pinned completion is refused before the database, a bound one is applied',async()=>{
+  const offered=await assign();await accept(offered.enrollmentId);
+  const current=await read(offered.enrollmentId);
+  const spy:ClinicalCoreDatabase={transaction:vi.fn()};
+  const pinned={action:'complete' as const,enrollmentId:offered.enrollmentId,sourceDigest:current.assignment.sourceDigest,expectedRevision:current.assignment.revision,itemId:'lesson-a'};
+  await expect(createProductionProgramAssignments({database:spy,activation:enabledEvidence(),boundaryActivation:boundaryEvidence(),verifyConsumerCore:core})(production(consumer,'consumer'),pinned,'Bearer x'))
+   .rejects.toMatchObject({category:'request_invalid'});
+  expect(spy.transaction).not.toHaveBeenCalled();
+  expect(await call({...pinned,planRevision:current.review.planRevision})).toMatchObject({action:'complete',itemId:'lesson-a'});
  });
  it('refuses the wrong owner, a revoked connection and a replaced connection, and a withdrawn consent',async()=>{
   const offered=await assign();
@@ -225,8 +260,8 @@ describe('authority once enabled in this test',()=>{
   expect(current.review).toMatchObject({inventoryComplete:false,held:['supp-1'],add:['lesson-a','lesson-b'],planRevision:expect.stringMatching(/^none:labs:[0-9a-f]{32}$/)});
   await accept(offered.enrollmentId);
   const afterAccept=await read(offered.enrollmentId);
-  await call({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:afterAccept.assignment.revision,itemId:'lesson-a'});
-  expect((await refusal({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:String(Number(afterAccept.assignment.revision)+1),itemId:'supp-1'})).category).toBe('identity_refused');
+  await call({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:afterAccept.assignment.revision,planRevision:afterAccept.review.planRevision,itemId:'lesson-a'});
+  expect((await refusal({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:String(Number(afterAccept.assignment.revision)+1),planRevision:afterAccept.review.planRevision,itemId:'supp-1'})).category).toBe('identity_refused');
   await db.query("update clinical_core.program_assignments set phase_started_at=now()-interval '2 days',revision=revision+1 where id=$1",[offered.enrollmentId]);
   const due=await read(offered.enrollmentId);
   const held=await refusal({action:'advance',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:due.assignment.revision});
@@ -352,10 +387,10 @@ describe('the lab-aware review (program-lab-review/1)',()=>{
   expect(JSON.stringify(decided)).not.toMatch(/420|400|ferritin|ng\/mL|"direction"|"value"|"unit"/i);
   await accept(offered.enrollmentId);
   const active=await read(offered.enrollmentId);
-  expect((await refusal({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:active.assignment.revision,itemId:'supp-1'})).category).toBe('identity_refused');
+  expect((await refusal({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:active.assignment.revision,planRevision:active.review.planRevision,itemId:'supp-1'})).category).toBe('identity_refused');
   await db.query("update clinical_core.program_assignments set phase_started_at=now()-interval '2 days',revision=revision+1 where id=$1",[offered.enrollmentId]);
   const due=await read(offered.enrollmentId);
-  await call({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:due.assignment.revision,itemId:'lesson-a'});
+  await call({action:'complete',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:due.assignment.revision,planRevision:due.review.planRevision,itemId:'lesson-a'});
   expect(await refusal({action:'advance',enrollmentId:offered.enrollmentId,sourceDigest:offered.sourceDigest,expectedRevision:String(Number(due.assignment.revision)+1)}))
    .toMatchObject({category:'conflict',reason:'program_clinical_items_held'});
  });
