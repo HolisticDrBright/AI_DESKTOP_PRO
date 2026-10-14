@@ -43,6 +43,26 @@ export type LabImportResult = {
   receipt?: { version: "lab-import-receipt/1"; connectionId: string; providerEventId: string; resourceVersion: string; payloadSha256: string };
 };
 
+/**
+ * The /2 receipt (lab-import-receipt/2): the /1 binding, plus the document digests the server recorded and the state it
+ * recorded the reading in. `payloadSha256` is the digest of the transfer's content exactly as the V2 sender computes its
+ * resourceVersion (expo/services/labs/desktopLabJournal.ts, desktopLabContent), so the sender can match it byte for byte.
+ */
+export type LabImportResultV2 = Omit<LabImportResult, "receipt"> & {
+  receipt: { version: "lab-import-receipt/2"; contract: "lab-result/2"; connectionId: string; providerEventId: string; resourceVersion: string;
+    payloadSha256: string; documents: string[]; verification: "needs_human_review" };
+};
+/** The content a /2 receipt digests, in the sender's key order with the documents sorted. */
+export function labResultV2Content(payload: LabResultTransferV2): string {
+  return JSON.stringify({ schemaVersion: payload.schemaVersion,
+    source: { system: payload.source.system, recordType: payload.source.recordType, panelId: payload.source.panelId, markerId: payload.source.markerId },
+    panel: { name: payload.panel.name, collectedAt: payload.panel.collectedAt, ...(payload.panel.sourceLabel !== undefined ? { sourceLabel: payload.panel.sourceLabel } : {}) },
+    result: { name: payload.result.name, value: payload.result.value, ...(payload.result.unit !== undefined ? { unit: payload.result.unit } : {}),
+      ...(payload.result.referenceRange ? { referenceRange: { ...(payload.result.referenceRange.min !== undefined ? { min: payload.result.referenceRange.min } : {}),
+        ...(payload.result.referenceRange.max !== undefined ? { max: payload.result.referenceRange.max } : {}) } } : {}) },
+    provenance: { origin: payload.provenance.origin, documents: [...payload.provenance.documents].sort(), reportedVerification: payload.provenance.reportedVerification } });
+}
+
 export type LabReviewResult = {
   eventId: string;
   state: "accepted" | "rejected";
@@ -60,7 +80,7 @@ export interface AwsClinicalStateAdapter<Context extends ClinicalRequestContext>
   } | null>;
   importLabResult(context: Context, payload: LabResultImport): Promise<LabImportResult>;
   /** lab-result/2 through the BLOCKED candidate's own function. Reached only once LAB_RESULT_TRANSFER_V2_ACCEPTED is on. */
-  importLabResultV2?(context: Context, payload: LabResultTransferV2): Promise<Omit<LabImportResult, "receipt">>;
+  importLabResultV2?(context: Context, payload: LabResultTransferV2): Promise<LabImportResultV2>;
   importLabSpecimenContext?(context:Context,payload:LabSpecimenTransfer):Promise<LabSpecimenReceipt>;
   getLabSpecimenContext?(context:Context,eventId:string):Promise<LabSpecimenRecord|null>;
   reviewLabResult(context: Context, input: {
@@ -166,7 +186,11 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       }>("select * from clinical_core.record_lab_import_v2($1::jsonb)", [JSON.stringify(parsed.data)])), "clinical_state_refused");
       if (!UUID.test(row.event_id) || !["review_pending", "conflict", "accepted", "rejected"].includes(row.state)
         || typeof row.duplicate !== "boolean") throw new ClinicalStateError("database_unavailable");
-      return { eventId: row.event_id, state: row.state, duplicate: row.duplicate };
+      const payload = parsed.data;
+      return { eventId: row.event_id, state: row.state, duplicate: row.duplicate,
+        receipt: { version: "lab-import-receipt/2", contract: "lab-result/2", connectionId: payload.connectionId, providerEventId: payload.providerEventId,
+          resourceVersion: payload.resourceVersion, payloadSha256: createHash("sha256").update(labResultV2Content(payload)).digest("hex"),
+          documents: [...payload.provenance.documents].sort(), verification: "needs_human_review" } };
     },
 
     async importLabSpecimenContext(context,input) {

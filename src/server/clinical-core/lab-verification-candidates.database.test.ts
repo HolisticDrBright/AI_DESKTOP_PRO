@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import type {ClinicalCoreDatabase} from './database';
-import {createAwsProductionClinicalStateAdapter} from './aws-clinical-state';
+import {createAwsProductionClinicalStateAdapter,labResultV2Content} from './aws-clinical-state';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {labResultTransferV2} from '../../contracts/labResultTransfer';
 import {createHash} from 'node:crypto';
@@ -23,6 +23,14 @@ const ATTESTATION='infra/aws-clinical-core/production-candidates/lab-observation
 let db:PGlite,org:string,otherOrg:string,staff:string,assistant:string,outsider:string,consumer:string,other:string,patient:string,connection:string;
 const subject=(id:string)=>'fictional-'+id;
 const DOC='d'.repeat(64),OTHER_DOC='e'.repeat(64);
+/** Fictional golden /2 payload. expo/__tests__/lab-result-v2-prepared.test.ts pins the same digest for the sender's content. */
+const LAB_RESULT_V2_GOLDEN=labResultTransferV2.parse({schemaVersion:'lab-result/2',provider:'alp_patient_sync',providerEventId:'lab:'+'a'.repeat(32)+':'+'b'.repeat(16),
+ connectionId:'33333333-3333-4333-8333-333333333333',resourceVersion:'c'.repeat(64),occurredAt:'2026-10-14T00:00:00.000Z',
+ source:{system:'ai_longevity_pro_v2',recordType:'lab_panels',panelId:'panel_'+'a'.repeat(32),markerId:'marker_'+'d'.repeat(32)},
+ panel:{name:'Fictional iron panel',collectedAt:'2026-09-30T00:00:00.000Z',sourceLabel:'upload'},
+ result:{name:'Ferritin',value:420,unit:'ng/mL',referenceRange:{min:30,max:400}},
+ provenance:{origin:'uploaded_report_analysis',documents:['e'.repeat(64),'d'.repeat(64)],reportedVerification:'analysis_cross_checked'}});
+const LAB_RESULT_V2_GOLDEN_SHA256='858f1f3b8ed29cd5a23014c92fdd13a7621a0c1280263352f1d8e89085f2d6e2';
 async function as<T=Record<string,unknown>>(person:string,pool:'workforce'|'consumer',organization:string,sql:string,params:unknown[]=[]):Promise<T[]>{
  return db.transaction(async tx=>{
   await tx.exec('set local role clinical_core_api');
@@ -251,6 +259,20 @@ describe('the Desktop adapter path for lab-result/2 (reached only once the gate 
   const stored=(await db.query<{source_status:string|null;transfer_provenance:{verification:string}}>('select source_status,transfer_provenance from clinical_core.lab_import_events where id=$1',[receipt.eventId])).rows[0]!;
   expect(stored).toMatchObject({source_status:null,transfer_provenance:{verification:'needs_human_review'}});
   await expect(adapter.importLabResultV2!(context(),{...body,result:{...body.result,sourceStatus:'critical'}} as never)).rejects.toMatchObject({category:'request_invalid'});
+ });
+ it('answers /2 with a lab-import-receipt/2 the V2 journal can match byte for byte: its digest is the sender\'s resourceVersion',async()=>{
+  // Built the way the V2 sender builds it: resourceVersion is the SHA-256 of the content in the sender's key order.
+  const base=transfer({},{},{documents:[OTHER_DOC,DOC]});
+  const content={schemaVersion:base.schemaVersion,source:base.source,panel:base.panel,result:base.result,provenance:{...base.provenance,documents:[DOC,OTHER_DOC]}};
+  const resourceVersion=createHash('sha256').update(JSON.stringify(content)).digest('hex');
+  const body=labResultTransferV2.parse({...base,resourceVersion,providerEventId:`lab:${'1'.repeat(32)}:${resourceVersion.slice(0,16)}`});
+  expect(labResultV2Content(body)).toBe(JSON.stringify(content));
+  const receipt=await createAwsProductionClinicalStateAdapter(database).importLabResultV2!(context(),body);
+  expect(receipt.receipt).toEqual({version:'lab-import-receipt/2',contract:'lab-result/2',connectionId:connection,providerEventId:body.providerEventId,
+   resourceVersion,payloadSha256:resourceVersion,documents:[DOC,OTHER_DOC],verification:'needs_human_review'});
+ });
+ it('the /2 receipt digest matches the cross-repository golden vector the V2 journal pins too',()=>{
+  expect(createHash('sha256').update(labResultV2Content(LAB_RESULT_V2_GOLDEN)).digest('hex')).toBe(LAB_RESULT_V2_GOLDEN_SHA256);
  });
 });
 
