@@ -25,6 +25,7 @@ yarn-error.log*
 # playwright
 /test-results/
 /playwright-report/
+/.forensic/
 
 # typescript
 *.tsbuildinfo

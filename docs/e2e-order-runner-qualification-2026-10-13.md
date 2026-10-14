@@ -58,3 +58,36 @@ the full battery, and fix the underlying long-run stall. Do not split specs
 into separate processes, extend timeouts, skip them, or mark the browser gate
 green on the basis of the targeted run. The production-only browser boundary
 remains separately tested under its built-runtime CI job.
+
+## October 13 forensic follow-up — worker restart observed, gate still open
+
+A full forward-order **diagnostic** run of all 39 specs in one Playwright process
+ended with 304 passed, 1 failed and 99 skipped in 2,526 seconds. Its local-only
+trace and list output are under `.forensic/e2e/2026-10-13T23-50-14-018Z/run-1/`.
+The failed case was `live-tasks.spec.ts`'s expired-token rotation journey: the
+server rotated the fictional access cookie, but the page stayed at “Loading
+review queue…” for the 45-second assertion, with no task API request in the
+browser trace. This diagnostic result is **red**, not release evidence.
+
+The retained development-server log establishes a cause in the test runtime,
+not merely a correlation from memory sampling. Next logged “Server is
+approaching the used memory threshold, restarting...”; its worker PID 19660
+exited with code 77 at 8.16 GiB V8 heap used and 9.86 GiB RSS. The replacement
+worker PID 29456 started during the battery. The task-page failure occurred
+after that transition. This does not prove every earlier stall has the same
+cause, nor does it prove the application's production runtime is affected.
+
+Two gate-honesty defects were also closed. The canonical order runner now
+requires each Playwright child to exit zero even if it printed a passing-count
+summary, and requires forward/reverse skipped totals to agree. Eleven focused
+runner tests pass. The forensic runner now exits nonzero on any failed test or
+failed Playwright child; its earlier terminal code zero despite one failed test
+must not be read as a passing diagnostic. Diagnostic artifacts are ignored by
+Git, not deleted.
+
+Next.js 15's documented `experimental.webpackMemoryOptimizations` is enabled
+for Webpack compilation. Typecheck and the 11 focused runner tests pass. The
+canonical build plus one-process forward **and** reverse browser battery is
+being rerun from that source; until its terminal result is inspected, this
+gate remains open. No fixture posture, test timeout, skip, production PHI
+setting or clinical release condition was changed.

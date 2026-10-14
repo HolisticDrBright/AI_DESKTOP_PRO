@@ -7,12 +7,11 @@
  *   - Runs the WHOLE battery in ONE Playwright invocation per run (not per
  *     spec). Anything else doesn't reproduce state-leak flakes — the leak
  *     lives across suites in the same process.
- *   - Passes `--trace retain-on-failure --screenshot only-on-failure
- *     --video retain-on-failure` so a failing test leaves a
- *     trace/screenshot/video the reviewer can open.
- *   - Wraps the run with periodic PowerShell process snapshots into a
- *     side log — chrome & node counts, memory. If numbers climb across
- *     the run, that's a leak signal even without a failure.
+ *   - Passes `--trace on` so every test leaves a trace, including the tests
+ *     immediately before a failure. This is intentionally a large local
+ *     artifact, not a normal CI setting.
+ *   - Records process counts before and after the battery. The development
+ *     worker's 30-second memory probe appears in Playwright's list output.
  *   - Runs the battery N times so a repeatable pattern shows itself.
  *
  * Output lands under `.forensic/e2e/<start>/run-<i>/` per run.
@@ -146,11 +145,14 @@ await withStub(async () => {
     console.log(`  battery: passed=${result.passed} failed=${result.failed} skipped=${result.skipped}  duration=${dt}s`);
     for (const line of result.failList) console.log(`    ${line}`);
     summary.runs.push({ run: r, order: ORDER, passed: result.passed, failed: result.failed,
-      skipped: result.skipped, duration_s: dt, before: preSnap, after: postSnap, failList: result.failList });
+      skipped: result.skipped, exitOk: result.exitOk, duration_s: dt,
+      before: preSnap, after: postSnap, failList: result.failList });
     writeFileSync(join(DIR, "summary.json"), JSON.stringify(summary, null, 2));
   }
 });
 
 const totalFailed = summary.runs.reduce((n, r) => n + r.failed, 0);
-console.log(`\n[forensic] runs complete — ${totalFailed} total failures across ${RUNS} ${ORDER}-order batteries`);
+const failedProcesses = summary.runs.filter((r) => !r.exitOk).length;
+console.log(`\n[forensic] runs complete — ${totalFailed} test failures and ${failedProcesses} failed Playwright processes across ${RUNS} ${ORDER}-order batteries`);
 console.log(`[forensic] artifacts under ${DIR}`);
+if (totalFailed > 0 || failedProcesses > 0) process.exitCode = 1;

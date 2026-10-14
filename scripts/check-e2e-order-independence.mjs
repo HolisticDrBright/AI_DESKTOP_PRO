@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { devServerEnvironment } from "./e2e-dev-resources.mjs";
+import { orderResultProblems, summarizePlaywrightResult } from "./e2e-order-result.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -385,6 +386,7 @@ async function withStub(run) {
 function run(label, files) {
   console.log(`\n[e2e-order] ${label} (${files.length} specs)`);
   let out = "";
+  let exitOk = true;
   try {
     out = execFileSync(
       process.execPath,
@@ -398,18 +400,12 @@ function run(label, files) {
     );
   } catch (e) {
     out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    exitOk = false;
   }
-  const passed = /(\d+) passed/.exec(out);
-  const failed = /(\d+) failed/.exec(out);
-  const skipped = /(\d+) skipped/.exec(out);
-  const result = {
-    passed: passed ? Number(passed[1]) : 0,
-    failed: failed ? Number(failed[1]) : 0,
-    skipped: skipped ? Number(skipped[1]) : 0,
-  };
+  const result = summarizePlaywrightResult(out, exitOk);
   console.log(
     `[e2e-order] ${label}: ${result.passed} passed, ${result.failed} failed, ` +
-      `${result.skipped} skipped`,
+      `${result.skipped} skipped, process=${result.exitOk ? "success" : "failed"}`,
   );
   if (result.failed > 0) {
     // Print the failing test titles so the diagnosis does not require a re-run.
@@ -418,6 +414,10 @@ function run(label, files) {
         console.error(`    ${line.trim()}`);
       }
     }
+  }
+  if (!result.exitOk && result.failed === 0) {
+    console.error(`[e2e-order] ${label} process failed without a Playwright failure summary. Last output:`);
+    console.error(out.slice(-4000));
   }
   return result;
 }
@@ -550,20 +550,7 @@ const { forward, reverse } = await withStub(async () =>
   }), devServerEnv),
 );
 
-const problems = [];
-if (forward.failed > 0) problems.push(`${forward.failed} failed in forward order`);
-if (reverse.failed > 0) problems.push(`${reverse.failed} failed in reverse order`);
-if (forward.passed !== reverse.passed) {
-  problems.push(
-    `passing totals differ (${forward.passed} forward vs ${reverse.passed} ` +
-      `reverse) — a suite behaves differently depending on what ran before it`,
-  );
-}
-if (forward.passed === 0) {
-  // Zero-passed-zero-failed is what a misconfigured run looks like, and it
-  // would otherwise be reported as success.
-  problems.push("no tests ran; the battery is not actually being exercised");
-}
+const problems = orderResultProblems(forward, reverse);
 
 if (problems.length) {
   console.error(`\n[e2e-order] FAIL`);
