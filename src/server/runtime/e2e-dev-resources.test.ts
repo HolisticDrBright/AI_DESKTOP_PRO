@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { devServerEnvironment, reuseExistingE2EServer } from '../../../scripts/e2e-dev-resources.mjs';
 
@@ -21,7 +23,8 @@ describe('browser-only development resource budget', () => {
   it('provisions a bounded heap with a separate OS/browser/native-memory reserve', () => {
     const result = devServerEnvironment(env, memory);
     expect(result.NODE_OPTIONS).toContain('--max-old-space-size=10240');
-    expect(result.NODE_OPTIONS).toContain('e2e-dev-memory-probe.mjs');
+    expect(result.NODE_OPTIONS).toContain('e2e-dev-preload.mjs');
+    expect(result.NODE_OPTIONS.match(/--import=/g)).toHaveLength(1);
     expect(result.E2E_DEV_MEMORY_PROBE).toBe('1');
   });
   it.each(['', '-1', '1.5', 'Infinity', '2047', '12289', '99999999999999999', '2048 --inspect'])('rejects invalid budget %s', (value) => {
@@ -88,5 +91,48 @@ describe('E2E development server keeps compiled routes', () => {
   it('leaves ordinary development and production builds on Next defaults', async () => {
     expect((await load(undefined)).onDemandEntries).toBeUndefined();
     expect((await load('0')).onDemandEntries).toBeUndefined();
+  });
+});
+
+/**
+ * React's development server renderer (bundled by Next 15.5) records every promise created during a render through an
+ * async_hooks hook; across the battery that retained memory until Next restarted its own worker. The harness preload
+ * leaves only that hook disabled. Fictional modules stand in for the renderer and for an unrelated library: both create
+ * a hook of the same shape, and only the one created from the renderer's path is switched off.
+ */
+describe('React development async-debug hook in the harness server', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-react-async-'));
+  const rendererDir = join(dir, 'node_modules', 'next', 'dist', 'compiled', 'next-server');
+  mkdirSync(rendererDir, { recursive: true });
+  const hookModule = `const hooks = require('node:async_hooks'); let count = 0;
+module.exports = () => count;
+hooks.createHook({ init() { count += 1; }, promiseResolve() {}, destroy() {} }).enable();`;
+  writeFileSync(join(rendererDir, 'app-page.runtime.dev.js'), hookModule);
+  writeFileSync(join(dir, 'other-library.js'), hookModule);
+  writeFileSync(join(dir, 'main.js'), `const renderer = require(${JSON.stringify(join(rendererDir, 'app-page.runtime.dev.js'))});
+const other = require(${JSON.stringify(join(dir, 'other-library.js'))});
+(async () => { for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  process.stdout.write(JSON.stringify({ renderer: renderer(), other: other() })); })();`);
+  const preload = pathToFileURL(resolve('scripts/e2e-dev-preload.mjs')).href;
+  const run = (extra: Record<string, string>) => spawnSync(process.execPath, ['--import', preload, join(dir, 'main.js')], {
+    env: { ...process.env, ...env, NEXT_PRIVATE_WORKER: '1', ...extra }, encoding: 'utf8',
+  });
+  it('disables only the hook created from the bundled development renderer, and says so once', () => {
+    const result = run({});
+    expect(result.status).toBe(0);
+    const counts = JSON.parse(result.stdout);
+    expect(counts.renderer).toBe(0);
+    expect(counts.other).toBeGreaterThan(0);
+    const notes = result.stderr.split('\n').filter((line) => line.includes('e2e_next_dev_react_async_debug'));
+    expect(notes).toHaveLength(1);
+    expect(Object.keys(JSON.parse(notes[0])).sort()).toEqual(['check', 'event', 'pid']);
+  });
+  it('changes nothing outside the harness development server', () => {
+    for (const extra of [{ NODE_ENV: 'production' }, { E2E_DEV_SERVER: '0' }, { NEXT_PRIVATE_WORKER: '0' }]) {
+      const result = run(extra);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).renderer).toBeGreaterThan(0);
+      expect(result.stderr).not.toContain('e2e_next_dev_react_async_debug');
+    }
   });
 });

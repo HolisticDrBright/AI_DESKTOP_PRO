@@ -45,10 +45,11 @@ export function devServerEnvironment(env = process.env, memory = {
   if (/max[-_]old[-_]space[-_]size/i.test(inherited)) {
     throw new Error('Set only E2E_DEV_HEAP_MB; NODE_OPTIONS already contains a heap budget.');
   }
-  // Playwright loads this config through its CJS transform; avoid import.meta.
-  const probe = pathToFileURL(resolve('scripts/e2e-dev-memory-probe.mjs')).href;
+  // Playwright loads this config through its CJS transform; avoid import.meta. One preload only: `next dev` keeps a
+  // single value per Node option for its worker, so a second --import would replace this one.
+  const preload = pathToFileURL(resolve('scripts/e2e-dev-preload.mjs')).href;
   return {
-    NODE_OPTIONS: `${inherited} --max-old-space-size=${heapMiB} --import=${JSON.stringify(probe)}`.trim(),
+    NODE_OPTIONS: `${inherited} --max-old-space-size=${heapMiB} --import=${JSON.stringify(preload)}`.trim(),
     E2E_DEV_MEMORY_PROBE: '1',
   };
 }
