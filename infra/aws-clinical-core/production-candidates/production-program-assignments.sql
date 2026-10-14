@@ -8,7 +8,9 @@
 -- mirrored in V2) over the production tables, with every authority re-checked here.
 --
 -- Parent assumptions: the 106-migration production artifact built by
--- scripts/build-aws-production-clinical-core.mjs (clinical_core.program_versions,
+-- scripts/build-aws-production-clinical-core.mjs, then the two lab candidates beside this file
+-- (lab-result-transfer-v2.sql and lab-observation-attestation.sql, in that order: the lab-aware review below
+-- reads clinical_private.lab_observation_verified) (clinical_core.program_versions,
 -- patient_connections, identities, persons, organizations, owned_consumer_record_versions,
 -- owned_consumer_active_plans, consumer_storage_consents, clinical_reference catalog tables,
 -- clinical_private.set_request_context/claim/actor_person_id/organization_id/has_clinical_role/
@@ -31,7 +33,17 @@
 --      is reported as duplicate, never applied twice;
 --   7. clinical holds: a supplement step is held unless the owner's adopted plan inventory is
 --      complete from verified ingredient releases, and a phase with a held or conflicting step
---      does not advance.
+--      does not advance;
+--   8. lab holds (program-lab-review/1): before a supplement step is declared available, the
+--      service reads the owner's own saved results itself (their personal lab history under its
+--      lab_history consent, and the clinic's readings for the enrolled patient record) and holds the
+--      step for clinician review when a reading is above its own printed range, when readings
+--      disagree, or, for iron, when no current VERIFIED iron-status result shows it is not high.
+--      Only a reviewer's current attestation verifies a reading; a personal copy never does. The
+--      review names each lab hold (labHolds) and its plan revision binds the readings it saw, so an
+--      accept made against an older view of the results is refused as stale. Nothing releases a lab
+--      hold here: that is a clinician's decision, recorded nowhere in this file yet. The device's own
+--      rule is a second safeguard, never the authority.
 -- The consumer's Core entitlement is not known to this database; the adapter in front of it
 -- (production-program-assignments.ts) verifies it against the billing service before any
 -- consumer action reaches here.
@@ -324,21 +336,135 @@ begin
 end $$;
 revoke all on function clinical_private.production_program_plan_inventory(uuid) from public;
 
--- The safety review: identical to the synthetic copy and to V2's reviewProgram.
-create function clinical_private.production_program_review(_content jsonb, _inventory jsonb) returns jsonb
+-- Where a reading stands against its OWN printed range, and nothing else: no functional target, no
+-- population range, no recalled source. A lower bound alone cannot show a result is not high, so a
+-- value at or above it is 'unknown' here (stricter than the device, which reads it as within).
+create function clinical_private.production_program_lab_direction(_value numeric,_low numeric,_high numeric) returns text
+language sql immutable set search_path='' as $$
+ select case
+  when _value is null then 'unknown'
+  when _low is not null and _high is not null then case when _high<=_low then 'unknown'
+   when _value<_low then 'below' when _value>_high then 'above' else 'within' end
+  when _high is not null then case when _value>_high then 'above' else 'within' end
+  when _low is not null then case when _value<_low then 'below' else 'unknown' end
+  else 'unknown' end
+$$;
+
+create function clinical_private.production_program_try_timestamptz(_value text) returns timestamptz
+language plpgsql immutable set search_path='' as $$
+begin return _value::timestamptz; exception when others then return null; end $$;
+
+-- The owner's saved readings, newest first, as this target can answer them:
+--   * their personal lab history (owned lab_observations), read only under a granted lab_history
+--     consent, and never verified: a personal copy is the app's import of a report nobody here has
+--     compared with it;
+--   * the clinic's readings for the enrolled patient record in this organization, not rejected,
+--     verified only by a current reviewer attestation (lab-observation-attestation.sql).
+-- The digest binds every reading, its revision or attestation, and the consent revision, so the
+-- plan revision a person accepts names the results the review was made against.
+create function clinical_private.production_program_lab_readings(_owner uuid,_org uuid,_patient uuid) returns jsonb
+language plpgsql stable security definer set search_path='' as $$
+declare _consent integer; _readings jsonb;
+begin
+ if _owner is null then return null; end if;
+ _consent:=clinical_private.owned_consumer_consent(_owner,'lab_history');
+ with owned as (
+  select distinct on (v.record_id) v.record_id,v.revision,v.payload,v.deleted
+  from clinical_core.owned_consumer_record_versions v
+  where _consent is not null and v.owner_id=_owner and v.collection='lab_observations'
+  order by v.record_id,v.revision desc
+ ), readings as (
+  select 'owned:'||o.record_id::text||':'||o.revision::text as key,o.payload->>'name' as marker,
+   clinical_private.production_program_lab_direction((o.payload->>'value')::numeric,
+    case when jsonb_typeof(o.payload->'reportedRange'->'low')='number' then (o.payload->'reportedRange'->>'low')::numeric end,
+    case when jsonb_typeof(o.payload->'reportedRange'->'high')='number' then (o.payload->'reportedRange'->>'high')::numeric end) as direction,
+   false as verified,clinical_private.production_program_try_timestamptz(o.payload->>'drawnAt') as observed
+  from owned o
+  where not o.deleted and jsonb_typeof(o.payload->'name')='string' and jsonb_typeof(o.payload->'value')='number'
+  union all
+  select 'clinic:'||l.id::text||':'||coalesce((clinical_private.current_lab_observation_attestation(l.id)).id::text,'none'),
+   l.marker_name,clinical_private.production_program_lab_direction(l.value_numeric,l.reference_min,l.reference_max),
+   clinical_private.lab_observation_verified(l.id),l.observed_at
+  from clinical_core.lab_observations l
+  where _patient is not null and l.organization_id=_org and l.patient_record_id=_patient and l.review_status<>'rejected'
+ )
+ select coalesce(jsonb_agg(jsonb_build_object('key',r.key,'marker',r.marker,'direction',r.direction,'verified',r.verified,
+   'observedAt',r.observed) order by r.observed desc nulls last,r.key),'[]'::jsonb) into _readings from readings r;
+ return jsonb_build_object('readings',_readings,'digest',encode(public.digest(convert_to(jsonb_build_object(
+  'contract','program-lab-review/1','labHistoryConsent',coalesce(_consent::text,'none'),'readings',_readings)::text,'UTF8'),'sha256'),'hex'));
+end $$;
+revoke all on function clinical_private.production_program_lab_readings(uuid,uuid,uuid) from public;
+
+-- The lab rule (program-lab-review/1), the service half of the device's program-lab-safety/1 and
+-- the authority over it. Per supplement step, first matching nutrient wins: a reading above its own
+-- range holds (results_disagree when the newest verified reading is not above, measured_above_range
+-- otherwise); for iron, a step is also held unless the newest verified iron-status result is below or
+-- within a range with an upper bound (status_not_verified). It returns reasons only: never a value,
+-- a range, a direction or a classification.
+create function clinical_private.production_program_lab_holds(_content jsonb,_labs jsonb) returns jsonb
+language plpgsql immutable set search_path='' as $$
+declare _phase jsonb; _item jsonb; _rule record; _related jsonb; _verified jsonb; _high boolean; _reason text;
+ _holds jsonb:='{}'::jsonb;
+begin
+ if _labs is null then return _holds; end if;
+ for _phase in select value from jsonb_array_elements(_content) loop
+  for _item in select value from jsonb_array_elements(_phase->'items') loop
+   if _item->>'kind' is distinct from 'supplement' or jsonb_typeof(_item->'product')<>'object' then continue; end if;
+   for _rule in select * from (values
+     (1,'iron','(^|[-_.:])(iron|ferrous|ferric|heme|carbonyl-iron)([-_.:]|$)','(ferritin|\yiron\y|iron saturation|transferrin saturation)','(binding capacity|\ytibc\y|\yuibc\y)',true),
+     (2,'vitamin_d','vitamin-?d|cholecalciferol|ergocalciferol|(^|[-_.:])d3([-_.:]|$)','(vitamin d|cholecalciferol|\yd3\y)',null,false),
+     (3,'vitamin_b12','b-?12|cobalamin','(vitamin b12|cobalamin|\yb12\y)',null,false),
+     (4,'folate','folate|folic|methylfolate|mthf','(folate|folic acid)',null,false),
+     (5,'magnesium','magnesium','magnesium',null,false),
+     (6,'zinc','(^|[-_.:])zinc([-_.:]|$)','(^|\s)zinc($|\s)',null,false)
+   ) as r(position,nutrient,ingredient,marker,excluded,verified_required) order by position loop
+    if not exists(select 1 from jsonb_array_elements_text(_item->'product'->'ingredientKeys') k
+     where lower(btrim(k.value)) ~ _rule.ingredient) then continue; end if;
+    select coalesce(jsonb_agg(r.value order by r.ordinality),'[]'::jsonb) into _related
+    from jsonb_array_elements(_labs->'readings') with ordinality r
+    where coalesce(r.value->>'marker','') ~* _rule.marker
+     and (_rule.excluded is null or coalesce(r.value->>'marker','') !~* _rule.excluded);
+    select r.value into _verified from jsonb_array_elements(_related) with ordinality r
+    where (r.value->>'verified')::boolean order by r.ordinality limit 1;
+    _high:=exists(select 1 from jsonb_array_elements(_related) r where r.value->>'direction'='above');
+    _reason:=null;
+    if _high then
+     _reason:=case when _verified is not null and _verified->>'direction'<>'above' then 'results_disagree' else 'measured_above_range' end;
+    elsif _rule.verified_required and (_verified is null or _verified->>'direction' not in ('below','within')) then
+     _reason:='status_not_verified';
+    end if;
+    if _reason is not null then
+     _holds:=_holds||jsonb_build_object(_item->>'id',jsonb_build_object('itemId',_item->>'id','nutrient',_rule.nutrient,
+      'reason',_reason,'decision','clinician_review'));
+     exit;
+    end if;
+   end loop;
+  end loop;
+ end loop;
+ return _holds;
+end $$;
+revoke all on function clinical_private.production_program_lab_holds(jsonb,jsonb) from public;
+
+-- The safety review: identical to the synthetic copy and to V2's reviewProgram, plus the lab rule
+-- above when the owner's readings are supplied (a workforce preview has no owner and supplies none).
+-- A lab hold can only move a step into `held`; it never releases one.
+create function clinical_private.production_program_review(_content jsonb, _inventory jsonb, _labs jsonb) returns jsonb
 language plpgsql immutable set search_path='' as $$
 declare
  _phase jsonb; _item jsonb; _product jsonb; _candidate jsonb; _candidates jsonb; _overlaps jsonb;
  _add text[]:='{}'; _duplicate text[]:='{}'; _held text[]:='{}'; _conflicts text[]:='{}';
  _complete boolean:=coalesce((_inventory->>'inventoryComplete')::boolean,false);
  _keys text[]; _other text[];
+ _lab jsonb:=clinical_private.production_program_lab_holds(_content,_labs); _labHolds jsonb:='[]'::jsonb;
 begin
  for _phase in select value from jsonb_array_elements(_content) loop
   _candidates:=coalesce(_inventory->'products','[]'::jsonb);
   for _item in select value from jsonb_array_elements(_phase->'items') loop
    if not coalesce((_item->>'released')::boolean,false)
    or (_item->>'kind'='supplement' and not _complete) then
-    _held:=_held||(_item->>'id'); continue; end if;
+    _held:=_held||(_item->>'id');
+    if _lab ? (_item->>'id') then _labHolds:=_labHolds||jsonb_build_array(_lab->(_item->>'id')); end if;
+    continue; end if;
    if _item->>'kind'<>'supplement' then _add:=_add||(_item->>'id'); continue; end if;
    _product:=_item->'product';
    select array_agg(lower(btrim(value)) order by lower(btrim(value))) into _keys
@@ -355,6 +481,8 @@ begin
      _duplicate:=_duplicate||(_item->>'id');
     else _conflicts:=_conflicts||(_item->>'id'); end if;
    elsif jsonb_array_length(_overlaps)>0 then _conflicts:=_conflicts||(_item->>'id');
+   elsif _lab ? (_item->>'id') then
+    _held:=_held||(_item->>'id'); _labHolds:=_labHolds||jsonb_build_array(_lab->(_item->>'id'));
    else
     _add:=_add||(_item->>'id');
     _candidates:=_candidates||jsonb_build_array(jsonb_build_object('productId',_product->>'id',
@@ -362,11 +490,16 @@ begin
    end if;
   end loop;
  end loop;
- return jsonb_build_object('planRevision',coalesce(_inventory->>'revision','none'),
+ if _labs is null then
+  return jsonb_build_object('planRevision',coalesce(_inventory->>'revision','none'),
+   'inventoryComplete',_complete,'add',to_jsonb(_add),'duplicate',to_jsonb(_duplicate),
+   'held',to_jsonb(_held),'conflicts',to_jsonb(_conflicts));
+ end if;
+ return jsonb_build_object('planRevision',coalesce(_inventory->>'revision','none')||':labs:'||left(_labs->>'digest',32),
   'inventoryComplete',_complete,'add',to_jsonb(_add),'duplicate',to_jsonb(_duplicate),
-  'held',to_jsonb(_held),'conflicts',to_jsonb(_conflicts));
+  'held',to_jsonb(_held),'conflicts',to_jsonb(_conflicts),'labHolds',_labHolds);
 end $$;
-revoke all on function clinical_private.production_program_review(jsonb,jsonb) from public;
+revoke all on function clinical_private.production_program_review(jsonb,jsonb,jsonb) from public;
 
 create function clinical_core.production_program_assignment_request(_request jsonb) returns jsonb
 language plpgsql security definer set search_path='' as $$
@@ -415,7 +548,7 @@ begin
   _digest:=encode(public.digest(convert_to(_items::text,'UTF8'),'sha256'),'hex');
   if _action='preview' then
    _inventory:=clinical_private.production_program_plan_inventory(null);
-   _review:=clinical_private.production_program_review(_items->'phases',_inventory);
+   _review:=clinical_private.production_program_review(_items->'phases',_inventory,null);
    insert into clinical_core.program_assignment_audit(actor_id,organization_id,action) values(_actor,_org,'status');
    return jsonb_build_object('action','preview','programVersionId',_version.id,
     'programVersion',_version.version::text,'title',_items->>'title','phases',_items->'phases',
@@ -525,7 +658,8 @@ begin
  or not exists(select 1 from clinical_core.patient_records where id=_connection.patient_record_id and organization_id=_org and status='active') then
   raise exception using errcode='42501',message='program_assignment_refused'; end if;
  _inventory:=clinical_private.production_program_plan_inventory(_actor);
- _review:=clinical_private.production_program_review(_row.content,_inventory);
+ _review:=clinical_private.production_program_review(_row.content,_inventory,
+  clinical_private.production_program_lab_readings(_actor,_org,_connection.patient_record_id));
 
  if _action='read' then
   if _request-array['action','enrollmentId']<>'{}'::jsonb then raise exception using errcode='22023',message='program_assignment_invalid'; end if;
