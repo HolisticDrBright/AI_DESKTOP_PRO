@@ -41,8 +41,16 @@ still produced these forward-order failures before it was stopped:
 Both failures occurred after multiple prior suites had exercised the same
 development server. The isolated 7-test run passed, so that narrower result
 cannot stand in for the one-process order-independence proof. The lens UI also
-shows its completion notice before its readback settles; this deserves a
-separate honest-state test and repair, but does not explain the sign-in timeout.
+showed its completion notice before its readback settled. A fictional browser
+regression reproduced POST 200 followed by GET 503: the old component displayed
+both “Evaluation complete” and “Readback unavailable.” The component now
+announces completion only after a bounded readback confirms the exact
+evaluation id and status. On a failed or mismatched readback it clears the
+unconfirmed result and shows an error, without asking the practitioner to
+re-run a write that may already have succeeded. Both the failed-readback and
+older-id browser cases pass; the ordinary six-case Lens journey passed after
+the repair. This closes the **false-success UI defect**, not the underlying
+long-run server stall or the sign-in timeout.
 
 The next investigation should retain server logs and memory samples at failure,
 measure response timing for `/login` and the lens evaluation readback under

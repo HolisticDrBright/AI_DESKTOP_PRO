@@ -241,14 +241,19 @@ export function LensPanel({
   // change, a run's readback) must not overwrite a newer one or report "loaded" while the newer one is still pending.
   const loadSeq = useRef(0);
   const loadEvaluation = useCallback(
-    async (p: string): Promise<
-      { status: "loaded"; evaluation: Evaluation | null } | { status: "failed"; message: string } | { status: "superseded" }
+    async (p: string, expected?: { evaluationId: string; status: "complete" | "blocked" }): Promise<
+      | { status: "loaded"; evaluation: Evaluation | null }
+      | { status: "failed"; message: string }
+      | { status: "unconfirmed" }
+      | { status: "superseded" }
     > => {
       const seq = ++loadSeq.current;
       setLoadingEval(true);
       setError(null);
       try {
-        const res = await fetch(`/api/live/lens/evaluation?encounterId=${encounterId}&paradigm=${p}`);
+        const res = await fetch(`/api/live/lens/evaluation?encounterId=${encounterId}&paradigm=${p}`, {
+          signal: AbortSignal.timeout(30_000),
+        });
         if (!res.ok) {
           const message = await readError(res);
           if (seq !== loadSeq.current) return { status: "superseded" };
@@ -258,12 +263,19 @@ export function LensPanel({
         }
         const json = (await res.json()) as { data: Evaluation | null };
         if (seq !== loadSeq.current) return { status: "superseded" };
+        // A run's readback must show that run's own evaluation; an older or different result cannot confirm it.
+        if (expected && (json.data?.evaluationId !== expected.evaluationId || json.data.status !== expected.status)) {
+          setError("The evaluation was saved, but its latest result could not be confirmed for display. Refresh the page to try again.");
+          setEvaluation(null);
+          return { status: "unconfirmed" };
+        }
         setEvaluation(json.data);
         return { status: "loaded", evaluation: json.data };
       } catch {
         if (seq !== loadSeq.current) return { status: "superseded" };
         const message = "The lens service is unreachable right now.";
         setError(message);
+        setEvaluation(null);
         return { status: "failed", message };
       } finally {
         if (seq === loadSeq.current) setLoadingEval(false);
@@ -290,19 +302,21 @@ export function LensPanel({
         setError(await readError(res));
         return;
       }
-      const json = (await res.json()) as { data: { status: string; questionsInserted?: number; blockedRules?: number } };
-      // The run is claimed only once its result reads back. A readback that fails, finds nothing, or is overtaken by a
-      // newer read leaves no completion notice: the screen must not say "complete" over a panel still loading or empty.
-      const readback = await loadEvaluation(paradigm);
+      const json = (await res.json()) as { data: { evaluationId?: string; status: string; questionsInserted?: number; blockedRules?: number } };
+      if (!json.data?.evaluationId || (json.data.status !== "complete" && json.data.status !== "blocked")) {
+        setError("The lens service did not return a verifiable evaluation result.");
+        setEvaluation(null);
+        return;
+      }
+      // The run is claimed only once its own result reads back. A readback that fails, shows another result, or is
+      // overtaken by a newer read leaves no completion notice: the screen must not say "complete" over a panel still
+      // loading, empty, or showing something else.
+      const readback = await loadEvaluation(paradigm, { evaluationId: json.data.evaluationId, status: json.data.status });
       if (readback.status === "failed") {
         setError(`The evaluation ran, but reading it back failed (${readback.message}). Refresh to see it.`);
         return;
       }
-      if (readback.status === "superseded") return;
-      if (!readback.evaluation) {
-        setError("The evaluation ran, but reading it back returned nothing. Refresh to check again.");
-        return;
-      }
+      if (readback.status !== "loaded") return;
       setNotice(
         json.data.status === "blocked"
           ? `Evaluation blocked by ${json.data.blockedRules ?? 0} safety rule(s) — output withheld for review.`
