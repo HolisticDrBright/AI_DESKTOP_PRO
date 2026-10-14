@@ -15,4 +15,5 @@ src/contracts/fixtures/clinic-record-copy-lab-item.json text eol=lf
 infra/aws-clinical-core/source-receipts/*.json text eol=lf
 src/contracts/fullscriptConsumerAction.ts text eol=lf
 src/contracts/programStepPurchase.ts text eol=lf
+src/contracts/programCompletion.ts text eol=lf
 src/contracts/fixtures/lab-consideration-trace.json text eol=lf

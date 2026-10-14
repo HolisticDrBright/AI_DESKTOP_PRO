@@ -321,7 +321,8 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   if (/\bprogram_assignment_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(program_assignment_refused|program_assignment_unpublished|program_item_held|program_assignment_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   // The production program family is disabled until a reviewed activation row exists; the refusal is a decision, not a fault.
-  if (/\bproduction_program_disabled\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  // The same holds for its consumer boundary (the BLOCKED program-consumer-boundary candidate).
+  if (/\b(production_program_disabled|program_boundary_disabled)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(program_assignment_conflict|program_assignment_version_changed|program_assignment_revision_stale|program_review_stale|program_assignment_state_invalid|program_tasks_remaining|program_phase_not_due|program_check_in_required|program_practitioner_review_required|program_clinical_items_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict", programRefusalReason(message));
   if (/\b(care_data_invalid|care_erasure_intent_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\bcare_data_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
