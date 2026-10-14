@@ -1,7 +1,7 @@
 {
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
-    "operationManifestSha256": "2361fa6a25f727ff143ca39840100bbfd2ff3715143f7366d7afa707b4e38849",
+    "operationManifestSha256": "233fb81aa26a467eb29174d55e84d860df16bc2dae7c83e5cadeda81828e4d6c",
     "productionOperationManifestSha256": "3624ba313a731855fdd5e8f250cceff40ee340be375e107fa6aef183002655dc",
     "legacyDefinitionSetSha256": "2c472d26e98365b7ba9c966f6223cb634cd076f52aece75f17d65fd1e9f4a739"
   },

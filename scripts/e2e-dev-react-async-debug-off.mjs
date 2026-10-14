@@ -25,7 +25,9 @@ if (process.env.E2E_DEV_SERVER === '1'
     const hook = original.call(this, callbacks);
     const reactShape = callbacks && typeof callbacks.init === 'function' && typeof callbacks.promiseResolve === 'function'
       && typeof callbacks.destroy === 'function';
-    if (reactShape && RENDERER.test(String(new Error().stack))) {
+    // Node stack paths use backslashes on Windows; the renderer allowlist is
+    // deliberately written with normalized separators for both platforms.
+    if (reactShape && RENDERER.test(String(new Error().stack).replace(/\\/g, '/'))) {
       hook.enable = function enable() { return this; };
       console.error(JSON.stringify({ check: 'e2e_next_dev_react_async_debug', event: 'disabled', pid: process.pid }));
     }
