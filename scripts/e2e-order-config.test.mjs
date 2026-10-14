@@ -13,7 +13,8 @@ import {
 const options = { stubBase: 'http://127.0.0.1:3999', port: 3114 };
 
 test('the battery runs every spec; the separately configured ones are named with their CI job, and an unclassified spec is an error', () => {
-  const specs = readdirSync('e2e').filter(file => file.endsWith('.spec.ts'));
+  // Generated order aliases (a concurrent order-proof test may hold some) are not specs.
+  const specs = readdirSync('e2e').filter(file => file.endsWith('.spec.ts') && !file.startsWith('__e2e_order_'));
   const { run, separatelyConfigured, unclassified } = selectOrderBattery(specs);
   assert.deepEqual(unclassified, []);
   assert.deepEqual(run, [...specs].sort());
@@ -117,13 +118,18 @@ test('the verdict compares identities, not totals, and refuses an unexercised or
 test('the driver runs the development server it configured, never `next start`, and the fixture boundary still refuses a deployed runtime', () => {
   const driver = readFileSync('scripts/check-e2e-order-independence.mjs', 'utf8');
   assert.match(driver, /\[NEXT_ENTRY, "dev", "-p", String\(APP_PORT\)\]/);
-  // Playwright is never a synchronous child (it would stop this process draining the server's pipes), and one
-  // development server carries both orders.
-  assert.match(driver, /spawn\(process\.execPath, \[PLAYWRIGHT_ENTRY, "test"/);
-  assert.doesNotMatch(driver, /execFileSync\(\s*process\.execPath,\s*\[PLAYWRIGHT_ENTRY/);
-  assert.match(driver, /withStub\(async \(\) => withApp\(heap, async \(\) => \{/);
+  // A browser run is never a synchronous child (it would stop this process draining the server's pipes); the only
+  // synchronous Playwright call is the --list that proves the collection order, before any server exists.
+  assert.match(driver, /runBoundedChild\(process\.execPath, \[PLAYWRIGHT_ENTRY, "test", "--reporter=list,json"/);
+  const synchronous = driver.match(/execFileSync\(\s*process\.execPath,\s*\[PLAYWRIGHT_ENTRY[^\]]*\]/g) ?? [];
+  assert.ok(synchronous.length > 0 && synchronous.every((call) => call.includes('"--list"')), synchronous.join('\n'));
+  // Each order runs on its own development server, with the fixture backend reset between them.
+  const first = driver.indexOf('withApp(heap, () => run("forward order"');
+  const reset = driver.indexOf('await resetOwnedStub()', first);
+  const second = driver.indexOf('withApp(heap, () => run("reverse order"', reset);
+  assert.ok(first > 0 && reset > first && second > reset, 'forward server, stub reset, then a fresh reverse server');
   // The server runs in its own process group and the whole group is stopped: no worker is orphaned on the port.
-  assert.match(driver, /env: \{ \.\.\.process\.env, \.\.\.heap \}, detached: true \}/);
+  assert.match(driver, /env: \{ \.\.\.process\.env, \.\.\.heap \}, detached: process\.platform !== "win32" \}/);
   assert.match(driver, /process\.kill\(-owned\.pid, "SIGKILL"\)/);
   assert.doesNotMatch(driver, /NEXT_ENTRY, "start"/);
   assert.doesNotMatch(driver, /NODE_ENV\s*[:=]/);
@@ -153,7 +159,7 @@ test('the timeline and memory samples are read from the report and the retained 
     '[2026-10-14T00:00:01.000Z] [forward order] ○ Compiling /login ...',
     '[2026-10-14T00:00:31.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":1048576000,"heapLimitBytes":9663676416,"rssBytes":2097152000}',
     '[2026-10-14T00:00:32.000Z] [forward order] {"check":"e2e_next_dev_memory","event":"sample"',
-    '[2026-10-14T00:01:01.000Z] [reverse order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":2097152000,"heapLimitBytes":9663676416,"rssBytes":3145728000,"eventLoopDelayMaxMs":20125,"gcMajorCount":2,"gcMajorPauseMaxMs":18400,"gcMajorPauseTotalMs":19000,"heapAfterMajorGcBytes":1572864000}',
+    '[2026-10-14T00:01:01.000Z] [reverse order] {"check":"e2e_next_dev_memory","event":"sample","pid":7,"heapUsedBytes":2097152000,"heapLimitBytes":9663676416,"rssBytes":3145728000,"loopUtilization":0.9,"loopDelayMaxMs":20125.4,"loopDelayP99Ms":900,"gcMajorCount":2,"gcMajorPauseMaxMs":18400,"gcMajorPauseTotalMs":19000,"heapAfterMajorGcBytes":1572864000}',
   ].join('\n');
   assert.deepEqual(memorySamples(log), [
     { at: '2026-10-14T00:00:31.000Z', event: 'sample', pid: 7, heapUsedMiB: 1000, heapLimitMiB: 9216, rssMiB: 2000 },

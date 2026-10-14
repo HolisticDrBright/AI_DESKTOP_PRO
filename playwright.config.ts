@@ -48,6 +48,9 @@ const DEV_SERVER = process.env.E2E_DEV_SERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Interrupted order-proof runs can leave generated wrappers behind on
+  // Windows. Ordinary browser runs must never collect those duplicates.
+  testIgnore: process.env.E2E_ORDER_ALIASES === "1" ? [] : ["**/__e2e_order_*.spec.ts"],
   workers: 1, // session-state flows stay deterministic
   timeout: TEST_TIMEOUT_MS,
   expect: { timeout: EXPECT_TIMEOUT_MS },

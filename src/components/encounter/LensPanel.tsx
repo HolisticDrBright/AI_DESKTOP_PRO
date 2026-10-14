@@ -297,6 +297,7 @@ export function LensPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ encounterId, paradigm }),
+        signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) {
         setError(await readError(res));

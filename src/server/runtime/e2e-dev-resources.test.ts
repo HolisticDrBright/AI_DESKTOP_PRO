@@ -60,7 +60,14 @@ describe('browser-only development resource budget', () => {
     expect(rows[1].exitCode).toBe(77);
     expect(rows[0].heapLimitBytes).toBeGreaterThan(0);
     expect(result.stderr).not.toContain('never-log-me');
-    expect(Object.keys(rows[0]).sort()).toEqual(['check', 'event', 'pid', 'heapUsedBytes', 'heapLimitBytes', 'rssBytes', 'totalMemoryBytes', 'constrainedMemoryBytes'].sort());
+    expect(Object.keys(rows[0]).sort()).toEqual([
+      'check', 'event', 'pid', 'heapUsedBytes', 'heapLimitBytes', 'rssBytes',
+      'totalMemoryBytes', 'constrainedMemoryBytes', 'loopUtilization',
+      'loopDelayMaxMs', 'loopDelayP99Ms',
+    ].sort());
+    for (const field of ['loopUtilization', 'loopDelayMaxMs', 'loopDelayP99Ms']) {
+      expect(rows[0][field] === null || Number.isFinite(rows[0][field])).toBe(true);
+    }
   });
   it('never emits diagnostics in a production process', () => {
     const result = spawnSync(process.execPath, ['--import', pathToFileURL(resolve('scripts/e2e-dev-memory-probe.mjs')).href, '-e', 'process.exit(0)'], {

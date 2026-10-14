@@ -257,8 +257,8 @@ export function memorySamples(log) {
       out.push({
         at: stamp, event: sample.event, pid: sample.pid, heapUsedMiB: mib(sample.heapUsedBytes),
         heapLimitMiB: mib(sample.heapLimitBytes), rssMiB: mib(sample.rssBytes),
-        ...(typeof sample.eventLoopDelayMaxMs === 'number' ? {
-          eventLoopDelayMaxMs: sample.eventLoopDelayMaxMs, gcMajorCount: sample.gcMajorCount,
+        ...(typeof sample.loopDelayMaxMs === 'number' && typeof sample.gcMajorCount === 'number' ? {
+          eventLoopDelayMaxMs: Math.round(sample.loopDelayMaxMs), gcMajorCount: sample.gcMajorCount,
           gcMajorPauseMaxMs: sample.gcMajorPauseMaxMs, heapAfterMajorGcMiB: mib(sample.heapAfterMajorGcBytes),
         } : {}),
       });

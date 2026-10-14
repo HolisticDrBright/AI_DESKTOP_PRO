@@ -580,13 +580,13 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await expect(page.getByTestId("encounter-status")).toHaveText("In progress");
 
   // 3. Create a SOAP draft; autosave must confirm from the SERVER before "Saved".
-  await page.getByRole("button", { name: "Start", exact: true }).click();
   const firstSave = page.waitForResponse(
     (response) =>
       response.url().includes("/api/live/emr/note") &&
       response.request().method() === "POST" &&
       response.ok(),
   );
+  await page.getByRole("button", { name: "Start", exact: true }).click();
   await page.getByLabel("Subjective").fill("Fatigue for two weeks.");
   const firstSavePayload = (await (await firstSave).json()) as {
     data: { noteId: string };

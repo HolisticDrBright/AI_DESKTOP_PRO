@@ -383,7 +383,11 @@ test("17: voiding an unpaid invoice releases its reservations", async ({ page })
   await page.getByTestId("line-add").click();
   await page.getByTestId("invoice-location").selectOption({ label: "Main Clinic" });
   await page.getByTestId("invoice-save").click();
+  // Wait for the server-adopted draft before finalizing. A click alone does
+  // not prove the save finished, and navigating away can race the mutation.
+  await expect(page.getByRole("status")).toContainText("Draft saved.");
   await page.getByTestId("invoice-finalize").click();
+  await expect(page.getByTestId("invoice-status")).toHaveText("Open");
 
   await page.goto(CATALOG);
   const beforeVoid = await page.getByTestId("catalog-rows").innerText();

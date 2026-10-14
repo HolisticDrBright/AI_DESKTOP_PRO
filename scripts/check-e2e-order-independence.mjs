@@ -2,9 +2,11 @@
 /**
  * Order-independence proof for the E2E battery.
  *
- * Runs the canonical one-process battery TWICE — once in Playwright's default
- * order, once with the spec list reversed — and requires both to report the
- * same passing total with zero failures.
+ * Runs the canonical one-process battery TWICE — once with the spec files in
+ * alphabetical order, once with those files reversed — and requires both to
+ * report the same passing total with zero failures. Numbered temporary import
+ * aliases force the collection order, which is checked with Playwright --list
+ * before either browser run. CLI file arguments alone do not control order.
  *
  * Why reversed rather than random: a shuffled run that passes once proves
  * nothing repeatable, and a failure would be hard to reproduce. Reversal is
@@ -29,6 +31,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { connect } from "node:net";
 import {
   existsSync,
   mkdirSync,
@@ -56,6 +59,14 @@ import {
   testTimeline,
   workerRestarts,
 } from "./e2e-order-config.mjs";
+import { runBoundedChild } from "./e2e-child-process.mjs";
+import {
+  assertListedSpecOrder,
+  createOrderedAliases,
+  isOrderedAlias,
+  orderedAliasPlan,
+  removeOrderedAliases,
+} from "./e2e-ordered-specs.mjs";
 
 /**
  * Where to find the `next` and `playwright` JS entry points.
@@ -72,7 +83,13 @@ const PLAYWRIGHT_ENTRY = join(
   process.cwd(), "node_modules", "@playwright", "test", "cli.js",
 );
 
-const battery = selectOrderBattery(readdirSync("e2e"));
+const e2eEntries = readdirSync("e2e");
+const staleAliases = e2eEntries.filter(isOrderedAlias);
+if (staleAliases.length > 0) {
+  console.error(`[e2e-order] FAIL — generated order aliases remain from an interrupted run: ${staleAliases.join(", ")}`);
+  process.exit(1);
+}
+const battery = selectOrderBattery(e2eEntries.filter((f) => !isOrderedAlias(f)));
 const specs = battery.run;
 
 if (specs.length === 0) {
@@ -276,11 +293,24 @@ function provisionBuild() {
  * from another configuration would be silently reused and the battery would
  * report on a server nobody in this run started.
  */
+function appPortListening() {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port: APP_PORT });
+    let settled = false;
+    const finish = (listening) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(1500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
 async function assertAppPortFree() {
-  const reachable = await fetch(`http://127.0.0.1:${APP_PORT}/api/health`)
-    .then(() => true)
-    .catch(() => false);
-  if (reachable) {
+  if (await appPortListening()) {
     configFailure(
       `something is already listening on port ${APP_PORT}, and Playwright would reuse it.`,
       `Stop it and re-run, or set E2E_PORT to a free port.`,
@@ -376,52 +406,70 @@ async function withStub(run) {
 }
 
 /**
- * Playwright runs as an ASYNCHRONOUS child. It must: this process owns the development server's stdout and stderr
- * pipes, and on Linux a server's write to a full pipe blocks it. A synchronous child (execFileSync, as this runner
- * used) froze this process's event loop for the whole order, so nothing drained the server's pipes; `next dev` logs
- * every request, and once about 64 KiB had accumulated the server stopped mid-write — navigations timed out, a
- * readback stayed "Loading", and the stall arrived only after enough suites had run.
+ * Playwright runs as an ASYNCHRONOUS child (Codex's bounded child, scripts/e2e-child-process.mjs). It must: this process
+ * owns the development server's stdout and stderr pipes, and on Linux a server's write to a full pipe blocks it. A
+ * synchronous child (execFileSync, as this runner used) froze this process's event loop for the whole order, so nothing
+ * drained the server's pipes; `next dev` logs every request, and once about 64 KiB had accumulated the server stopped
+ * mid-write — navigations timed out, a readback stayed "Loading", and the stall arrived only after enough suites had run.
+ * Its output is echoed as it arrives, so a long order's progress is visible in this runner's own log.
  */
 function playwright(files, reportFile) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [PLAYWRIGHT_ENTRY, "test", "--reporter=list,json", ...files.map((f) => `e2e/${f}`)], {
-      stdio: ["ignore", "pipe", "pipe"],
-      // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs).
-      env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1" },
-    });
-    // Echoed as it arrives so a long order's progress (and the moment a test fails) is visible in the runner's own log,
-    // and kept for the failure path below.
-    const chunks = [];
-    child.stdout.on("data", (b) => { chunks.push(b); process.stdout.write(b); });
-    child.stderr.on("data", (b) => { chunks.push(b); process.stderr.write(b); });
-    child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  return runBoundedChild(process.execPath, [PLAYWRIGHT_ENTRY, "test", "--reporter=list,json", ...files.map((f) => `e2e/${f}`)], {
+    // Only this runner's own children may reuse the server it started (scripts/e2e-dev-resources.mjs), and only they
+    // collect the generated order aliases (playwright.config.ts).
+    env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile, E2E_ORDER_OWNED_SERVER: "1", E2E_ORDER_ALIASES: "1" },
+    maxBytes: 64 * 1024 * 1024,
+    onData: (chunk) => process.stdout.write(chunk),
   });
+}
+
+async function resetOwnedStub() {
+  const response = await fetch(`${STUB_BASE}/__control/reset-all`, {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new Error(`The owned fictional backend refused its between-pass reset (${response.status}).`);
+  }
 }
 
 async function run(label, files) {
   console.log(`\n[e2e-order] ${label} (${files.length} specs)`);
   const reportFile = join(tmpdir(), `e2e-order-${label.replace(/\W+/g, "-")}-${process.pid}.json`);
   rmSync(reportFile, { force: true });
-  const out = await playwright(files, reportFile);
+  const child = await playwright(files, reportFile);
   let report;
   try {
     report = JSON.parse(readFileSync(reportFile, "utf8"));
   } catch {
     console.error(`[e2e-order] FAIL — ${label}: Playwright wrote no JSON report. Its last output:`);
-    console.error(out.slice(-6000));
+    console.error(child.output.slice(-6000));
+    if (child.limitExceeded) console.error("[e2e-order] Playwright output exceeded the 64 MiB limit.");
+    if (child.error) console.error(`[e2e-order] Child start failed: ${child.error.message}`);
     process.exit(1);
   }
-  const result = summarizeReport(report);
+  // A child that exits non-zero has not passed, whatever its report says (Codex 7919a983).
+  const result = { ...summarizeReport(report), exitOk: child.exitOk, limitExceeded: child.limitExceeded };
   const slug = label.replace(/\W+/g, "-");
   writeFileSync(join(EVIDENCE, `${slug}.report.json`), JSON.stringify(report));
   writeFileSync(join(EVIDENCE, `${slug}.timeline.jsonl`), testTimeline(report).map((row) => JSON.stringify(row)).join("\n") + "\n");
   console.log(
     `[e2e-order] ${label}: ${result.passed.length} passed, ${result.failed.length} failed or did not run, ` +
-      `${result.skipped.length} skipped by declaration (not counted as passes)`,
+      `${result.skipped.length} skipped by declaration (not counted as passes), process=${result.exitOk ? "success" : "failed"}`,
   );
   for (const failure of result.failed) console.error(`    ✘ [${failure.status}] ${failure.id}\n        ${failure.message}`);
   for (const error of result.errors) console.error(`    ✘ [outside any test] ${error}`);
   return result;
+}
+
+function proveCollectedOrder(plan) {
+  const listed = execFileSync(
+    process.execPath,
+    [PLAYWRIGHT_ENTRY, "test", ...plan.map((item) => `e2e/${item.alias}`), "--list"],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, env: { ...process.env, E2E_ORDER_ALIASES: "1" } },
+  );
+  const observed = assertListedSpecOrder(listed, plan.map((item) => item.spec));
+  console.log(`[e2e-order] verified ${plan[0].alias.includes("_forward_") ? "forward" : "reverse"} collection order: ${observed.length} specs, ${observed[0]} → ${observed.at(-1)}`);
 }
 
 /**
@@ -484,7 +532,7 @@ async function precompileApp(compilations) {
   };
   await Promise.all(Array.from({ length: PRECOMPILE_CONCURRENCY }, worker));
   const result = { entries: urls.length, ms: Date.now() - t0, slowestMs, compilations: compilations() - before, statuses };
-  writeFileSync(join(EVIDENCE, "precompile.json"), JSON.stringify(result, null, 2) + "\n");
+  writeFileSync(join(EVIDENCE, `precompile-${currentOrder.replace(/\W+/g, "-")}.json`), JSON.stringify(result, null, 2) + "\n");
   console.log(`[e2e-order] compiled ${result.entries} app entries in ${result.ms} ms (${result.compilations} compilations; statuses ${JSON.stringify(statuses)})`);
   if (result.ms > PRECOMPILE_CAP_MS || statuses.error) {
     console.error(`[e2e-order] FAIL — the app did not compile within ${PRECOMPILE_CAP_MS} ms, or a request got no answer. No spec ran.`);
@@ -539,7 +587,7 @@ async function withApp(heap, run) {
     process.execPath, [NEXT_ENTRY, "dev", "-p", String(APP_PORT)],
     // Its own process group: `next dev` runs the server in a worker process, and killing only the CLI orphans that
     // worker on the port, so the next run refuses ("something is already listening") for a reason it did not cause.
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap }, detached: true },
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...heap }, detached: process.platform !== "win32" },
   );
   const appLog = [];
   let compiled = 0;
@@ -558,7 +606,18 @@ async function withApp(heap, run) {
   owned.on("exit", (code, signal) => { if (died === null) died = { code, signal }; });
 
   const killOwned = () => {
-    try { process.kill(-owned.pid, "SIGKILL"); } catch { try { owned.kill("SIGKILL"); } catch { /* already gone */ } }
+    if (!owned.pid) return;
+    try {
+      if (process.platform === "win32") {
+        // Terminate only this runner's spawned Next tree, including its route
+        // worker. Killing the launcher alone leaves a listener on APP_PORT.
+        execFileSync("taskkill", ["/PID", String(owned.pid), "/T", "/F"], { stdio: "ignore" });
+      } else {
+        process.kill(-owned.pid, "SIGKILL");
+      }
+    } catch {
+      try { owned.kill("SIGKILL"); } catch { /* already gone */ }
+    }
   };
   const onSignal = (sig) => { killOwned(); process.exit(sig === "SIGINT" ? 130 : 143); };
   process.once("SIGINT", () => onSignal("SIGINT"));
@@ -572,9 +631,7 @@ async function withApp(heap, run) {
         .then((r) => r.ok).catch(() => false);
     }
     if (!ready) {
-      console.error(`[e2e-order] FAIL — next dev never became ready on ${APP_PORT}. Its last output:`);
-      console.error(appLog.join(""));
-      process.exit(1);
+      throw new Error(`[e2e-order] Next dev never became ready on ${APP_PORT}. Its last output:\n${appLog.join("")}`);
     }
     // Observe the fixture posture before any spec runs. Forty-five suites failing in beforeAll is what a refused
     // fixture used to look like; one precise line is what it looks like now.
@@ -600,7 +657,13 @@ async function withApp(heap, run) {
   } finally {
     killOwned();
     for (let i = 0; i < 40 && died === null; i += 1) await sleep(250);
+    for (let attempt = 0; attempt < 30 && await appPortListening(); attempt += 1) {
+      await sleep(250);
+    }
     serverLog.end();
+    if (await appPortListening()) {
+      throw new Error(`Owned Next server still listens on ${APP_PORT} after termination; refusing to reuse it.`);
+    }
   }
 }
 
@@ -653,7 +716,7 @@ console.log(
 if (appliedDefaults.length > 0) {
   console.log(`[e2e-order] provisioned by this script: ${appliedDefaults.join(", ")}`);
 }
-console.log(`[e2e-order] battery: all ${specs.length} specs in one development server for both orders; ` +
+console.log(`[e2e-order] battery: all ${specs.length} specs, one Playwright process per order, each order on a fresh development server; ` +
   `${battery.separatelyConfigured.length} need a posture of their own, so their tests skip by declaration and are not counted:`);
 for (const { spec, reason } of battery.separatelyConfigured) console.log(`    - ${spec}: ${reason}`);
 mkdirSync(EVIDENCE, { recursive: true });
@@ -661,33 +724,56 @@ console.log(`[e2e-order] evidence: ${EVIDENCE}`);
 await assertAppPortFree();
 provisionBuild();
 
-const orders = [["forward order", specs], ["reverse order", [...specs].reverse()]];
-// ONE development server carries both orders: the battery measures what accumulated load does to it, so it is never
-// restarted between suites or orders. Only the fixture backend is reset before each order.
-const results = await withStub(async () => withApp(heap, async () => {
-  const out = {};
-  for (const [label, files] of orders) {
-    currentOrder = label;
-    await fetch(`${STUB_BASE}/__control/reset-all`, { method: "POST" });
-    out[label] = await run(label, files);
-  }
-  currentOrder = "shutdown";
-  return out;
-}));
-const forward = results["forward order"], reverse = results["reverse order"];
+const forwardPlan = orderedAliasPlan(specs, "forward");
+const reversePlan = orderedAliasPlan([...specs].reverse(), "reverse");
+let generated = [];
+const cleanupGenerated = () => {
+  removeOrderedAliases(generated);
+  generated = [];
+};
+process.on("exit", cleanupGenerated);
+let forward;
+let reverse;
+try {
+  // Playwright sorts the files it collects; passing them in reverse does not reverse the run (Codex a24ecc28).
+  // Numbered aliases force the order, and each order is checked with --list before any browser starts.
+  generated = createOrderedAliases("e2e", [...forwardPlan, ...reversePlan]);
+  proveCollectedOrder(forwardPlan);
+  proveCollectedOrder(reversePlan);
+  // Each order gets its own development server and a reset fixture backend (Codex f97bb2d8), so both start from the
+  // same state; each server compiles the whole app before its first spec.
+  ({ forward, reverse } = await withStub(async () => {
+    currentOrder = "forward order";
+    const first = await withApp(heap, () => run("forward order", forwardPlan.map((item) => item.alias)));
+    await resetOwnedStub();
+    console.log("[e2e-order] fictional backend reset; starting a fresh development server for reverse order");
+    currentOrder = "reverse order";
+    const second = await withApp(heap, () => run("reverse order", reversePlan.map((item) => item.alias)));
+    currentOrder = "shutdown";
+    return { forward: first, reverse: second };
+  }));
+} finally {
+  cleanupGenerated();
+}
 const verdict = compareOrders(forward, reverse);
+for (const [label, result] of [["forward", forward], ["reverse", reverse]]) {
+  if (!result.exitOk) verdict.problems.push(`${label} Playwright process exited non-zero${result.limitExceeded ? " (its output exceeded 64 MiB)" : ""}`);
+}
+verdict.ok = verdict.problems.length === 0;
 
 const serverLogText = readFileSync(join(EVIDENCE, "dev-server.log"), "utf8");
 const memory = memorySamples(serverLogText);
 const windows = memory.filter((m) => typeof m.eventLoopDelayMaxMs === "number");
 const restarts = workerRestarts(serverLogText);
-const precompile = existsSync(join(EVIDENCE, "precompile.json")) ? JSON.parse(readFileSync(join(EVIDENCE, "precompile.json"), "utf8")) : null;
+const precompile = Object.fromEntries(["forward-order", "reverse-order"].map((slug) => [slug,
+  existsSync(join(EVIDENCE, `precompile-${slug}.json`)) ? JSON.parse(readFileSync(join(EVIDENCE, `precompile-${slug}.json`), "utf8")) : null]));
 const canary = readFileSync(join(EVIDENCE, "canary.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 const slowest = [...canary].sort((a, b) => b.ms - a.ms).slice(0, 5);
 writeFileSync(SUMMARY, JSON.stringify({
-  contract: "e2e-order-summary/2",
-  runtime: { server: "next dev (one process, both orders)", contractFixture: true, stub: STUB_BASE, heapMiB: process.env.E2E_DEV_HEAP_MB ?? null },
+  contract: "e2e-order-summary/3",
+  runtime: { server: "next dev (one per order, the whole app compiled first)", contractFixture: true, stub: STUB_BASE, heapMiB: process.env.E2E_DEV_HEAP_MB ?? null },
   battery: specs, separatelyConfigured: battery.separatelyConfigured,
+  order: { forward: forwardPlan.map((item) => item.spec), reverse: reversePlan.map((item) => item.spec) },
   forward, reverse, verdict,
   memory: {
     samples: memory.length, maxHeapUsedMiB: Math.max(0, ...memory.map((m) => m.heapUsedMiB)), maxRssMiB: Math.max(0, ...memory.map((m) => m.rssMiB)),

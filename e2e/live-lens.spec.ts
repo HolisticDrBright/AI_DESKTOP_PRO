@@ -62,6 +62,29 @@ async function coreText(page: Page): Promise<string> {
   return text.replace(/\s+/g, " ").trim();
 }
 
+test("a lost evaluation reply ends the running state without claiming completion", async ({ page }) => {
+  await page.goto(LENS_ENCOUNTER);
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId("lens-empty")).toBeVisible();
+
+  await page.route(/\/api\/live\/lens\/evaluation(?:\?|$)/, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    // The local server can accept a request and never answer it. Keep this
+    // transport pending longer than the screen's bounded request deadline.
+    await new Promise((resolve) => setTimeout(resolve, 40_000));
+    await route.abort("timedout").catch(() => undefined);
+  });
+
+  await page.getByTestId("run-evaluation").click();
+  await expect(page.getByTestId("run-evaluation")).toHaveText("Running…");
+  await expect(panel(page).getByRole("alert")).toContainText("unreachable", { timeout: 33_000 });
+  await expect(page.getByTestId("run-evaluation")).toBeEnabled();
+  await expect(page.getByTestId("lens-notice")).toHaveCount(0);
+});
+
 test("a saved evaluation is not announced as displayed when its readback fails", async ({ page }) => {
   let saved = false;
   await page.route(/\/api\/live\/lens\/evaluation(?:\?|$)/, async (route) => {
