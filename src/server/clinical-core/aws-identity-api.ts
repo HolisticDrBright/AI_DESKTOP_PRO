@@ -28,7 +28,10 @@ import {
   INVITATION_CODE_PATTERN,
   normalizeInvitationCode,
   type AwsIdentityConsentAdapter,
+  type AwsProductionIdentityConsentAdapter,
   type AwsSyntheticIdentityConsentAdapter,
+  type CurrentMembershipIdentityConsent,
+  type CurrentWorkforcePrincipal,
   type ClinicalRequestContext,
   type ProductionClinicalRequestContext,
   type ConsentMethod,
@@ -216,6 +219,19 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/chat": { pool: "workforce", purpose: "clinical_data", operation: "workforce_chat" },
 };
 
+/**
+ * The workforce operations answered under the `database_current` authority. Each resolves the person, clinic and
+ * role from current rows in its own transaction. Every other workforce route answers 503
+ * `membership_authority_not_configured` in that mode: it is refused, never served from token claims.
+ */
+const CURRENT_MEMBERSHIP_WORKFORCE_OPERATIONS: ReadonlySet<RouteDefinition["operation"]> = new Set([
+  "desktop_compatibility",
+  "posture", "issue", "grant", "revoke", "get_consent_artifact", "get_current_consent",
+]);
+export const CURRENT_MEMBERSHIP_WORKFORCE_ROUTES = Object.entries(ROUTES)
+  .filter(([, route]) => route.pool === "workforce" && CURRENT_MEMBERSHIP_WORKFORCE_OPERATIONS.has(route.operation))
+  .map(([key]) => key).sort();
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9:_-]{8,128}$/;
@@ -251,7 +267,7 @@ export function createAwsIdentityApiHandler(input: {
 }
 
 export function createAwsProductionIdentityApiHandler(input: {
-  adapter: AwsIdentityConsentAdapter<ProductionClinicalRequestContext>;
+  adapter: AwsProductionIdentityConsentAdapter;
   clinicalStateAdapter: AwsClinicalStateAdapter<ProductionClinicalRequestContext>;
   clinicalRecordsAdapter: AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>;
   desktopCompatibilityAdapter: AwsProductionDesktopAdapter;
@@ -382,11 +398,16 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         && route.pool === "workforce") {
         // Never enter a legacy-claim workforce route while this successor is
         // selected. Those routes require their own current-membership migration.
-        if (route.operation !== "desktop_compatibility") {
+        if (!CURRENT_MEMBERSHIP_WORKFORCE_OPERATIONS.has(route.operation)) {
           return response(503, { error: "membership_authority_not_configured" });
         }
         const principal = currentWorkforcePrincipal(event, input.configuration,
           input.productionPilot?.organizationId);
+        if (route.operation !== "desktop_compatibility") {
+          const current = (input.adapter as AwsProductionIdentityConsentAdapter | undefined)?.currentMembership;
+          if (!current) return response(503, { error: "membership_authority_not_configured" });
+          return await currentMembershipIdentityConsent(event, route.operation, current, principal, input.productionPilot);
+        }
         const request = validateDesktopCompatibilityRequest(
           { organizationId: principal.selectedOrganizationId }, parseBody(event));
         if (input.productionPilot && !isProductionPilotDesktopRequestAllowed(request)) {
@@ -1093,25 +1114,144 @@ class IdentityApiError extends Error {
   }
 }
 
+/**
+ * The only token facts the current authority uses: a live workforce ID token for an immutable subject, and exactly
+ * one selected clinic. Person, clinic membership and role are never read from the token; a clinic, person, role,
+ * group or MFA-looking claim is ignored. Whether this sign-in completed MFA is the pool's guarantee; the token
+ * cannot prove it, so it is neither inferred nor required here.
+ */
 function currentWorkforcePrincipal(
   event: ApiGatewayV2Event,
   configuration: IdentityApiConfiguration,
   pilotOrganizationId?: string,
-): { subject: string; selectedOrganizationId: string } {
+): CurrentWorkforcePrincipal {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const get = (name: string) => typeof claims?.[name] === "string" ? claims[name] as string : "";
-  const selectedOrganizationId = header(event.headers,"x-alp-selected-organization-id") ?? "";
+  // Two selections in one request are ambiguous: refused, not decided by whichever is read first.
+  const selected = Object.entries(event.headers ?? {})
+    .filter(([key]) => key.toLowerCase() === "x-alp-selected-organization-id");
+  const selectedOrganizationId = selected.length === 1 ? selected[0]![1] ?? "" : "";
+  // The API Gateway authorizer also checks expiry; the handler does not depend on that alone.
+  const expiry = Number(claims?.exp);
   if (event.requestContext?.accountId !== "173535830222"
     || get("iss") !== configuration.workforceIssuer
     || get("aud") !== configuration.workforceAudience
     || get("token_use") !== "id" || !UUID.test(get("sub"))
     || get("email_verified") !== "true"
     || get("custom:synthetic_attested") === "true"
+    || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()
     || !UUID.test(selectedOrganizationId)
     || selectedOrganizationId !== pilotOrganizationId) {
     throw new IdentityApiError("identity_refused");
   }
   return { subject: get("sub"),selectedOrganizationId };
+}
+
+/**
+ * The workforce identity and consent family under the current authority. Request shapes and pilot scopes are the
+ * legacy routes' own; the person, clinic and role come from the current-membership adapter, never from the token.
+ */
+async function currentMembershipIdentityConsent(
+  event: ApiGatewayV2Event,
+  operation: RouteDefinition["operation"],
+  current: CurrentMembershipIdentityConsent,
+  principal: CurrentWorkforcePrincipal,
+  pilot: { scope: ProductionPilotScope; organizationId: string } | undefined,
+): Promise<ApiGatewayV2Response> {
+  const pilotRefuses = (scope: string) => pilot !== undefined && !isProductionPilotConsentScopeAllowed(pilot.scope, scope);
+  const query = event.queryStringParameters ?? {};
+  const onlyQuery = (allowed: readonly string[]) => {
+    if (Object.keys(query).some((key) => !allowed.includes(key))) throw new IdentityApiError("request_invalid");
+  };
+  if (operation === "posture") {
+    if (event.body) throw new IdentityApiError("request_invalid");
+    onlyQuery([]);
+    const membership = await current.posture(principal);
+    return response(200, {
+      data: {
+        contractVersion: "clinical-core/1",
+        environment: "production-clinical",
+        dataClassification: "clinical_phi",
+        identityPool: "workforce",
+        authenticated: true,
+        phiAllowed: true,
+        realPatientDataAllowed: true,
+        ...(pilot ? { pilotScope: pilot.scope } : {}),
+        membership,
+      },
+    });
+  }
+  if (operation === "get_consent_artifact") {
+    if (event.body) throw new IdentityApiError("request_invalid");
+    onlyQuery(["scope"]);
+    const scope = query.scope ?? "";
+    if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])) throw new IdentityApiError("request_invalid");
+    if (pilotRefuses(scope)) return response(403, { error: "pilot_scope_refused" });
+    return response(200, { data: await current.getCurrentConsentArtifact(principal, { scope: scope as (typeof CONSENT_SCOPES)[number] }) });
+  }
+  if (operation === "get_current_consent") {
+    if (event.body) throw new IdentityApiError("request_invalid");
+    onlyQuery(["scope", "patientRecordId", "consumerPersonId"]);
+    const scope = query.scope ?? "";
+    const { patientRecordId, consumerPersonId } = query;
+    if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])
+      || (patientRecordId === undefined) === (consumerPersonId === undefined)
+      || (patientRecordId !== undefined && !UUID.test(patientRecordId))
+      || (consumerPersonId !== undefined && !UUID.test(consumerPersonId))) {
+      throw new IdentityApiError("request_invalid");
+    }
+    if (pilotRefuses(scope)) return response(403, { error: "pilot_scope_refused" });
+    return response(200, { data: await current.getCurrentConsent(principal, {
+      scope: scope as (typeof CONSENT_SCOPES)[number],
+      ...(patientRecordId !== undefined ? { patientRecordId } : { consumerPersonId }),
+    }) });
+  }
+  onlyQuery([]);
+  const body = parseBody(event);
+  if (operation === "issue") {
+    exactKeys(body, ["patientRecordId", "expiresAt", "idempotencyKey"], ["patientRecordId", "expiresAt"]);
+    return response(201, { data: await current.issueInvitation(principal, {
+      patientRecordId: requiredString(body, "patientRecordId", UUID),
+      expiresAt: requiredString(body, "expiresAt"),
+      idempotencyKey: optionalString(body, "idempotencyKey", IDEMPOTENCY),
+    }) });
+  }
+  if (operation === "grant") {
+    exactKeys(body, ["connectionId", "artifactId", "scope", "method", "representativeAuthority"],
+      ["connectionId", "artifactId", "scope", "method", "representativeAuthority"]);
+    const scope = requiredString(body, "scope");
+    const method = requiredString(body, "method") as ConsentMethod;
+    const representativeAuthority = requiredString(body, "representativeAuthority") as RepresentativeAuthority;
+    if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])
+      || !["patient_app", "portal", "in_person", "written"].includes(method)
+      || !["self", "guardian", "healthcare_proxy", "legal_representative"].includes(representativeAuthority)) {
+      throw new IdentityApiError("request_invalid");
+    }
+    if (pilotRefuses(scope)) return response(403, { error: "pilot_scope_refused" });
+    return response(201, { data: await current.recordConsent(principal, {
+      connectionId: requiredString(body, "connectionId", UUID),
+      artifactId: requiredString(body, "artifactId", UUID),
+      scope: scope as (typeof CONSENT_SCOPES)[number],
+      method,
+      representativeAuthority,
+    }) });
+  }
+  if (operation === "revoke") {
+    exactKeys(body, ["connectionId", "scope", "reasonCode"], ["connectionId", "scope", "reasonCode"]);
+    const scope = requiredString(body, "scope");
+    const reasonCode = requiredString(body, "reasonCode");
+    if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])
+      || !["patient_request", "scope_changed", "connection_revoked"].includes(reasonCode)) {
+      throw new IdentityApiError("request_invalid");
+    }
+    if (pilotRefuses(scope)) return response(403, { error: "pilot_scope_refused" });
+    return response(201, { data: await current.revokeConsent(principal, {
+      connectionId: requiredString(body, "connectionId", UUID),
+      scope: scope as (typeof CONSENT_SCOPES)[number],
+      reasonCode: reasonCode as "patient_request" | "scope_changed" | "connection_revoked",
+    }) });
+  }
+  return response(503, { error: "membership_authority_not_configured" });
 }
 
 function contextFromClaims(
