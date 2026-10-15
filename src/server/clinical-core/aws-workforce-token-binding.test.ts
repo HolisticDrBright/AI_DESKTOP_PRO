@@ -16,6 +16,15 @@ const CONFIGURATION = {
   phiAllowed: true,
   activationEvidenceSha256: "a".repeat(64),
 };
+const QUALIFICATION_CONFIGURATION = {
+  userPoolId: "us-east-2_ueGlFRbNB",
+  clientId: "4s7jgr4o8sqdq7cvo9gmq96e2h",
+  activation: "qualification" as const,
+  phiAllowed: false,
+  activationEvidenceSha256: "b".repeat(64),
+  qualificationAccountId: "588966314750",
+  qualificationIdentitySubjects: [SUBJECT],
+};
 
 function event(attributes: Record<string, unknown> = {}): WorkforcePreTokenEvent {
   return {
@@ -62,6 +71,67 @@ function claims(output: WorkforcePreTokenEvent) {
 describe("source-only workforce pre-token binding candidate", () => {
   test("the real source release stays blocked", () => {
     expect(WORKFORCE_TOKEN_BINDING_RELEASE).toBe("blocked");
+  });
+
+  test("fictional qualification may bind only a designated synthetic subject with PHI off", async () => {
+    const lookup = vi.fn().mockResolvedValue(binding());
+    const handler = createWorkforcePreTokenCandidate({
+      configuration: QUALIFICATION_CONFIGURATION,
+      lookup,
+    });
+    const syntheticEvent = {
+      ...event(),
+      userPoolId: QUALIFICATION_CONFIGURATION.userPoolId,
+      callerContext: { clientId: QUALIFICATION_CONFIGURATION.clientId },
+    };
+    expect(claims(await handler(syntheticEvent)).claimsToAddOrOverride).toEqual({
+      "custom:person_id": PERSON,
+      "custom:organization_id": ORGANIZATION,
+      "custom:production_bound": "true",
+    });
+    expect(lookup).toHaveBeenCalledExactlyOnceWith(SUBJECT);
+
+    lookup.mockClear();
+    const otherSubject = "44444444-4444-4444-8444-444444444444";
+    const unlisted = {
+      ...syntheticEvent,
+      request: { userAttributes: { ...syntheticEvent.request?.userAttributes, sub: otherSubject } },
+    };
+    expect(claims(await handler(unlisted)).claimsToSuppress).toHaveLength(3);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  test("fictional qualification cannot target the production pool, permit PHI, or use an unreviewed allowlist", () => {
+    const invalid = [
+      { userPoolId: CONFIGURATION.userPoolId },
+      { clientId: CONFIGURATION.clientId },
+      { qualificationAccountId: "173535830222" },
+      { phiAllowed: true },
+      { activationEvidenceSha256: undefined },
+      { qualificationIdentitySubjects: [] },
+      { qualificationIdentitySubjects: [SUBJECT, SUBJECT] },
+      { qualificationIdentitySubjects: ["not-a-subject"] },
+    ];
+    for (const change of invalid) {
+      expect(() => createWorkforcePreTokenCandidate({
+        configuration: { ...QUALIFICATION_CONFIGURATION, ...change },
+        lookup: vi.fn(),
+      })).toThrow("workforce_token_binding_configuration_invalid");
+    }
+  });
+
+  test("production approval cannot reuse the fictional qualification pool or subject allowlist", () => {
+    for (const change of [
+      { userPoolId: QUALIFICATION_CONFIGURATION.userPoolId },
+      { clientId: QUALIFICATION_CONFIGURATION.clientId },
+      { qualificationAccountId: QUALIFICATION_CONFIGURATION.qualificationAccountId },
+      { qualificationIdentitySubjects: [SUBJECT] },
+    ]) {
+      expect(() => createWorkforcePreTokenCandidate({
+        configuration: { ...CONFIGURATION, ...change },
+        lookup: vi.fn(),
+      })).toThrow("workforce_token_binding_configuration_invalid");
+    }
   });
 
   test("blocked activation strips even pre-existing clinical Cognito attributes without reading membership", async () => {

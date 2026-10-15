@@ -10,6 +10,11 @@ export const WORKFORCE_TOKEN_BINDING_RELEASE = "blocked" as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/;
+const PRODUCTION_POOL = "us-east-2_AZMa5gxSZ";
+const PRODUCTION_CLIENT = "67moqjql53ms7247tphe5ftpd8";
+const QUALIFICATION_POOL = "us-east-2_ueGlFRbNB";
+const QUALIFICATION_CLIENT = "4s7jgr4o8sqdq7cvo9gmq96e2h";
+const QUALIFICATION_ACCOUNT = "588966314750";
 const CLINICAL_CLAIMS = [
   "custom:person_id",
   "custom:organization_id",
@@ -51,9 +56,11 @@ type BindingLookup = (subject: string) => Promise<WorkforceTokenBinding | null>;
 type BindingConfiguration = {
   userPoolId: string;
   clientId: string;
-  activation: "blocked" | "approved";
+  activation: "blocked" | "qualification" | "approved";
   phiAllowed: boolean;
   activationEvidenceSha256?: string;
+  qualificationAccountId?: string;
+  qualificationIdentitySubjects?: readonly string[];
 };
 
 export function createWorkforcePreTokenCandidate(input: {
@@ -61,11 +68,31 @@ export function createWorkforcePreTokenCandidate(input: {
   lookup: BindingLookup;
 }) {
   const { configuration } = input;
+  const qualificationSubjects = configuration.qualificationIdentitySubjects;
+  const qualificationValid = configuration.activation !== "qualification" || (
+    configuration.phiAllowed === false
+    && configuration.userPoolId === QUALIFICATION_POOL
+    && configuration.clientId === QUALIFICATION_CLIENT
+    && configuration.qualificationAccountId === QUALIFICATION_ACCOUNT
+    && SHA256.test(configuration.activationEvidenceSha256 ?? "")
+    && Array.isArray(qualificationSubjects)
+    && qualificationSubjects.length >= 1
+    && qualificationSubjects.length <= 4
+    && qualificationSubjects.every((subject) => typeof subject === "string" && UUID.test(subject))
+    && new Set(qualificationSubjects).size === qualificationSubjects.length
+  );
+  const productionValid = configuration.activation !== "approved" || (
+    configuration.phiAllowed === true
+    && configuration.userPoolId === PRODUCTION_POOL
+    && configuration.clientId === PRODUCTION_CLIENT
+    && configuration.qualificationAccountId === undefined
+    && qualificationSubjects === undefined
+    && SHA256.test(configuration.activationEvidenceSha256 ?? "")
+  );
   if (!/^[a-z0-9-]+_[A-Za-z0-9]+$/.test(configuration.userPoolId)
     || !/^[A-Za-z0-9]{20,128}$/.test(configuration.clientId)
-    || !["blocked", "approved"].includes(configuration.activation)
-    || (configuration.activation === "approved" && (!configuration.phiAllowed
-      || !SHA256.test(configuration.activationEvidenceSha256 ?? "")))) {
+    || !["blocked", "qualification", "approved"].includes(configuration.activation)
+    || !qualificationValid || !productionValid) {
     throw new Error("workforce_token_binding_configuration_invalid");
   }
 
@@ -86,7 +113,12 @@ export function createWorkforcePreTokenCandidate(input: {
       response: { claimsOverrideDetails: { claimsToSuppress: [...CLINICAL_CLAIMS] } },
     });
     if (configuration.activation !== "approved"
-      || event.request?.userAttributes?.email_verified !== "true") {
+      && configuration.activation !== "qualification") {
+      return withoutClinicalClaims();
+    }
+    if (event.request?.userAttributes?.email_verified !== "true"
+      || (configuration.activation === "qualification"
+        && !qualificationSubjects?.includes(subject))) {
       return withoutClinicalClaims();
     }
 
