@@ -239,6 +239,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Verify exact-source telehealth qualification artifacts and read-only preflight refusals
+        run: npm run test:aws-telehealth-qualification
       - name: Refuse root credentials in fictional intake operators
         run: npm run test:synthetic-aws-principal
       - name: Keep fictional identity timeout changes narrow
