@@ -2,10 +2,9 @@ import { z } from 'zod';
 import { PROGRAM_CATALOG_TARGETS, programProductCatalogBinding } from './programAssignments';
 
 /**
- * `program-catalog-observation/1`: what the Program Studio reads of the governed catalog when a
- * practitioner binds a supplement step to a product. It is an additive Desktop reader over the
- * deployed governed catalog API (`governed-catalog-api/1`, `GET /clinical-core/workforce/catalog/products`);
- * it adds no route to that runtime and loosens none of its checks.
+ * `program-catalog-observation/2`: what the Program Studio reads of the governed catalog when a
+ * practitioner binds a supplement step to a product. Synthetic qualification retains the original
+ * catalog API; production must use the distinct, exact-label reference contract.
  *
  * An observation is a reference-only read bound to the clinic whose workforce session made it,
  * the service target the catalog API reported, and the draft version the Studio asked for. It
@@ -13,8 +12,9 @@ import { PROGRAM_CATALOG_TARGETS, programProductCatalogBinding } from './program
  * commercial offer, never the clinical payload, never a dose. Catalog eligibility is not purchase
  * availability or clinical approval; both stay where they are decided.
  */
-export const PROGRAM_CATALOG_OBSERVATION_CONTRACT = 'program-catalog-observation/1' as const;
+export const PROGRAM_CATALOG_OBSERVATION_CONTRACT = 'program-catalog-observation/2' as const;
 export const GOVERNED_CATALOG_API_CONTRACT = 'governed-catalog-api/1' as const;
+export const PRODUCTION_CATALOG_REFERENCE_API_CONTRACT = 'production-catalog-reference-api/1' as const;
 
 const stableId = z.string().regex(/^prd_[a-z0-9][a-z0-9_-]{2,95}$/);
 const version = z.number().int().min(1).max(1_000_000);
@@ -43,17 +43,57 @@ export const governedCatalogProductPage = z.object({
 }).passthrough();
 export type GovernedCatalogProductPage = z.infer<typeof governedCatalogProductPage>;
 
+/** Exact production reference page. It contains no commercial destination or inferred dose. */
+export const productionCatalogReferencePage = z.object({
+  contractVersion: z.literal(PRODUCTION_CATALOG_REFERENCE_API_CONTRACT),
+  environment: z.literal('production-clinical'),
+  dataClassification: z.literal('reference_only'),
+  phiAllowed: z.literal(false),
+  realPatientDataAllowed: z.literal(false),
+  data: z.object({
+    contractVersion: z.literal('production-catalog-reference/1'),
+    audience: z.literal('workforce'),
+    products: z.array(z.object({
+      productId: stableId,
+      productVersion: version,
+      displayName: z.string().trim().min(1).max(200),
+      brand: z.string().max(200).nullable(),
+      productType: z.enum(['supplement', 'oral_peptide', 'practitioner_only', 'injectable_peptide', 'other']),
+      accessTier: z.enum(['open', 'practitioner_gated', 'injectable', 'blocked']),
+      declaredRestricted: z.boolean(),
+      declaredDirectOrderAllowed: z.boolean(),
+      labelVersionId: z.string().uuid(),
+      labelSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+      productContentSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      sourceRefs: z.array(z.string().trim().min(1).max(4000)).min(1).max(100),
+      importManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      sourceVerified: z.boolean(),
+    }).strict()).max(100),
+    nextCursor: stableId.nullable(),
+  }).strict().superRefine((value, ctx) => {
+    if (value.products.some((product) => (product.sourceVerified && product.labelSha256 === null)
+      || new Set(product.sourceRefs).size !== product.sourceRefs.length)
+      || value.products.some((product, index) => index > 0 && product.productId <= value.products[index - 1]!.productId)
+      || (value.nextCursor !== null && value.nextCursor !== value.products.at(-1)?.productId)) {
+      ctx.addIssue({ code: 'custom', message: 'production_catalog_reference_invalid' });
+    }
+  }),
+}).strict();
+
 /** A product as the picker shows it: identity, the observed release, and the declared facts that decide a hold. */
 export const observedCatalogProduct = z.object({
   stableId,
   version,
   displayName: z.string().trim().min(1).max(240),
-  productType: z.enum(['supplement', 'oral_peptide', 'practitioner_only', 'injectable_peptide']),
-  accessTier: z.enum(['open', 'practitioner_gated', 'injectable']),
+  productType: z.enum(['supplement', 'oral_peptide', 'practitioner_only', 'injectable_peptide', 'other']),
+  accessTier: z.enum(['open', 'practitioner_gated', 'injectable', 'blocked']),
   declaredRestricted: z.boolean(),
   directOrderAllowed: z.boolean(),
   /** The approved label release the catalog reports for this product, or null when none is observed. */
   labelVersion: version.nullable(),
+  /** Production uses the real label-version UUID; no legacy label number is invented. */
+  labelVersionId: z.string().uuid().nullable().optional(),
+  sourceVerified: z.boolean().optional(),
 }).strict();
 export type ObservedCatalogProduct = z.infer<typeof observedCatalogProduct>;
 
@@ -81,7 +121,12 @@ export const programCatalogObservation = z.object({
   catalogSize: z.number().int().min(0),
   /** False when the catalog had more pages than the reader is allowed to follow; the list is then a prefix. */
   complete: z.boolean(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.target === 'production-clinical' && value.products.some(product =>
+    product.labelVersion !== null || !product.labelVersionId || product.sourceVerified === undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'production_catalog_source_identity_required' });
+  }
+});
 export type ProgramCatalogObservation = z.infer<typeof programCatalogObservation>;
 
 /** The binding a selection records. Identical to the shared program contract's binding; re-exported so a picker depends on one name. */
@@ -92,12 +137,14 @@ export const programCatalogSelection = programProductCatalogBinding;
  * Each reason is a declared catalog value, never an inference from the product's name. A held product
  * stays visible so the practitioner can see it was observed and why it is not offered.
  */
-export type CatalogHoldReason = 'declared_restricted' | 'not_direct_order' | 'access_tier' | 'no_approved_label';
-export function catalogHold(product: ObservedCatalogProduct): CatalogHoldReason | null {
+export type CatalogHoldReason = 'declared_restricted' | 'not_direct_order' | 'access_tier' | 'no_approved_label' | 'source_unverified' | 'unsupported_product_type';
+export function catalogHold(product: ObservedCatalogProduct, target: ProgramCatalogObservation['target'] = 'synthetic-staging'): CatalogHoldReason | null {
   if (product.declaredRestricted) return 'declared_restricted';
   if (product.accessTier !== 'open') return 'access_tier';
+  if (product.productType !== 'supplement') return 'unsupported_product_type';
   if (!product.directOrderAllowed) return 'not_direct_order';
-  if (product.labelVersion === null) return 'no_approved_label';
+  if (target === 'production-clinical' && !product.sourceVerified) return 'source_unverified';
+  if (target === 'production-clinical' ? !product.labelVersionId : product.labelVersion === null) return 'no_approved_label';
   return null;
 }
 export const CATALOG_HOLD_WORDS: Record<CatalogHoldReason, string> = {
@@ -105,4 +152,6 @@ export const CATALOG_HOLD_WORDS: Record<CatalogHoldReason, string> = {
   access_tier: 'not an open-access product; a patient cannot order it directly',
   not_direct_order: 'the catalog does not allow direct ordering',
   no_approved_label: 'no approved label is observed, so no dose can be copied from one',
+  source_unverified: 'the exact label and ingredient sources are not verified for this release',
+  unsupported_product_type: 'not a supplement product for this step',
 };

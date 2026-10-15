@@ -8,7 +8,7 @@ import { liveGuard } from '../../route-helpers';
 
 /**
  * The Studio's governed catalog read. The practitioner's cookie session is exchanged for the
- * workforce JWT here, so the browser never holds it; the reply is the `program-catalog-observation/1`
+ * workforce JWT here, so the browser never holds it; the reply is the `program-catalog-observation/2`
  * observation bound to this session's clinic and the draft version the Studio named. A failure is
  * returned as the category it is, so the picker can say "could not be read" and never "no match".
  */
@@ -31,7 +31,11 @@ export async function POST(request: Request) {
   const origin = workforceApiOrigin(process.env.CLINICAL_AWS_WORKFORCE_API_ORIGIN);
   if (!origin) return json(503, { error: { code: 'unavailable', message: 'service_unavailable' } });
   try {
-    const data = await observeProgramCatalog({ token: session.token, clinic: session.orgId, versionId: body.versionId, query: body.query, origin });
+    // Only the explicitly synthetic, PHI-disabled host may use the older catalog contract.
+    // Production never falls back from the exact-label projection to the incompatible old reader.
+    const source = process.env.CLINICAL_AWS_RUNTIME_MODE === 'synthetic' && process.env.PHI_ALLOWED !== 'true'
+      ? 'legacy-synthetic' : 'production-reference';
+    const data = await observeProgramCatalog({ token: session.token, clinic: session.orgId, versionId: body.versionId, query: body.query, origin, source });
     return json(200, { data });
   } catch (error) {
     const category = error instanceof CatalogObservationError ? error.category : 'service_unavailable';

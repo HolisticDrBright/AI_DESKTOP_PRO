@@ -21,6 +21,8 @@ function req(body: unknown = { versionId: VERSION, query: 'magnes' }, headers: R
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal('fetch', upstream);
   vi.stubEnv('CLINICAL_AWS_WORKFORCE_API_ORIGIN', 'https://abcdefghij.execute-api.us-east-2.amazonaws.com');
+  vi.stubEnv('CLINICAL_AWS_RUNTIME_MODE', 'synthetic');
+  vi.stubEnv('PHI_ALLOWED', 'false');
   session.mockResolvedValue({ token: 'fictional-workforce-token', orgId: 'clinic-a' });
   upstream.mockResolvedValue(Response.json(page));
 });
@@ -35,9 +37,27 @@ it('exchanges the cookie session for the workforce token, binds the reply to the
   expect((init.headers as Record<string, string>).authorization).toBe('Bearer fictional-workforce-token');
   expect(init.method).toBe('GET');
   const body = await response.json() as { data: Record<string, unknown> };
-  expect(body.data).toMatchObject({ contractVersion: 'program-catalog-observation/1', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging', query: 'magnes', catalogSize: 1, complete: true });
+  expect(body.data).toMatchObject({ contractVersion: 'program-catalog-observation/2', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging', query: 'magnes', catalogSize: 1, complete: true });
   expect(JSON.stringify(body)).not.toContain('fictional-workforce-token');
   expect(response.headers.get('cache-control')).toBe('no-store');
+});
+it('production reads only the exact-label reference contract and does not fall back to the synthetic product path', async () => {
+  vi.stubEnv('CLINICAL_AWS_RUNTIME_MODE', 'production');
+  upstream.mockResolvedValue(Response.json({
+    contractVersion: 'production-catalog-reference-api/1', environment: 'production-clinical',
+    dataClassification: 'reference_only', phiAllowed: false, realPatientDataAllowed: false,
+    data: { contractVersion: 'production-catalog-reference/1', audience: 'workforce', nextCursor: null,
+      products: [{ productId: 'prd_fictional_magnesium', productVersion: 3, displayName: 'Fictional magnesium', brand: null,
+        productType: 'supplement', accessTier: 'open', declaredRestricted: false, declaredDirectOrderAllowed: true,
+        labelVersionId: '22222222-2222-4222-8222-222222222222', labelSha256: 'b'.repeat(64),
+        productContentSha256: 'a'.repeat(64), sourceRefs: ['fictional-source'], importManifestSha256: 'c'.repeat(64),
+        sourceVerified: true }] },
+  }));
+  const response = await POST(req());
+  expect(response.status).toBe(200);
+  expect(upstream.mock.calls[0]![0]).toBe('https://abcdefghij.execute-api.us-east-2.amazonaws.com/clinical-core/workforce/catalog/reference?limit=100');
+  expect(await response.json()).toMatchObject({ data: { contractVersion: 'program-catalog-observation/2',
+    target: 'production-clinical', products: [{ labelVersion: null, sourceVerified: true }] } });
 });
 it.each<Record<string, string>>([
   { origin: 'https://evil.example' }, { origin: '' }, { host: '' }, { origin: 'http://' + host }, { 'sec-fetch-site': 'cross-site' },

@@ -123,7 +123,7 @@ export function createCatalogPickerController(input: {
       if (state.kind !== 'observed') return { ok: false, reason: 'no_observation' };
       const product = state.observation.products.find(candidate => candidate.stableId === stableId);
       if (!product) return { ok: false, reason: 'not_observed' };
-      const hold = catalogHold(product);
+      const hold = catalogHold(product, state.observation.target);
       if (hold) return { ok: false, reason: 'held', hold };
       return { ok: true, product, binding: { stableId: product.stableId, version: product.version, target: state.observation.target } };
     },

@@ -22,6 +22,18 @@ const product = (stableId: string, over: Record<string, unknown> = {}) => ({
   declaredRestricted: false, directOrderAllowed: true, clinical: { secret: 'must not leave' }, sourceRefs: ['src_1'], reviewStatus: 'approved',
   label: { stableId: 'lbl_fictional', version: 2, label: { dose: 'as labelled' }, crosscheck: {}, reviewStatus: 'approved' }, ...over,
 });
+const productionProduct = (over: Record<string, unknown> = {}) => ({
+  productId: 'prd_fictional_magnesium', productVersion: 3, displayName: 'Fictional magnesium', brand: 'Fictional brand',
+  productType: 'supplement', accessTier: 'open', declaredRestricted: false, declaredDirectOrderAllowed: true,
+  labelVersionId: '22222222-2222-4222-8222-222222222222', labelSha256: 'b'.repeat(64),
+  productContentSha256: 'a'.repeat(64), sourceRefs: ['fictional-source'], importManifestSha256: 'c'.repeat(64),
+  sourceVerified: true, ...over,
+});
+const productionPage = (products: unknown[], data: Record<string, unknown> = {}) => ({
+  contractVersion: 'production-catalog-reference-api/1', environment: 'production-clinical',
+  dataClassification: 'reference_only', phiAllowed: false, realPatientDataAllowed: false,
+  data: { contractVersion: 'production-catalog-reference/1', audience: 'workforce', products, nextCursor: null, ...data },
+});
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
 const read = (fetchImpl: typeof fetch, query = '', maxPages?: number) =>
   observeProgramCatalog({ token: 'fictional-workforce-token', clinic: 'clinic-a', versionId: VERSION, query, origin: ORIGIN, fetchImpl, now: () => new Date('2026-10-11T12:00:00Z'), maxPages });
@@ -31,6 +43,34 @@ const failure = async (fetchImpl: typeof fetch, query = '', maxPages?: number) =
 };
 
 describe('observing the governed catalog', () => {
+  it('uses the exact production reference route and preserves UUID label/source verification without a fabricated label number', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(json(productionPage([productionProduct()])));
+    const result = await observeProgramCatalog({ token: 'fictional-workforce-token', clinic: 'clinic-a',
+      versionId: VERSION, query: '', origin: ORIGIN, fetchImpl, source: 'production-reference',
+      now: () => new Date('2026-10-11T12:00:00Z') });
+    expect(fetchImpl.mock.calls[0]![0]).toBe(ORIGIN + '/clinical-core/workforce/catalog/reference?limit=100');
+    expect(result).toMatchObject({ contractVersion: 'program-catalog-observation/2', target: 'production-clinical',
+      products: [{ stableId: 'prd_fictional_magnesium', version: 3, labelVersion: null,
+        labelVersionId: '22222222-2222-4222-8222-222222222222', sourceVerified: true }] });
+    expect(JSON.stringify(result)).not.toContain('Fictional brand');
+    expect(JSON.stringify(result)).not.toContain('fictional-source');
+  });
+
+  it('refuses a production reply with commercial fields or a missing exact label identity', async () => {
+    for (const value of [
+      productionPage([{ ...productionProduct(), purchaseUrl: 'https://shop.example.invalid' }]),
+      productionPage([productionProduct({ labelVersionId: null })]),
+      productionPage([productionProduct()], { audience: 'consumer' }),
+    ]) {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(json(value));
+      const result = await failure(fetchImpl);
+      // The legacy path may never reinterpret a production contract as a synthetic product page.
+      expect(result).toBe('catalog_unverifiable');
+      await expect(observeProgramCatalog({ token: 'fictional-workforce-token', clinic: 'clinic-a', versionId: VERSION,
+        query: '', origin: ORIGIN, fetchImpl, source: 'production-reference' })).rejects.toMatchObject({ category: 'catalog_unverifiable' });
+    }
+  });
+
   it('presents the workforce token, follows the cursor, requires one target and returns identity and declared facts only', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json(page([product('prd_fictional_magnesium')], {}, { nextCursor: 'prd_fictional_magnesium' })))
@@ -44,7 +84,7 @@ describe('observing the governed catalog', () => {
     expect(fetchImpl.mock.calls[1]![0]).toBe(ORIGIN + '/clinical-core/workforce/catalog/products?limit=100&cursor=prd_fictional_magnesium');
     expect((fetchImpl.mock.calls[1]![1] as RequestInit).headers).toMatchObject({ 'x-alp-selected-organization-id': 'clinic-a' });
     expect(result).toEqual({
-      contractVersion: 'program-catalog-observation/1', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
+      contractVersion: 'program-catalog-observation/2', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
       observedAt: '2026-10-11T12:00:00.000Z', query: '', catalogSize: 2, complete: true,
       products: [
         { stableId: 'prd_fictional_magnesium', version: 3, displayName: 'Fictional fictional magnesium', productType: 'supplement', accessTier: 'open', declaredRestricted: false, directOrderAllowed: true, labelVersion: 2 },
@@ -111,11 +151,11 @@ describe('observing the governed catalog', () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => reply());
     expect(await failure(fetchImpl)).toBe(category);
   });
-  it('refuses a read whose pages report different targets', async () => {
+  it('refuses a production-shaped reply on the synthetic-only legacy path', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json(page([product('prd_fictional_a')], {}, { nextCursor: 'prd_fictional_a' })))
       .mockResolvedValueOnce(json(page([product('prd_fictional_b')], { environment: 'production-clinical' })));
-    expect(await failure(fetchImpl)).toBe('catalog_target_changed');
+    expect(await failure(fetchImpl)).toBe('catalog_unverifiable');
   });
   it('refuses a cursor that repeats, rather than looping', async () => {
     const fetchImpl = vi.fn<typeof fetch>()

@@ -17,7 +17,7 @@ const product = (over: Partial<ObservedCatalogProduct> = {}): ObservedCatalogPro
   declaredRestricted: false, directOrderAllowed: true, labelVersion: 2, ...over,
 });
 const observation = (over: Partial<ProgramCatalogObservation> = {}): ProgramCatalogObservation => ({
-  contractVersion: 'program-catalog-observation/1', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
+  contractVersion: 'program-catalog-observation/2', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
   observedAt: '2026-10-11T12:00:00.000Z', query: '', products: [product()], catalogSize: 1, complete: true, ...over,
 });
 function deferred<T>() {
@@ -89,7 +89,9 @@ describe('a changed release is shown, never applied', () => {
     expect(controller.select('prd_fictional_magnesium')).toMatchObject({ ok: true, binding: { ...binding, version: 4 } });
   });
   it('reports a different observed target and keeps the binding', async () => {
-    const controller = createCatalogPickerController({ read: async () => observation({ target: 'production-clinical' }), scope: scope() });
+    const controller = createCatalogPickerController({ read: async () => observation({ target: 'production-clinical',
+      products: [product({ labelVersion: null, labelVersionId: '33333333-3333-4333-8333-333333333333', sourceVerified: true })],
+    }), scope: scope() });
     await controller.search('');
     expect(controller.bindingStatus(binding)).toMatchObject({ status: 'target_differs', observedTarget: 'production-clinical' });
   });
@@ -201,6 +203,19 @@ describe('the target step changes during the read', () => {
 });
 
 describe('held products', () => {
+  it('holds production products until the exact UUID label has source-V proof, even when direct ordering is declared', async () => {
+    const unverified = product({ labelVersion: null, labelVersionId: '33333333-3333-4333-8333-333333333333', sourceVerified: false });
+    const controller = createCatalogPickerController({ read: async () => observation({ target: 'production-clinical', products: [unverified] }), scope: scope() });
+    await controller.search('');
+    expect(controller.select(unverified.stableId)).toEqual({ ok: false, reason: 'held', hold: 'source_unverified' });
+    const verified = product({ ...unverified, sourceVerified: true });
+    const allowed = createCatalogPickerController({ read: async () => observation({ target: 'production-clinical', products: [verified] }), scope: scope() });
+    await allowed.search('');
+    expect(allowed.select(verified.stableId)).toMatchObject({ ok: true, binding: { stableId: verified.stableId, version: 3,
+      target: 'production-clinical' } });
+    expect(catalogHold(product({ ...verified, productType: 'other' }), 'production-clinical')).toBe('unsupported_product_type');
+  });
+
   it.each([
     ['declared restricted', product({ declaredRestricted: true }), 'declared_restricted'],
     ['practitioner-gated', product({ accessTier: 'practitioner_gated' }), 'access_tier'],

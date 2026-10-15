@@ -3,14 +3,14 @@ if (typeof window !== 'undefined') {
 }
 
 import {
-  governedCatalogProductPage, PROGRAM_CATALOG_OBSERVATION_CONTRACT,
+  governedCatalogProductPage, productionCatalogReferencePage, PROGRAM_CATALOG_OBSERVATION_CONTRACT,
   type ObservedCatalogProduct, type ProgramCatalogObservation,
 } from '@/contracts/programCatalogObservation';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 
 /**
  * The Studio's read of the governed catalog: the practitioner's workforce JWT is presented to
- * the deployed catalog API (`GET /clinical-core/workforce/catalog/products`), every page is
+ * the selected versioned catalog API, every page is
  * checked against the published envelope, the service target is required to be the same on
  * every page, and the result is narrowed by the practitioner's words on this side. Nothing is
  * cached, nothing is written, no commercial offer or clinical payload leaves this module.
@@ -61,6 +61,7 @@ export async function observeProgramCatalog(input: {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   maxPages?: number;
+  source?: 'legacy-synthetic' | 'production-reference';
 }): Promise<ProgramCatalogObservation> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const maxPages = input.maxPages ?? MAX_PAGES;
@@ -69,9 +70,12 @@ export async function observeProgramCatalog(input: {
   let target: ProgramCatalogObservation['target'] | null = null;
   let cursor: string | undefined;
   let complete = false;
+  const source = input.source ?? 'legacy-synthetic';
 
   for (let page = 0; page < maxPages; page += 1) {
-    const url = new URL(input.origin + '/clinical-core/workforce/catalog/products');
+    const url = new URL(input.origin + (source === 'production-reference'
+      ? '/clinical-core/workforce/catalog/reference'
+      : '/clinical-core/workforce/catalog/products'));
     url.searchParams.set('limit', String(PAGE_LIMIT));
     if (cursor) url.searchParams.set('cursor', cursor);
     let response: Response | null = null;
@@ -101,26 +105,46 @@ export async function observeProgramCatalog(input: {
     if (response.status === 403) throw new CatalogObservationError('identity_refused');
     if (!response.ok) throw new CatalogObservationError('service_unavailable');
     if (!response.headers.get('content-type')?.includes('application/json')) throw new CatalogObservationError('catalog_unverifiable');
-    let parsed: ReturnType<typeof governedCatalogProductPage.safeParse>;
+    let decoded: unknown;
     try {
       const bytes = await readBoundedRequestBody({ body: response.body, headers: response.headers, signal: AbortSignal.timeout(PAGE_TIMEOUT_MS) }, PAGE_BYTES, PAGE_TIMEOUT_MS);
-      parsed = governedCatalogProductPage.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
+      decoded = JSON.parse(new TextDecoder().decode(bytes));
     } catch {
       throw new CatalogObservationError('catalog_unverifiable');
     }
-    if (!parsed.success) throw new CatalogObservationError('catalog_unverifiable');
-    const body = parsed.data;
-    if (target === null) target = body.environment;
-    else if (target !== body.environment) throw new CatalogObservationError('catalog_target_changed');
-    for (const product of body.data.products) {
-      all.push({
-        stableId: product.stableId, version: product.version, displayName: product.displayName,
-        productType: product.productType, accessTier: product.accessTier,
-        declaredRestricted: product.declaredRestricted, directOrderAllowed: product.directOrderAllowed,
-        labelVersion: product.label ? product.label.version : null,
-      });
+    let environment: ProgramCatalogObservation['target'];
+    let next: string | undefined;
+    if (source === 'production-reference') {
+      const parsed = productionCatalogReferencePage.safeParse(decoded);
+      if (!parsed.success) throw new CatalogObservationError('catalog_unverifiable');
+      const body = parsed.data;
+      environment = body.environment;
+      next = body.data.nextCursor ?? undefined;
+      for (const product of body.data.products) {
+        all.push({
+          stableId: product.productId, version: product.productVersion, displayName: product.displayName,
+          productType: product.productType, accessTier: product.accessTier,
+          declaredRestricted: product.declaredRestricted, directOrderAllowed: product.declaredDirectOrderAllowed,
+          labelVersion: null, labelVersionId: product.labelVersionId, sourceVerified: product.sourceVerified,
+        });
+      }
+    } else {
+      const parsed = governedCatalogProductPage.safeParse(decoded);
+      if (!parsed.success || parsed.data.environment !== 'synthetic-staging') throw new CatalogObservationError('catalog_unverifiable');
+      const body = parsed.data;
+      environment = body.environment;
+      next = body.data.nextCursor;
+      for (const product of body.data.products) {
+        all.push({
+          stableId: product.stableId, version: product.version, displayName: product.displayName,
+          productType: product.productType, accessTier: product.accessTier,
+          declaredRestricted: product.declaredRestricted, directOrderAllowed: product.directOrderAllowed,
+          labelVersion: product.label ? product.label.version : null,
+        });
+      }
     }
-    const next = body.data.nextCursor;
+    if (target === null) target = environment;
+    else if (target !== environment) throw new CatalogObservationError('catalog_target_changed');
     if (!next) { complete = true; break; }
     if (seenCursors.has(next)) throw new CatalogObservationError('catalog_unverifiable');
     seenCursors.add(next);

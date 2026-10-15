@@ -110,11 +110,13 @@ export function CatalogPickerView({ label, state, binding, bindingStatus, query,
               </p>
               <ul className="m-0 list-none p-0 flex flex-col gap-1">
                 {state.observation.products.map(product => {
-                  const hold = catalogHold(product);
+                  const hold = catalogHold(product, state.observation.target);
                   const bound = binding?.stableId === product.stableId;
                   return (
                     <li key={product.stableId} className="flex flex-wrap items-center gap-2 rounded-[6px] border border-line px-2 py-1" data-testid={`catalog-product-${product.stableId}`} data-hold={hold ?? "none"}>
-                      <span className="text-[12px] text-body"><span className="font-semibold">{product.displayName}</span> · {product.stableId} · version {product.version} · {product.productType}{product.labelVersion === null ? " · no approved label" : ` · label version ${product.labelVersion}`}</span>
+                      <span className="text-[12px] text-body"><span className="font-semibold">{product.displayName}</span> · {product.stableId} · version {product.version} · {product.productType}
+                        {product.labelVersionId ? ` · label ${product.labelVersionId}` : product.labelVersion === null ? " · no approved label" : ` · label version ${product.labelVersion}`}
+                        {state.observation.target === "production-clinical" ? product.sourceVerified ? " · sources verified" : " · sources not verified" : ""}</span>
                       {hold
                         ? <span className="text-[11.5px] text-critical" data-testid={`catalog-held-${product.stableId}`}>Held: {CATALOG_HOLD_WORDS[hold]}.</span>
                         : <Btn disabled={disabled} onClick={() => onSelect(product.stableId)} data-testid={`catalog-select-${product.stableId}`}>

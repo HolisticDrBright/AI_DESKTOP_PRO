@@ -21,7 +21,7 @@ const product = (over: Partial<ObservedCatalogProduct> = {}): ObservedCatalogPro
   declaredRestricted: false, directOrderAllowed: true, labelVersion: 2, ...over,
 });
 const observation = (over: Partial<ProgramCatalogObservation> = {}): ProgramCatalogObservation => ({
-  contractVersion: 'program-catalog-observation/1', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
+  contractVersion: 'program-catalog-observation/2', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
   observedAt: '2026-10-11T12:00:00.000Z', query: '', products: [product()], catalogSize: 1, complete: true, ...over,
 });
 const noop = () => undefined;
@@ -88,7 +88,9 @@ describe('the catalog picker view', () => {
     expect(markup).toContain('data-testid="catalog-select-prd_fictional_magnesium"');
   });
   it('shows a different observed target and keeps the binding', async () => {
-    const { text } = await rendered(async () => observation({ target: 'production-clinical' }), binding);
+    const { text } = await rendered(async () => observation({ target: 'production-clinical',
+      products: [product({ labelVersion: null, labelVersionId: '33333333-3333-4333-8333-333333333333', sourceVerified: true })],
+    }), binding);
     expect(text).toContain('The catalog observed here is production-clinical, not the binding\'s target; the binding is kept unchanged.');
     expect(text).toContain('Rebind on production-clinical');
   });
