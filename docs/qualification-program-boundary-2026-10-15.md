@@ -1,15 +1,15 @@
 # Qualification program boundary: one program family for the production-shaped qualification database
 
-**Status:** BLOCKED source candidate.
+**Status as of 15 October 2026:** The exact five-file schema chain was approved for fictional qualification and applied atomically to `clinical_core_qualification` in synthetic account `588966314750`. The qualification row, all four production activation rows and billing remain disabled; no subject, Lambda/API route, store purchase, PHI or real-data path was activated. Operator source commit: `6a9d26243cf7ba76a1bc0fba2bfed33bd17e479a`. The Aurora rehearsal rolled back cleanly; independent post-commit readback preserved the 112-row ledger and the same 108 historical rows/data fingerprint while adding the expected 11 tables. The bullets below describe the earlier source-only state and are retained as historical context.
 
-- Applied nowhere and registered in no manifest.
+- Originally applied nowhere and registered in no manifest; the separate approved fictional upgrade above did not alter the historical migration manifest.
 - A source Lambda entry point now imports it, with a clean-checkout build that embeds the exact commit. A distinct
   BLOCKED template successor names its route and bundle parameters; no deployed template or route imports that bundle.
   Building and linting are not deployment.
 - The Core entitlement port is a bounded, Sandbox-only verifier in
-  `src/server/clinical-core/core-subscription-guard.ts`, wired into that source entry point. There is no hosted billing
-  endpoint for it to call yet.
-- Nothing in this work deployed, applied SQL, enabled a row, designated a subject or changed an AWS resource.
+  `src/server/clinical-core/core-subscription-guard.ts`, wired into that source entry point. A separate synthetic Core
+  billing stack was later deployed with billing blocked and no store credentials; it cannot supply a positive entitlement.
+- The original source package deployed nothing. The later approved upgrade applied SQL to the isolated qualification database only; it enabled no row or subject and did not deploy the program service.
 - PHI stays disabled, and production program activation stays off everywhere, including in the qualification database.
 
 ## The mismatch it resolves
