@@ -13,7 +13,9 @@ import {
 
 const ACCOUNT = '588966314750';
 const REGION = 'us-east-2';
-const PROFILE = 'ai-synthetic-staging';
+// The staging profile resolves to root in this account. Use the reviewed
+// assumed-role profile for operator commands, including read-only inspection.
+const PROFILE = 'ai-synthetic-member';
 const DATABASE = 'clinical_core_qualification';
 const FOUNDATION = 'ai-clinical-core-qualification-foundation';
 const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
