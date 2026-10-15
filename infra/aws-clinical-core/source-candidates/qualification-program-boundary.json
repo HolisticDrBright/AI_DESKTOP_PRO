@@ -84,7 +84,7 @@
   "runtime": {
     "adapter": "src/server/clinical-core/qualification-program-assignments.ts#createQualificationProgramAssignments",
     "handler": "src/server/clinical-core/qualification-program-api.ts#createQualificationProgramHandler",
-    "lambdaEntry": null,
+    "lambdaEntry": "src/server/clinical-core/aws-qualification-program-lambda.ts#handler",
     "entryFunction": "clinical_core.production_program_bounded_request(jsonb)",
     "requestContext": {
       "environment": "production-clinical",
@@ -119,7 +119,7 @@
         "WORKFORCE_AUDIENCE"
       ]
     },
-    "consumerCoreEntitlement": "required port verifyConsumerCore; no qualification verifier exists in source"
+    "consumerCoreEntitlement": "per-request Sandbox billing entitlement via requireQualificationConsumerCore; no hosted billing route is present in the observed synthetic APIs, so consumer access remains refused"
   },
   "supersedes": {
     "file": "infra/aws-clinical-core/qualification-program-api-candidate.json",

@@ -3,10 +3,11 @@
 **Status:** BLOCKED source candidate.
 
 - Applied nowhere and registered in no manifest.
-- No Lambda entry point, template or route imports it.
-- The Core entitlement port now has a bounded, Sandbox-only verifier in
-  `src/server/clinical-core/core-subscription-guard.ts`, but no entry point
-  wires it and there is no hosted billing endpoint for it to call yet.
+- A source Lambda entry point now imports it, with a clean-checkout build that embeds the exact commit; no deployed
+  template or route imports that bundle. Building is not deployment.
+- The Core entitlement port is a bounded, Sandbox-only verifier in
+  `src/server/clinical-core/core-subscription-guard.ts`, wired into that source entry point. There is no hosted billing
+  endpoint for it to call yet.
 - Nothing in this work deployed, applied SQL, enabled a row, designated a subject or changed an AWS resource.
 - PHI stays disabled, and production program activation stays off everywhere, including in the qualification database.
 
@@ -42,6 +43,7 @@ The 112-ledger test reproduces the mismatch on the same ledger with the parents 
 | Metadata | `…/qualification-program-boundary.json` | Parents, digests, function body digests, the runtime binding, the required environment. Pinned to the code by the test |
 | Qualification adapter | `src/server/clinical-core/qualification-program-assignments.ts` | Built only under qualification execution. Admits only designated subjects. Runs the production request path (`boundedProgramExecutor`, now shared with the production adapter) behind a per-transaction function-digest binding |
 | Route handler | `src/server/clinical-core/qualification-program-api.ts` | The two routes, `POST /clinical-core/{consumer,workforce}/programs`, with every configuration pin checked before any data client exists |
+| Lambda entry and source build | `src/server/clinical-core/aws-qualification-program-lambda.ts` and `scripts/build-aws-qualification-program.mjs` | Bundles the exact reviewed function digests and compiled commit from a clean checkout; requires the real Sandbox billing verifier, never a synthetic Core bypass |
 
 ### Qualification-open
 
@@ -141,8 +143,9 @@ What this does **not** prove:
    - the review digest, reviewer and time.
    Then insert the designated fictional subjects from the reviewed synthetic acceptance manifest, at most 16, the same
    list the Lambda's `QUALIFICATION_IDENTITY_SUBJECTS` names.
-4. **Build a Lambda entry point** for `createQualificationProgramHandler`. None exists in source. It needs:
-   - wire `requireQualificationConsumerCore` as the per-request `verifyConsumerCore` port, with an exact reviewed
+4. **Review and build the Lambda source entry point** for `createQualificationProgramHandler`. It exists in source,
+   but no candidate template imports its artifact and it has not run in AWS. It needs:
+   - a reviewed and pinned
      `QUALIFICATION_BILLING_API_ORIGIN`. It requires a bounded, fresh `Sandbox` answer from the billing service; it
      never accepts the client-side synthetic bypass. A read-only October 15 inventory found no billing stack and no
      billing route on either the isolated qualification API (`6zt8e9qz04`) or the shared synthetic API

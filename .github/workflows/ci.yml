@@ -304,6 +304,8 @@ jobs:
         run: npm run check:aws-authenticated-api
       - name: Isolated fictional program API candidate (source-only)
         run: npm run test:aws-qualification-program-api
+      - name: Build blocked qualification program Lambda from exact clean source (no deployment)
+        run: npm run build:aws-qualification-program-lambda
       - name: AWS deployed synthetic acceptance harness gate
         run: npm run check:aws-deployment-acceptance
       - name: AWS governed catalog and read API safety gates
