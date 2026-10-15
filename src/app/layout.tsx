@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { StagingBanner } from "@/components/shell/StagingBanner";
+import { ClinicBindingFence } from "@/components/shell/ClinicBindingFence";
 import { MaterialProvider, ShellUiProvider } from "@/lib/providers";
 import { FeedbackProvider } from "@/lib/feedback";
 import { ComposerProvider } from "@/lib/composer";
@@ -37,6 +38,7 @@ export default function RootLayout({
                 >
                   Skip to content
                 </a>
+                <ClinicBindingFence />
                 <StagingBanner />
                 <AppShell>{children}</AppShell>
               </ComposerProvider>

@@ -8,6 +8,9 @@ import { SignOutButton } from "@/components/auth/SignOutButton";
 import { OrgSwitcher } from "@/components/settings/OrgSwitcher";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { clinicChoices } from "@/server/clinic-choices";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { pageClinicBinding } from "@/server/clinic-fence";
+import { ClinicBindingMark } from "@/components/shell/ClinicBindingMark";
 
 /**
  * Data source & environment status (server component).
@@ -42,6 +45,7 @@ export async function DataSourceCard() {
     }
   }
   const activeOrg = organizations.find((o) => o.organizationId === session?.orgId) ?? null;
+  const tabBinding = mode.live && session?.signedIn ? pageClinicBinding(await getRequestSelectedClinic()) : null;
   const overrideNames = [
     mode.devOverrides.orgId && "org",
     mode.devOverrides.patientId && "patient",
@@ -135,6 +139,7 @@ export async function DataSourceCard() {
                           ? "Temporarily unavailable"
                         : "No memberships found"}
                   </span>
+                  <ClinicBindingMark token={tabBinding} />
                   <OrgSwitcher organizations={organizations} activeOrgId={session.orgId} />
                   {pendingClinics.length > 0 && (
                     <span className="text-[11px] text-muted" data-testid="pending-clinics">

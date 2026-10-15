@@ -43,3 +43,13 @@ export function selectedClinicCookieValues(organizationId: string, idToken: stri
   if (!SELECTED_CLINIC_UUID.test(organizationId) || !subject || !binding) return null;
   return { organization: organizationId.toLowerCase(), binding, subject };
 }
+
+/**
+ * The tab-facing fingerprint of one selection: which account and which clinic a page or response was produced under.
+ * It is not a credential and grants nothing; the server only compares it with the token of the session's current,
+ * account-bound selection, so a tab rendered for another clinic or another account is refused.
+ */
+export function clinicBindingToken(selection: Extract<SelectedClinic, { state: "selected" }>): string {
+  return "v1." + createHash("sha256")
+    .update(`aidp-expected-clinic/1|${selection.subject}|${selection.organizationId}`).digest("base64url").slice(0, 32);
+}
