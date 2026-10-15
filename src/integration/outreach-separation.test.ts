@@ -42,7 +42,7 @@ function reach(entries: readonly string[]) {
     throw new Error(`unresolved ${spec} from ${from}`);
   };
   const walk = (file: string) => {
-    const name = relative(ROOT, file);
+    const name = relative(ROOT, file).replace(/\\/g, '/');
     if (modules.has(name)) return;
     modules.add(name);
     for (const m of readFileSync(file, 'utf8').matchAll(/(?:^|\n)\s*(import|export)(\s+type)?\s+(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
