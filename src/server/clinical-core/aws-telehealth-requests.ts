@@ -1165,7 +1165,7 @@ function publicVisitSummary(visit: VisitItem) {
 
 /* ---- the governed consent authority (identity API, caller's workforce JWT forwarded) ---- */
 
-async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, path: string, init?: { method: "POST"; body: Record<string, unknown> }, notFound: TelehealthRefusal = "service_unavailable", maxResponseBytes?: number): Promise<T> {
+async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, path: string, init?: { method: "POST"; body: Record<string, unknown> }, notFound: TelehealthRefusal = "service_unavailable", maxResponseBytes = 4_194_304): Promise<T> {
   if (!/^https:\/\//.test(config.identityApiOrigin)) throw new TelehealthError("service_unavailable");
   const signal = AbortSignal.timeout(10_000);
   let response: Response;
@@ -1175,7 +1175,7 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
       ...(init ? { body: JSON.stringify(init.body) } : {}) });
   } catch { throw new TelehealthError("service_unavailable"); }
   let payload: unknown;
-  try { payload = maxResponseBytes === undefined ? await response.json() : await boundedProviderJson(response, maxResponseBytes, signal); }
+  try { payload = await boundedProviderJson(response, maxResponseBytes, signal); }
   catch { throw new TelehealthError("service_unavailable"); }
   if (!response.ok || !payload || typeof payload !== "object" || !("data" in payload)) {
     if (response.status === 403) throw new TelehealthError("identity_refused");

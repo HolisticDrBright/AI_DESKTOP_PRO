@@ -722,6 +722,16 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(template.Resources.TelehealthFunction.Properties.Environment?.Variables.CLINICAL_API_ORIGIN).toEqual({ "Fn::Sub": "https://${ClinicalApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}" });
   });
 
+  it("refuses an oversized consent-authority reply before using its data", async () => {
+    const payload = JSON.stringify({ data: ARTIFACT, padding: "x".repeat(4_194_304) });
+    fetchRouter([["/clinical-core/workforce/consent-artifact", () => new Response(payload, { status: 200 })]]);
+    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/visits/consent-artifact", undefined, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "service_unavailable" });
+    expect(send).not.toHaveBeenCalled();
+    expect(secretsSend).not.toHaveBeenCalled();
+  });
+
   /* ---------------------------------------------------- appointment authority at the AWS boundary */
 
   it.each([null, "99999999-9999-4999-8999-999999999999", "not-a-person-id"])("will not issue host authority when the assigned practitioner is %j", async (practitioner) => {
