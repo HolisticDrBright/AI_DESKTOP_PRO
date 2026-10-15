@@ -8,7 +8,8 @@
       "PhiAllowed": false,
       "ZoomEnabled": false,
       "RemindersEnabled": false,
-      "StripeTestEnabled": false
+      "StripeTestEnabled": false,
+      "ConsultEnquirerEmailsEnabled": false
     }
   },
   "Parameters": {
@@ -73,6 +74,20 @@
     "ReminderConfigurationSet": {
       "Type": "String",
       "Default": "alp-transactional"
+    },
+    "ConsultEnquirerEmailsEnabled": {
+      "Type": "String",
+      "AllowedValues": [
+        "false",
+        "true"
+      ],
+      "Default": "false",
+      "Description": "\"Your consultation is booked\" emails when staff schedule a visit (same sender and alp-transactional set as the reminders). Off by default; SES production access is required first."
+    },
+    "ClinicDisplayName": {
+      "Type": "String",
+      "Default": "",
+      "Description": "The clinic name the booked email names. Required when ConsultEnquirerEmailsEnabled is true."
     },
     "StripeTestEnabled": {
       "Type": "String",
@@ -593,6 +608,12 @@
                 },
                 ""
               ]
+            },
+            "CONSULT_ENQUIRER_EMAILS_ENABLED": {
+              "Ref": "ConsultEnquirerEmailsEnabled"
+            },
+            "CLINIC_DISPLAY_NAME": {
+              "Ref": "ClinicDisplayName"
             },
             "STRIPE_TEST_ENABLED": {
               "Ref": "StripeTestEnabled"

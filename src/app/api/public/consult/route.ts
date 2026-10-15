@@ -5,6 +5,7 @@ import { publicConsultBrowserRequest } from '@/contracts/consultRequests';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { prepareConsultSubmission, contactDigestFor } from '@/server/consult/consultContactEnvelope';
 import { createConsultContactKeyResolver, ConsultKeyError } from '@/server/consult/consultContactKey';
+import { sendReceivedEmail } from '@/server/consult/consultEnquirerEmail';
 import { consultPublicCall, ConsultPublicApiError } from '@/server/consult/consultPublicApi';
 import { sameBrowserOrigin } from '@/server/same-browser-origin';
 
@@ -24,6 +25,11 @@ import { liveGuard } from '../../live/route-helpers';
  *
  * Nothing about the request is logged. A refusal is answered with a code and no detail,
  * including for an unavailable link, so this cannot be used to find out which clinics exist.
+ *
+ * When CONSULT_ENQUIRER_EMAILS_ENABLED is on and configured, a request that was actually received is
+ * followed by one "we received your request" email to the address the visitor just typed, through the
+ * clinic's own transactional SES configuration (consultEnquirerEmail.ts). The answer to the visitor is
+ * decided first and does not change with the email's outcome.
  */
 const json = (status: number, value: unknown) =>
   NextResponse.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -51,7 +57,14 @@ export async function POST(request: Request) {
       environment: process.env as Record<string, string | undefined>,
       secrets: new SecretsManagerClient({}),
     })();
-    return json(200, { data: await call(prepareConsultSubmission(key, parsed)) });
+    const submitted = await call(prepareConsultSubmission(key, parsed));
+    if (submitted.action === 'submit' && submitted.outcome === 'received') {
+      await sendReceivedEmail({
+        env: process.env as Record<string, string | undefined>, to: parsed.email,
+        clinic: async () => { const described = await call({ action: 'describe', slug: parsed.slug }); return described.action === 'describe' ? described.clinic : null; },
+      });
+    }
+    return json(200, { data: submitted });
   } catch (error) {
     // A missing or wrong key is a configuration answer, not a visitor's fault, and the form
     // must say so rather than appearing to have accepted the request.
