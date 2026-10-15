@@ -2,6 +2,8 @@ if (typeof window !== "undefined") {
   throw new Error("clinical-core/synthetic-api-client is server-only.");
 }
 
+import { refusedUnderClinicMembership } from "@/server/clinic-authority-families";
+
 export type ClinicalCoreIdentityPool = "workforce" | "consumer";
 
 export interface SyntheticClinicalCorePosture {
@@ -28,6 +30,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const INVITATION_CODE = /^[A-HJ-NP-Z2-9]{13}$/;
 
 function apiOrigin(): string {
+  // The synthetic boundary decides from token claims: never reached from a clinic-membership session
+  // (src/server/clinic-authority-families.ts).
+  if (refusedUnderClinicMembership("synthetic_boundary")) throw new SyntheticClinicalCoreUnavailable();
   if (process.env.CLINICAL_AWS_RUNTIME_MODE !== "synthetic") throw new SyntheticClinicalCoreUnavailable();
   const raw = (process.env.CLINICAL_AWS_API_ORIGIN ?? "").trim();
   let url: URL;

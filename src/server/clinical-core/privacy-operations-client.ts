@@ -1,9 +1,12 @@
 import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation} from '@/contracts/privacyOperations';
 import {PrivacyOperationError} from './privacy-operations';
+import {refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 /** Server-only token forwarding to one reviewed AWS origin, never direct SQL. */
 export async function requestPrivacyOperation(token:string|null,input:PrivacyOperation){
   if(typeof window!=='undefined')throw new Error('server_only');
   if(!token)throw new PrivacyOperationError('reauth_required');
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if(refusedUnderClinicMembership('privacy_operations'))throw new PrivacyOperationError('membership_authority_not_configured');
   const parsed=privacyOperationSchema.safeParse(input);
   if(!parsed.success)throw new PrivacyOperationError('request_invalid');
   const raw=process.env.CLINICAL_AWS_PRIVACY_OPERATIONS_ORIGIN??'';

@@ -2,6 +2,7 @@ if(typeof window!=='undefined')throw new Error('Cleanup execution is server-only
 import {AdapterError,codeFromHttpStatus} from './errors';
 import {cleanupExecutionRequestSchema,parseCleanupExecutionResponse} from '@/contracts/recordingCleanupExecution';
 import {readBoundedRequestBody} from '@/server/bounded-request-body';
+import {CLINIC_MEMBERSHIP_REFUSAL,CLINIC_MEMBERSHIP_REFUSAL_MESSAGE,refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 function executionOrigin():URL|null{
   try{
     const origin=new URL(process.env.RECORDING_CLEANUP_EXECUTION_API_ORIGIN??'');
@@ -14,6 +15,8 @@ function executionOrigin():URL|null{
 export const recordingCleanupExecutionConfigured=()=>executionOrigin()!==null;
 export async function recordingCleanupExecutionRequest(input:unknown,token:string|null,signal?:AbortSignal){
   if(!token)throw new AdapterError('unauthenticated');
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if(refusedUnderClinicMembership('encounter_recording'))throw new AdapterError('unavailable',CLINIC_MEMBERSHIP_REFUSAL_MESSAGE,CLINIC_MEMBERSHIP_REFUSAL);
   const parsed=cleanupExecutionRequestSchema.safeParse(input);if(!parsed.success)throw new AdapterError('invalid');
   const origin=executionOrigin();if(!origin)throw new AdapterError('unavailable');
   const controller=new AbortController();let interrupt!:()=>void;

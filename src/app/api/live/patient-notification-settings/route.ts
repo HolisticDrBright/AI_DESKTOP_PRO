@@ -4,6 +4,7 @@ import {readBoundedRequestBody} from '@/server/bounded-request-body';
 import {sameBrowserOrigin} from '@/server/same-browser-origin';
 import {clinicNotificationSettingsRequest,clinicNotificationSettingsView} from '@/contracts/patientNotifications';
 import {liveGuard} from '../route-helpers';
+import {CLINIC_MEMBERSHIP_REFUSAL,refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 import {patientNotificationSwitches} from '@/server/notifications/notification-switches';
 /**
  * The clinic's read-only view of a linked patient's reminder and notice choices.
@@ -23,6 +24,8 @@ export async function POST(request:Request){
  if(!patientNotificationSwitches(process.env).NOTIFICATION_PREFERENCES_ENABLED)return json(404,{error:'not_found'});
  if(!sameBrowserOrigin(request))return json(403,{error:'identity_refused'});
  const session=await getRequestSession();if(!session.token)return json(401,{error:'reauth_required'});
+ // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+ if(refusedUnderClinicMembership('patient_notification_settings'))return json(503,{error:CLINIC_MEMBERSHIP_REFUSAL});
  try{
   const parsed=clinicNotificationSettingsRequest.safeParse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request,4096,5000))));
   if(!parsed.success)return json(400,{error:'request_invalid'});

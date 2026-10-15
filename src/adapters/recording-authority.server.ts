@@ -3,11 +3,14 @@ import { createHash } from "node:crypto";
 import { AdapterError, codeFromHttpStatus } from "./errors";
 import { recordingAuthorityRequestSchema, parseRecordingAuthorityResponse } from "@/contracts/encounterRecordingAuthority";
 import { readBoundedRequestBody } from "@/server/bounded-request-body";
+import { CLINIC_MEMBERSHIP_REFUSAL, CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, refusedUnderClinicMembership } from "@/server/clinic-authority-families";
 
 /** Separate AWS authority endpoint; no compatibility RPC, retired backend or
  * fixture fallback. Identity is exclusively the request-scoped cookie session. */
 export async function recordingAuthorityRequest(input: unknown, token: string | null, signal?: AbortSignal) {
   if (!token) throw new AdapterError("unauthenticated");
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if (refusedUnderClinicMembership("encounter_recording")) throw new AdapterError("unavailable", CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, CLINIC_MEMBERSHIP_REFUSAL);
   const parsed = recordingAuthorityRequestSchema.safeParse(input);
   if (!parsed.success) throw new AdapterError("invalid");
   let origin: URL;

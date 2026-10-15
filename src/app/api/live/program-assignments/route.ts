@@ -4,6 +4,7 @@ import {readBoundedRequestBody} from '@/server/bounded-request-body';
 import {sameBrowserOrigin} from '@/server/same-browser-origin';
 import {programAssignmentRequest,parseProgramAssignmentResponse} from '@/contracts/programAssignments';
 import {liveGuard} from '../route-helpers';
+import {CLINIC_MEMBERSHIP_REFUSAL,refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 /**
  * Workforce side of the program assignment service. The practitioner's cookie
  * session is exchanged for the workforce JWT here, so the browser never holds it,
@@ -16,6 +17,8 @@ export async function POST(request:Request){
  const blocked=liveGuard();if(blocked)return blocked;
  if(!sameBrowserOrigin(request))return json(403,{error:'identity_refused'});
  const session=await getRequestSession();if(!session.token)return json(401,{error:'reauth_required'});
+ // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+ if(refusedUnderClinicMembership('program_assignments'))return json(503,{error:CLINIC_MEMBERSHIP_REFUSAL});
  try{
   const body=programAssignmentRequest.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request,262144,5000))));
   if(!WORKFORCE.has(body.action))return json(403,{error:'identity_refused'});

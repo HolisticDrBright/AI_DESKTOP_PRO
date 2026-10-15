@@ -1,4 +1,5 @@
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
+import { refusedUnderClinicMembership } from '@/server/clinic-authority-families';
 import {
   externalCalendarRequest,
   parseExternalCalendarResponse,
@@ -20,6 +21,8 @@ export class CalendarWorkforceError extends Error {
 export function calendarWorkforceCall(token: string, signal?: AbortSignal) {
   const requestSignal = signal ?? AbortSignal.timeout(20000);
   return async (request: ExternalCalendarRequest): Promise<ExternalCalendarResponse> => {
+    // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+    if (refusedUnderClinicMembership('calendar_connection')) throw new CalendarWorkforceError(503);
     const parsed = externalCalendarRequest.parse(request);
     const origin = new URL(process.env.CLINICAL_AWS_WORKFORCE_API_ORIGIN ?? '');
     if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash

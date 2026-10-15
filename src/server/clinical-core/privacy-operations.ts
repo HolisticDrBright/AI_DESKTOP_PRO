@@ -9,7 +9,7 @@ import {OwnedStorageError} from './owned-consumer-records';
 import {createPrivacyExportRetention,type PrivacyExportObjectStorage,type PrivacyExportStore} from './owned-privacy-export-job';
 import {z} from 'zod';
 export class PrivacyOperationError extends Error{
-  constructor(readonly code:'reauth_required'|'privacy_access_refused'|'request_invalid'|'conflict'|'legal_hold'|'service_unavailable'|'external_inventory_not_activated'|'personal_purge_not_activated'|'external_purge_not_activated'|'export_cleanup_not_activated',cause?:unknown){super(code,cause===undefined?undefined:{cause});}
+  constructor(readonly code:'reauth_required'|'privacy_access_refused'|'request_invalid'|'conflict'|'legal_hold'|'service_unavailable'|'external_inventory_not_activated'|'personal_purge_not_activated'|'external_purge_not_activated'|'export_cleanup_not_activated'|'membership_authority_not_configured',cause?:unknown){super(code,cause===undefined?undefined:{cause});}
 }
 type Tx=Parameters<Parameters<ClinicalCoreDatabase['transaction']>[0]>[0];
 const purgeBatchSchema=z.object({ownerId:z.string().uuid(),ownerSub:z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/),
