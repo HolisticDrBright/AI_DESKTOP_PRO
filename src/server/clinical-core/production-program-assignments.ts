@@ -80,7 +80,8 @@ export function createProductionProgramAssignments(deps:ProductionProgramAssignm
  * (qualification-program-assignments.ts, behind qualification execution and designated fictional subjects) both run
  * exactly this, so the route and the database function agree on one context and one contract. It never decides activation.
  */
-export function boundedProgramExecutor(deps:Pick<ProductionProgramAssignmentDependencies,'database'|'verifyConsumerCore'>){
+export function boundedProgramExecutor(deps:Pick<ProductionProgramAssignmentDependencies,'database'|'verifyConsumerCore'>,
+  entryPoints: 'production' | 'qualification' = 'production'){
  return async(context:ClinicalRequestContext,body:unknown,authorization:string):Promise<ProgramAssignmentResponse>=>{
   // The production target only: a synthetic context is the wrong target for this family, as a production one is for the other.
   if(context.environment!=='production-clinical'||context.dataClassification!=='clinical_phi'||!('productionBound' in context)||context.productionBound!==true
@@ -101,10 +102,14 @@ export function boundedProgramExecutor(deps:Pick<ProductionProgramAssignmentDepe
    try{await deps.verifyConsumerCore(authorization);}catch{throw new ProductionProgramAssignmentError('entitlement_refused');}
   }
   try{return await deps.database.transaction(async tx=>{
-   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[
+   await tx.query(entryPoints === 'qualification'
+    ? 'select clinical_program_qualification.set_request_context($1,$2,$3,$4,$5,$6,$7)'
+    : 'select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[
     {kind:'uuid',value:context.actorPersonId},{kind:'uuid',value:context.organizationId},context.identityPool,context.identitySubject,
     context.purpose,context.environment,context.dataClassification]);
-   const result=await tx.query<{data:unknown}>('select clinical_core.production_program_bounded_request($1::jsonb) as data',[JSON.stringify(sent)]);
+   const result=await tx.query<{data:unknown}>(entryPoints === 'qualification'
+    ? 'select clinical_program_qualification.bounded_request($1::jsonb) as data'
+    : 'select clinical_core.production_program_bounded_request($1::jsonb) as data',[JSON.stringify(sent)]);
    const raw=result.rows[0]?.data;
    const answer=parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw);
    // The boundary already withheld every destination; this is the second lock, on both projections that carry phases.

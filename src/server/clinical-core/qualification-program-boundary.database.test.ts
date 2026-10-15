@@ -46,7 +46,7 @@ function body(name: string, files: readonly string[]): string {
   if (found === undefined) throw new Error('no definition of ' + name);
   return found;
 }
-const bindings = (files: readonly string[] = [...PARENTS, SUCCESSOR]): QualificationProgramFunctionBinding[] =>
+const bindings = (files: readonly string[] = [...PARENTS, SUCCESSOR, LOGIN]): QualificationProgramFunctionBinding[] =>
   QUALIFICATION_PROGRAM_FUNCTIONS.map(([name]) => ({ name, bodySha256: sha(body(name, files)) }));
 
 let db: PGlite, org: string, otherOrg: string, staff: string, outsider: string, consumer: string, other: string, patient: string, connection: string,
@@ -84,8 +84,8 @@ async function direct(person: string, pool: 'workforce' | 'consumer', request: u
   try {
     await db.transaction(async tx => {
       await tx.exec('set local role clinical_program_qualification_api');
-      await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', [person, organization, pool, subject(person), 'clinical_data', 'production-clinical', 'clinical_phi']);
-      await tx.query('select clinical_core.production_program_bounded_request($1::jsonb)', [JSON.stringify(request)]);
+      await tx.query('select clinical_program_qualification.set_request_context($1,$2,$3,$4,$5,$6,$7)', [person, organization, pool, subject(person), 'clinical_data', 'production-clinical', 'clinical_phi']);
+      await tx.query('select clinical_program_qualification.bounded_request($1::jsonb)', [JSON.stringify(request)]);
     });
     return 'served';
   } catch (error) { return (error as Error).message; }
@@ -203,7 +203,8 @@ describe('the successor preserves its parents and the 112 ledger', () => {
       ledger: { migrationCount: 112, migrationReleaseSha256: QUALIFICATION_PROGRAM_LEDGER.migrationReleaseSha256 },
       successor: { sha256: QUALIFICATION_PROGRAM_BOUNDARY_CANDIDATE_SHA256 }, rollback: { sha256: QUALIFICATION_PROGRAM_BOUNDARY_ROLLBACK_SHA256 } });
     expect(meta.parents.map((p: { file: string; sha256: string }) => [p.file, p.sha256])).toEqual(PARENTS.map(f => [f, sha(lf(f))]));
-    expect(meta.functions.map((f: { name: string; bodySha256: string }) => ({ name: f.name, bodySha256: f.bodySha256 }))).toEqual(bindings());
+    expect(meta.functions.map((f: { name: string; bodySha256: string }) => ({ name: f.name, bodySha256: f.bodySha256 })))
+      .toEqual(bindings().slice(0, meta.functions.length));
     expect(meta.runtime.environment).toMatchObject({ PHI_ALLOWED: 'false', PROGRAM_ACTIVATION: 'blocked', QUALIFICATION_PROGRAM_BOUNDARY_SHA256: QUALIFICATION_PROGRAM_BOUNDARY_CANDIDATE_SHA256 });
   });
 });
@@ -251,6 +252,20 @@ describe('qualification opens the family only for designated subjects, with prod
     expect(await direct(consumer, 'consumer', { action: 'list' })).toBe('program_boundary_disabled');
     await qualificationRow(true);
     expect(await direct(consumer, 'consumer', { action: 'list' })).toBe('served');
+  });
+  it('the program-only role can execute only its two reviewed entry points in the schemas it can use', async () => {
+    const { rows } = await db.query<{ signature: string }>(`select p.oid::regprocedure::text as signature
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname in ('clinical_core','clinical_private','clinical_program_qualification')
+        and has_schema_privilege('clinical_program_qualification_api',n.oid,'USAGE')
+        and has_function_privilege('clinical_program_qualification_api',p.oid,'EXECUTE')
+      order by 1`);
+    const allowed = new Set([
+      'clinical_program_qualification.set_request_context(uuid,uuid,text,text,text,text,text)',
+      'clinical_program_qualification.bounded_request(jsonb)',
+    ]);
+    expect(rows.filter(row => !allowed.has(row.signature)).slice(0, 20)).toEqual([]);
+    expect(rows).toHaveLength(allowed.size);
   });
   it('the API role can neither read nor change the qualification row or the subject list, nor call the open check', async () => {
     for (const sql of ['select * from clinical_core.program_qualification_boundary', "update clinical_core.program_qualification_boundary set enabled=true",

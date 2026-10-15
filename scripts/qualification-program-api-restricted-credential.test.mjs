@@ -2,12 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 
 const read = path => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 const parent = JSON.parse(read('infra/aws-clinical-core/qualification-program-api-successor.json'));
 const candidate = JSON.parse(read('infra/aws-clinical-core/qualification-program-api-restricted-credential.json'));
 const loginSql = read('infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql');
+
+test('the bundled Lambda binds both exact proxy bodies, with no callable clinical-schema grant', () => {
+  const entry = read('src/server/clinical-core/aws-qualification-program-lambda.ts');
+  const expected = ['set_request_context', 'bounded_request'].map(name => {
+    const start = loginSql.indexOf(`create function clinical_program_qualification.${name}(`);
+    assert.ok(start >= 0);
+    const bodyStart = loginSql.indexOf('as $$', start) + 'as $$'.length;
+    const bodyEnd = loginSql.indexOf('$$;', bodyStart);
+    assert.ok(bodyEnd > bodyStart);
+    return { name: `clinical_program_qualification.${name}`,
+      bodySha256: createHash('sha256').update(loginSql.slice(bodyStart, bodyEnd)).digest('hex') };
+  });
+  for (const binding of expected) {
+    assert.match(entry, new RegExp(`name: '${binding.name.replaceAll('.', '\\.')}[\\s\\S]*?bodySha256: '${binding.bodySha256}'`));
+  }
+  assert.doesNotMatch(loginSql, /grant usage on schema clinical_(?:core|private) to clinical_program_qualification_api/i);
+  assert.match(loginSql, /revoke all on schema clinical_program_qualification from public/i);
+});
 
 test('restricted-credential successor is generated and changes only its pinned secret boundary', () => {
   execFileSync(process.execPath, ['scripts/build-qualification-program-api-restricted-credential.mjs', '--check']);
@@ -26,7 +45,7 @@ test('restricted-credential successor is generated and changes only its pinned s
   assert.equal(candidate.Resources.IdentityApiFunction.Properties.Environment.Variables.PROGRAM_ACTIVATION, 'blocked');
 });
 
-test('candidate login starts disabled, can assume only the API role, and refuses replay', async () => {
+test('candidate login starts disabled, can assume only the proxy role, and refuses replay', async () => {
   assert.match(loginSql, /current_database\(\) <> 'clinical_core_qualification'/);
   assert.match(loginSql, /create role clinical_program_qualification_api/);
   assert.doesNotMatch(loginSql, /grant clinical_core_api to clinical_program_qualification_login/i);
@@ -60,8 +79,13 @@ test('candidate login starts disabled, can assume only the API role, and refuses
     await assert.rejects(db.exec('set role clinical_core_api'), /permission denied/);
     await db.exec('set role clinical_program_qualification_api');
     assert.equal((await db.query('select current_user as name')).rows[0].name, 'clinical_program_qualification_api');
+    assert.equal((await db.query(`select has_schema_privilege(current_user,'clinical_core','USAGE') as allowed`)).rows[0].allowed, false);
+    assert.equal((await db.query(`select has_schema_privilege(current_user,'clinical_private','USAGE') as allowed`)).rows[0].allowed, false);
     assert.equal((await db.query(`select has_function_privilege(current_user,
-      'clinical_core.production_program_bounded_request(jsonb)', 'EXECUTE') as allowed`)).rows[0].allowed, true);
+      'clinical_program_qualification.bounded_request(jsonb)', 'EXECUTE') as allowed`)).rows[0].allowed, true);
+    assert.deepEqual((await db.query(`select clinical_program_qualification.bounded_request('{"fictional":true}'::jsonb) as data`)).rows[0].data,
+      { fictional: true });
+    await assert.rejects(db.query(`select clinical_core.production_program_bounded_request('{}'::jsonb)`), /permission denied/);
     await assert.rejects(db.query('select * from clinical_core.private_data'), /permission denied/);
     await db.exec('reset session authorization');
     await assert.rejects(db.exec(loginSql.replace("current_database() <> 'clinical_core_qualification'",

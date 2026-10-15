@@ -19,8 +19,8 @@ import { boundedProgramExecutor, ProductionProgramAssignmentError, type Producti
  * - every request from an identity that is not a designated subject is refused as `activation_refused`, exactly as when
  *   nothing is activated;
  * - it runs the production adapter's own request path (boundedProgramExecutor): the production-shaped context, the bound
- *   completion contract, the per-request Core entitlement check, clinical_core.production_program_bounded_request and the
- *   destination lock. One context and one contract;
+ *   completion contract, the per-request Core entitlement check and the destination lock. Qualification reaches the
+ *   same bounded database function only through two reviewed proxies in its isolated schema;
  * - before every transaction the database must hold exactly the reviewed function bodies of the family and the
  *   qualification boundary (bindQualificationProgramDatabase). An unknown or conflicting schema identity is refused as
  *   `service_unavailable` before any request reaches it;
@@ -35,14 +35,16 @@ export const QUALIFICATION_PROGRAM_BOUNDARY_ROLLBACK_SHA256 = 'bfdf50b7bb0676d83
 export const QUALIFICATION_PROGRAM_LEDGER = Object.freeze({ migrationCount: 112, migrationReleaseSha256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4' });
 
 export type QualificationProgramFunctionBinding = { name: string; bodySha256: string };
-/** The family's functions the binding checks: argument list, whether the API role may call it, and whether it runs as
+/** The family's functions the binding checks: argument list, whether the qualification role may call it, and whether it runs as
  * its definer (the destination projection is a plain function called only from inside the definer entry points). */
 export const QUALIFICATION_PROGRAM_FUNCTIONS = [
-  ['clinical_core.production_program_bounded_request', '(jsonb)', true, true],
+  ['clinical_core.production_program_bounded_request', '(jsonb)', false, true],
   ['clinical_private.production_program_bounded_complete', '(jsonb)', false, true],
   ['clinical_core.production_program_assignment_request', '(jsonb)', false, true],
   ['clinical_private.production_program_without_destinations', '(jsonb)', false, false],
   ['clinical_private.program_qualification_open', '()', false, true],
+  ['clinical_program_qualification.set_request_context', '(uuid,uuid,text,text,text,text,text)', true, true],
+  ['clinical_program_qualification.bounded_request', '(jsonb)', true, true],
 ] as const;
 
 export function validateQualificationProgramFunctions(supplied: readonly QualificationProgramFunctionBinding[]): QualificationProgramFunctionBinding[] {
@@ -54,22 +56,23 @@ export function validateQualificationProgramFunctions(supplied: readonly Qualifi
 }
 
 /**
- * Deployed-contract metadata check before every transaction, through the API role only: each family function has the
- * reviewed body (SHA-256 of prosrc), the reviewed SECURITY DEFINER setting and an empty search_path, is callable by the API role exactly
+ * Deployed-contract metadata check before every transaction, through the qualification role only: each family function has the
+ * reviewed body (SHA-256 of prosrc), the reviewed SECURITY DEFINER setting and an empty search_path, is callable by that role exactly
  * when it should be and never by PUBLIC; the qualification boundary and subject tables force row security and grant the
- * API role nothing. It reads no row of any table.
+ * role nothing. It also refuses clinical-schema usage and extra functions in the proxy schema. It reads no row of any table.
  */
 export function bindQualificationProgramDatabase(database: ClinicalCoreDatabase, supplied: readonly QualificationProgramFunctionBinding[]): ClinicalCoreDatabase {
   const functions = validateQualificationProgramFunctions(supplied);
   const expected = JSON.stringify(QUALIFICATION_PROGRAM_FUNCTIONS.map(([qualified, args, callable, definer]) => {
     const [schema, name] = qualified.split('.');
-    return { schema, name, signature: qualified + args, callable, definer, sha256: functions.find(f => f.name === qualified)!.bodySha256 };
+    return { schema, name, args, callable, definer, sha256: functions.find(f => f.name === qualified)!.bodySha256 };
   }));
   return { transaction: work => database.transaction(async tx => {
     const check = await tx.query<{ valid: boolean }>(`with expected as (
-      select * from jsonb_to_recordset($1::jsonb) as e(schema text,name text,signature text,callable boolean,definer boolean,sha256 text)
+      select * from jsonb_to_recordset($1::jsonb) as e(schema text,name text,args text,callable boolean,definer boolean,sha256 text)
     ), checked_functions as (
-      select count(*)=${QUALIFICATION_PROGRAM_FUNCTIONS.length} and bool_and(p.oid=to_regprocedure(e.signature) and p.prokind='f' and p.prosecdef=e.definer
+      select count(*)=${QUALIFICATION_PROGRAM_FUNCTIONS.length} and bool_and(('('||replace(oidvectortypes(p.proargtypes),' ','')||')')=e.args
+        and p.prokind='f' and p.prosecdef=e.definer
         and p.prolang=(select oid from pg_language where lanname='plpgsql')
         and p.proconfig=array['search_path=""']::text[]
         and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.sha256
@@ -83,9 +86,15 @@ export function bindQualificationProgramDatabase(database: ClinicalCoreDatabase,
         and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee=0)) valid
       from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where n.nspname='clinical_core' and c.relname in('program_qualification_boundary','program_qualification_subjects')
+    ), checked_schema as (
+      select has_schema_privilege(current_user,'clinical_program_qualification','USAGE')
+        and not has_schema_privilege(current_user,'clinical_core','USAGE')
+        and not has_schema_privilege(current_user,'clinical_private','USAGE')
+        and (select count(*)=2 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+          where n.nspname='clinical_program_qualification') as valid
     ) select current_user='clinical_program_qualification_api'
       and not pg_has_role(current_user,'clinical_core_api','MEMBER')
-      and f.valid and t.valid as valid from checked_functions f cross join checked_tables t`, [expected]);
+      and f.valid and t.valid and s.valid as valid from checked_functions f cross join checked_tables t cross join checked_schema s`, [expected]);
     if (check.rows[0]?.valid !== true) throw new ProductionProgramAssignmentError('service_unavailable');
     return work(tx);
   }) };
@@ -105,7 +114,7 @@ export function createQualificationProgramAssignments(deps: QualificationProgram
   catch { qualification = undefined; }
   if (!qualification) throw new Error('qualification_program_configuration_invalid');
   const policy = qualification;
-  const execute = boundedProgramExecutor({ database: bindQualificationProgramDatabase(deps.database, deps.functions), verifyConsumerCore: deps.verifyConsumerCore });
+  const execute = boundedProgramExecutor({ database: bindQualificationProgramDatabase(deps.database, deps.functions), verifyConsumerCore: deps.verifyConsumerCore }, 'qualification');
   return async (context: ClinicalRequestContext, body: unknown, authorization: string): Promise<ProgramAssignmentResponse> => {
     if (!qualificationAdmits(policy, context.identitySubject)) throw new ProductionProgramAssignmentError('activation_refused');
     return execute(context, body, authorization);
