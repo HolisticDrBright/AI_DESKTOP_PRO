@@ -9,7 +9,6 @@ import {
 import type { AwsIdentityConsentAdapter, ProductionClinicalRequestContext } from "./aws-identity-consent";
 import type { AwsClinicalStateAdapter } from "./aws-clinical-state";
 import type { AwsClinicalRecordsAdapter } from "./aws-consumer-clinical-records";
-import type { DesktopCompatibilityAdapter } from "./aws-desktop-compatibility";
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -67,7 +66,7 @@ function fullProductionInput(configurationOverrides: Partial<ProductionIdentityA
     adapter: {} as AwsIdentityConsentAdapter<ProductionClinicalRequestContext>,
     clinicalStateAdapter: { getConsumerConnection: connection } as unknown as AwsClinicalStateAdapter<ProductionClinicalRequestContext>,
     clinicalRecordsAdapter: {} as AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>,
-    desktopCompatibilityAdapter: adapter() as DesktopCompatibilityAdapter<ProductionClinicalRequestContext>,
+    desktopCompatibilityAdapter: adapter() as AwsProductionDesktopAdapter,
     configuration: {
       workforceIssuer: ISSUER,
       workforceAudience: AUDIENCE,
@@ -85,6 +84,51 @@ function fullProductionInput(configurationOverrides: Partial<ProductionIdentityA
 }
 
 describe("AWS production clinical API", () => {
+  it("keeps the DB-current successor separate from legacy token-claim authority", async () => {
+    const actualIssuer = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ";
+    const actualAudience = "67moqjql53ms7247tphe5ftpd8";
+    const subject = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const service: AwsProductionDesktopAdapter = {
+      execute: vi.fn(async () => { throw new Error("legacy path must not run"); }),
+      executeWithCurrentMembership: vi.fn(async () => [{ observation_id: PERSON }]),
+    };
+    const request = event({ iss: actualIssuer,aud: actualAudience,sub: subject,
+      email_verified: "true","custom:person_id": "","custom:organization_id": "",
+      "custom:production_bound": "" });
+    request.requestContext!.accountId = "173535830222";
+    request.headers!["x-alp-selected-organization-id"] = ORG;
+    const configuration: ProductionClinicalApiConfiguration = {
+      ...approved,workforceIssuer: actualIssuer,workforceAudience: actualAudience,
+      authorityMode: "database_current",
+    };
+    const response = await createAwsProductionClinicalApiHandler({ adapter: service,configuration })(request);
+    expect(response.statusCode).toBe(200);
+    expect(service.execute).not.toHaveBeenCalled();
+    expect(service.executeWithCurrentMembership).toHaveBeenCalledWith(
+      { subject,selectedOrganizationId: ORG },
+      expect.objectContaining({ functionName: "list_patient_lab_observations" }),
+    );
+    request.headers!["x-alp-selected-organization-id"] = PERSON;
+    expect((await createAwsProductionClinicalApiHandler({ adapter: service,configuration })(request)).statusCode).toBe(403);
+    expect(service.executeWithCurrentMembership).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the successor when its current-membership adapter is absent", async () => {
+    const request = event({
+      iss: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ",
+      aud: "67moqjql53ms7247tphe5ftpd8",sub: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      email_verified: "true",
+    });
+    request.requestContext!.accountId = "173535830222";
+    request.headers!["x-alp-selected-organization-id"] = ORG;
+    const response = await createAwsProductionClinicalApiHandler({ adapter: adapter(),
+      configuration: { ...approved,workforceIssuer: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ",
+        workforceAudience: "67moqjql53ms7247tphe5ftpd8",authorityMode: "database_current" },
+    })(request);
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe('{"error":"membership_authority_not_configured"}');
+  });
+
   it("categorically refuses before identity or body processing while activation is blocked", async () => {
     const service = adapter();
     const handler = createAwsProductionClinicalApiHandler({
@@ -161,6 +205,54 @@ describe("AWS production clinical API", () => {
 });
 
 describe("AWS production App and Desktop API", () => {
+  it("routes the actual identity Lambda's DB-current compatibility request without legacy clinical claims", async () => {
+    const actualIssuer = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ";
+    const actualAudience = "67moqjql53ms7247tphe5ftpd8";
+    const subject = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const input = fullProductionInput({ workforceIssuer: actualIssuer,
+      workforceAudience: actualAudience,authorityMode: "database_current" });
+    const execute = vi.fn(async () => { throw new Error("legacy path must not run"); });
+    const current = vi.fn(async () => [{ observation_id: PERSON }]);
+    input.desktopCompatibilityAdapter = { execute,executeWithCurrentMembership: current };
+    const request = event({ iss: actualIssuer,aud: actualAudience,sub: subject,
+      email_verified: "true","custom:person_id": "","custom:organization_id": "",
+      "custom:production_bound": "" });
+    request.requestContext!.accountId = "173535830222";
+    request.headers!["x-alp-selected-organization-id"] = ORG;
+    const handler = createAwsProductionIdentityApiHandler(input);
+    const accepted = await handler(request);
+    expect(accepted.statusCode).toBe(200);
+    expect(current).toHaveBeenCalledWith({ subject,selectedOrganizationId: ORG },
+      expect.objectContaining({ functionName: "list_patient_lab_observations" }));
+    expect(execute).not.toHaveBeenCalled();
+    request.headers!["x-alp-selected-organization-id"] = PERSON;
+    expect((await handler(request)).statusCode).toBe(403);
+    expect(current).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses other workforce routes rather than falling back to legacy claims", async () => {
+    const input = fullProductionInput({
+      workforceIssuer: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ",
+      workforceAudience: "67moqjql53ms7247tphe5ftpd8",
+      authorityMode: "database_current",
+    });
+    const legacy = vi.fn(async () => []);
+    input.desktopCompatibilityAdapter = { execute: legacy };
+    const request = event({
+      iss: input.configuration.workforceIssuer,
+      aud: input.configuration.workforceAudience,
+      sub: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "custom:person_id": PERSON,
+      "custom:organization_id": ORG,
+      "custom:production_bound": "true",
+    });
+    request.routeKey = "GET /clinical-core/workforce/posture";
+    const result = await createAwsProductionIdentityApiHandler(input)(request);
+    expect(result.statusCode).toBe(503);
+    expect(result.body).toBe('{"error":"membership_authority_not_configured"}');
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
   it("blocks every workforce and consumer route before activation", async () => {
     const input = fullProductionInput({ phiAllowed: false, activationState: "blocked", activationEvidenceSha256: undefined });
     const result = await createAwsProductionIdentityApiHandler(input)({ routeKey: "GET /clinical-core/consumer/connection" });

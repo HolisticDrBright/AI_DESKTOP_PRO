@@ -26,6 +26,8 @@ export type ProductionClinicalApiConfiguration = {
   activationEvidenceSha256?: string;
   pilotScope: ProductionPilotScope;
   pilotOrganizationId?: string;
+  /** Legacy is the existing pilot. The database-current successor has no deployed release row. */
+  authorityMode?: "legacy_claims" | "database_current";
 };
 
 const ROUTE = "POST /clinical-core/workforce/data-compatibility";
@@ -33,6 +35,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const MAX_BODY_BYTES = 20_480;
+const CURRENT_AUTHORITY_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ";
+const CURRENT_AUTHORITY_AUDIENCE = "67moqjql53ms7247tphe5ftpd8";
+const PRODUCTION_ACCOUNT = "173535830222";
 
 export function createAwsProductionClinicalApiHandler(input: {
   adapter: AwsProductionDesktopAdapter;
@@ -47,6 +52,19 @@ export function createAwsProductionClinicalApiHandler(input: {
     if (!activated) return response(503, { error: "production_not_activated", phiAllowed: false });
     if (event.routeKey !== ROUTE) return response(404, { error: "route_not_found" });
     try {
+      if (input.configuration.authorityMode === "database_current") {
+        const principal = databaseCurrentPrincipal(event, input.configuration);
+        const request = validateDesktopCompatibilityRequest(
+          { organizationId: principal.selectedOrganizationId }, parseBody(event));
+        if (!isProductionPilotDesktopRequestAllowed(request)) {
+          return response(403, { error: "pilot_scope_refused" });
+        }
+        if (!input.adapter.executeWithCurrentMembership) {
+          return response(503, { error: "membership_authority_not_configured" });
+        }
+        const data = await input.adapter.executeWithCurrentMembership(principal, request);
+        return response(200, { data });
+      }
       const context = productionContext(event, input.configuration);
       const request = validateDesktopCompatibilityRequest(context, parseBody(event));
       if (!isProductionPilotDesktopRequestAllowed(request)) {
@@ -58,11 +76,33 @@ export function createAwsProductionClinicalApiHandler(input: {
       if (error instanceof ProductionApiError) return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
       if (error instanceof ProductionDesktopError) {
         if (error.category === "request_invalid") return response(400, { error: "request_invalid" });
+        if (error.category === "identity_refused") return response(403, { error: "identity_refused" });
         if (error.category === "operation_refused") return response(403, { error: "operation_refused" });
       }
       return response(503, { error: "database_unavailable" });
     }
   };
+}
+
+function databaseCurrentPrincipal(
+  event: ApiGatewayV2Event,
+  configuration: ProductionClinicalApiConfiguration,
+): { subject: string; selectedOrganizationId: string } {
+  const claims = event.requestContext?.authorizer?.jwt?.claims;
+  const get = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
+  const selectedOrganizationId = Object.entries(event.headers ?? {})
+    .find(([key]) => key.toLowerCase() === "x-alp-selected-organization-id")?.[1] ?? "";
+  if (event.requestContext?.accountId !== PRODUCTION_ACCOUNT
+    || get("iss") !== configuration.workforceIssuer
+    || get("aud") !== configuration.workforceAudience
+    || get("token_use") !== "id" || !UUID.test(get("sub"))
+    || get("email_verified") !== "true"
+    || get("custom:synthetic_attested") === "true"
+    || !UUID.test(selectedOrganizationId)
+    || selectedOrganizationId !== configuration.pilotOrganizationId) {
+    throw new ProductionApiError("identity_refused");
+  }
+  return { subject: get("sub"), selectedOrganizationId };
 }
 
 function productionContext(
@@ -114,6 +154,11 @@ function parseBody(event: ApiGatewayV2Event): Record<string, unknown> {
 function validateConfiguration(configuration: ProductionClinicalApiConfiguration) {
   if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(configuration.workforceIssuer)
     || !/^[A-Za-z0-9]{20,128}$/.test(configuration.workforceAudience)
+    || (configuration.authorityMode !== undefined
+      && !["legacy_claims", "database_current"].includes(configuration.authorityMode))
+    || (configuration.authorityMode === "database_current"
+      && (configuration.workforceIssuer !== CURRENT_AUTHORITY_ISSUER
+        || configuration.workforceAudience !== CURRENT_AUTHORITY_AUDIENCE))
     || (configuration.phiAllowed && (configuration.activationState !== "approved"
       || !SHA256.test(configuration.activationEvidenceSha256 ?? "")
       || !isProductionPilotScope(configuration.pilotScope)

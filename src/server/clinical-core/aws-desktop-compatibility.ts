@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import operationManifest from "../../../infra/aws-clinical-core/desktop-compatibility-operations.json";
-import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from "./database";
+import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 export type DesktopCompatibilityRequest =
   | { kind: "rpc"; functionName: string; args: Record<string, unknown> }
@@ -76,12 +76,7 @@ export function createAwsDesktopCompatibilityAdapter(database: ClinicalCoreDatab
             clinicalUuid(context.actorPersonId), clinicalUuid(context.organizationId), context.identityPool,
             context.identitySubject, "clinical_data", context.environment, context.dataClassification,
           ]);
-          const result = await tx.query<{ data: unknown }>(
-            `select clinical_core.invoke_desktop_compatibility($1,$2::jsonb) as data`,
-            [request.kind, JSON.stringify(request)],
-          );
-          if (result.rows.length !== 1) throw new DesktopCompatibilityError("operation_refused");
-          return decodeJson(result.rows[0]?.data);
+          return executeDesktopCompatibilityInCurrentTransaction(tx, request);
         });
       } catch (error) {
         if (error instanceof DesktopCompatibilityError) throw error;
@@ -92,6 +87,19 @@ export function createAwsDesktopCompatibilityAdapter(database: ClinicalCoreDatab
       }
     },
   };
+}
+
+/** The caller must have set a verified clinical request context in this same transaction. */
+export async function executeDesktopCompatibilityInCurrentTransaction(
+  tx: ClinicalCoreTransaction,
+  request: DesktopCompatibilityRequest,
+): Promise<unknown> {
+  const result = await tx.query<{ data: unknown }>(
+    `select clinical_core.invoke_desktop_compatibility($1,$2::jsonb) as data`,
+    [request.kind, JSON.stringify(request)],
+  );
+  if (result.rows.length !== 1) throw new DesktopCompatibilityError("operation_refused");
+  return decodeJson(result.rows[0]?.data);
 }
 
 function exactKeys(input: Record<string, unknown>, keys: readonly string[]) {

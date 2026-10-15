@@ -56,6 +56,7 @@ import {
   validateDesktopCompatibilityRequest,
   type DesktopCompatibilityAdapter,
 } from "./aws-desktop-compatibility";
+import { ProductionDesktopError, type AwsProductionDesktopAdapter } from "./aws-production-desktop";
 import {
   isProductionPilotDesktopRequestAllowed,
   isProductionPilotCollectionAllowed,
@@ -219,6 +220,8 @@ export type ProductionIdentityApiConfiguration = IdentityApiConfiguration & {
   activationEvidenceSha256?: string;
   pilotScope: ProductionPilotScope;
   pilotOrganizationId?: string;
+  /** The deployed Lambda leaves this unset; database-current is an unactivated successor. */
+  authorityMode?: "legacy_claims" | "database_current";
 };
 
 export function createAwsIdentityApiHandler(input: {
@@ -239,7 +242,7 @@ export function createAwsProductionIdentityApiHandler(input: {
   adapter: AwsIdentityConsentAdapter<ProductionClinicalRequestContext>;
   clinicalStateAdapter: AwsClinicalStateAdapter<ProductionClinicalRequestContext>;
   clinicalRecordsAdapter: AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>;
-  desktopCompatibilityAdapter: DesktopCompatibilityAdapter<ProductionClinicalRequestContext>;
+  desktopCompatibilityAdapter: AwsProductionDesktopAdapter;
   familyAccessAdapter?: FamilyAccessAdapter<ProductionClinicalRequestContext>;
   chatContextAdapter?: ChatContextAdapter<ProductionClinicalRequestContext>;
   patientChatAdapter?: PatientChatAdapter<ProductionClinicalRequestContext>;
@@ -252,6 +255,13 @@ export function createAwsProductionIdentityApiHandler(input: {
       || !isProductionPilotScope(input.configuration.pilotScope)
       || !UUID.test(input.configuration.pilotOrganizationId ?? "")
       || input.configuration.pilotOrganizationId === "00000000-0000-0000-0000-000000000000")) {
+    throw new Error("production_api_configuration_invalid");
+  }
+  if ((input.configuration.authorityMode !== undefined
+      && !["legacy_claims", "database_current"].includes(input.configuration.authorityMode))
+    || (input.configuration.authorityMode === "database_current"
+    && (input.configuration.workforceIssuer !== "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ"
+      || input.configuration.workforceAudience !== "67moqjql53ms7247tphe5ftpd8"))) {
     throw new Error("production_api_configuration_invalid");
   }
   const activated = input.configuration.phiAllowed === true
@@ -269,6 +279,7 @@ export function createAwsProductionIdentityApiHandler(input: {
       scope: input.configuration.pilotScope,
       organizationId: input.configuration.pilotOrganizationId!,
     },
+    productionAuthorityMode: input.configuration.authorityMode,
   });
 }
 
@@ -284,6 +295,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
   productionPilot?: { scope: ProductionPilotScope; organizationId: string };
+  productionAuthorityMode?: "legacy_claims" | "database_current";
 }) {
   const adapter = input.adapter ?? (input.database && input.boundary === "synthetic"
     ? createAwsSyntheticIdentityConsentAdapter(input.database) as AwsIdentityConsentAdapter<Context>
@@ -346,6 +358,26 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (!route) return response(404, { error: "route_not_found" });
       if (input.productionPilot && !isProductionPilotRouteAllowed(event.routeKey)) {
         return response(403, { error: "pilot_scope_refused" });
+      }
+      if (input.boundary === "production" && input.productionAuthorityMode === "database_current"
+        && route.pool === "workforce") {
+        // Never enter a legacy-claim workforce route while this successor is
+        // selected. Those routes require their own current-membership migration.
+        if (route.operation !== "desktop_compatibility") {
+          return response(503, { error: "membership_authority_not_configured" });
+        }
+        const principal = currentWorkforcePrincipal(event, input.configuration,
+          input.productionPilot?.organizationId);
+        const request = validateDesktopCompatibilityRequest(
+          { organizationId: principal.selectedOrganizationId }, parseBody(event));
+        if (input.productionPilot && !isProductionPilotDesktopRequestAllowed(request)) {
+          return response(403, { error: "pilot_scope_refused" });
+        }
+        const adapter = desktopCompatibilityAdapter as AwsProductionDesktopAdapter | undefined;
+        if (!adapter?.executeWithCurrentMembership) {
+          return response(503, { error: "membership_authority_not_configured" });
+        }
+        return response(200, { data: await adapter.executeWithCurrentMembership(principal,request) });
       }
       const context = contextFromClaims(
         event,
@@ -825,6 +857,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (error instanceof DesktopCompatibilityError) {
         return response(error.category === "operation_refused" ? 403 : 503, { error: error.category });
       }
+      if (error instanceof ProductionDesktopError) {
+        return response(error.category === "identity_refused" || error.category === "operation_refused"
+          ? 403 : error.category === "request_invalid" ? 400 : 503,
+        { error: error.category });
+      }
       if (error instanceof FamilyAccessError) {
         const status = error.category === "family_access_refused" ? 403
           : error.category === "invitation_invalid" ? 404
@@ -1011,6 +1048,27 @@ class IdentityApiError extends Error {
     super(category);
     this.name = "IdentityApiError";
   }
+}
+
+function currentWorkforcePrincipal(
+  event: ApiGatewayV2Event,
+  configuration: IdentityApiConfiguration,
+  pilotOrganizationId?: string,
+): { subject: string; selectedOrganizationId: string } {
+  const claims = event.requestContext?.authorizer?.jwt?.claims;
+  const get = (name: string) => typeof claims?.[name] === "string" ? claims[name] as string : "";
+  const selectedOrganizationId = header(event.headers,"x-alp-selected-organization-id") ?? "";
+  if (event.requestContext?.accountId !== "173535830222"
+    || get("iss") !== configuration.workforceIssuer
+    || get("aud") !== configuration.workforceAudience
+    || get("token_use") !== "id" || !UUID.test(get("sub"))
+    || get("email_verified") !== "true"
+    || get("custom:synthetic_attested") === "true"
+    || !UUID.test(selectedOrganizationId)
+    || selectedOrganizationId !== pilotOrganizationId) {
+    throw new IdentityApiError("identity_refused");
+  }
+  return { subject: get("sub"),selectedOrganizationId };
 }
 
 function contextFromClaims(

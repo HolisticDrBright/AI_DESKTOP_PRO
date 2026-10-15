@@ -255,6 +255,7 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["specimen_provider_approval_required", "operation_refused"],
     ["request_context_refused", "identity_refused"],
     ["production_context_refused", "identity_refused"],
+    ["workforce_membership_refused", "identity_refused"],
     ["patient_access_refused", "identity_refused"],
     ["zoom_host_binding_invalid", "request_invalid"],
     ["zoom_host_binding_conflict", "conflict"],

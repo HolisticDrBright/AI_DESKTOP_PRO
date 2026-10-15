@@ -4,17 +4,26 @@ if (typeof window !== "undefined") {
 
 import {
   createAwsDesktopCompatibilityAdapter,
+  DesktopCompatibilityError,
+  executeDesktopCompatibilityInCurrentTransaction,
   type DesktopCompatibilityAdapter,
+  type DesktopCompatibilityRequest,
 } from "./aws-desktop-compatibility";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 export type ProductionRequestContext = ProductionClinicalRequestContext;
 
-export type AwsProductionDesktopAdapter = DesktopCompatibilityAdapter<ProductionRequestContext>;
+export type AwsProductionDesktopAdapter = DesktopCompatibilityAdapter<ProductionRequestContext> & {
+  /** Blocked successor: current DB membership and the operation share one transaction. */
+  executeWithCurrentMembership?: (
+    principal: { subject: string; selectedOrganizationId: string },
+    request: DesktopCompatibilityRequest,
+  ) => Promise<unknown>;
+};
 
 export class ProductionDesktopError extends Error {
-  constructor(readonly category: "request_invalid" | "operation_refused" | "database_unavailable") {
+  constructor(readonly category: "request_invalid" | "operation_refused" | "database_unavailable" | "identity_refused") {
     super(category);
     this.name = "ProductionDesktopError";
   }
@@ -302,6 +311,51 @@ export function createAwsProductionDesktopAdapter(
   fallback: DesktopCompatibilityAdapter = createAwsDesktopCompatibilityAdapter(database),
 ): AwsProductionDesktopAdapter {
   return {
+    async executeWithCurrentMembership(principal, request) {
+      if (!UUID.test(principal.selectedOrganizationId)
+        || !/^[A-Za-z0-9:_-]{8,128}$/.test(principal.subject)) {
+        throw new ProductionDesktopError("identity_refused");
+      }
+      try {
+        return await database.transaction(async (tx) => {
+          const { rows } = await tx.query<{ binding: unknown }>(
+            "select clinical_private.set_current_workforce_context($1,$2,$3) as binding",
+            [principal.subject, clinicalUuid(principal.selectedOrganizationId), "clinical_data"],
+          );
+          const binding = decodeCurrentMembership(rows[0]?.binding);
+          if (!binding || binding.organizationId !== principal.selectedOrganizationId) {
+            throw new ProductionDesktopError("identity_refused");
+          }
+          const current: ProductionRequestContext = {
+            actorPersonId: binding.personId,
+            organizationId: binding.organizationId,
+            identityPool: "workforce",
+            identitySubject: principal.subject,
+            purpose: "clinical_data",
+            environment: "production-clinical",
+            dataClassification: "clinical_phi",
+            containsPhi: true,
+            realPatientData: true,
+            productionBound: true,
+          };
+          if (request.kind === "rpc" && CORE_RPCS.has(request.functionName)) {
+            return executeCoreRpc(tx, current, request.functionName, request.args);
+          }
+          if (request.kind === "select" && CORE_SELECTS.has(request.table)) {
+            return executeCoreSelect(tx, current, request.table, request.query);
+          }
+          return executeDesktopCompatibilityInCurrentTransaction(tx, request);
+        });
+      } catch (error) {
+        if (error instanceof ProductionDesktopError) throw error;
+        if (error instanceof ClinicalCoreDatabaseRejection) {
+          throw new ProductionDesktopError(error.category === "identity_refused"
+            ? "identity_refused" : "operation_refused");
+        }
+        if (error instanceof DesktopCompatibilityError) throw new ProductionDesktopError("operation_refused");
+        throw new ProductionDesktopError("database_unavailable");
+      }
+    },
     async execute(context, request) {
       assertContext(context);
       if (request.kind === "rpc" && CORE_RPCS.has(request.functionName)) {
@@ -318,6 +372,19 @@ export function createAwsProductionDesktopAdapter(
       }
     },
   };
+}
+
+function decodeCurrentMembership(value: unknown): { personId: string; organizationId: string } | null {
+  let row = value;
+  if (typeof row === "string") {
+    try { row = JSON.parse(row) as unknown; } catch { return null; }
+  }
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const binding = row as Record<string, unknown>;
+  if (typeof binding.personId !== "string" || !UUID.test(binding.personId)
+    || typeof binding.organizationId !== "string" || !UUID.test(binding.organizationId)
+    || !["owner", "admin", "practitioner", "staff"].includes(String(binding.role))) return null;
+  return { personId: binding.personId, organizationId: binding.organizationId };
 }
 
 async function executeCoreRpc(
