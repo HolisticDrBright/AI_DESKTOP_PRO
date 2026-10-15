@@ -12,7 +12,7 @@ if (!/^[a-f0-9]{40}$/.test(sourceCommit)) throw new Error('qualification_program
 
 const outdir = 'dist/aws-clinical-core/qualification-program';
 mkdirSync(outdir, { recursive: true });
-const outfile = `${outdir}/index.cjs`;
+const outfile = `${outdir}/index.js`;
 await build({
   entryPoints: ['src/server/clinical-core/aws-qualification-program-lambda.ts'],
   outfile, bundle: true, platform: 'node', target: 'node22', format: 'cjs',

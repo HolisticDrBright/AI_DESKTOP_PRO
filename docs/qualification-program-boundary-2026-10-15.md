@@ -3,8 +3,9 @@
 **Status:** BLOCKED source candidate.
 
 - Applied nowhere and registered in no manifest.
-- A source Lambda entry point now imports it, with a clean-checkout build that embeds the exact commit; no deployed
-  template or route imports that bundle. Building is not deployment.
+- A source Lambda entry point now imports it, with a clean-checkout build that embeds the exact commit. A distinct
+  BLOCKED template successor names its route and bundle parameters; no deployed template or route imports that bundle.
+  Building and linting are not deployment.
 - The Core entitlement port is a bounded, Sandbox-only verifier in
   `src/server/clinical-core/core-subscription-guard.ts`, wired into that source entry point. There is no hosted billing
   endpoint for it to call yet.
@@ -44,6 +45,7 @@ The 112-ledger test reproduces the mismatch on the same ledger with the parents 
 | Qualification adapter | `src/server/clinical-core/qualification-program-assignments.ts` | Built only under qualification execution. Admits only designated subjects. Runs the production request path (`boundedProgramExecutor`, now shared with the production adapter) behind a per-transaction function-digest binding |
 | Route handler | `src/server/clinical-core/qualification-program-api.ts` | The two routes, `POST /clinical-core/{consumer,workforce}/programs`, with every configuration pin checked before any data client exists |
 | Lambda entry and source build | `src/server/clinical-core/aws-qualification-program-lambda.ts` and `scripts/build-aws-qualification-program.mjs` | Bundles the exact reviewed function digests and compiled commit from a clean checkout; requires the real Sandbox billing verifier, never a synthetic Core bypass |
+| BLOCKED template successor | `infra/aws-clinical-core/qualification-program-api-successor.json` and `scripts/build-qualification-program-api-successor.mjs` | Two JWT-protected routes, correct qualification program context and immutable PHI/activation holds; requires exact fictional subjects, reviewed billing origin, schema review and source bundle before any deployment |
 
 ### Qualification-open
 
@@ -153,9 +155,12 @@ What this does **not** prove:
      and reviewed. The source verifier alone is not an entitlement or hosted pass;
    - the function digests from `qualification-program-boundary.json`;
    - the environment listed there.
-5. **Prepare a successor of `qualification-program-api-candidate.json`**, not an edit to it, that points the two routes
-   at that entry point. Keep `PhiAllowed=false`, `Activation=blocked` and the pinned pools, API, log group and alarm
-   names.
+5. **Review the separate successor of `qualification-program-api-candidate.json`**. It now points the two routes at
+   the source Lambda entry, keeps `PhiAllowed=false`, `Activation=blocked`, the pinned pools and API, and distinct log
+   group and alarm names. Before any change set, pin the exact clean-source bundle/key, source commit, reviewed
+   qualification subjects and clinic, and a Sandbox billing API origin that actually exists and verifies those same
+   fictional consumer tokens. The origin is a required parameter, not an implicit fallback. Review resource ownership
+   and replacement effects; the old candidate remains unchanged and must not be deployed.
 6. **Run the hosted cases on fictional identities.** A skip, an unavailable catalog or a mismatched source is a refusal,
    not acceptance:
    - designated assign, accept, replay and bound completion;
