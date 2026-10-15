@@ -695,11 +695,39 @@ test("EMR conflict recovery saves local edits against the selected server versio
   });
   expect(external.status()).toBe(200);
 
+  // Prove the actual fixture route rejects the stale version, then drive the
+  // composer with that same response deterministically. A loaded next-dev
+  // server can exceed the composer's 12-second save deadline; in that case
+  // the correct UI is "unconfirmed", not the conflict UI this test exercises.
+  const stale = await page.request.post("/api/live/emr/note", {
+    data: {
+      encounterId,
+      noteId,
+      noteType: "soap",
+      content: { S: "Practitioner keeps this local edit.", O: "", A: "", P: "" },
+      expectedVersion: 1,
+      saveKind: "manual",
+      provenance: [],
+    },
+  });
+  expect(stale.status()).toBe(409);
+  let browserConflicts = 0;
+  await page.route("**/api/live/emr/note", async route => {
+    const request = route.request();
+    if (request.method() !== "POST") return route.continue();
+    const body = request.postDataJSON() as { noteId?: string; expectedVersion?: number };
+    if (body.noteId !== noteId || body.expectedVersion !== 1) return route.continue();
+    browserConflicts += 1;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "conflict", message: "The note changed elsewhere." } }),
+    });
+  });
+
   await page.getByLabel("Subjective").fill("Practitioner keeps this local edit.");
-  // Use the suite's configured budget: in next dev, the save itself has a
-  // 12-second deadline, so a 10-second assertion could fail while it is still
-  // legitimately "Saving…" and before the conflict response arrives.
   await expect(page.getByTestId("conflict-view")).toBeVisible();
+  expect(browserConflicts).toBe(1);
   await page.getByRole("button", { name: "Keep my edits (save over v2)" }).click();
   await expect(page.getByTestId("conflict-view")).toHaveCount(0);
   await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v3/, { timeout: 10_000 });
