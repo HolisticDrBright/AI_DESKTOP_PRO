@@ -8,7 +8,7 @@ const conditional = (transaction: boolean) => Object.assign(new Error("fictional
 
 function condition(expression: string | undefined, row: Row, names: Row, values: Row): boolean {
   if (!expression) return true;
-  const tokens = expression.match(/attribute_not_exists|attribute_exists|AND|OR|\(|\)|<>|>=|<=|=|>|<|[#:][A-Za-z0-9_]+|[A-Za-z0-9_]+/g) ?? [];
+  const tokens = expression.match(/attribute_not_exists|attribute_exists|contains|AND|OR|\(|\)|,|<>|>=|<=|=|>|<|[#:][A-Za-z0-9_]+|[A-Za-z0-9_]+/g) ?? [];
   let position = 0;
   const field = (token: string) => token.startsWith("#") ? String(names[token]) : token;
   const value = (token: string) => token.startsWith(":") ? values[token] : row[field(token)];
@@ -20,6 +20,15 @@ function condition(expression: string | undefined, row: Row, names: Row, values:
       const exists = field(tokens[position++]) in row;
       if (tokens[position++] !== ")") throw new Error("unsupported_condition");
       return token === "attribute_exists" ? exists : !exists;
+    }
+    if (token === "contains") {
+      if (tokens[position++] !== "(") throw new Error("unsupported_condition");
+      const container = row[field(tokens[position++])];
+      if (tokens[position++] !== ",") throw new Error("unsupported_condition");
+      const member = value(tokens[position++]);
+      if (tokens[position++] !== ")") throw new Error("unsupported_condition");
+      return container instanceof Set ? container.has(member) : Array.isArray(container) ? container.includes(member)
+        : typeof container === "string" && typeof member === "string" && container.includes(member);
     }
     const left = value(token), operator = tokens[position++], right = value(tokens[position++]);
     if (operator === "=") return left === right;
@@ -51,18 +60,34 @@ export class FictionalAppointmentStore {
     if (kind === "ConditionCheck") return;
     if (kind === "Put") { rows.set(keyOf(key), structuredClone(input.Item as Row)); return; }
     if (kind !== "Update") throw new Error("unsupported_write");
-    const next = { ...existing, ...key }, expression = String(input.UpdateExpression);
-    const [sets, removes] = expression.split(/\s*REMOVE\s*/);
-    if (sets.startsWith("SET ")) for (const assignment of sets.slice(4).split(",")) {
-      const [target, source] = assignment.trim().split(/\s*=\s*/);
-      const addition = source.match(/^(#[A-Za-z0-9_]+)\+(:[A-Za-z0-9_]+)$/);
-      if (addition) next[target.startsWith("#") ? String(names[target]) : target] = Number(next[String(names[addition[1]])]) + Number(values[addition[2]]);
+    const next: Row = { ...existing, ...key }, expression = String(input.UpdateExpression);
+    const name = (target: string) => target.startsWith("#") ? String(names[target]) : target;
+    // SET, REMOVE, ADD (numbers and string sets) and DELETE (string sets), each at most once, in any order.
+    const sections = [...expression.matchAll(/(?:^|\s)(SET|REMOVE|ADD|DELETE)\s+([\s\S]*?)(?=\s+(?:SET|REMOVE|ADD|DELETE)\s|$)/g)];
+    if (sections.length === 0 || new Set(sections.map(([, action]) => action)).size !== sections.length
+      || sections.map(([, action, body]) => `${action} ${body.trim()}`).join(" ").replace(/\s+/g, " ") !== expression.trim().replace(/\s+/g, " ")) {
+      throw new Error("unsupported_update");
+    }
+    for (const [, action, body] of sections) for (const part of body.split(",").map(item => item.trim())) {
+      if (action === "SET") {
+        const [target, source] = part.split(/\s*=\s*/);
+        const addition = source.match(/^(#[A-Za-z0-9_]+)\+(:[A-Za-z0-9_]+)$/);
+        if (addition) next[name(target)] = Number(next[String(names[addition[1]])]) + Number(values[addition[2]]);
+        else {
+          if (!(source in values)) throw new Error("unsupported_update");
+          next[name(target)] = structuredClone(values[source]);
+        }
+      } else if (action === "REMOVE") delete next[name(part)];
       else {
-        if (!(source in values)) throw new Error("unsupported_update");
-        next[target.startsWith("#") ? String(names[target]) : target] = structuredClone(values[source]);
+        const [target, source] = part.split(/\s+/), operand = values[source], current = next[name(target)];
+        if (action === "ADD" && typeof operand === "number" && (current === undefined || typeof current === "number")) next[name(target)] = Number(current ?? 0) + operand;
+        else if (action === "ADD" && operand instanceof Set && (current === undefined || current instanceof Set)) next[name(target)] = new Set([...(current ?? []), ...operand]);
+        else if (action === "DELETE" && operand instanceof Set && (current === undefined || current instanceof Set)) {
+          const remaining = new Set([...(current ?? [])].filter(member => !operand.has(member)));
+          if (remaining.size === 0) delete next[name(target)]; else next[name(target)] = remaining;
+        } else throw new Error("unsupported_update");
       }
-    } else if (sets.trim()) throw new Error("unsupported_update");
-    if (removes) for (const target of removes.split(",").map(item => item.trim())) delete next[target.startsWith("#") ? String(names[target]) : target];
+    }
     rows.set(keyOf(key), next);
   }
   send = async (command: Command): Promise<Row> => {
@@ -85,7 +110,14 @@ export class FictionalAppointmentStore {
       const keys = parts.map(part => { const [kind, raw] = Object.entries(part)[0]; return keyOf((raw as Row)[kind === "Put" ? "Item" : "Key"] as Row); });
       if (new Set(keys).size !== keys.length) throw new Error("duplicate_transaction_key");
       const next = new Map([...this.rows].map(([key, row]) => [key, structuredClone(row)]));
-      for (const part of parts) this.apply(part, next, true);
+      for (const [index, part] of parts.entries()) {
+        try { this.apply(part, next, true); } catch (error) {
+          // Like DynamoDB, name the item whose condition failed, so a caller can tell its own refusal from a fence's.
+          if ((error as Error).message === "fictional_condition_refused") Object.assign(error as Error, {
+            CancellationReasons: parts.map((_, position) => ({ Code: position === index ? "ConditionalCheckFailed" : "None" })) });
+          throw error;
+        }
+      }
       this.rows = next;
       if ((admission && loss === "admission_after") || (commit && loss === "commit_after") || (reservation && loss === "reservation_after")) {
         this.transactionLoss = "none"; throw new Error("fictional_lost_receipt");

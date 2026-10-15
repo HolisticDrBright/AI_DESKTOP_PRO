@@ -174,7 +174,7 @@ describe('workforce identity and consent under current database membership', () 
     const who = { sub: practitioner.sub };
     expect(await posture(who)).toMatchObject({ status: 200, body: { data: {
       contractVersion: 'clinical-core/1', identityPool: 'workforce', authenticated: true, pilotScope: 'lab_intake_only',
-      membership: { organizationId: CLINIC, role: 'practitioner' },
+      membership: { organizationId: CLINIC, role: 'practitioner', personId: practitioner.person },
     } } });
     const issued = await issue(who);
     expect(issued.status).toBe(201);
@@ -311,12 +311,16 @@ describe('workforce identity and consent under current database membership', () 
 
   it('selects the clinic per request at the adapter: two approved clinics keep their own roles', async () => {
     const current = legacy.currentMembership!;
-    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: CLINIC })).toEqual({ organizationId: CLINIC, role: 'practitioner' });
-    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: OTHER })).toEqual({ organizationId: OTHER, role: 'staff' });
+    // The posture names the caller's own person from current rows: a fenced telehealth write is recorded as them.
+    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: CLINIC }))
+      .toEqual({ organizationId: CLINIC, role: 'practitioner', personId: practitioner.person });
+    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: OTHER }))
+      .toEqual({ organizationId: OTHER, role: 'staff', personId: practitioner.person });
     await expect(current.issueInvitation({ subject: practitioner.sub, selectedOrganizationId: OTHER }, {
       patientRecordId: invitee, expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     })).rejects.toMatchObject({ category: 'production_boundary_refused' });
-    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: CLINIC })).toEqual({ organizationId: CLINIC, role: 'practitioner' });
+    expect(await current.posture({ subject: practitioner.sub, selectedOrganizationId: CLINIC }))
+      .toEqual({ organizationId: CLINIC, role: 'practitioner', personId: practitioner.person });
     await expect(current.posture({ subject: 'not-a-subject', selectedOrganizationId: CLINIC })).rejects.toMatchObject({ category: 'production_boundary_refused' });
     expect(queries.filter((sql) => sql.includes('set_request_context'))).toEqual([]);
   });

@@ -113,6 +113,10 @@ const ERROR_MESSAGES: Record<string, { code: AdapterError["code"]; message: stri
     code: "unavailable",
     message: "This telehealth change is not available yet under clinic-membership sign-in. Reading visits still works.",
   },
+  membership_changed: {
+    code: "conflict",
+    message: "Your clinic membership changed while this was being saved, so it was not kept. Reload to continue.",
+  },
   request_invalid: { code: "invalid", message: "That action couldn't be completed as requested." },
 };
 

@@ -196,7 +196,8 @@ export type WorkforceMembershipDiscovery = {
 export interface CurrentMembershipIdentityConsent {
   /** Subject-only: the UNREGISTERED discovery candidate, for choosing a first clinic. It binds no request context. */
   discoverMemberships(subject: string): Promise<WorkforceMembershipDiscovery>;
-  posture(principal: CurrentWorkforcePrincipal): Promise<CurrentWorkforceMembership>;
+  /** The current membership, with the caller's own person id: a fenced telehealth write is recorded as that person. */
+  posture(principal: CurrentWorkforcePrincipal): Promise<CurrentWorkforceMembership & { personId: string }>;
   getCurrentConsentArtifact(principal: CurrentWorkforcePrincipal, input: { scope: ConsentScope }): Promise<ConsentArtifactResult>;
   getCurrentConsent(principal: CurrentWorkforcePrincipal, input: {
     scope: ConsentScope; patientRecordId?: string; consumerPersonId?: string;
@@ -332,7 +333,7 @@ function createCurrentMembershipIdentityConsent(database: ClinicalCoreDatabase):
       }
     },
     async posture(principal) {
-      return runCurrent(database, principal, "identity_link", async (_tx, _context, membership) => membership);
+      return runCurrent(database, principal, "identity_link", async (_tx, context, membership) => ({ ...membership, personId: context.actorPersonId }));
     },
     async getCurrentConsentArtifact(principal, input) {
       assertConsentScope(input.scope);
