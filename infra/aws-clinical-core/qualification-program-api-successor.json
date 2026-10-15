@@ -127,6 +127,12 @@
       "Type": "String",
       "MinLength": 1,
       "MaxLength": 256
+    },
+    "DatabaseSecretKmsKeyArn": {
+      "Type": "String",
+      "AllowedValues": [
+        "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900"
+      ]
     }
   },
   "Resources": {
@@ -196,7 +202,7 @@
                   "Effect": "Allow",
                   "Action": "kms:Decrypt",
                   "Resource": {
-                    "Ref": "ClinicalCoreKeyArn"
+                    "Ref": "DatabaseSecretKmsKeyArn"
                   },
                   "Condition": {
                     "StringEquals": {
