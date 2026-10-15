@@ -15,4 +15,6 @@ export const handler = createTelehealthHandler({
   stripeSuccessUrl: process.env.STRIPE_SUCCESS_URL?.trim() ?? "", stripeCancelUrl: process.env.STRIPE_CANCEL_URL?.trim() ?? "",
   identityApiOrigin: required("CLINICAL_API_ORIGIN"),
   chartAdmissionSecretArn: process.env.CHART_ADMISSION_SECRET_ARN?.trim() ?? "",
+  enquirerEmailsEnabled: process.env.CONSULT_ENQUIRER_EMAILS_ENABLED?.trim() === "true",
+  clinicDisplayName: process.env.CLINIC_DISPLAY_NAME?.trim() ?? "",
 });

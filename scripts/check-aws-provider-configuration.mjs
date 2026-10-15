@@ -33,10 +33,10 @@ const telehealth = json("infra/aws-clinical-core/telehealth-requests-extension.j
 const lambdaSource = read("src/server/clinical-core/aws-telehealth-requests-lambda.ts");
 if (telehealth) {
   const param = (name) => telehealth.Parameters?.[name] ?? {};
-  for (const name of ["ZoomEnabled", "ZoomBaaVerified", "RemindersEnabled", "StripeTestEnabled"]) {
+  for (const name of ["ZoomEnabled", "ZoomBaaVerified", "RemindersEnabled", "StripeTestEnabled", "ConsultEnquirerEmailsEnabled"]) {
     require(param(name).Default === "false" && JSON.stringify(param(name).AllowedValues) === JSON.stringify(["false", "true"]), `telehealth parameter ${name} must default to false with a boolean allow-list`);
   }
-  for (const name of ["ZoomSecretArn", "StripeSecretArn", "ReminderSender"]) require(param(name).Default === "", `telehealth parameter ${name} must default to empty`);
+  for (const name of ["ZoomSecretArn", "StripeSecretArn", "ReminderSender", "ClinicDisplayName"]) require(param(name).Default === "", `telehealth parameter ${name} must default to empty`);
   for (const name of ["StripeSuccessUrl", "StripeCancelUrl"]) require(/^https:\/\/ailongevitypro\.app\//.test(param(name).Default ?? ""), `telehealth parameter ${name} must default to an https ailongevitypro.app URL`);
   const variables = telehealth.Resources?.TelehealthFunction?.Properties?.Environment?.Variables ?? {};
   const expected = new Set([...lambdaSource.matchAll(/required\("([A-Z_]+)"\)/g), ...lambdaSource.matchAll(/process\.env\.([A-Z_]+)/g)].map((m) => m[1]));
