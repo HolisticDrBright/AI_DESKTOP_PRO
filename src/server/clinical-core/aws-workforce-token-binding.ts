@@ -118,7 +118,8 @@ export function createWorkforcePreTokenCandidate(input: {
     }
     if (event.request?.userAttributes?.email_verified !== "true"
       || (configuration.activation === "qualification"
-        && !qualificationSubjects?.includes(subject))) {
+        && (event.request?.userAttributes?.["custom:synthetic_attested"] !== "true"
+          || !qualificationSubjects?.includes(subject)))) {
       return withoutClinicalClaims();
     }
 
@@ -149,7 +150,9 @@ export function createWorkforcePreTokenCandidate(input: {
           claimsToAddOrOverride: {
             "custom:person_id": binding.personId,
             "custom:organization_id": binding.organizationId,
-            "custom:production_bound": "true",
+            // Qualification uses an isolated copy of the production schema,
+            // but its Cognito token must remain synthetic and PHI-ineligible.
+            "custom:production_bound": configuration.activation === "qualification" ? "false" : "true",
           },
         },
       },

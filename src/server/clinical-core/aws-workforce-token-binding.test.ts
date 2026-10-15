@@ -83,15 +83,23 @@ describe("source-only workforce pre-token binding candidate", () => {
       ...event(),
       userPoolId: QUALIFICATION_CONFIGURATION.userPoolId,
       callerContext: { clientId: QUALIFICATION_CONFIGURATION.clientId },
+      request: { userAttributes: { ...event().request?.userAttributes, "custom:synthetic_attested": "true" } },
     };
     expect(claims(await handler(syntheticEvent)).claimsToAddOrOverride).toEqual({
       "custom:person_id": PERSON,
       "custom:organization_id": ORGANIZATION,
-      "custom:production_bound": "true",
+      "custom:production_bound": "false",
     });
     expect(lookup).toHaveBeenCalledExactlyOnceWith(SUBJECT);
 
     lookup.mockClear();
+    const notAttested = {
+      ...syntheticEvent,
+      request: { userAttributes: { ...syntheticEvent.request.userAttributes, "custom:synthetic_attested": "false" } },
+    };
+    expect(claims(await handler(notAttested)).claimsToSuppress).toHaveLength(3);
+    expect(lookup).not.toHaveBeenCalled();
+
     const otherSubject = "44444444-4444-4444-8444-444444444444";
     const unlisted = {
       ...syntheticEvent,
