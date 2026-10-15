@@ -43,7 +43,9 @@ describe("OpenAI request builder", () => {
     expect(req.headers["OpenAI-Organization"]).toBe("org-1");
     expect(req.headers["OpenAI-Project"]).toBe("proj-1");
     expect(req.body.model).toBe("gpt-4o-2024-08-06");
-    expect(req.body.response_format.json_schema.strict).toBe(true);
+    expect(req.body).toMatchObject({ store: false });
+    expect(req.body).toMatchObject({ text: { format: { type: "json_schema", name: "copilot_output_v1", strict: true } } });
+    expect(req.body).not.toHaveProperty("response_format");
     expect(req.body.temperature).toBe(0);
     expect(req.body.metadata.envelope_sha256).toBe(env.envelopeSha256);
   });

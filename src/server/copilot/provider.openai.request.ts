@@ -27,10 +27,12 @@ import type { MinimizedEnvelope } from "./data-minimizer";
  */
 export type OpenAIRequestBody = {
   model: string;
+  /** Never create provider-side response application state for a clinical run. */
+  store: false;
   input: Array<{ role: "system" | "user"; content: string }>;
-  response_format: {
-    type: "json_schema";
-    json_schema: {
+  text: {
+    format: {
+      type: "json_schema";
       name: string;
       strict: true;
       schema: Record<string, unknown>;
@@ -173,13 +175,14 @@ export function buildOpenAIRequest(input: {
 
   const body: OpenAIRequestBody = {
     model: input.model,
+    store: false,
     input: [
       { role: "system", content: SYSTEM_INSTRUCTION_HEADER },
       { role: "user", content: JSON.stringify(userPayload) },
     ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
+    text: {
+      format: {
+        type: "json_schema",
         name: "copilot_output_v1",
         strict: true,
         schema: COPILOT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
