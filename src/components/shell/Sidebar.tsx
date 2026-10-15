@@ -15,6 +15,7 @@ import {
   Layers,
   Megaphone,
   Mail,
+  Radar,
   SlidersVertical,
   Sun,
   User,
@@ -64,6 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: "programs", label: "Programs", icon: Layers, href: "/programs" },
       { id: "funnels", label: "Funnels", icon: Megaphone, href: "/funnels" },
       { id: "campaigns", label: "Campaigns", icon: Mail, href: "/campaigns" },
+      { id: "outreach", label: "Outreach status", icon: Radar, href: "/outreach" },
       { id: "billing", label: "Billing", icon: CreditCard, href: "/billing" },
       { id: "reports", label: "Reports", icon: BarChart3, href: "/reports" },
     ],
@@ -93,6 +95,8 @@ function activeNavId(pathname: string): string {
   if (pathname.startsWith("/tasks")) return "review";
   if (pathname.startsWith("/inbox")) return "inbox";
   if (pathname.startsWith("/programs")) return "programs";
+  if (pathname.startsWith("/campaigns")) return "campaigns";
+  if (pathname.startsWith("/outreach")) return "outreach";
   if (pathname.startsWith("/billing")) return "billing";
   if (pathname.startsWith("/reports")) return "reports";
   if (pathname.startsWith("/integrations")) return "integrations";

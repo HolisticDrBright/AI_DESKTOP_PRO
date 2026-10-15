@@ -30,6 +30,8 @@ export interface CampaignSesPort {
   domainStatus(domain: string): Promise<DomainStatus>;
   /** The account's sending rate, per second, from GetAccount. */
   maxSendRate(): Promise<number>;
+  /** Whether the account is out of the SES sandbox (GetAccount `ProductionAccessEnabled`); throws when SES does not answer. */
+  productionAccess(): Promise<boolean>;
 }
 
 export const MARKETING_IDENTITY_TAG = Object.freeze({ Key: 'alp-purpose', Value: 'marketing' });
@@ -101,6 +103,10 @@ export function createAwsCampaignSes(input: { client: Pick<SESv2Client, 'send'>;
       const rate = Number(account.SendQuota?.MaxSendRate ?? 1);
       return Number.isFinite(rate) && rate > 0 ? rate : 1;
     },
+    async productionAccess() {
+      const account = await client.send(new GetAccountCommand({}));
+      return account.ProductionAccessEnabled === true;
+    },
   };
 }
 function ignoreExists(error: unknown): void {
@@ -111,6 +117,8 @@ function ignoreExists(error: unknown): void {
 
 export function createFakeCampaignSes(options: { region?: string } = {}) {
   const outbox: OutgoingEmail[] = [];
+  /** Fictional accounts start in the sandbox, as a real new account does. */
+  const account: { production: boolean | 'silent' } = { production: false };
   const domains = new Map<string, { verified: boolean; tenant: string; sets: string[] }>();
   const queue: SendReply[] = [];
   let n = 0;
@@ -132,6 +140,10 @@ export function createFakeCampaignSes(options: { region?: string } = {}) {
         records: dnsRecordsFor(domain, options.region ?? 'us-east-2', ['fictionaldkimtokena', 'fictionaldkimtokenb', 'fictionaldkimtokenc']), checkedAt: new Date(0).toISOString() };
     },
     async maxSendRate() { return 14; },
+    async productionAccess() {
+      if (account.production === 'silent') throw Object.assign(new Error('fictional SES did not answer'), { name: 'TimeoutError' });
+      return account.production;
+    },
   };
-  return { port, outbox, domains, verify(domain: string) { const d = domains.get(domain); if (d) d.verified = true; }, next(reply: SendReply) { queue.push(reply); } };
+  return { port, outbox, domains, account, verify(domain: string) { const d = domains.get(domain); if (d) d.verified = true; }, next(reply: SendReply) { queue.push(reply); } };
 }

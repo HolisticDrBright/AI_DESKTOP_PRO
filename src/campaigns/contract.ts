@@ -173,9 +173,29 @@ export const overview = z.object({
 }).strict();
 export type CampaignOverview = z.infer<typeof overview>;
 
+/**
+ * The Outreach status screen's read: flags and counts only, for any staff member of the practice, with no role or
+ * entitlement needed. No address, list, template text or result leaves the engine through it. SES production access
+ * is the account's (`GetAccount`), and `unknown` when SES did not answer: never a guess either way.
+ */
+export const SES_PRODUCTION_ACCESS = ['granted', 'not_granted', 'unknown'] as const;
+export const engineStatus = z.object({
+  action: z.literal('status'),
+  contract: z.literal(CAMPAIGN_ENGINE_CONTRACT),
+  marketing: z.boolean(), tier: z.enum(MARKETING_TIERS).nullable(),
+  domain: z.object({ verifiedForSending: z.boolean(), dkim: domainStatus.shape.dkim, mailFrom: domainStatus.shape.mailFrom }).strict().nullable(),
+  readiness,
+  sesProductionAccess: z.enum(SES_PRODUCTION_ACCESS),
+  activeSequences: z.array(campaignProgram).max(CAMPAIGN_PROGRAMS.length),
+  scheduledBroadcasts: z.number().int().min(0),
+  approvedTemplates: z.number().int().min(0),
+}).strict();
+export type EngineStatus = z.infer<typeof engineStatus>;
+
 const version = z.number().int().min(0);
 export const workforceRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('overview') }).strict(),
+  z.object({ action: z.literal('status') }).strict(),
   z.object({ action: z.literal('contacts'), programKey: campaignProgram, after: z.string().max(200).nullable().optional() }).strict(),
   z.object({ action: z.literal('update_settings'), expectedVersion: version, joinSlug: practiceSlug.nullable(), senderName: practiceSettings.shape.senderName,
     mailingAddress: practiceSettings.shape.mailingAddress, timeZone: timeZone.nullable(), trackOpensAndClicks: z.boolean() }).strict(),
@@ -202,6 +222,7 @@ export const contactsPage = z.object({ action: z.literal('contacts'), programKey
 export const checkResult = z.object({ action: z.literal('check_template'), templateId: uuid, problems: z.array(z.string().max(200)).max(40) }).strict();
 export const workforceResponse = z.union([
   overview.extend({ action: z.literal('overview') }).strict(),
+  engineStatus,
   contactsPage,
   checkResult,
   z.object({ action: z.literal('done'), refreshed: overview }).strict(),
