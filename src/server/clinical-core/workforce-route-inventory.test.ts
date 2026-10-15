@@ -17,7 +17,15 @@ const EXPECTED: Readonly<Record<string, { count: number; routeDigest: string }>>
   "telehealth-requests-extension.json": { count: 17, routeDigest: "ad21d7a35fe1d5f98cf9fd62fbb88e3519bb4f8d1bc8499bed6ed6933a559e2e" },
 };
 
-type TemplateRoute = { Type?: string; Properties?: { RouteKey?: unknown } };
+type TemplateRoute = {
+  Type?: string;
+  Properties?: {
+    RouteKey?: unknown;
+    AuthorizationType?: unknown;
+    AuthorizerId?: unknown;
+    JwtConfiguration?: { Issuer?: unknown };
+  };
+};
 type Template = { Resources?: Record<string, TemplateRoute> };
 const templateDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/aws-clinical-core");
 
@@ -26,12 +34,28 @@ function actualWorkforceRoutes(): Record<string, { count: number; routeDigest: s
   for (const filename of readdirSync(templateDirectory).filter((name) => name.endsWith(".json")).sort()) {
     const template = JSON.parse(readFileSync(join(templateDirectory, filename), "utf8")) as Template;
     const routes: string[] = [];
+    const authorizers = template.Resources ?? {};
     for (const resource of Object.values(template.Resources ?? {})) {
       if (resource.Type !== "AWS::ApiGatewayV2::Route") continue;
       // A dynamic route key cannot be proven absent from the workforce surface.
       expect(typeof resource.Properties?.RouteKey, `${filename}: route key must be literal`).toBe("string");
       const key = resource.Properties?.RouteKey as string;
-      if (key.includes("/workforce/")) routes.push(key);
+      const authorizerRef = resource.Properties?.AuthorizerId as { Ref?: string } | undefined;
+      const issuer = authorizerRef?.Ref
+        ? authorizers[authorizerRef.Ref]?.Properties?.JwtConfiguration?.Issuer
+        : undefined;
+      const issuerSource = typeof issuer === "object" && issuer !== null
+        ? (issuer as { "Fn::Sub"?: unknown })["Fn::Sub"]
+        : undefined;
+      const workforceAuthorizer = typeof issuerSource === "string" && issuerSource.includes("${WorkforceUserPoolId}");
+      // Route naming and the issuer must agree in both directions. Otherwise
+      // an innocently named route can bypass this inventory's path filter.
+      expect(workforceAuthorizer, `${filename}: ${key} workforce path/issuer mismatch`)
+        .toBe(key.includes("/workforce/"));
+      if (workforceAuthorizer) {
+        expect(resource.Properties?.AuthorizationType, `${filename}: ${key} requires JWT`).toBe("JWT");
+        routes.push(key);
+      }
     }
     if (routes.length) {
       routes.sort();
