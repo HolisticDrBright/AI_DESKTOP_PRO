@@ -102,6 +102,9 @@ const SERVER_ONLY_MARKERS = [
   // The selected-clinic binding and header are server-side only: a client chunk carrying either could choose a clinic.
   "aidp-selected-clinic/1",
   "x-alp-selected-organization-id",
+  // The expected-clinic token's hash domain and the membership fence are server-side only as well.
+  "aidp-expected-clinic/1",
+  "membership-fence/1",
 ];
 
 function walk(dir) {
