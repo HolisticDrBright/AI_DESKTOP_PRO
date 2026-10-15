@@ -23,6 +23,10 @@ The alarm name is likewise pinned to the foundation's
 This is **not deployed or approved**. The template alone cannot attest the
 Lambda bundle's source commit, the database's exact migration ledger, the
 consent copies or the users behind the JWTs.
+Read-only member-role checks on October 15 found the Lambda concurrent-execution
+quota at 150, with 132 unreserved. The earlier account-capacity constraint is
+not the reason this particular candidate remains blocked; the runtime/schema
+mismatch below is. No reserved concurrency or stack setting was changed.
 
 **Observed blocker, October 14 Pacific / October 15 UTC:** read-only Data API
 queries of `clinical_core_qualification` returned 112 migration receipts, latest
