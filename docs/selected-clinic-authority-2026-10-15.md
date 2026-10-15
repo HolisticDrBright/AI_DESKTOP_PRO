@@ -111,6 +111,9 @@ they fail closed rather than fall back to a custom claim. Converting one means c
 
 ## 3. Findings, not fixed
 
+> Both findings are addressed on `claude/clinic-authority-fences-20261015`: the subject-only membership read (1) and
+> the stale-tab expected-clinic fence (2). See [`clinic-authority-fences-2026-10-15.md`](clinic-authority-fences-2026-10-15.md).
+
 1. **The first selection after sign-in cannot be made under `database_current`.**
    - The identity API answers `list_my_organizations` only for a request that already names a clinic.
    - So login, org auto-select and the first Settings list all refuse before any HTTP call, because no selection
@@ -193,6 +196,10 @@ How to read the matrix:
   clinic.
 
 ### The transactional design the writes need (not built)
+
+> Built, disabled by default, as `membership-fence/1`: see
+> [`clinic-authority-fences-2026-10-15.md`](clinic-authority-fences-2026-10-15.md) section 3. The design below is kept
+> as it was written.
 
 A telehealth write can run under `database_current` only when a membership change and the write cannot interleave.
 The recommended design:
