@@ -123,9 +123,33 @@ switch holds each piece off:
 
 **The fake must record nothing.**
 
-## Gate results
+## Gate results (this line, at `7375b8e9`)
 
-See the table at the end of this document, filled in from the run on this tree.
+| Check | Result |
+| --- | --- |
+| Unit suite (`npm run test:unit`) | 582 files passed; 8,965 tests passed, 11 skipped (the existing declared skips) |
+| The new end-to-end files (`src/integration/`) | 5 files, 13 tests, all passing; the lab-notice test also passes alone |
+| Typecheck (`tsc --noEmit`) | clean |
+| ESLint, `src/integration`, `outreach-status.ts` and the merged telehealth handler, `--max-warnings=0` | clean |
+| Build (`APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build`) | compiled; `/outreach`, `/campaigns`, `/join/*` and the four campaign routes present |
+| Ordered battery (`npm run test:e2e:order`) | **PASS**: the same 324 tests passed in the forward and the reverse order, 0 failed or did not run, 99 skipped by declaration (not counted). 40 specs, 308 app entries precompiled, worker restarts 0, max heap used 2,462 MiB |
+| `npm run check:stub-reset` | PASS: 142 mutable bindings, every one covered |
+
+**How the battery was run, and why.**
+
+```bash
+env -u NODE_OPTIONS -u CLINICAL_SUPABASE_ANON_KEY E2E_DEV_HEAP_MB=9216 \
+  PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npm run test:e2e:order
+```
+
+- **`CLINICAL_SUPABASE_ANON_KEY` was unset.** This container's shell sets one, and the runner refuses anything but
+  its own fictional value. It did so correctly.
+- **`E2E_DEV_HEAP_MB=9216` was set on its own.** This container is limited to 13,679 MiB, so the default 10,240 MiB
+  heap plus the 4,096 MiB reserve does not fit. 9,216 is inside the runner's allowed range, and the heap was set
+  alone, as `CLAUDE.md` requires.
+- No spec, timeout or refusal was changed.
+- No new browser spec was added: the browser cannot reach the campaign engine without weakening the API-origin
+  check.
 
 ## Settings, all off by default
 
