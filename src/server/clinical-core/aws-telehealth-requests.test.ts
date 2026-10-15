@@ -105,9 +105,8 @@ const workforceClaims = {
   aud: config.workforceAudience,
   sub: "synthetic-workforce-1234",
 };
-const membershipResponse = (rows: unknown = [{ organization_id: workforceClaims["custom:organization_id"], role: "practitioner" }]) => ({
-  ok: true, status: 200, json: async () => ({ data: rows }),
-});
+const membershipResponse = (rows: unknown = [{ organization_id: workforceClaims["custom:organization_id"], role: "practitioner" }]) =>
+  new Response(JSON.stringify({ data: rows }), { status: 200, headers: { "content-type": "application/json" } });
 
 function event(routeKey: string, body?: Record<string, unknown>, suppliedClaims = claims) {
   return {
@@ -218,6 +217,20 @@ describe("AWS telehealth request boundary", () => {
       expect(init).toMatchObject({ method: "POST", headers: { authorization: "Bearer fictional-workforce-token" } });
       expect(JSON.parse(String(init?.body))).toEqual({ kind: "rpc", functionName: "list_my_organizations", args: {} });
     }
+  });
+
+  it.each(["declared", "streamed"] as const)("refuses an oversized %s membership reply before DynamoDB access", async (kind) => {
+    const valid = { organization_id: workforceClaims["custom:organization_id"], role: "practitioner" };
+    const payload = JSON.stringify({ data: [valid], padding: "x".repeat(65_536) });
+    const reply = kind === "declared"
+      ? new Response(JSON.stringify({ data: [valid] }), { status: 200, headers: { "content-length": "65537" } })
+      : new Response(payload, { status: 200 });
+    vi.stubGlobal("fetch", vi.fn(async () => reply));
+    send.mockResolvedValue({ Items: [] });
+    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/requests", undefined, workforceClaims));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "service_unavailable" });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it.each([

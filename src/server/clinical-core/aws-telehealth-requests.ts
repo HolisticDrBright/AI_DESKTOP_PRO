@@ -1165,15 +1165,18 @@ function publicVisitSummary(visit: VisitItem) {
 
 /* ---- the governed consent authority (identity API, caller's workforce JWT forwarded) ---- */
 
-async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, path: string, init?: { method: "POST"; body: Record<string, unknown> }, notFound: TelehealthRefusal = "service_unavailable"): Promise<T> {
+async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, path: string, init?: { method: "POST"; body: Record<string, unknown> }, notFound: TelehealthRefusal = "service_unavailable", maxResponseBytes?: number): Promise<T> {
   if (!/^https:\/\//.test(config.identityApiOrigin)) throw new TelehealthError("service_unavailable");
+  const signal = AbortSignal.timeout(10_000);
   let response: Response;
   try {
-    response = await fetch(`${config.identityApiOrigin}${path}`, { method: init?.method ?? "GET", redirect: "manual", signal: AbortSignal.timeout(10_000),
+    response = await fetch(`${config.identityApiOrigin}${path}`, { method: init?.method ?? "GET", redirect: "manual", signal,
       headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}) },
       ...(init ? { body: JSON.stringify(init.body) } : {}) });
   } catch { throw new TelehealthError("service_unavailable"); }
-  let payload: unknown; try { payload = await response.json(); } catch { throw new TelehealthError("service_unavailable"); }
+  let payload: unknown;
+  try { payload = maxResponseBytes === undefined ? await response.json() : await boundedProviderJson(response, maxResponseBytes, signal); }
+  catch { throw new TelehealthError("service_unavailable"); }
   if (!response.ok || !payload || typeof payload !== "object" || !("data" in payload)) {
     if (response.status === 403) throw new TelehealthError("identity_refused");
     if (response.status === 404 || response.status === 409) throw new TelehealthError(notFound);
@@ -1185,7 +1188,7 @@ async function requireCurrentWorkforceMembership(config: TelehealthConfiguration
   if (!actor.bearer) throw new TelehealthError("identity_refused");
   const rows = await identityApi<unknown>(config, actor, "/clinical-core/workforce/data-compatibility", {
     method: "POST", body: { kind: "rpc", functionName: "list_my_organizations", args: {} },
-  }, "identity_refused");
+  }, "identity_refused", 65_536);
   if (!Array.isArray(rows)) throw new TelehealthError("service_unavailable");
   const matches = rows.filter((row) => row !== null && typeof row === "object" && !Array.isArray(row)
     && (row as Record<string, unknown>).organization_id === actor.organizationId
