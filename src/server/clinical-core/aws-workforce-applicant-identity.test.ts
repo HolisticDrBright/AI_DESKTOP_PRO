@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { AdminGetUserCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { AdminGetUserCommand, CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
 import { createCognitoCurrentWorkforceApplicant } from './aws-workforce-applicant-identity';
 
 const subject = randomUUID();
@@ -15,6 +15,12 @@ const confirmed = () => ({
 });
 
 describe('read-only current workforce applicant identity', () => {
+  it('accepts the real Cognito client interface without issuing a request', () => {
+    const client = new CognitoIdentityProviderClient({ region: 'us-east-2' });
+    expect(createCognitoCurrentWorkforceApplicant(client)).toBeTypeOf('function');
+    client.destroy();
+  });
+
   it('reads the exact fictional pool and subject with a bounded request, then maps current MFA settings', async () => {
     const send = vi.fn(async () => confirmed());
     const read = createCognitoCurrentWorkforceApplicant({ send });
