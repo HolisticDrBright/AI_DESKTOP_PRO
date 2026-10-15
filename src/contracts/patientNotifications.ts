@@ -14,7 +14,8 @@ import { z } from 'zod';
  * can turn off); everything by text OFF until the patient opts in with recorded consent at that
  * number; push OFF (the patient app has no push support yet).
  *
- * This file is mirrored byte for byte into the consumer app when the app gains a preferences screen.
+ * Mirrored byte for byte in the consumer app at expo/contracts/patientNotifications.ts (AI_LONGEVITY_PRO_V2),
+ * whose Notifications settings screen reads it; both suites pin the same digest.
  */
 export const PATIENT_NOTIFICATIONS_CONTRACT = 'patient-notifications/1' as const;
 export const NOTICE_KINDS = ['lab_result', 'protocol', 'message', 'form', 'program_lesson'] as const;
@@ -69,3 +70,57 @@ export type TextConsent = z.infer<typeof textConsent>;
 
 /** A patient's IANA time zone, as the patient set it; without one, no text is sent. */
 export const timeZone = z.string().min(3).max(64).refine(value => { try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; } catch { return false; } }, 'time_zone_invalid');
+
+/* ---------------------------------------------------------------- the settings a patient sees and changes */
+
+/** The patient's own settings, as the service answers every settings request. */
+export const notificationSettingsView = z.object({
+  contract: z.literal(PATIENT_NOTIFICATIONS_CONTRACT),
+  preferences: patientNotificationPreferences,
+  timeZone: z.string().min(3).max(64).nullable(),
+  version: z.number().int().min(0),
+  textConsent: z.object({ phone: e164, wordingVersion: z.string(), wordingSha256: z.string().regex(/^[a-f0-9]{64}$/), agreedAt: z.string().datetime({ offset: true }), source: z.literal('patient_app') }).strict().nullable(),
+  textStopped: z.boolean(),
+  pushAvailable: z.literal(false),
+}).strict();
+export type NotificationSettingsView = z.infer<typeof notificationSettingsView>;
+/** The text-consent wording counsel approved, shown in full before a patient agrees; null while none is approved. */
+export const consentWording = z.object({ version: z.string().regex(/^text-consent\/[1-9][0-9]{0,3}$/), body: z.string().min(20).max(2000), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export type ConsentWording = z.infer<typeof consentWording>;
+
+/** What the patient app may ask. Only the patient can agree to texts, at a number and wording they name. */
+export const notificationSettingsRequest = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('read') }).strict(),
+  z.object({ action: z.literal('wording') }).strict(),
+  z.object({ action: z.literal('save'), preferences: patientNotificationPreferences, timeZone: timeZone.nullable(), expectedVersion: z.number().int().min(0) }).strict(),
+  z.object({ action: z.literal('consent'), phone: e164, wordingVersion: z.string().regex(/^text-consent\/[1-9][0-9]{0,3}$/), wordingSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  z.object({ action: z.literal('withdraw') }).strict(),
+]);
+export type NotificationSettingsRequest = z.infer<typeof notificationSettingsRequest>;
+export const notificationSettingsResponse = z.union([
+  z.object({ action: z.literal('wording'), wording: consentWording.nullable() }).strict(),
+  z.object({ action: z.enum(['read', 'save', 'consent', 'withdraw']), settings: notificationSettingsView }).strict(),
+]);
+export type NotificationSettingsResponse = z.infer<typeof notificationSettingsResponse>;
+/** A reply that does not answer the action asked is not usable, however well formed. */
+export function parseNotificationSettingsResponse(request: NotificationSettingsRequest, raw: unknown): NotificationSettingsResponse {
+  const parsed = notificationSettingsResponse.parse(raw);
+  if (parsed.action !== request.action) throw new Error('response_action_mismatch');
+  return parsed;
+}
+
+/**
+ * What a clinic member sees of a connected patient's choices: read-only, the number reduced to its last two
+ * digits. There is no clinic request that changes a choice.
+ */
+export const clinicNotificationSettingsView = z.object({
+  contract: z.literal(PATIENT_NOTIFICATIONS_CONTRACT),
+  connectionId: z.string().uuid(),
+  preferences: patientNotificationPreferences,
+  timeZone: z.string().min(3).max(64).nullable(),
+  textConsent: z.object({ phoneLastTwo: z.string().regex(/^[0-9]{2}$/), wordingVersion: z.string(), agreedAt: z.string().datetime({ offset: true }) }).strict().nullable(),
+  textStopped: z.boolean(),
+  pushAvailable: z.literal(false),
+}).strict();
+export type ClinicNotificationSettingsView = z.infer<typeof clinicNotificationSettingsView>;
+export const clinicNotificationSettingsRequest = z.object({ action: z.literal('read'), connectionId: z.string().uuid() }).strict();

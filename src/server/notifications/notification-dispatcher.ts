@@ -21,8 +21,11 @@ export type DispatchPass = { ok: true; formed: number; results: DispatchResult[]
 export function createNoticeDispatcher(deps: {
   ledger: PatientNotificationWorkerLedger; directory: PatientEmailDirectory; email: EmailSender; text: TextSender;
   origin: string; now?: () => Date; windowSeconds?: number; batchLimit?: number;
+  /** Which channels may send. A channel left out is skipped (`channel_switched_off`) and its sender never called. */
+  channels?: { email: boolean; sms: boolean };
 }) {
   const now = deps.now ?? (() => new Date());
+  const channels = deps.channels ?? { email: true, sms: true };
   const windowSeconds = deps.windowSeconds ?? 600, batchLimit = deps.batchLimit ?? 50;
   const fromReply = (reply: SendReply, optedOut: DeliveryOutcome): DeliveryOutcome =>
     reply.outcome === 'accepted' ? { outcome: 'sent', providerRef: reply.providerRef }
@@ -30,6 +33,7 @@ export function createNoticeDispatcher(deps: {
         : reply.detail === 'request_invalid' ? { outcome: 'failed', reason: 'provider_refused' } : { outcome: 'retry', reason: 'provider_unavailable' };
 
   async function decide(delivery: DueDelivery): Promise<DeliveryOutcome> {
+    if (!channels[delivery.channel]) return { outcome: 'skipped', reason: 'channel_switched_off' };
     if (delivery.channel === 'email') {
       const contact = await deps.directory.emailFor(delivery.consumerSubject).catch(() => ({ kind: 'unavailable' as const, reason: 'service_unavailable' as const }));
       if (contact.kind === 'unavailable') return contact.reason === 'no_contact' ? { outcome: 'skipped', reason: 'no_contact' } : { outcome: 'retry', reason: 'contact_unavailable' };

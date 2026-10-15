@@ -1,6 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('patient notification ledger is server-only');
 import { z } from 'zod';
-import { e164, NOTICE_KINDS, patientNotificationPreferences, type NoticeKind, type PatientNotificationPreferences } from '@/contracts/patientNotifications';
+import { clinicNotificationSettingsView, consentWording, e164, NOTICE_KINDS, notificationSettingsView, patientNotificationPreferences,
+  type ClinicNotificationSettingsView, type NoticeKind, type PatientNotificationPreferences } from '@/contracts/patientNotifications';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from '../clinical-core/database';
 import type { ClinicalRequestContext } from '../clinical-core/aws-identity-consent';
 
@@ -13,7 +14,7 @@ import type { ClinicalRequestContext } from '../clinical-core/aws-identity-conse
  *   - the patient's own SETTINGS, on the API role in a verified consumer context.
  * Every reply is parsed to its exact shape; anything else is `service_unavailable`.
  */
-export const PATIENT_NOTIFICATIONS_SCHEMA_CANDIDATE_SHA256 = 'e7c88741f955055585d61428ae7edf02ae180a8ccd56ababb6b6e01f1057b91a';
+export const PATIENT_NOTIFICATIONS_SCHEMA_CANDIDATE_SHA256 = '93bd5f677068b0a2d09f8f8013a66722289b8c82ed50ecb156da0a68e8d596a5';
 /** The artifacts the candidate was written against, by path under infra/aws-clinical-core/. */
 export const PATIENT_NOTIFICATIONS_PARENTS = Object.freeze({
   'migrations/manifest.json': 'f6cf4aa9507c3e61bed4e033dbef74e45acd4461f139abdc11f379ac48d90917',
@@ -25,7 +26,7 @@ export const PATIENT_NOTIFICATIONS_PARENTS = Object.freeze({
 });
 
 export class PatientNotificationError extends Error {
-  constructor(readonly category: 'request_invalid' | 'identity_refused' | 'conflict' | 'service_unavailable') { super(category); this.name = 'PatientNotificationError'; }
+  constructor(readonly category: 'request_invalid' | 'identity_refused' | 'consent_required' | 'conflict' | 'service_unavailable') { super(category); this.name = 'PatientNotificationError'; }
 }
 
 const uuid = z.string().uuid();
@@ -78,7 +79,8 @@ function parsed<T>(schema: z.ZodType<T>, value: unknown): T {
 function classify(error: unknown): never {
   if (error instanceof PatientNotificationError) throw error;
   if (error instanceof ClinicalCoreDatabaseRejection) {
-    throw new PatientNotificationError(error.category === 'conflict' ? 'conflict' : error.category === 'request_invalid' ? 'request_invalid' : 'identity_refused');
+    throw new PatientNotificationError(error.category === 'conflict' ? 'conflict' : error.category === 'request_invalid' ? 'request_invalid'
+      : error.category === 'consent_required' ? 'consent_required' : 'identity_refused');
   }
   throw new PatientNotificationError('service_unavailable');
 }
@@ -137,18 +139,6 @@ export function createSqlNoticeEnqueuer(database: ClinicalCoreDatabase): NoticeE
 
 /* -------------------------------------------------------------- the patient's own settings (API role) */
 
-export const notificationSettingsView = z.object({
-  contract: z.literal('patient-notifications/1'),
-  preferences: patientNotificationPreferences,
-  timeZone: z.string().min(3).max(64).nullable(),
-  version: z.number().int().min(0),
-  textConsent: z.object({ phone: e164, wordingVersion: z.string(), wordingSha256: z.string().regex(/^[a-f0-9]{64}$/), agreedAt: z.string().datetime({ offset: true }), source: z.literal('patient_app') }).strict().nullable(),
-  textStopped: z.boolean(),
-  pushAvailable: z.literal(false),
-}).strict();
-export type NotificationSettingsView = z.infer<typeof notificationSettingsView>;
-export const consentWording = z.object({ version: z.string().regex(/^text-consent\/[1-9][0-9]{0,3}$/), body: z.string().min(20).max(2000), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
-
 export function createSqlPatientNotificationSettings(database: ClinicalCoreDatabase) {
   const run = async <T>(context: ClinicalRequestContext, work: (tx: ClinicalCoreTransaction) => Promise<T>) => {
     if (context.identityPool !== 'consumer') throw new PatientNotificationError('identity_refused');
@@ -162,6 +152,19 @@ export function createSqlPatientNotificationSettings(database: ClinicalCoreDatab
     consent: (context: ClinicalRequestContext, phone: string, wordingVersion: string, wordingSha256: string) => run(context, async tx =>
       parsed(notificationSettingsView, await one(tx, 'clinical_core.record_my_text_consent($1,$2,$3)', [phone, wordingVersion, wordingSha256]))),
     withdraw: (context: ClinicalRequestContext) => run(context, async tx => parsed(notificationSettingsView, await one(tx, 'clinical_core.withdraw_my_text_consent()', []))),
+  };
+}
+
+/** A clinic member's read-only view of a connected patient's choices (workforce, API role). */
+export function createSqlClinicNotificationSettingsReader(database: ClinicalCoreDatabase) {
+  return async (context: ClinicalRequestContext, connectionId: string): Promise<ClinicNotificationSettingsView> => {
+    if (context.identityPool !== 'workforce') throw new PatientNotificationError('identity_refused');
+    try {
+      return await database.transaction(async tx => {
+        await withContext(tx, context);
+        return parsed(clinicNotificationSettingsView, await one(tx, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [connectionId]));
+      });
+    } catch (error) { return classify(error); }
   };
 }
 export type { NoticeKind };

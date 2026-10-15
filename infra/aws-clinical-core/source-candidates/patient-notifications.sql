@@ -53,7 +53,8 @@
 -- through policies added for it. clinical_core_api may execute the consumer, workforce and clinic
 -- functions; patient_notification_worker (NOLOGIN; a reviewed worker login is Codex's) may execute
 -- the delivery and inbound functions. Neither gains a table privilege. No login, password, number,
--- wording or activation is created.
+-- wording or activation is created. A clinic member can READ a connected patient's choices (number
+-- reduced to its last two digits) and change none of them.
 
 create role patient_notification_authority nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
 create role patient_notification_worker nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
@@ -381,6 +382,36 @@ begin
  update clinical_core.patient_notification_settings set preferences=clinical_private.patient_preferences_without_text(preferences),
   version=version+1,updated_at=clock_timestamp() where person_id=_person and clinical_private.patient_preferences_use_text(preferences);
  return clinical_private.patient_notification_view(_person);
+end $$;
+
+/* -------------------------------------------------------------- the clinic's read-only view of a patient's choices */
+
+/**
+ * What a connected patient chose, for a member of the clinic that patient is connected to. READ-ONLY:
+ * no function lets the clinic set a preference, record text consent or lift a STOP; only the patient
+ * can, from the app. The number is never returned, only its last two digits; the consent wording
+ * version and time are returned so staff can see what was agreed to and when.
+ */
+create function clinical_core.clinic_patient_notification_settings(_connection_id uuid) returns jsonb language plpgsql security definer set search_path='' as $$
+declare _org uuid:=clinical_private.organization_id(); _actor uuid:=clinical_private.actor_person_id(); _c clinical_core.patient_connections; _view jsonb;
+begin
+ if _org is null or _actor is null or clinical_private.claim('identity_pool') is distinct from 'workforce'
+  or clinical_private.claim('purpose') is distinct from 'clinical_data'
+  or clinical_private.claim('environment') is distinct from 'synthetic-staging'
+  or clinical_private.claim('data_classification') is distinct from 'synthetic_only'
+  or not clinical_private.is_active_member(_org) then
+  raise exception using errcode='42501',message='notification_identity_refused';
+ end if;
+ select * into _c from clinical_core.patient_connections c where c.id=_connection_id and c.organization_id=_org;
+ if _c.id is null or _c.state<>'verified' or _c.consumer_person_id is null then
+  raise exception using errcode='42501',message='notification_identity_refused';
+ end if;
+ _view:=clinical_private.patient_notification_view(_c.consumer_person_id);
+ return jsonb_build_object('contract','patient-notifications/1','connectionId',_c.id,'preferences',_view->'preferences','timeZone',_view->'timeZone',
+  'textConsent',case when jsonb_typeof(_view->'textConsent')='object' then jsonb_build_object(
+    'phoneLastTwo',right(_view->'textConsent'->>'phone',2),'wordingVersion',_view->'textConsent'->>'wordingVersion','agreedAt',_view->'textConsent'->>'agreedAt')
+   else null end,
+  'textStopped',_view->'textStopped','pushAvailable',false);
 end $$;
 
 /* -------------------------------------------------------------- the clinic's name and help line */
@@ -738,7 +769,7 @@ begin
  for _f in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where (n.nspname='clinical_private' and p.proname like 'patient\_%') or (n.nspname='clinical_core' and p.proname in(
    'my_patient_notification_settings','current_text_consent_wording','set_my_patient_notification_settings','record_my_text_consent',
-   'withdraw_my_text_consent','set_clinic_notification_contact','enqueue_patient_notice','form_patient_notices','due_patient_notice_deliveries',
+   'withdraw_my_text_consent','clinic_patient_notification_settings','set_clinic_notification_contact','enqueue_patient_notice','form_patient_notices','due_patient_notice_deliveries',
    'record_patient_notice_delivery','record_inbound_text','patient_reminder_channels','claim_patient_reminder_text','settle_patient_reminder_text'))
  loop
   execute format('alter function %s owner to patient_notification_authority',_f);
@@ -749,7 +780,7 @@ revoke create on schema clinical_core,clinical_private from patient_notification
 
 grant execute on function clinical_core.my_patient_notification_settings(),clinical_core.current_text_consent_wording(),
  clinical_core.set_my_patient_notification_settings(jsonb,text,bigint),clinical_core.record_my_text_consent(text,text,text),
- clinical_core.withdraw_my_text_consent(),clinical_core.set_clinic_notification_contact(text,text,bigint),
+ clinical_core.withdraw_my_text_consent(),clinical_core.clinic_patient_notification_settings(uuid),clinical_core.set_clinic_notification_contact(text,text,bigint),
  clinical_core.enqueue_patient_notice(text,jsonb) to clinical_core_api;
 grant execute on function clinical_core.form_patient_notices(integer,integer),clinical_core.due_patient_notice_deliveries(integer),
  clinical_core.record_patient_notice_delivery(uuid,text,text,timestamptz,text),clinical_core.record_inbound_text(text,text,text),

@@ -5,6 +5,7 @@ import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 import {RevisionAnnouncePanel} from '@/components/governance/RevisionAnnouncePanel';
 import {ProtocolCartPanel} from './ProtocolCartPanel';
 import {OutcomeRecordPanel} from '@/components/reasoning/OutcomeRecordPanel';
+import {PatientNotificationChoicesPanel} from '@/components/notifications/PatientNotificationChoicesPanel';
 
 type Status=Extract<ProgramAssignmentResponse,{action:'status'}>;
 type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
@@ -34,7 +35,8 @@ const postAssignment=(input:ProgramAssignmentRequest)=>fetch('/api/live/program-
  * It creates no enrollment, no charge and no protocol, and it never writes into the
  * patient's clinical plan — a program is an overlay the patient may add.
  */
-export function AppProgramAssignmentsPanel(){
+/** `notificationChoices`: NOTIFICATION_PREFERENCES_ENABLED, read on the server. Off (the default), the panel is unchanged. */
+export function AppProgramAssignmentsPanel({notificationChoices=false}:{notificationChoices?:boolean}={}){
  const [status,setStatus]=useState<Status|null>(null);
  const [links,setLinks]=useState<Connections|null>(null);
  const [programs,setPrograms]=useState<Programs|null>(null);
@@ -162,6 +164,8 @@ export function AppProgramAssignmentsPanel(){
    {programVersionId.trim()?<ProtocolCartPanel programVersionId={programVersionId.trim()}/>:null}
    {/* What happened for this patient, for counting later. Needs its own research consent. */}
    {connectionId.trim()?<OutcomeRecordPanel connectionId={connectionId.trim()}/>:null}
+   {/* The patient's reminder and notice choices, read only: only the patient can turn on texts. */}
+   {notificationChoices&&connectionId.trim()?<PatientNotificationChoicesPanel connectionId={connectionId.trim()}/>:null}
   {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
     <p className="font-semibold">{preview.title}</p>
     <p className="text-sm">Version {preview.programVersion}. This is what the patient would see; it comes from the

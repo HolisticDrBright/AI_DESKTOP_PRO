@@ -3,6 +3,8 @@ if (typeof window !== "undefined") {
 }
 
 import type { NoticeEmitter } from "../notifications/notification-dispatcher";
+import type { NotificationSettingsService } from "../notifications/notification-settings-service";
+import { PatientNotificationError } from "../notifications/patient-notification-ledger";
 import { createHash } from "node:crypto";
 import {createCareMessaging,CareMessageError} from './care-messaging';
 import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
@@ -130,7 +132,8 @@ type RouteDefinition = {
       | "disputes_workforce" | "disputes_consumer"
       | "revisions_workforce" | "revisions_consumer"
       | "note_templates" | "note_drafting_context" | "protocol_carts"
-      | "outcome_ledger" | "outcome_report" | "consult_retention";
+      | "outcome_ledger" | "outcome_report" | "consult_retention"
+      | "notification_settings" | "notification_settings_clinic";
 };
 
 /**
@@ -152,6 +155,10 @@ export const PUBLIC_IDENTITY_API_ROUTES = Object.keys(PUBLIC_ROUTES);
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/messages": {pool:"consumer",purpose:"clinical_data",operation:"care_messages"},
   "POST /clinical-core/consumer/programs": {pool:"consumer",purpose:"clinical_data",operation:"program_assignments"},
+  // Notification settings: the patient's own, and the clinic's read-only view. Not yet in the API Gateway
+  // template; served only when a settings service is supplied (the BLOCKED patient-notifications candidate).
+  "POST /clinical-core/consumer/notifications/settings": {pool:"consumer",purpose:"clinical_data",operation:"notification_settings"},
+  "POST /clinical-core/workforce/notifications/settings": {pool:"workforce",purpose:"clinical_data",operation:"notification_settings_clinic"},
   "POST /clinical-core/workforce/programs": {pool:"workforce",purpose:"clinical_data",operation:"program_assignments"},
   "POST /clinical-core/workforce/calendar-connection": {pool:"workforce",purpose:"clinical_data",operation:"calendar_connection"},
   "POST /clinical-core/consumer/care-data": {pool:"consumer",purpose:"consent_management",operation:"care_data_lifecycle"},
@@ -233,6 +240,8 @@ export function createAwsIdentityApiHandler(input: {
   patientChatAdapter?: PatientChatAdapter<SyntheticRequestContext>;
   /** Patient notices for items a committed workforce action made visible. Unset, nothing is enqueued. */
   patientNotices?: NoticeEmitter;
+  /** The patient's own notification settings and the clinic's read-only view. Unset, both routes answer 503. */
+  notificationSettings?: NotificationSettingsService;
   configuration: IdentityApiConfiguration;
 }) {
   return createIdentityApiHandler<SyntheticRequestContext>({ ...input, boundary: "synthetic" });
@@ -285,6 +294,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   chatContextAdapter?: ChatContextAdapter<Context>;
   patientChatAdapter?: PatientChatAdapter<Context>;
   patientNotices?: NoticeEmitter;
+  notificationSettings?: NotificationSettingsService;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
   productionPilot?: { scope: ProductionPilotScope; organizationId: string };
@@ -485,6 +495,19 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const body=parseBody(event);const data=await service(context,body);
         if(route.operation==="intake_packets_workforce")await notify(context,route.operation,body,data);
         return response(200,{data});
+      }
+      if (route.operation === "notification_settings" || route.operation === "notification_settings_clinic") {
+        // Synthetic boundary only, a live JWT, no query string. Without the settings service (the candidate is
+        // not installed) the answer is 503: the settings are unavailable, never an empty set of choices.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!input.notificationSettings)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        const body=parseBody(event);
+        return response(200,{data:route.operation==="notification_settings"
+          ? await input.notificationSettings.patient(context,body) : await input.notificationSettings.clinic(context,body)});
       }
       if (route.operation === "calendar_connection") {
         // Same posture as programs and messaging: synthetic boundary only, live JWT only,
@@ -858,6 +881,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         // A program conflict names which rule refused it when that rule is in the consumer app's closed vocabulary.
         const reason=error instanceof ProgramAssignmentError&&error.category==="conflict"&&error.reason?{reason:error.reason}:{};
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category,...reason});
+      }
+      if(error instanceof PatientNotificationError) {
+        return response(error.category==="identity_refused"?403:error.category==="consent_required"||error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
       }
       if(error instanceof ConsultRetentionError) {
         const status=error.category==="identity_refused"||error.category==="operation_refused"?403

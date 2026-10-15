@@ -4,7 +4,8 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { defaultNotificationPreferences } from '@/contracts/patientNotifications';
-import { PATIENT_NOTIFICATIONS_SCHEMA_CANDIDATE_SHA256, PATIENT_NOTIFICATIONS_PARENTS, createSqlNoticeEnqueuer, createSqlPatientNotificationLedger, createSqlPatientNotificationSettings } from './patient-notification-ledger';
+import { PATIENT_NOTIFICATIONS_SCHEMA_CANDIDATE_SHA256, PATIENT_NOTIFICATIONS_PARENTS, createSqlClinicNotificationSettingsReader, createSqlNoticeEnqueuer, createSqlPatientNotificationLedger, createSqlPatientNotificationSettings } from './patient-notification-ledger';
+import { createNotificationSettingsService } from './notification-settings-service';
 import { createAppointmentTextReminders, createInboundTextHandler, createNoticeDispatcher, createNoticeEmitter } from './notification-dispatcher';
 import { createFictionalSenders } from './notification-providers';
 import { classifyDatabaseRejection } from '@/server/clinical-core/rds-data-database';
@@ -222,6 +223,39 @@ describe('text consent', () => {
   });
 });
 
+describe("the clinic's read-only view of a patient's choices", () => {
+  const view = (who: Who, connection: string) => api<Record<string, unknown>>(who, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [connection]);
+  it('shows a clinic member what a connected patient chose, with the number reduced to its last two digits', async () => {
+    const seen = await view(as.staff, avaConn);
+    expect(seen).toMatchObject({ contract: 'patient-notifications/1', connectionId: avaConn, timeZone: 'America/Los_Angeles', textStopped: false, pushAvailable: false,
+      textConsent: { phoneLastTwo: AVA_PHONE.slice(-2), wordingVersion: 'text-consent/1' } });
+    expect((seen.preferences as Prefs).notices.message).toEqual({ email: true, sms: true, push: false });
+    expect(JSON.stringify(seen)).not.toContain(AVA_PHONE);
+    expect(JSON.stringify(seen)).not.toContain(AVA_PHONE.slice(2));
+    // A patient who withdrew consent shows no consent and no text preference.
+    const ben = await view(as.clinician, benConn);
+    expect(ben.textConsent).toBeNull();
+    expect(ben.preferences).toEqual(defaultNotificationPreferences());
+  });
+  it('is refused to another clinic, to a patient, and for a connection that is not verified', async () => {
+    expect(await refusal('clinical_core_api', as.outsider, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [avaConn])).toMatch(/notification_identity_refused/);
+    expect(await refusal('clinical_core_api', as.ava, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [avaConn])).toMatch(/notification_identity_refused/);
+    expect(await refusal('clinical_core_api', as.staff, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [calConn])).toMatch(/notification_identity_refused/);
+    expect(await refusal('clinical_core_api', as.staff, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [otherConn])).toMatch(/notification_identity_refused/);
+  });
+  it('gives the clinic no way to change a choice: every setter is the patient\'s own, and staff calling one is refused', async () => {
+    const callable = (await db.query<{ f: string }>(`select p.proname f from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='clinical_core' and has_function_privilege('clinical_core_api', p.oid, 'execute') and p.proname like any(array['%notification%','%text_consent%','%patient_notice%'])
+      order by 1`)).rows.map(r => r.f);
+    expect(callable).toEqual(['clinic_patient_notification_settings', 'current_text_consent_wording', 'enqueue_patient_notice', 'my_patient_notification_settings',
+      'record_my_text_consent', 'set_clinic_notification_contact', 'set_my_patient_notification_settings', 'withdraw_my_text_consent']);
+    for (const [sql, args] of [['clinical_core.set_my_patient_notification_settings($1::jsonb,$2,$3)', [JSON.stringify(textsOn()), 'America/Los_Angeles', 0]],
+      ['clinical_core.record_my_text_consent($1,$2,$3)', [AVA_PHONE, 'text-consent/1', sha(WORDING)]], ['clinical_core.withdraw_my_text_consent()', []]] as const) {
+      expect(await refusal('clinical_core_api', as.owner, sql, [...args]), sql).toMatch(/notification_identity_refused/);
+    }
+  });
+});
+
 describe('an item became visible', () => {
   it('while notices are disabled, every check still runs and nothing is stored', async () => {
     const msg = await message(avaConn, clinician, 'workforce');
@@ -432,6 +466,20 @@ describe('end to end through the SQL adapters: a committed action, one notice, S
     await expect(settingsApi.read(context(as.clinician))).rejects.toThrow('identity_refused');
     await expect(settingsApi.save(context(as.ava), defaultNotificationPreferences(), 'Not/AZone', view.version)).rejects.toThrow('request_invalid');
     await settingsApi.save(context(as.ava), textsOn(), zoneAtLocalHour(12), view.version);
+  });
+  it('the settings service over the SQL adapters: the patient reads and changes their own, the clinic reads and cannot change', async () => {
+    const service = createNotificationSettingsService({ patient: createSqlPatientNotificationSettings(roleDatabase('clinical_core_api')),
+      clinic: createSqlClinicNotificationSettingsReader(roleDatabase('clinical_core_api')) });
+    const own = await service.patient(context(as.ava), { action: 'read' });
+    expect(own.action === 'read' ? own.settings.textConsent?.phone : null).toBe(AVA_PHONE);
+    expect(await service.patient(context(as.ava), { action: 'wording' })).toEqual({ action: 'wording', wording: { version: 'text-consent/1', body: WORDING, sha256: sha(WORDING) } });
+    const seen = await service.clinic(context(as.staff), { action: 'read', connectionId: avaConn });
+    expect(seen.textConsent).toMatchObject({ phoneLastTwo: AVA_PHONE.slice(-2), wordingVersion: 'text-consent/1' });
+    expect(JSON.stringify(seen)).not.toContain(AVA_PHONE);
+    await expect(service.patient(context(as.staff), { action: 'read' })).rejects.toThrow('identity_refused');
+    await expect(service.clinic(context(as.ava), { action: 'read', connectionId: avaConn })).rejects.toThrow('identity_refused');
+    await expect(service.clinic(context(as.outsider), { action: 'read', connectionId: avaConn })).rejects.toThrow('identity_refused');
+    await expect(service.clinic(context(as.staff), { action: 'save', connectionId: avaConn })).rejects.toThrow('request_invalid');
   });
   it('a message a clinician sends becomes one email and one text with fixed wording; a reply of STOP ends the texts', async () => {
     await db.query(`update clinical_core.patient_notice_deliveries set state='skipped',reason='fixture_reset' where state in('queued','sending')`);
