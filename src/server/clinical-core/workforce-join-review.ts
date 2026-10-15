@@ -21,12 +21,12 @@ import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase,
  */
 /** SHA-256 of the BLOCKED candidate and its rollback; the approval-authority database test holds them to the files, so a
  * changed candidate cannot be served against a review of another. */
-export const WORKFORCE_APPROVAL_AUTHORITY_CANDIDATE_SHA256 = 'd33f398e3f31ac66b28f88e18c6f7332ce3ce98b9a9b19a28298fe6e42e5815f';
+export const WORKFORCE_APPROVAL_AUTHORITY_CANDIDATE_SHA256 = '534d6c8baa9781a76f34421b39ddac8de0612bca5b4e729d4af70be644ab8ffb';
 export const WORKFORCE_APPROVAL_AUTHORITY_ROLLBACK_SHA256 = '28590e2678da6c10b87da85696a75a6792bb44e2774a9aa11cf313454b34f70c';
 /** prosrc SHA-256 of each reviewed function as the candidate defines it; a database test holds them to the file. */
 export const WORKFORCE_JOIN_REVIEW_FUNCTIONS = {
   list: { signature: 'clinical_core.list_workforce_join_requests()', prosrcSha256: '5cf9f785be055b762801464de4f4ead54df0f23e3422e833cfc744aef2bc6527' },
-  decide: { signature: 'clinical_core.review_workforce_join_request_v2(uuid,boolean,text,text)', prosrcSha256: '8be8f5168a79f5ce08796f938959da341e806793f613eb2d7efe71b56417a74b' },
+  decide: { signature: 'clinical_core.review_workforce_join_request_v2(uuid,boolean,text,text)', prosrcSha256: 'a5ba98a54f480819ab295619f23d584ec113f4065a087e68e63e4d719f4d49f5' },
   revoke: { signature: 'clinical_core.revoke_workforce_membership(uuid,text)', prosrcSha256: '204a96b3ff7ed7478ebf67a50fc32ce7ad2e308f21f7cc799e9f8f9b01bc93f0' },
 } as const satisfies Record<string, { signature: string; prosrcSha256: string }>;
 

@@ -273,6 +273,19 @@ describe('the approval-authority successor', () => {
       await asRole('clinical_workforce_application', tx => tx.query('select clinical_private.withdraw_workforce_access_request($1,$2)', [app.request, adminA.subject]));
     });
 
+    it('a second account holding an already-bound address is refused by name, and no second person is made', async () => {
+      // A fictional second Cognito account that verified practitioner A's address.
+      const app = await submit(randomUUID(), 'join', clinicB, practitionerA.email);
+      const persons = async () => (await db.query<{ n: number }>('select count(*)::int as n from clinical_core.persons')).rows[0]!.n;
+      const before = await persons();
+      expect(await refusal(decide(ownerB, clinicB, app.request, true, 'identity_confirmed_by_clinic', digest(practitionerA.email))))
+        .toEqual({ code: '42501', message: 'workforce_binding_conflict' });
+      expect(await persons()).toBe(before);
+      expect(await row(app.request)).toMatchObject({ status: 'pending' });
+      expect(await admitted(app.subject, clinicB)).toBe(false);
+      await decide(ownerB, clinicB, app.request, false, 'duplicate_request');
+    });
+
     it('a rejection records its reason and grants nothing', async () => {
       const app = await submit(randomUUID(), 'join', clinicA);
       expect(await decide(ownerA, clinicA, app.request, false, 'credentials_not_verified')).toMatchObject({ status: 'rejected', membershipId: null, decisionReason: 'credentials_not_verified', duplicate: false });

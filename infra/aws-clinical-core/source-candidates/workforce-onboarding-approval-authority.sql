@@ -228,6 +228,12 @@ begin
       where id=_request.requested_organization_id and status='active') then
       raise exception using errcode='42501',message='workforce_clinic_unavailable';
     end if;
+    -- A second account holding an address already bound to another subject is a duplicate identity: refused by
+    -- name here, before the directory's unique constraint would refuse it without one.
+    if exists (select 1 from clinical_core.workforce_identity_directory d
+        where d.email_sha256=_request.email_sha256 and d.identity_subject<>_request.identity_subject) then
+      raise exception using errcode='42501',message='workforce_binding_conflict';
+    end if;
     _person:=clinical_private.bind_approved_workforce_subject(_request.identity_subject,_request.email_sha256);
     if _person=_actor then
       raise exception using errcode='42501',message='workforce_self_approval_refused';
@@ -291,6 +297,10 @@ begin
       'activation',case when _request.status='approved' then 'held' else null end,'duplicate',true);
   end if;
   if _approve then
+    if exists (select 1 from clinical_core.workforce_identity_directory d
+        where d.email_sha256=_request.email_sha256 and d.identity_subject<>_request.identity_subject) then
+      raise exception using errcode='42501',message='workforce_binding_conflict';
+    end if;
     _person:=clinical_private.bind_approved_workforce_subject(_request.identity_subject,_request.email_sha256);
     insert into clinical_core.organizations(organization_label)
       values (_request.proposed_organization_label) returning id into _organization;
