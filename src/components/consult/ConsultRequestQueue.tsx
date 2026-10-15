@@ -28,7 +28,7 @@ type Links = Extract<ConsultLinkAdminResponse, { action: "list" }>;
 type Queue = Extract<ConsultReviewResponse, { action: "list" }>;
 type Contact = { requestId: string; reference: string; contact: { name: string; email: string; phone: string | null } };
 
-const REASON_LABEL: Record<string, string> = {
+export const REASON_LABEL: Record<string, string> = {
   new_consultation: "Wants to become a patient", lab_review: "Lab review",
   follow_up_care: "Continuing care", supplement_question: "Supplement question",
   program_question: "Program question", insurance_question: "Payment question", other: "Other",
@@ -39,11 +39,11 @@ export function requestSource(slug: string): string {
   return source ? `${source.funnel.programLabel} page · ${CHANNEL_LABEL[source.channel]}` : `link ${slug}`;
 }
 
-const VISIT_LABEL: Record<string, string> = {
+export const VISIT_LABEL: Record<string, string> = {
   initial: "First consultation", follow_up: "Follow-up", urgent_question: "Urgent question",
 };
 
-async function post(body: unknown) {
+export async function post(body: unknown) {
   const response = await fetch("/api/live/consult-requests", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(body), cache: "no-store",
