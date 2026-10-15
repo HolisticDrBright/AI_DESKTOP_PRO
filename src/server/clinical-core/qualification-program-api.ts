@@ -54,7 +54,7 @@ export function createQualificationProgramHandler(environment: Environment, supp
       || e.DEPLOYMENT_ACCOUNT_ID !== QUALIFICATION_ACCOUNT || !ISSUER.test(e.CONSUMER_ISSUER ?? '') || !ISSUER.test(e.WORKFORCE_ISSUER ?? '')
       || e.CONSUMER_ISSUER === e.WORKFORCE_ISSUER || !AUDIENCE.test(e.CONSUMER_AUDIENCE ?? '') || !AUDIENCE.test(e.WORKFORCE_AUDIENCE ?? '')
       || e.CONSUMER_AUDIENCE === e.WORKFORCE_AUDIENCE || !UUID.test(e.QUALIFICATION_PROGRAM_ORGANIZATION_ID ?? '')
-      || !new RegExp(`^arn:aws:secretsmanager:us-east-2:${QUALIFICATION_ACCOUNT}:secret:[A-Za-z0-9/_+=.@!-]+$`).test(e.CLINICAL_DATABASE_SECRET_ARN ?? ''))
+      || !new RegExp(`^arn:aws:secretsmanager:us-east-2:${QUALIFICATION_ACCOUNT}:secret:alp-qualification-program-api-db-[A-Za-z0-9-]+$`).test(e.CLINICAL_DATABASE_SECRET_ARN ?? ''))
       throw new Error('binding_refused');
     const qualification = resolveQualificationExecution(e, 'blocked');
     if (!qualification || qualification.accountId !== QUALIFICATION_ACCOUNT) throw new Error('binding_refused');

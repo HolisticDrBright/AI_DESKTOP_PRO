@@ -354,7 +354,7 @@ describe('the route and the database function agree on one context and one contr
     WORKFORCE_ISSUER: 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_fictionalWorkforce', WORKFORCE_AUDIENCE: 'fictionalworkforceclient00000',
     QUALIFICATION_PROGRAM_ORGANIZATION_ID: org, QUALIFICATION_EXECUTION: 'enabled', QUALIFICATION_REVIEW_SHA256: 'a'.repeat(64), QUALIFICATION_ACCOUNT_ID: '588966314750',
     CLINICAL_DATABASE_NAME: 'clinical_core_qualification', CLINICAL_DATABASE_CLUSTER_ARN: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional-qualification',
-    CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification', QUALIFICATION_IDENTITY_SUBJECTS: designated.join(','), ...over });
+    CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-program-api-db-fictional', QUALIFICATION_IDENTITY_SUBJECTS: designated.join(','), ...over });
   const build = (over: Partial<QualificationProgramBuild> = {}): QualificationProgramBuild => ({ sourceCommit: COMMIT, sourceClean: true, migrationCount: 112,
     migrationReleaseSha256: QUALIFICATION_PROGRAM_LEDGER.migrationReleaseSha256, boundaryCandidateSha256: QUALIFICATION_PROGRAM_BOUNDARY_CANDIDATE_SHA256, functions: bindings(), ...over });
   const factory = vi.fn(() => database);
@@ -394,6 +394,7 @@ describe('the route and the database function agree on one context and one contr
       ['the 106 ledger', {}, { migrationCount: 106 }], ['another boundary candidate', {}, { boundaryCandidateSha256: 'f'.repeat(64) }],
       ['a dirty build', {}, { sourceClean: false }], ['another source commit', { SOURCE_COMMIT: 'd'.repeat(40) }, {}],
       ['no designated subject', { QUALIFICATION_IDENTITY_SUBJECTS: '' }, {}], ['a malformed function binding', {}, { functions: bindings().slice(1) }],
+      ['the managed master credential', { CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-fictional' }, {}],
     ];
     for (const [label, envOver, buildOver] of bad) {
       const answer = await handler(env(envOver), build(buildOver))(consumerEvent(consumer, { action: 'list' }));
