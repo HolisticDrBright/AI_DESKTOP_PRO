@@ -32,6 +32,10 @@ queries of `clinical_core_qualification` returned 112 migration receipts, latest
 `clinical_core.program_assignments`. It has neither
 `clinical_core.program_assignment_request(jsonb)` nor
 `clinical_core.production_program_assignment_request(jsonb)`.
+The table/function check was repeated with the short-lived
+`ai-synthetic-member` assumed-role profile (account `588966314750`), not relied
+on solely from the older root-resolving profile; it returned only
+`program_enrollments` and `program_versions` among those queried.
 
 This is **a runtime-family mismatch, not merely one missing table**. The projected
 Lambda calls `createProgramAssignments`, which requires a synthetic-staging
