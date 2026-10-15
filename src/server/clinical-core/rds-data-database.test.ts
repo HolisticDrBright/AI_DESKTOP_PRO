@@ -4,6 +4,7 @@ import {
   bindParameters,
   createRdsDataAdministrativeDatabase,
   createRdsDataClinicalCoreDatabase,
+  createRdsDataQualificationProgramDatabase,
   createRdsDataFullscriptDraftDatabase,
   RdsDataDatabaseError,
   classifyDatabaseRejection,
@@ -37,6 +38,20 @@ function client(respond?: (seen: Seen) => Record<string, unknown> | Promise<Reco
 }
 
 describe("Aurora RDS Data API transaction adapter", () => {
+  test('fictional program requests use only the dedicated qualification role and credential', async () => {
+    const mock = client();
+    const config = { clusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional-cluster',
+      secretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-program-api-db-test',
+      databaseName: 'clinical_core_qualification', region: 'us-east-2' };
+    await createRdsDataQualificationProgramDatabase(config, mock.value).transaction(tx => tx.query('select 1'));
+    expect(mock.calls.filter(call => call.name === 'ExecuteStatementCommand').map(call => call.input.sql))
+      .toEqual(['set local role clinical_program_qualification_api', 'select 1']);
+    expect(() => createRdsDataQualificationProgramDatabase({ ...config,
+      secretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-master' }, mock.value))
+      .toThrow('configuration_invalid');
+    expect(() => createRdsDataQualificationProgramDatabase({ ...config, databaseName: 'clinical_core' }, mock.value))
+      .toThrow('configuration_invalid');
+  });
   test('Fullscript requests assume only the dedicated worker role, before any application query',async()=>{
     const mock=client();
     await createRdsDataFullscriptDraftDatabase(CONFIG,mock.value).transaction(tx=>tx.query('select 1'));

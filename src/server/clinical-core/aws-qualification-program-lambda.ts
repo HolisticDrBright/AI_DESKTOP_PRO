@@ -1,7 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('aws-qualification-program-lambda is server-only');
 
 import candidate from '../../../infra/aws-clinical-core/source-candidates/qualification-program-boundary.json';
-import { createRdsDataClinicalCoreDatabase } from './rds-data-database';
+import { createRdsDataQualificationProgramDatabase } from './rds-data-database';
 import { requireQualificationConsumerCore } from './core-subscription-guard';
 import { createQualificationProgramHandler } from './qualification-program-api';
 
@@ -17,6 +17,6 @@ export const handler = createQualificationProgramHandler(environment, {
   boundaryCandidateSha256: candidate.successor.sha256,
   functions: candidate.functions.map(({ name, bodySha256 }) => ({ name, bodySha256 })),
 }, {
-  databaseFactory: createRdsDataClinicalCoreDatabase,
+  databaseFactory: createRdsDataQualificationProgramDatabase,
   verifyConsumerCore: authorization => requireQualificationConsumerCore(authorization, environment),
 });

@@ -46,6 +46,19 @@ export function createRdsDataClinicalCoreDatabase(
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
 
+/** Separate, unreleased fictional program runtime. Its database login is not
+ * a member of the cluster-global clinical_core_api role. */
+export function createRdsDataQualificationProgramDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  if (configuration.databaseName !== 'clinical_core_qualification' || configuration.region !== 'us-east-2'
+    || !configuration.clusterArn.startsWith('arn:aws:rds:us-east-2:588966314750:cluster:')
+    || !configuration.secretArn.startsWith('arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-program-api-db-'))
+    throw new RdsDataDatabaseError('configuration_invalid');
+  return createRdsDataDatabase(configuration, client, 'clinical_program_qualification_api');
+}
+
 /** The catalog endpoint is read-only and has a 29-second Lambda deadline. The
  * synthetic database may need longer than the general policy's three delays
  * to resume from zero ACUs. Only BeginTransaction is retried. */
@@ -96,7 +109,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api" | "fullscript_draft_worker" | "program_media_worker",
+  assumeRole?: "clinical_core_api" | "clinical_program_qualification_api" | "fullscript_draft_worker" | "program_media_worker",
   resumePolicy: "general" | "catalog_read" = "general",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);

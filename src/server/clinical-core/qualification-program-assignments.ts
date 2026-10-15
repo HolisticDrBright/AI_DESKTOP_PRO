@@ -73,17 +73,19 @@ export function bindQualificationProgramDatabase(database: ClinicalCoreDatabase,
         and p.prolang=(select oid from pg_language where lanname='plpgsql')
         and p.proconfig=array['search_path=""']::text[]
         and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.sha256
-        and has_function_privilege('clinical_core_api',p.oid,'EXECUTE')=e.callable
+        and has_function_privilege('clinical_program_qualification_api',p.oid,'EXECUTE')=e.callable
         and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
           where a.grantee=0 and a.privilege_type='EXECUTE')) valid
       from expected e join pg_namespace n on n.nspname=e.schema join pg_proc p on p.pronamespace=n.oid and p.proname=e.name
     ), checked_tables as (
       select count(*)=2 and bool_and(c.relkind='r' and c.relrowsecurity and c.relforcerowsecurity
-        and not has_table_privilege('clinical_core_api',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+        and not has_table_privilege('clinical_program_qualification_api',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
         and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee=0)) valid
       from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where n.nspname='clinical_core' and c.relname in('program_qualification_boundary','program_qualification_subjects')
-    ) select current_user='clinical_core_api' and f.valid and t.valid as valid from checked_functions f cross join checked_tables t`, [expected]);
+    ) select current_user='clinical_program_qualification_api'
+      and not pg_has_role(current_user,'clinical_core_api','MEMBER')
+      and f.valid and t.valid as valid from checked_functions f cross join checked_tables t`, [expected]);
     if (check.rows[0]?.valid !== true) throw new ProductionProgramAssignmentError('service_unavailable');
     return work(tx);
   }) };

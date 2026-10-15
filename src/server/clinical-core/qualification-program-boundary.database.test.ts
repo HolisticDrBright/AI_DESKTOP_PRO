@@ -27,6 +27,7 @@ import type { ApiGatewayV2Event } from './aws-identity-api';
 const DIR = 'infra/aws-clinical-core/production-candidates/';
 const PARENTS = ['lab-result-transfer-v2.sql', 'lab-observation-attestation.sql', 'production-program-assignments.sql', 'production-program-consumer-boundary.sql'].map(f => DIR + f);
 const SUCCESSOR = 'infra/aws-clinical-core/source-candidates/qualification-program-boundary.sql';
+const LOGIN = 'infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql';
 const ROLLBACK = 'infra/aws-clinical-core/source-candidates/qualification-program-boundary-rollback.sql';
 const REDEFINED = ['clinical_core.production_program_assignment_request(jsonb)', 'clinical_private.production_program_bounded_complete(jsonb)', 'clinical_core.production_program_bounded_request(jsonb)'];
 const OPEN_LINE = '\n  and not clinical_private.program_qualification_open()';
@@ -57,7 +58,7 @@ const production = (person: string, pool: 'workforce' | 'consumer', organization
 const REQUEST_INVALID = /\bprogram_assignment_invalid\b/;
 const CONFLICT = /\b(program_assignment_conflict|program_assignment_version_changed|program_assignment_revision_stale|program_review_stale|program_assignment_state_invalid|program_tasks_remaining|program_phase_not_due|program_check_in_required|program_practitioner_review_required|program_clinical_items_held)\b/;
 const database: ClinicalCoreDatabase = { transaction: work => db.transaction(async tx => {
-  await tx.exec('set local role clinical_core_api');
+  await tx.exec('set local role clinical_program_qualification_api');
   return work({ query: async <Row extends Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) => {
     try { return await tx.query<Row>(sql, parameters.map(p => p && typeof p === 'object' && 'kind' in p && p.kind === 'uuid' && 'value' in p ? p.value : p)); }
     catch (cause) {
@@ -82,7 +83,7 @@ async function refusal(input: ProgramAssignmentRequest | ProgramBoundCompletionR
 async function direct(person: string, pool: 'workforce' | 'consumer', request: unknown, organization = org): Promise<string> {
   try {
     await db.transaction(async tx => {
-      await tx.exec('set local role clinical_core_api');
+      await tx.exec('set local role clinical_program_qualification_api');
       await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', [person, organization, pool, subject(person), 'clinical_data', 'production-clinical', 'clinical_phi']);
       await tx.query('select clinical_core.production_program_bounded_request($1::jsonb)', [JSON.stringify(request)]);
     });
@@ -133,6 +134,8 @@ beforeAll(async () => {
   parentDefinitions = await definitions();
   ledgerBefore = JSON.stringify((await db.query('select version,name,sha256 from clinical_core.schema_migrations order by version')).rows);
   await db.exec(lf(SUCCESSOR));
+  const testDatabase = (await db.query<{ name: string }>('select current_database() as name')).rows[0]!.name;
+  await db.exec(lf(LOGIN).replace("current_database() <> 'clinical_core_qualification'", `current_database() <> '${testDatabase}'`));
   for (const scope of ['protocols_supplements', 'lab_history']) await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
     values($1,'program-fixture','FICTIONAL ONLY',encode(public.digest('FICTIONAL ONLY','sha256'),'hex'),'FIXTURE NOT APPROVAL',now()-interval '1 day')`, [scope]);
 }, 240_000);

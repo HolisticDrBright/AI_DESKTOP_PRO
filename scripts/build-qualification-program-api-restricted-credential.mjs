@@ -9,7 +9,7 @@ if (parent.Metadata?.ClinicalCore?.ContractVersion !== 'qualification-program-ap
 const candidate = structuredClone(parent);
 candidate.Metadata.ClinicalCore.ContractVersion = 'qualification-program-api-candidate/3';
 candidate.Metadata.ClinicalCore.SourceTemplate = 'infra/aws-clinical-core/qualification-program-api-successor.json';
-candidate.Metadata.ClinicalCore.CredentialBoundary = 'BLOCKED: separate NOINHERIT login; no master credential; verify role and secret before change-set execution';
+candidate.Metadata.ClinicalCore.CredentialBoundary = 'BLOCKED: separate NOINHERIT login and program-only API role; no master credential or global clinical API membership; verify role and secret before change-set execution';
 candidate.Metadata.ClinicalCore.DeploymentGate = 'BLOCKED: requires separate credential provisioning, exact role/secret audit, preserving SQL review and hosted refusal tests';
 candidate.Parameters.DatabaseSecretArn.AllowedPattern =
   '^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-program-api-db-[A-Za-z0-9-]+$';

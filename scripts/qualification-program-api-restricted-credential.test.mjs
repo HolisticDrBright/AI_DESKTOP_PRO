@@ -28,10 +28,21 @@ test('restricted-credential successor is generated and changes only its pinned s
 
 test('candidate login starts disabled, can assume only the API role, and refuses replay', async () => {
   assert.match(loginSql, /current_database\(\) <> 'clinical_core_qualification'/);
+  assert.match(loginSql, /create role clinical_program_qualification_api/);
+  assert.doesNotMatch(loginSql, /grant clinical_core_api to clinical_program_qualification_login/i);
   assert.doesNotMatch(loginSql, /\bpassword\b\s*'/i);
   const db = new PGlite();
   try {
-    await db.exec('create role clinical_core_api nologin noinherit; create role clinical_core_migrator nologin noinherit;');
+    await db.exec(`create role clinical_core_api nologin noinherit;
+      create role clinical_core_migrator nologin noinherit;
+      create schema clinical_core; create schema clinical_private;
+      create function clinical_private.set_request_context(uuid,uuid,text,text,text,text,text)
+        returns void language sql as $$ select null::void $$;
+      create function clinical_core.production_program_bounded_request(jsonb)
+        returns jsonb language sql as $$ select $1 $$;
+      revoke all on function clinical_private.set_request_context(uuid,uuid,text,text,text,text,text) from public;
+      revoke all on function clinical_core.production_program_bounded_request(jsonb) from public;
+      create table clinical_core.private_data(id integer);`);
     const database = (await db.query('select current_database() as name')).rows[0].name;
     await db.exec(loginSql.replace("current_database() <> 'clinical_core_qualification'",
       `current_database() <> '${database}'`));
@@ -42,15 +53,19 @@ test('candidate login starts disabled, can assume only the API role, and refuses
     const membership = await db.query(`select parent.rolname as parent, m.admin_option, m.inherit_option, m.set_option
       from pg_auth_members m join pg_roles parent on parent.oid = m.roleid
       join pg_roles member on member.oid = m.member where member.rolname = 'clinical_program_qualification_login'`);
-    assert.deepEqual(membership.rows, [{ parent: 'clinical_core_api', admin_option: false,
+    assert.deepEqual(membership.rows, [{ parent: 'clinical_program_qualification_api', admin_option: false,
       inherit_option: false, set_option: true }]);
     await db.exec('set session authorization clinical_program_qualification_login');
     await assert.rejects(db.exec('set role clinical_core_migrator'), /permission denied/);
-    await db.exec('set role clinical_core_api');
-    assert.equal((await db.query('select current_user as name')).rows[0].name, 'clinical_core_api');
+    await assert.rejects(db.exec('set role clinical_core_api'), /permission denied/);
+    await db.exec('set role clinical_program_qualification_api');
+    assert.equal((await db.query('select current_user as name')).rows[0].name, 'clinical_program_qualification_api');
+    assert.equal((await db.query(`select has_function_privilege(current_user,
+      'clinical_core.production_program_bounded_request(jsonb)', 'EXECUTE') as allowed`)).rows[0].allowed, true);
+    await assert.rejects(db.query('select * from clinical_core.private_data'), /permission denied/);
     await db.exec('reset session authorization');
     await assert.rejects(db.exec(loginSql.replace("current_database() <> 'clinical_core_qualification'",
-      `current_database() <> '${database}'`)), /qualification_login_already_exists/);
+      `current_database() <> '${database}'`)), /qualification_roles_already_exist/);
   } finally { await db.close(); }
 });
 
