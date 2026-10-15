@@ -9,6 +9,7 @@ const read = path => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 const parent = JSON.parse(read('infra/aws-clinical-core/qualification-program-api-successor.json'));
 const candidate = JSON.parse(read('infra/aws-clinical-core/qualification-program-api-restricted-credential.json'));
 const loginSql = read('infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql');
+const rollbackSql = read('infra/aws-clinical-core/source-candidates/qualification-program-api-login-rollback.sql');
 
 test('the bundled Lambda binds both exact proxy bodies, with no callable clinical-schema grant', () => {
   const entry = read('src/server/clinical-core/aws-qualification-program-lambda.ts');
@@ -111,5 +112,35 @@ test('candidate refuses a missing API role before creating the login', async () 
       `current_database() <> '${database}'`)), /clinical_api_role_refused/);
     const result = await db.query("select count(*)::integer as n from pg_roles where rolname = 'clinical_program_qualification_login'");
     assert.equal(result.rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+test('rollback refuses an activated or changed proxy, then removes only the original inactive role and schema', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`create role clinical_core_api nologin noinherit;
+      create schema clinical_core; create schema clinical_private;
+      create function clinical_private.set_request_context(uuid,uuid,text,text,text,text,text)
+        returns void language sql as $$ select null::void $$;
+      create function clinical_core.production_program_bounded_request(jsonb)
+        returns jsonb language sql as $$ select $1 $$;
+      create table clinical_core.preserved_data(id integer);
+      insert into clinical_core.preserved_data values(7);`);
+    const database = (await db.query('select current_database() as name')).rows[0].name;
+    const scoped = sql => sql.replace("current_database() <> 'clinical_core_qualification'", `current_database() <> '${database}'`);
+    await db.exec(scoped(loginSql));
+    await assert.rejects(db.exec(rollbackSql), /qualification_database_refused/);
+    await db.exec('alter role clinical_program_qualification_login login');
+    await assert.rejects(db.exec(scoped(rollbackSql)), /qualification_roles_not_rollback_safe/);
+    await db.exec('alter role clinical_program_qualification_login nologin');
+    await db.exec('create function clinical_program_qualification.unreviewed() returns integer language sql as $$ select 1 $$');
+    await assert.rejects(db.exec(scoped(rollbackSql)), /qualification_proxy_not_rollback_safe/);
+    assert.equal((await db.query('select count(*)::integer as n from pg_roles where rolname=\'clinical_program_qualification_login\'')).rows[0].n, 1);
+    await db.exec('drop function clinical_program_qualification.unreviewed()');
+    await db.exec(scoped(rollbackSql));
+    assert.equal((await db.query('select count(*)::integer as n from pg_roles where rolname like \'clinical_program_qualification_%\'')).rows[0].n, 0);
+    assert.equal((await db.query("select count(*)::integer as n from pg_namespace where nspname='clinical_program_qualification'")).rows[0].n, 0);
+    assert.deepEqual((await db.query('select id from clinical_core.preserved_data')).rows, [{ id: 7 }]);
+    await assert.rejects(db.exec(scoped(rollbackSql)), /qualification_roles_not_rollback_safe/);
   } finally { await db.close(); }
 });
