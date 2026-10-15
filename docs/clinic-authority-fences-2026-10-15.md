@@ -215,6 +215,10 @@ serve. So under `database_current` each caller refuses before the token leaves t
 A source scan classifies every file that names a `/clinical-core/workforce/` route as converted, refused or not a Desktop
 caller. A new caller fails until it is classified.
 
+> **Later the same day:** care messages and program assignments are no longer simply refused. They are *gated*:
+> converted in source on both sides and still refused unless the deployment pairs the family with a current-membership
+> service. See `docs/program-messaging-membership-2026-10-15.md`.
+
 ## 5. Evidence
 
 Failing-before runs copied the new tests (and any new pure module or test support they import) into a clean worktree at
