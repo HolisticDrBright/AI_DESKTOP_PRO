@@ -774,3 +774,25 @@ under the practice's settings), patients who decline recording, out-of-state
 patients (the location is recorded, nothing is blocked), and whether to
 restructure Zoom's summary with the platform's AI layer (today it is mapped by
 section label only, never rewritten).
+
+## Exact-source synthetic qualification artifact
+
+The static `telehealth-requests-extension.json` remains the staging template.
+For a **new**, isolated fictional qualification stack, use
+`npm run build:aws-telehealth-qualification -- --target=<reviewed-target.json>`
+from a clean committed Desktop checkout. The target must name the synthetic
+account, region, qualification API and database, current source commit,
+designated fictional identities and non-placeholder database authority. The
+builder refuses dirty source or a target that names the staging API/database.
+
+The generated template pins the API ID, source commit and deployment ZIP key,
+requires an S3 object **version**, and permits only disabled Zoom, reminders and
+Stripe test flags. Its manifest records the SHA-256 of the source target,
+compiled Lambda, deterministic ZIP and template. It performs no upload,
+CloudFormation change, provider activation or hosted test. Before any separate
+deployment, independently verify the signed-in account and API, the reviewed
+target, the uploaded version's bytes and the Lambda's resulting CodeSha256;
+refuse an existing or staging stack name. Then run the fictional hosted
+membership, consent, appointment, cancellation and two-participant race matrix.
+An artifact build or green source test does **not** count as hosted acceptance,
+Zoom approval, PHI readiness or a real-patient launch.

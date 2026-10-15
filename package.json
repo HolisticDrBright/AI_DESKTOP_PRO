@@ -112,6 +112,8 @@
     "build:aws-ask-alp": "node scripts/build-aws-ask-alp.mjs",
     "check:aws-ask-alp": "node scripts/check-aws-ask-alp.mjs",
     "build:aws-telehealth-requests": "node scripts/build-aws-telehealth-requests.mjs",
+    "build:aws-telehealth-qualification": "node scripts/build-aws-telehealth-qualification.mjs",
+    "test:aws-telehealth-qualification": "node --test scripts/telehealth-qualification-template.test.mjs scripts/telehealth-qualification-build.test.mjs",
     "build:aws-consumer-account": "node scripts/build-aws-consumer-account.mjs",
     "build:aws-sync-bridge": "node scripts/build-aws-sync-bridge.mjs",
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
