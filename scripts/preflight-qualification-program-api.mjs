@@ -58,12 +58,13 @@ export function evaluateQualificationProgramPreflight(input) {
     a.AuthorizerType === 'JWT' && a.JwtConfiguration?.Issuer === `https://cognito-idp.${region}.amazonaws.com/${pool}`
       && a.JwtConfiguration?.Audience?.length === 1 && a.JwtConfiguration.Audience[0] === client))) reject('authorizers');
   const row = database?.records?.[0]?.map(field);
-  if (!row || row.length !== 10 || row[0] !== 'clinical_core_qualification' || row[1] !== 112
+  if (!row || row.length !== 15 || row[0] !== 'clinical_core_qualification' || row[1] !== 112
     || row[2] !== ledgerSha256 || row[3] !== false || row[4] !== 0 || row[5] !== false || row[6] !== false
-    || row[7] !== qualificationFunctionSha256 || row[8] !== assignmentFunctionSha256 || row[9] !== 0) reject('database');
+    || row[7] !== qualificationFunctionSha256 || row[8] !== assignmentFunctionSha256 || row[9] !== 0
+    || row.slice(10).some(count => count !== 1)) reject('database');
   return { contract: 'qualification-program-api-preflight/1', account, region, database: row[0],
     sourceCommit, programRouteVacant: true, reviewedBoundaryInstalledButDisabled: true,
-    qualificationSubjects: 0, billing: 'blocked', phiAllowed: false,
+    qualificationSubjects: 0, designatedFictionalAccountsBound: true, billing: 'blocked', phiAllowed: false,
     templateSha256: sha(JSON.stringify(template)), bundleSha256,
     changeSetReady: false, reason: 'requires_reviewed_subjects_and_separate_deployment_review' };
 }
@@ -85,7 +86,25 @@ const databaseSql = `select current_database(),
     where p.oid=to_regprocedure('clinical_private.program_qualification_open()')),
   (select encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') from pg_proc p
     where p.oid=to_regprocedure('clinical_core.production_program_assignment_request(jsonb)')),
-  (select count(*)::int from clinical_core.program_assignments)`;
+  (select count(*)::int from clinical_core.program_assignments),
+  -- Qualification fixtures use production-shaped classification even though the
+  -- account and fixture manifest prohibit real patient data.
+  (select count(*)::int from clinical_core.organizations where id='a82dafa6-190f-4769-bb0a-89f4f318b5aa'
+    and status='active' and data_classification='clinical_phi' and contains_phi=true),
+  (select count(*)::int from clinical_core.identities i join clinical_core.persons p on p.id=i.person_id
+    where i.identity_subject='a16b2580-9091-709c-26f5-543bc0f312a9' and i.identity_pool='consumer'
+    and i.person_id='c6ae03bd-acde-4344-8d6d-95aa1d815ee1' and i.status='active' and i.production_bound
+    and p.status='active' and p.data_classification='clinical_phi' and p.contains_phi=true),
+  (select count(*)::int from clinical_core.identities i join clinical_core.persons p on p.id=i.person_id
+    where i.identity_subject='815b1540-10d1-706c-53f9-6955699ac385' and i.identity_pool='consumer'
+    and i.person_id='cb850e33-20a6-4339-b559-d36f65e8dba9' and i.status='active' and i.production_bound
+    and p.status='active' and p.data_classification='clinical_phi' and p.contains_phi=true),
+  (select count(*)::int from clinical_core.identities i join clinical_core.persons p on p.id=i.person_id
+    where i.identity_subject='31db0500-60b1-70b4-9046-371730a55db5' and i.identity_pool='workforce'
+    and i.person_id='da08c358-0091-406e-8a26-799ca366d822' and i.status='active' and i.production_bound
+    and p.status='active' and p.data_classification='clinical_phi' and p.contains_phi=true),
+  (select count(*)::int from clinical_core.organization_memberships where organization_id='a82dafa6-190f-4769-bb0a-89f4f318b5aa'
+    and person_id='da08c358-0091-406e-8a26-799ca366d822' and role='practitioner' and status='active')`;
 
 async function main() {
   if (process.argv.length !== 3 || process.argv[2] !== '--read-only-fictional') reject('command');

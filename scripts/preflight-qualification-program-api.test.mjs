@@ -42,14 +42,16 @@ function fixture() {
     database: { records: [[text('clinical_core_qualification'), integer(112),
       text('45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4'), boolean(false), integer(0),
       boolean(false), boolean(false), text('83ce2f61711f9fa8b94962cf9330af8eb2e0c984a55e4c0edf2a40764c8a31af'),
-      text('d9c07fec841cd1d68689be602c933fa67cddd343f4ee5228f336efe9362c981d'), integer(0)]] },
+      text('d9c07fec841cd1d68689be602c933fa67cddd343f4ee5228f336efe9362c981d'), integer(0),
+      integer(1), integer(1), integer(1), integer(1), integer(1)]] },
   };
 }
 test('only the exact blocked synthetic target passes the read-only preflight', () => {
   assert.deepEqual(evaluateQualificationProgramPreflight(fixture()), {
     contract: 'qualification-program-api-preflight/1', account: '588966314750', region: 'us-east-2',
     database: 'clinical_core_qualification', sourceCommit: 'a'.repeat(40), programRouteVacant: true,
-    reviewedBoundaryInstalledButDisabled: true, qualificationSubjects: 0, billing: 'blocked', phiAllowed: false,
+    reviewedBoundaryInstalledButDisabled: true, qualificationSubjects: 0,
+    designatedFictionalAccountsBound: true, billing: 'blocked', phiAllowed: false,
     templateSha256: evaluateQualificationProgramPreflight(fixture()).templateSha256, bundleSha256: 'b'.repeat(64),
     changeSetReady: false, reason: 'requires_reviewed_subjects_and_separate_deployment_review',
   });
@@ -66,6 +68,11 @@ test('refuses an account, source, billing, route, authorizer, or database drift'
     x => { x.database.records[0][3] = boolean(true); },
     x => { x.database.records[0][4] = integer(1); },
     x => { x.database.records[0][8] = text('c'.repeat(64)); },
+    x => { x.database.records[0][10] = integer(0); },
+    x => { x.database.records[0][11] = integer(0); },
+    x => { x.database.records[0][12] = integer(0); },
+    x => { x.database.records[0][13] = integer(0); },
+    x => { x.database.records[0][14] = integer(0); },
   ];
   for (const change of changes) {
     const observed = fixture(); change(observed);
