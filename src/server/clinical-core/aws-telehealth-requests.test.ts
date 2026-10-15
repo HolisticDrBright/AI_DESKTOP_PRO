@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash, createHmac } from "node:crypto";
 
-const { send, secretsSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn() }));
+const { send, secretsSend, sesSend } = vi.hoisted(() => ({ send: vi.fn(), secretsSend: vi.fn(), sesSend: vi.fn() }));
 const secretSend = secretsSend;
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
@@ -24,7 +24,7 @@ vi.mock("@aws-sdk/client-secrets-manager", () => ({
 }));
 
 vi.mock("@aws-sdk/client-sesv2", () => ({
-  SESv2Client: class SESv2Client { send = vi.fn(); },
+  SESv2Client: class SESv2Client { send = sesSend; },
   SendEmailCommand: class SendEmailCommand { constructor(readonly input: unknown) {} },
 }));
 
@@ -1810,5 +1810,75 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
     expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({ alg: "HS256", typ: "JWT" });
     expect(JSON.parse(Buffer.from(payload, "base64url").toString())).toMatchObject({ appKey: "sdk-key", mn: "123456789", role: 1 });
     expect(signature).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
+
+describe("text appointment reminders beside the email (patient-notifications/1 port)", () => {
+  const reminders: TelehealthConfiguration = { ...config, remindersEnabled: true, reminderSender: "no-reply@ailongevitypro.app", reminderConfigurationSet: "alp-transactional",
+    reminderScheduleGroup: "group", reminderSchedulerRoleArn: "arn:aws:iam::111122223333:role/reminders", reminderTargetArn: "arn:aws:lambda:us-east-2:111122223333:function:telehealth",
+    reminderEventsTopicArn: "arn:aws:sns:us-east-2:111122223333:telehealth-reminder-events" };
+  const generation = "77777777-7777-4777-8777-777777777777";
+  const start = new Date(Date.now() + 24 * 3_600_000).toISOString();
+  const item = () => ({ ...processingItem(), status: "scheduled", reminderStatus: "scheduled", scheduledStart: start, reminderGeneration: generation });
+  const reminder = (at = start) => ({ internalEvent: "send_appointment_reminder", organizationId: item().organizationId, requestId: item().requestId, scheduledStart: at,
+    reminderProtocol: "appointment-reminder/2", reminderGeneration: generation }) as never;
+  const text = { phone: "+15555550123", timeZone: "America/Los_Angeles", clinicName: "Fictional Clinic" };
+  const port = (plan: { email: boolean; text: typeof text | null; textReason: string | null }) => {
+    const sendText = vi.fn(async () => ({ sent: true }));
+    return { sendText, channels: { channels: vi.fn(async () => plan), sendText } };
+  };
+  const data = (r: { body?: string }) => JSON.parse(r.body ?? "{}").data;
+  beforeEach(() => { send.mockReset(); sesSend.mockReset(); sesSend.mockResolvedValue({ MessageId: "fictional" }); });
+
+  it("refuses to take a text port while reminders are disabled", () => {
+    expect(() => createTelehealthHandler(config, { textReminders: port({ email: true, text, textReason: null }).channels })).toThrow("telehealth_configuration_invalid");
+  });
+  it("sends the email and the text from the same scheduled event, naming the reminder by request, generation and offset", async () => {
+    const { channels, sendText } = port({ email: true, text, textReason: null });
+    send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [item()] });
+    const result = data(await createTelehealthHandler(reminders, { textReminders: channels })(reminder()));
+    expect(result).toEqual({ sent: true, email: { sent: true }, text: { sent: true } });
+    expect(sesSend).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith({ organizationId: item().organizationId, personId: item().consumerPersonId, requestId: item().requestId,
+      generation, offset: "24h", scheduledStart: start, text });
+  });
+  it("honours the patient turning reminder emails off; a bounced address still gets the text", async () => {
+    const off = port({ email: false, text, textReason: null });
+    send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({ Items: [item()] });
+    expect(data(await createTelehealthHandler(reminders, { textReminders: off.channels })(reminder()))).toEqual({ sent: true, email: { sent: false, reason: "patient_preference" }, text: { sent: true } });
+    expect(sesSend).not.toHaveBeenCalled();
+    const bounced = port({ email: true, text, textReason: null });
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({ Item: { pk: "EMAIL_SUPPRESSION", sk: "hash" } }).mockResolvedValueOnce({ Items: [item()] });
+    expect(data(await createTelehealthHandler(reminders, { textReminders: bounced.channels })(reminder()))).toEqual({ sent: true, email: { sent: false, reason: "suppressed" }, text: { sent: true } });
+    expect(sesSend).not.toHaveBeenCalled();
+  });
+  it("sends no text without consent and says why; the email is unchanged", async () => {
+    const { channels, sendText } = port({ email: true, text: null, textReason: "consent_inactive" });
+    send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [item()] });
+    expect(data(await createTelehealthHandler(reminders, { textReminders: channels })(reminder()))).toEqual({ sent: true, email: { sent: true }, text: { sent: false, reason: "consent_inactive" } });
+    expect(sendText).not.toHaveBeenCalled();
+  });
+  it("a cancelled or rescheduled visit sends nothing on either channel, before preferences are even read", async () => {
+    for (const changed of [{ ...item(), status: "cancelled", reminderStatus: "disabled" }, { ...item(), scheduledStart: new Date(Date.now() + 48 * 3_600_000).toISOString() }]) {
+      const { channels, sendText } = port({ email: true, text, textReason: null });
+      send.mockReset(); send.mockResolvedValueOnce({ Items: [changed] });
+      expect(data(await createTelehealthHandler(reminders, { textReminders: channels })(reminder()))).toEqual({ sent: false, reason: "stale" });
+      expect(channels.channels).not.toHaveBeenCalled(); expect(sendText).not.toHaveBeenCalled(); expect(sesSend).not.toHaveBeenCalled();
+    }
+  });
+  it("a change between the two reads sends nothing, and an unreadable preference sends nothing rather than guess", async () => {
+    const { channels, sendText } = port({ email: true, text, textReason: null });
+    send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [{ ...item(), status: "cancelled", reminderStatus: "disabled" }] });
+    expect(data(await createTelehealthHandler(reminders, { textReminders: channels })(reminder()))).toEqual({ sent: false, reason: "stale" });
+    expect(sendText).not.toHaveBeenCalled(); expect(sesSend).not.toHaveBeenCalled();
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [item()] });
+    const broken = { channels: vi.fn(async () => { throw new Error("down"); }), sendText };
+    expect(data(await createTelehealthHandler(reminders, { textReminders: broken })(reminder()))).toEqual({ sent: false, reason: "preferences_unavailable" });
+    expect(sesSend).not.toHaveBeenCalled();
+  });
+  it("without the port the reminder is exactly the existing email path", async () => {
+    send.mockResolvedValueOnce({ Items: [item()] }).mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [item()] });
+    expect(data(await createTelehealthHandler(reminders)(reminder()))).toEqual({ sent: true });
+    expect(sesSend).toHaveBeenCalledTimes(1);
   });
 });

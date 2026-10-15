@@ -5,6 +5,7 @@ import {CareMessagesPanel} from '@/components/inbox/CareMessagesPanel';
 import {AppProgramAssignmentsPanel} from '@/components/programs/AppProgramAssignmentsPanel';
 import {DisputeQueuePanel} from '@/components/governance/DisputeQueuePanel';
 import {ClinicRecordRequestsPanel} from '@/components/governance/ClinicRecordRequestsPanel';
+import {patientNotificationSwitches} from '@/server/notifications/notification-switches';
 
 export const metadata: Metadata = { title: "Inbox — AI Longevity Pro" };
 
@@ -40,7 +41,9 @@ export default async function InboxPage({
           answered from the same place: nothing here deletes, and nothing is fulfilled by submitting. */}
       <ClinicRecordRequestsPanel />
       <CareMessagesPanel />
-      <AppProgramAssignmentsPanel />
+      {/* A linked patient's reminder and notice choices appear beside them, read only, only when
+          NOTIFICATION_PREFERENCES_ENABLED is on. */}
+      <AppProgramAssignmentsPanel notificationChoices={patientNotificationSwitches(process.env).NOTIFICATION_PREFERENCES_ENABLED} />
       <InboxWorkspace initialThreadId={thread} />
     </section>
   );
