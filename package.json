@@ -110,6 +110,7 @@
     "test:aws-qualification-program-api": "node --test scripts/qualification-program-api-candidate.test.mjs",
     "test:aws-qualification-program-api-successor": "node --test scripts/qualification-program-api-successor.test.mjs",
     "test:aws-qualification-program-api-restricted-credential": "node --test scripts/qualification-program-api-restricted-credential.test.mjs",
+    "test:aws-qualification-program-credential-operator": "node --test scripts/qualification-program-credential-operator.test.mjs",
     "test:qualification-program-api-preflight": "node --test scripts/preflight-qualification-program-api.test.mjs",
     "build:inventory-qualification-identity-mapping": "node scripts/build-inventory-qualification-identity-mapping.mjs",
     "build:aws-chat-transcription": "node scripts/build-aws-chat-transcription.mjs",
