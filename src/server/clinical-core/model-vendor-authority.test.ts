@@ -89,7 +89,8 @@ describe("model vendor authority", () => {
     expect(parseModelVendorAuthority(ACTIVE)).toEqual(ACTIVE);
     for (const bad of [
       null, "active", { ...ACTIVE, record: "other/1" }, { ...ACTIVE, state: "paused" }, { ...ACTIVE, retention: "zero" },
-      { ...ACTIVE, agreement: "" }, { ...ACTIVE, effectiveAt: "17/09/2026" }, { ...ACTIVE, extra: true },
+      { ...ACTIVE, agreement: "" }, { ...ACTIVE, effectiveAt: "17/09/2026" },
+      { ...ACTIVE, effectiveAt: "2026-02-31" }, { ...ACTIVE, extra: true },
       { ...SCOPED, projectId: "" }, { ...SCOPED, organizationId: "" },
       { ...SCOPED, agreementReviewSha256: "unreviewed" }, { ...SCOPED, retentionReviewSha256: "unreviewed" },
       { ...SCOPED, extra: true },

@@ -63,6 +63,11 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const ORGANIZATION_ID = /^org-[A-Za-z0-9_-]+$/;
 const PROJECT_ID = /^proj-[A-Za-z0-9_-]+$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const validDay = (value: unknown): value is string => {
+  if (typeof value !== "string" || !DAY.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
 
 /** Strict: an authority record that cannot be read is an authority that does not exist. */
 export function parseModelVendorAuthority(value: unknown): ModelVendorAuthority {
@@ -76,7 +81,7 @@ export function parseModelVendorAuthority(value: unknown): ModelVendorAuthority 
     || typeof row.state !== "string" || !(MODEL_VENDOR_AUTHORITY_STATES as readonly string[]).includes(row.state)
     || typeof row.retention !== "string" || !(MODEL_VENDOR_RETENTION_MODES as readonly string[]).includes(row.retention)
     || typeof row.agreement !== "string" || !AGREEMENT.test(row.agreement)
-    || typeof row.effectiveAt !== "string" || !DAY.test(row.effectiveAt) || !Number.isFinite(Date.parse(row.effectiveAt))
+    || !validDay(row.effectiveAt)
     || (scoped && (typeof row.organizationId !== "string" || !ORGANIZATION_ID.test(row.organizationId)
       || typeof row.projectId !== "string" || !PROJECT_ID.test(row.projectId)
       || typeof row.agreementReviewSha256 !== "string" || !SHA256.test(row.agreementReviewSha256)
