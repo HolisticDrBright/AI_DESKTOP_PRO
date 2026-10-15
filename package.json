@@ -103,6 +103,8 @@
     "check:aws-governed-catalog": "node scripts/check-aws-governed-catalog.mjs",
     "check:aws-governed-catalog-api": "node --test scripts/check-aws-governed-catalog-api.test.mjs && node scripts/check-aws-governed-catalog-api.mjs",
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
+    "build:aws-qualification-program-api": "node scripts/build-qualification-program-api.mjs",
+    "test:aws-qualification-program-api": "node --test scripts/qualification-program-api-candidate.test.mjs",
     "build:inventory-qualification-identity-mapping": "node scripts/build-inventory-qualification-identity-mapping.mjs",
     "build:aws-chat-transcription": "node scripts/build-aws-chat-transcription.mjs",
     "check:aws-chat-transcription": "node scripts/check-aws-chat-transcription.mjs",

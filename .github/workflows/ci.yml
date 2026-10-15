@@ -302,6 +302,8 @@ jobs:
         run: npm run check:aws-identity-consent
       - name: AWS authenticated synthetic API safety gate
         run: npm run check:aws-authenticated-api
+      - name: Isolated fictional program API candidate (source-only)
+        run: npm run test:aws-qualification-program-api
       - name: AWS deployed synthetic acceptance harness gate
         run: npm run check:aws-deployment-acceptance
       - name: AWS governed catalog and read API safety gates
@@ -323,6 +325,7 @@ jobs:
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint infra/aws-clinical-core/telehealth-requests-extension.json
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
+          cfn-lint infra/aws-clinical-core/qualification-program-api-candidate.json
       - name: Build and validate independent voice deployment candidate (no deployment)
         run: |
           node scripts/build-aws-owned-voice.mjs
