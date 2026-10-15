@@ -14,6 +14,7 @@ export const PRODUCTION_PILOT_SCOPE: ProductionPilotScope = "lab_intake_only";
 
 export const PRODUCTION_PILOT_ROUTE_KEYS = new Set([
   "GET /clinical-core/workforce/posture",
+  "GET /clinical-core/workforce/memberships/current",
   "GET /clinical-core/consumer/posture",
   "POST /clinical-core/workforce/invitations",
   "POST /clinical-core/consumer/invitations/claim",

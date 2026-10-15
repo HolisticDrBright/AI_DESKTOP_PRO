@@ -18,6 +18,11 @@ import { PatientNutritionLive } from "@/components/nutrition/PatientNutritionLiv
 import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
 import { patientAppIntakeLive } from "@/adapters/patient-app-intake.live";
 import type { LivePatientAppIntake } from "@/adapters/live-types";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import type { SelectedClinic } from "@/adapters/selected-clinic.server";
+import { pageClinicBinding } from "@/server/clinic-fence";
+import { ClinicBindingMark } from "@/components/shell/ClinicBindingMark";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = {
@@ -51,13 +56,24 @@ function LiveHold({ patientId, label }: { patientId: string; label: string }) {
   );
 }
 
-export default async function PatientTabPage({
-  params,
-  searchParams,
-}: {
+type PatientTabProps = {
   params: Promise<{ patientId: string; tab: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+};
+
+/** Every tab renders under one selection, and records that clinic binding for its browser tab. */
+export default async function PatientTabPage(props: PatientTabProps) {
+  const selection = await getRequestSelectedClinic();
+  const content = await renderPatientTab(props, selection);
+  return (
+    <>
+      <ClinicBindingMark token={pageClinicBinding(selection)} />
+      {content}
+    </>
+  );
+}
+
+async function renderPatientTab({ params, searchParams }: PatientTabProps, selection: SelectedClinic) {
   const { patientId, tab } = await params;
   const sp = await searchParams;
   const view = typeof sp.view === "string" ? sp.view : undefined;
@@ -77,7 +93,7 @@ export default async function PatientTabPage({
   if (!isPatientTabId(tab)) notFound();
 
   const session = await getRequestSession();
-  const patient = await api.patients.get(patientId, session.token, session.orgId);
+  const patient = await withSelectedClinic(selection, () => api.patients.get(patientId, session.token, session.orgId));
   if (!patient) notFound();
   const name = patient.name;
   const syntheticOnly =
@@ -86,7 +102,7 @@ export default async function PatientTabPage({
   let initialAppIntake: LivePatientAppIntake | null = null;
   if (showsPatientAppData) {
     try {
-      initialAppIntake = await patientAppIntakeLive.get(patientId, session.orgId, session.token);
+      initialAppIntake = await withSelectedClinic(selection, () => patientAppIntakeLive.get(patientId, session.orgId, session.token));
       console.info("[patient-app-intake:ssr] loaded", {
         connectionState: initialAppIntake.connectionState,
         questionnaireCount: initialAppIntake.questionnaireResponses.length,

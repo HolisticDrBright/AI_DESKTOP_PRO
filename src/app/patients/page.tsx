@@ -4,6 +4,10 @@ import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
 import { ClinicalError } from "@/components/ui/ClinicalStates";
 import { getRequestSession } from "@/server/session";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { pageClinicBinding } from "@/server/clinic-fence";
+import { ClinicBindingMark } from "@/components/shell/ClinicBindingMark";
 
 export const metadata: Metadata = { title: "Patients — AI Longevity Pro" };
 
@@ -15,11 +19,17 @@ export const metadata: Metadata = { title: "Patients — AI Longevity Pro" };
 export default async function PatientsPage() {
   try {
     const session = await getRequestSession();
-    const entries = await api.patients.list(session.token, session.orgId);
+    const selection = await getRequestSelectedClinic();
+    const entries = await withSelectedClinic(selection, () => api.patients.list(session.token, session.orgId));
     const syntheticOnly =
       process.env.APP_RUNTIME_ENV === "staging" ||
       process.env.CLINICAL_DATA_PLANE === "supabase_staging";
-    return <LiveClientDirectory entries={entries} syntheticOnly={syntheticOnly} />;
+    return (
+      <>
+        <ClinicBindingMark token={pageClinicBinding(selection)} />
+        <LiveClientDirectory entries={entries} syntheticOnly={syntheticOnly} />
+      </>
+    );
   } catch (e) {
     const code = isAdapterError(e) ? e.code : "unknown";
     const message = isAdapterError(e) ? e.safeMessage : "Unable to load the directory right now.";

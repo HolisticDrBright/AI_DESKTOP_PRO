@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIES, cookieOptions } from "@/adapters/auth.server";
 import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
-import { organizationsLive } from "@/adapters/organizations.live";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { getRequestSession } from "@/server/session";
+import { clinicalAuthorityMode } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
+import { clinicChoices } from "@/server/clinic-choices";
 
 const WEEK = 60 * 60 * 24 * 7;
 
@@ -21,12 +23,22 @@ export async function GET() {
   try {
     const session = await getRequestSession();
     const token = await getClinicalAccessToken(session.token);
-    const orgs = await organizationsLive.mine(token);
+    // Under database_current the list is the subject's own discovery, read without any selection, so a first clinic
+    // can be chosen; pending memberships are listed apart and are not choices. The active clinic is the session's
+    // selection only while it is bound to this account and still among its clinics.
+    const { clinics, pending } = await clinicChoices(token);
+    let activeOrgId = session.orgId;
+    if (clinicalAuthorityMode() === "database_current") {
+      const selection = await getRequestSelectedClinic();
+      activeOrgId = selection.state === "selected" && clinics.some((clinic) => clinic.organizationId === selection.organizationId)
+        ? selection.organizationId : null;
+    }
     return NextResponse.json({
       data: {
         mode: "live",
-        organizations: orgs.filter((o) => o.organizationId),
-        activeOrgId: session.orgId,
+        organizations: clinics,
+        activeOrgId,
+        ...(clinicalAuthorityMode() === "database_current" ? { pending } : {}),
       },
     });
   } catch (e) {
@@ -49,15 +61,21 @@ export async function POST(req: NextRequest) {
     }
     const session = await getRequestSession();
     const token = await getClinicalAccessToken(session.token);
-    const orgs = await organizationsLive.mine(token);
-    const match = orgs.find((o) => o.organizationId === body.organizationId);
+    // The chosen clinic must be one of this account's own clinics, read now. Under database_current that is the
+    // subject-only discovery: the requested id is only compared with it, never sent as a selection to ask with.
+    const { clinics, pending } = await clinicChoices(token);
+    const requested = body.organizationId.toLowerCase();
+    const match = clinics.find((o) => o.organizationId === (clinicalAuthorityMode() === "database_current" ? requested : body.organizationId));
     if (!match) {
+      if (pending.some((clinic) => clinic.organizationId === requested)) {
+        throw new AdapterError("forbidden", "Your membership at that clinic is awaiting approval.", "clinic_membership_pending");
+      }
       throw new AdapterError("forbidden", "You are not a member of that organization.");
     }
     const res = NextResponse.json({
       data: { activeOrgId: match.organizationId, name: match.name },
     });
-    res.cookies.set(AUTH_COOKIES.org, body.organizationId, cookieOptions(WEEK));
+    writeSelectedClinic(res, match.organizationId!, token, WEEK);
     return res;
   } catch (e) {
     const err = toAdapterError(e);

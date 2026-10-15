@@ -4,10 +4,13 @@ import { describeMode } from "@/adapters/mode";
 import { cookies } from "next/headers";
 import { readAuthSession } from "@/adapters/auth.server";
 import { getLiveServerStatus } from "@/adapters/live-status.server";
-import { organizationsLive } from "@/adapters/organizations.live";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { OrgSwitcher } from "@/components/settings/OrgSwitcher";
 import { Card, CardTitle } from "@/components/ui/bits";
+import { clinicChoices } from "@/server/clinic-choices";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { pageClinicBinding } from "@/server/clinic-fence";
+import { ClinicBindingMark } from "@/components/shell/ClinicBindingMark";
 
 /**
  * Data source & environment status (server component).
@@ -26,9 +29,13 @@ export async function DataSourceCard() {
   // shows the honest state; service configuration has its own rows below).
   let organizations: { organizationId: string; name: string | null; role: string }[] = [];
   let organizationLookupFailed = false;
+  // Memberships still awaiting a clinic's approval: shown, never offered as a choice.
+  let pendingClinics: { organizationId: string; name: string }[] = [];
   if (mode.live && session?.signedIn && session.accessToken) {
     try {
-      const orgs = await organizationsLive.mine(session.accessToken);
+      const choices = await clinicChoices(session.accessToken);
+      pendingClinics = choices.pending;
+      const orgs = choices.clinics;
       organizations = orgs
         .filter((o): o is typeof o & { organizationId: string } => Boolean(o.organizationId))
         .map((o) => ({ organizationId: o.organizationId, name: o.name, role: o.role }));
@@ -38,6 +45,7 @@ export async function DataSourceCard() {
     }
   }
   const activeOrg = organizations.find((o) => o.organizationId === session?.orgId) ?? null;
+  const tabBinding = mode.live && session?.signedIn ? pageClinicBinding(await getRequestSelectedClinic()) : null;
   const overrideNames = [
     mode.devOverrides.orgId && "org",
     mode.devOverrides.patientId && "patient",
@@ -131,7 +139,13 @@ export async function DataSourceCard() {
                           ? "Temporarily unavailable"
                         : "No memberships found"}
                   </span>
+                  <ClinicBindingMark token={tabBinding} />
                   <OrgSwitcher organizations={organizations} activeOrgId={session.orgId} />
+                  {pendingClinics.length > 0 && (
+                    <span className="text-[11px] text-muted" data-testid="pending-clinics">
+                      Awaiting approval: {pendingClinics.map((clinic) => clinic.name).join(", ")}
+                    </span>
+                  )}
                   {organizationLookupFailed && (
                     <Link
                       href="/api/auth/org/auto?next=/patients"

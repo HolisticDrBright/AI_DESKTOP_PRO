@@ -2,8 +2,11 @@ if(typeof window!=='undefined')throw new Error('Cleanup review is server-only');
 import {AdapterError,codeFromHttpStatus} from './errors';
 import {cleanupReviewRequestSchema,parseCleanupReviewResponse} from '@/contracts/recordingCleanupReview';
 import {readBoundedRequestBody} from '@/server/bounded-request-body';
+import {CLINIC_MEMBERSHIP_REFUSAL,CLINIC_MEMBERSHIP_REFUSAL_MESSAGE,refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 export async function recordingCleanupReviewRequest(input:unknown,token:string|null,signal?:AbortSignal){
   if(!token)throw new AdapterError('unauthenticated');
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if(refusedUnderClinicMembership('encounter_recording'))throw new AdapterError('unavailable',CLINIC_MEMBERSHIP_REFUSAL_MESSAGE,CLINIC_MEMBERSHIP_REFUSAL);
   const parsed=cleanupReviewRequestSchema.safeParse(input);if(!parsed.success)throw new AdapterError('invalid');
   let origin:URL;try{origin=new URL(process.env.RECORDING_CLEANUP_REVIEW_API_ORIGIN??'');}catch{throw new AdapterError('unavailable');}
   if(origin.protocol!=='https:'||origin.pathname!=='/'||origin.username||origin.password||origin.search||origin.hash||origin.port

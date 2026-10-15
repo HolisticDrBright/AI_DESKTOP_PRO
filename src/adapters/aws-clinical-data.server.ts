@@ -8,6 +8,7 @@ import {
   type AdapterErrorCode,
 } from "./errors";
 import { getContractFixtureTransport } from "@/server/runtime/contractFixture";
+import { selectedClinicHeaders } from "./selected-clinic.server";
 import {labSpecimenRecordSchema} from "@/contracts/labSpecimenTransfer";
 import {z} from "zod";
 
@@ -82,13 +83,26 @@ function clinicalConfig(): ClinicalTransport {
   return { kind: "aws", origin: url.origin };
 }
 
+type ClinicalOperation = { kind: "select"; table: string; query: string }
+  | { kind: "rpc"; functionName: string; args: Record<string, unknown> };
+
+/** The clinic an operation names itself, if any: an RPC's `_organization_id`, or a select's `organization_id=eq.`. */
+function operationOrganization(operation: ClinicalOperation): string | null {
+  if (operation.kind === "rpc") {
+    const value = operation.args._organization_id;
+    return value === undefined || value === null ? null : String(value);
+  }
+  const filter = new URLSearchParams(operation.query).get("organization_id");
+  return filter && filter.startsWith("eq.") ? filter.slice(3) : null;
+}
+
 async function request<T>(
-  operation: { kind: "select"; table: string; query: string }
-    | { kind: "rpc"; functionName: string; args: Record<string, unknown> },
+  operation: ClinicalOperation,
   token?: string | null,
 ): Promise<T> {
   if (!token) throw new AdapterError("unauthenticated");
   const config = clinicalConfig();
+  const clinic = config.kind === "aws" ? selectedClinicHeaders(token, operationOrganization(operation)) : {};
   const localPath = operation.kind === "select"
     ? `${operation.table}?${operation.query}`
     : `rpc/${operation.functionName}`;
@@ -115,9 +129,12 @@ async function request<T>(
               ...(config.kind === "local-contract" ? { "Content-Profile": "public" } : {}),
             }
           : {}),
+        ...clinic,
       },
       body: body ? JSON.stringify(body) : undefined,
       cache: "no-store",
+      // A redirect would carry the bearer and the clinic header to another host; the API never redirects.
+      ...(config.kind === "aws" ? { redirect: "error" as const } : {}),
     });
   } catch (error) {
     throw new AdapterError(
@@ -180,6 +197,7 @@ export async function clinicalLabSpecimenContext(
   if(!parsed.success||!orgId)throw new AdapterError("invalid");
   const config=clinicalConfig();
   if(config.kind!=="aws")throw new AdapterError("unavailable");
+  const clinic=selectedClinicHeaders(token,orgId);
   const rows=await clinicalRpc<Array<{id:string;import_event_id?:string;observed_at:string}>>(
     "list_patient_lab_observations",{_organization_id:orgId,_patient_id:selection.patientId},token);
   const matches=Array.isArray(rows)?rows.filter(r=>r.id===selection.observationId&&r.import_event_id===selection.eventId):[];
@@ -187,7 +205,7 @@ export async function clinicalLabSpecimenContext(
   let response:Response;
   try{
     response=await fetch(`${config.origin}/clinical-core/workforce/labs/specimen-context?eventId=${encodeURIComponent(selection.eventId)}`,{
-      method:"GET",headers:{Authorization:`Bearer ${token}`,Accept:"application/json"},
+      method:"GET",headers:{Authorization:`Bearer ${token}`,Accept:"application/json",...clinic},
       cache:"no-store",redirect:"error",signal:AbortSignal.timeout(15000),
     });
   }catch{throw new AdapterError("unavailable");}
@@ -201,4 +219,46 @@ export async function clinicalLabSpecimenContext(
   if(record&&(record.labEventId!==selection.eventId||typeof matches[0].observed_at!=="string"
     ||record.context.observedOn!==matches[0].observed_at.slice(0,10)))throw new AdapterError("unavailable");
   return record;
+}
+
+/**
+ * The signed-in subject's clinics, before any clinic is selected (`database_current` only): the identity API's
+ * subject-only discovery route. It is the one clinical call that sends NO selected-clinic header, because it is how a
+ * first clinic is chosen. `clinics` are active clinical memberships; `pending` await approval and are not access.
+ */
+const discoverySchema = z.object({
+  clinics: z.array(z.object({
+    organizationId: z.string().uuid(), name: z.string().max(200), role: z.enum(["owner", "admin", "practitioner", "staff"]),
+  }).strict()).max(200),
+  pending: z.array(z.object({ organizationId: z.string().uuid(), name: z.string().max(200) }).strict()).max(200),
+}).strict();
+export type ClinicMembershipDiscovery = z.infer<typeof discoverySchema>;
+
+export async function clinicalMembershipDiscovery(token: string | null): Promise<ClinicMembershipDiscovery> {
+  if (!token) throw new AdapterError("unauthenticated");
+  const config = clinicalConfig();
+  if (config.kind !== "aws") throw new AdapterError("unavailable", undefined, "clinic_discovery_unavailable");
+  let response: Response;
+  try {
+    response = await fetch(`${config.origin}/clinical-core/workforce/memberships/current`, {
+      method: "GET", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15000),
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+  } catch (error) {
+    throw new AdapterError("unavailable", undefined, `AWS clinic discovery fetch: ${error instanceof Error ? error.name : "network error"}`);
+  }
+  let payload: unknown;
+  try { payload = await response.json(); } catch {
+    throw new AdapterError("unknown", undefined, `AWS clinic discovery returned non-JSON (${response.status})`);
+  }
+  if (!response.ok) {
+    const serverCode = payload && typeof payload === "object" ? (payload as ClinicalServiceError).code ?? (payload as { error?: string }).error : undefined;
+    throw new AdapterError(mapClinicalServiceError(response.status, serverCode), undefined, `AWS clinic discovery ${response.status}`);
+  }
+  const parsed = discoverySchema.safeParse(payload && typeof payload === "object" ? (payload as { data?: unknown }).data : undefined);
+  if (!parsed.success) throw new AdapterError("unknown", undefined, "AWS clinic discovery envelope invalid");
+  return {
+    clinics: parsed.data.clinics.map((clinic) => ({ ...clinic, organizationId: clinic.organizationId.toLowerCase() })),
+    pending: parsed.data.pending.map((clinic) => ({ ...clinic, organizationId: clinic.organizationId.toLowerCase() })),
+  };
 }

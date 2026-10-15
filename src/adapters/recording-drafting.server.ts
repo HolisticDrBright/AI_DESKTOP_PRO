@@ -2,12 +2,15 @@ if (typeof window !== 'undefined') throw new Error('Recording drafting is server
 import { AdapterError, codeFromHttpStatus } from './errors';
 import { draftingOperationSchema, parseDraftingResponse } from '@/contracts/encounterRecordingDrafting';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
+import { CLINIC_MEMBERSHIP_REFUSAL, CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, refusedUnderClinicMembership } from '@/server/clinic-authority-families';
 
 /** A distinct, configured drafting service. Never the consent, capture or
  * transcription endpoint, compatibility RPC or a fixture. Bearer identity is
  * cookie-derived. Proposed text passes through unlogged. */
 export async function recordingDraftingRequest(input: unknown, token: string | null, signal?: AbortSignal) {
   if (!token) throw new AdapterError('unauthenticated');
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if (refusedUnderClinicMembership('encounter_recording')) throw new AdapterError('unavailable', CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, CLINIC_MEMBERSHIP_REFUSAL);
   const parsed = draftingOperationSchema.safeParse(input);
   if (!parsed.success) throw new AdapterError('invalid');
   let origin: URL;

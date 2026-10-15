@@ -44,6 +44,7 @@ import type {
   TelehealthVisit,
   TelehealthWithdrawInput,
 } from "./telehealth.types";
+import { selectedClinicHeaders } from "./selected-clinic.server";
 
 const HOST = /^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -108,6 +109,14 @@ const ERROR_MESSAGES: Record<string, { code: AdapterError["code"]; message: stri
   },
   not_found: { code: "not_found", message: "This visit record isn't available." },
   identity_refused: { code: "forbidden", message: "You don't have access to this visit." },
+  membership_fence_unavailable: {
+    code: "unavailable",
+    message: "This telehealth change is not available yet under clinic-membership sign-in. Reading visits still works.",
+  },
+  membership_changed: {
+    code: "conflict",
+    message: "Your clinic membership changed while this was being saved, so it was not kept. Reload to continue.",
+  },
   request_invalid: { code: "invalid", message: "That action couldn't be completed as requested." },
 };
 
@@ -117,6 +126,9 @@ async function request<T>(
   init?: { method?: "GET" | "POST"; body?: Record<string, unknown> },
 ): Promise<T> {
   const method = init?.method ?? (init?.body ? "POST" : "GET");
+  const fixture = getContractFixtureTransport();
+  // The session's own selected clinic under database_current (never a body or appointment field); nothing otherwise.
+  const clinic = fixture ? {} : selectedClinicHeaders(token, null);
   let response: Response;
   try {
     response = await fetch(`${origin()}${path}`, {
@@ -127,6 +139,7 @@ async function request<T>(
         authorization: `Bearer ${token}`,
         accept: "application/json",
         ...(init?.body ? { "content-type": "application/json" } : {}),
+        ...clinic,
       },
       ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
     });

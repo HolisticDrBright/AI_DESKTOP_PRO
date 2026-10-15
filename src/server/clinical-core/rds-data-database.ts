@@ -431,6 +431,8 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   if (/\brecording_cleanup_attempt_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bowned_account_deletion_write_blocked\b/.test(message)) return new ClinicalCoreDatabaseRejection("account_deletion_write_blocked");
+  // The BLOCKED membership-fence guard: an authority-reducing change without the fence writer's acknowledgement.
+  if (/\bmembership_fence_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bzoom_host_binding_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\bzoom_host_binding_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\b(zoom_host_actor_refused|zoom_host_appointment_refused|zoom_host_binding_refused)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");

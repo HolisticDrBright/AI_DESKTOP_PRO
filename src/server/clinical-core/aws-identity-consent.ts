@@ -167,8 +167,57 @@ export interface AwsIdentityConsentAdapter<Context extends ClinicalRequestContex
   }): Promise<ConsentResult>;
 }
 
+/** The verified Cognito subject and the clinic this request selected; nothing else from the token is authority. */
+export type CurrentWorkforcePrincipal = { subject: string; selectedOrganizationId: string };
+
+/** The person, clinic and role resolved from current rows for one request. */
+export type CurrentWorkforceMembership = { organizationId: string; role: "owner" | "admin" | "practitioner" | "staff" };
+
+/**
+ * The signed-in subject's clinics, from current rows and before any clinic is selected: `clinics` are active
+ * memberships with a clinical role, `pending` are memberships still awaiting approval and carry no role (not access).
+ * Nothing about any patient or record is in it.
+ */
+export type WorkforceMembershipDiscovery = {
+  clinics: Array<{ organizationId: string; name: string; role: CurrentWorkforceMembership["role"] }>;
+  pending: Array<{ organizationId: string; name: string }>;
+};
+
+/**
+ * The workforce identity and consent family under the unactivated `database_current` authority.
+ *
+ * Every call opens its own transaction and first runs `clinical_private.set_current_workforce_context` (the
+ * UNREGISTERED current-membership candidate). That resolves the person, clinic and role from current identity,
+ * person, clinic and membership rows for the signed-in subject and the selected clinic, and locks them for the rest
+ * of the transaction. The operation then runs in that same transaction, under the same SQL authority checks as the
+ * legacy path (`has_clinical_role` for writes, row-level security for reads). No organization, person or role is
+ * read from the token, and `set_request_context` (which trusts the claimed person and clinic) is never called.
+ */
+export interface CurrentMembershipIdentityConsent {
+  /** Subject-only: the UNREGISTERED discovery candidate, for choosing a first clinic. It binds no request context. */
+  discoverMemberships(subject: string): Promise<WorkforceMembershipDiscovery>;
+  /** The current membership, with the caller's own person id: a fenced telehealth write is recorded as that person. */
+  posture(principal: CurrentWorkforcePrincipal): Promise<CurrentWorkforceMembership & { personId: string }>;
+  getCurrentConsentArtifact(principal: CurrentWorkforcePrincipal, input: { scope: ConsentScope }): Promise<ConsentArtifactResult>;
+  getCurrentConsent(principal: CurrentWorkforcePrincipal, input: {
+    scope: ConsentScope; patientRecordId?: string; consumerPersonId?: string;
+  }): Promise<CurrentConsentResult>;
+  issueInvitation(principal: CurrentWorkforcePrincipal, input: {
+    patientRecordId: string; expiresAt: string; idempotencyKey?: string;
+  }): Promise<InvitationResult>;
+  recordConsent(principal: CurrentWorkforcePrincipal, input: {
+    connectionId: string; artifactId: string; scope: ConsentScope; method: ConsentMethod; representativeAuthority: RepresentativeAuthority;
+  }): Promise<ConsentResult>;
+  revokeConsent(principal: CurrentWorkforcePrincipal, input: {
+    connectionId: string; scope: ConsentScope; reasonCode: "patient_request" | "scope_changed" | "connection_revoked";
+  }): Promise<ConsentResult>;
+}
+
 export type AwsSyntheticIdentityConsentAdapter = AwsIdentityConsentAdapter<SyntheticRequestContext>;
-export type AwsProductionIdentityConsentAdapter = AwsIdentityConsentAdapter<ProductionClinicalRequestContext>;
+export type AwsProductionIdentityConsentAdapter = AwsIdentityConsentAdapter<ProductionClinicalRequestContext> & {
+  /** Present on the production adapter; reached only when the API's authority mode is `database_current`. */
+  currentMembership?: CurrentMembershipIdentityConsent;
+};
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INVITATION_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -193,7 +242,10 @@ export function createAwsSyntheticIdentityConsentAdapter(
 export function createAwsProductionIdentityConsentAdapter(
   database: ClinicalCoreDatabase,
 ): AwsProductionIdentityConsentAdapter {
-  return createAwsIdentityConsentAdapter(database, "production");
+  return {
+    ...createAwsIdentityConsentAdapter<ProductionClinicalRequestContext>(database, "production"),
+    currentMembership: createCurrentMembershipIdentityConsent(database),
+  };
 }
 
 function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>(
@@ -205,130 +257,20 @@ function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>
       // Consumers read it to sign; workforce reads it to record an attested
       // signature against the exact approved version and hash.
       assertContext(input.context, boundary, undefined, "consent_management");
-      if (!CONSENT_SCOPES.includes(input.scope)) {
-        throw new ClinicalCoreAdapterError("consent_precondition_failed");
-      }
-      const row = await run(database, input.context, async (tx) => firstRow<{
-        id: string;
-        scope: ConsentScope;
-        artifact_version: string;
-        content_sha256: string;
-        jurisdiction: string;
-        approved_at: string;
-      }>(await tx.query(
-        `select id, scope, artifact_version, content_sha256, jurisdiction, approved_at
-           from clinical_core.consent_artifacts
-          where organization_id=$1 and scope=$2 and status='approved'
-          order by approved_at desc, created_at desc limit 1`,
-        [clinicalUuid(input.context.organizationId), input.scope],
-      ), "consent_precondition_failed"), "consent_precondition_failed");
-      return {
-        artifactId: row.id,
-        scope: row.scope,
-        artifactVersion: row.artifact_version,
-        contentSha256: row.content_sha256,
-        jurisdiction: row.jurisdiction,
-        approvedAt: row.approved_at,
-      };
+      assertConsentScope(input.scope);
+      return run(database, input.context, (tx) => readConsentArtifact(tx, input.context, input.scope), "consent_precondition_failed");
     },
 
     async getCurrentConsent(input) {
       assertContext(input.context, boundary, "workforce", "consent_management");
-      if (!CONSENT_SCOPES.includes(input.scope)) {
-        throw new ClinicalCoreAdapterError("consent_precondition_failed");
-      }
-      const byPatient = typeof input.patientRecordId === "string";
-      const byConsumer = typeof input.consumerPersonId === "string";
-      if (byPatient === byConsumer) throw new ClinicalCoreAdapterError("request_context_invalid");
-      if (byPatient) assertUuid(input.patientRecordId as string);
-      if (byConsumer) assertUuid(input.consumerPersonId as string);
-      const rows = await run(database, input.context, async (tx) => (await tx.query<{
-        patient_record_id: string;
-        connection_id: string;
-        consent_id: string | null;
-        artifact_id: string | null;
-        artifact_version: string | null;
-        content_sha256: string | null;
-        artifact_status: "approved" | "retired" | null;
-        status: "granted" | "revoked" | null;
-        method: ConsentMethod | null;
-        representative_authority: RepresentativeAuthority | null;
-        version: number | null;
-        recorded_at: string | null;
-      }>(
-        `select c.patient_record_id, c.id as connection_id,
-                g.id as consent_id, g.artifact_id, a.artifact_version, a.content_sha256, a.status as artifact_status,
-                g.status, g.method, g.representative_authority, g.version, g.recorded_at
-           from clinical_core.patient_connections c
-           left join clinical_core.current_consent g
-             on g.connection_id = c.id and g.scope = $3
-           left join clinical_core.consent_artifacts a
-             on a.id = g.artifact_id
-          where c.organization_id = $1
-            and c.state in ('verified','paused')
-            and ${byPatient ? "c.patient_record_id = $2" : "c.consumer_person_id = $2"}
-          order by g.recorded_at desc nulls last, c.verified_at desc nulls last
-          limit 1`,
-        [
-          clinicalUuid(input.context.organizationId),
-          clinicalUuid((byPatient ? input.patientRecordId : input.consumerPersonId) as string),
-          input.scope,
-        ],
-      )).rows, "consent_precondition_failed");
-      const row = rows[0];
-      if (!row || !row.status) {
-        return {
-          status: "none", patientRecordId: row?.patient_record_id ?? null, connectionId: row?.connection_id ?? null,
-          consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null,
-          method: null, representativeAuthority: null, version: null, recordedAt: null,
-        };
-      }
-      return {
-        status: row.status,
-        patientRecordId: row.patient_record_id,
-        connectionId: row.connection_id,
-        consentId: row.consent_id,
-        artifactId: row.artifact_id,
-        artifactVersion: row.artifact_version,
-        contentSha256: row.content_sha256,
-        artifactStatus: row.artifact_status,
-        method: row.method,
-        representativeAuthority: row.representative_authority,
-        version: row.version,
-        recordedAt: row.recorded_at,
-      };
+      const lookup = currentConsentLookup(input);
+      return run(database, input.context, (tx) => readCurrentConsent(tx, input.context, lookup), "consent_precondition_failed");
     },
 
     async issueInvitation(input) {
       assertContext(input.context, boundary, "workforce", "identity_link");
-      assertUuid(input.patientRecordId);
-      const expiresAt = new Date(input.expiresAt);
-      const lifetime = expiresAt.getTime() - Date.now();
-      if (!Number.isFinite(expiresAt.getTime()) || lifetime <= 0 || lifetime > 48 * 60 * 60 * 1_000) {
-        throw new ClinicalCoreAdapterError("request_context_invalid");
-      }
-
-      // Thirteen characters from a 32-symbol, ambiguity-free alphabet = 65 bits.
-      // The code remains short-lived, single-use, and hash-only at rest.
-      const token = generateInvitationCode();
-      const tokenHash = sha256(token);
-      const idempotencyKey = input.idempotencyKey ?? randomUUID();
-      assertBoundedIdempotencyKey(idempotencyKey);
-
-      const row = await run(database, input.context, async (tx) => firstRow<{
-        invitation_id: string;
-        connection_id: string;
-        expires_at: string;
-      }>(await tx.query(
-        "select * from clinical_core.issue_connection_invitation($1, $2, $3, $4::timestamptz, $5)",
-        [clinicalUuid(input.context.organizationId), clinicalUuid(input.patientRecordId), tokenHash, expiresAt.toISOString(), idempotencyKey],
-      )), "request_context_invalid");
-      return {
-        invitationId: row.invitation_id,
-        connectionId: row.connection_id,
-        expiresAt: row.expires_at,
-        token,
-      };
+      const invitation = prepareInvitation(input);
+      return run(database, input.context, (tx) => insertInvitation(tx, input.context, invitation), "request_context_invalid");
     },
 
     async claimInvitation(input) {
@@ -358,31 +300,335 @@ function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>
 
     async recordConsent(input) {
       assertContext(input.context, boundary, undefined, "consent_management");
-      assertUuid(input.connectionId);
-      assertUuid(input.artifactId);
-      if (!CONSENT_SCOPES.includes(input.scope)) {
-        throw new ClinicalCoreAdapterError("consent_precondition_failed");
-      }
-      const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
-        "select * from clinical_core.record_consent_grant($1, $2, $3, $4, $5)",
-        [clinicalUuid(input.connectionId), clinicalUuid(input.artifactId), input.scope, input.method, input.representativeAuthority],
-      )), "consent_precondition_failed");
-      return toConsent(row);
+      assertGrant(input);
+      return run(database, input.context, (tx) => insertConsentGrant(tx, input), "consent_precondition_failed");
     },
 
     async revokeConsent(input) {
       assertContext(input.context, boundary, undefined, "consent_management");
-      assertUuid(input.connectionId);
-      if (!CONSENT_SCOPES.includes(input.scope)) {
-        throw new ClinicalCoreAdapterError("consent_precondition_failed");
-      }
-      const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
-        "select * from clinical_core.revoke_consent_grant($1, $2, $3)",
-        [clinicalUuid(input.connectionId), input.scope, input.reasonCode],
-      )), "consent_precondition_failed");
-      return toConsent(row);
+      assertRevocation(input);
+      return run(database, input.context, (tx) => insertConsentRevocation(tx, input), "consent_precondition_failed");
     },
   };
+}
+
+function createCurrentMembershipIdentityConsent(database: ClinicalCoreDatabase): CurrentMembershipIdentityConsent {
+  return {
+    async discoverMemberships(subject) {
+      if (!UUID_PATTERN.test(subject)) throw new ClinicalCoreAdapterError("production_boundary_refused");
+      try {
+        return await database.transaction(async (tx) => {
+          const { rows } = await tx.query<{ discovery: unknown }>(
+            "select clinical_private.discover_current_workforce_memberships($1) as discovery", [subject]);
+          const discovery = decodeMembershipDiscovery(rows[0]?.discovery);
+          if (!discovery) throw new ClinicalCoreAdapterError("database_unavailable");
+          return discovery;
+        });
+      } catch (error) {
+        if (error instanceof ClinicalCoreAdapterError) throw error;
+        if (error instanceof ClinicalCoreDatabaseRejection) {
+          throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "production_boundary_refused" : "database_unavailable");
+        }
+        throw new ClinicalCoreAdapterError("database_unavailable");
+      }
+    },
+    async posture(principal) {
+      return runCurrent(database, principal, "identity_link", async (_tx, context, membership) => ({ ...membership, personId: context.actorPersonId }));
+    },
+    async getCurrentConsentArtifact(principal, input) {
+      assertConsentScope(input.scope);
+      return runCurrent(database, principal, "consent_management",
+        (tx, context) => readConsentArtifact(tx, context, input.scope), "consent_precondition_failed");
+    },
+    async getCurrentConsent(principal, input) {
+      const lookup = currentConsentLookup(input);
+      return runCurrent(database, principal, "consent_management",
+        (tx, context) => readCurrentConsent(tx, context, lookup), "consent_precondition_failed");
+    },
+    async issueInvitation(principal, input) {
+      const invitation = prepareInvitation(input);
+      return runCurrent(database, principal, "identity_link",
+        (tx, context) => insertInvitation(tx, context, invitation), "request_context_invalid");
+    },
+    async recordConsent(principal, input) {
+      assertGrant(input);
+      return runCurrent(database, principal, "consent_management",
+        (tx) => insertConsentGrant(tx, input), "consent_precondition_failed");
+    },
+    async revokeConsent(principal, input) {
+      assertRevocation(input);
+      return runCurrent(database, principal, "consent_management",
+        (tx) => insertConsentRevocation(tx, input), "consent_precondition_failed");
+    },
+  };
+}
+
+function assertConsentScope(scope: string) {
+  if (!CONSENT_SCOPES.includes(scope as ConsentScope)) {
+    throw new ClinicalCoreAdapterError("consent_precondition_failed");
+  }
+}
+
+async function readConsentArtifact(
+  tx: ClinicalCoreTransaction,
+  context: ClinicalRequestContext,
+  scope: ConsentScope,
+): Promise<ConsentArtifactResult> {
+  const row = firstRow<{
+    id: string;
+    scope: ConsentScope;
+    artifact_version: string;
+    content_sha256: string;
+    jurisdiction: string;
+    approved_at: string;
+  }>(await tx.query(
+    `select id, scope, artifact_version, content_sha256, jurisdiction, approved_at
+       from clinical_core.consent_artifacts
+      where organization_id=$1 and scope=$2 and status='approved'
+      order by approved_at desc, created_at desc limit 1`,
+    [clinicalUuid(context.organizationId), scope],
+  ), "consent_precondition_failed");
+  return {
+    artifactId: row.id,
+    scope: row.scope,
+    artifactVersion: row.artifact_version,
+    contentSha256: row.content_sha256,
+    jurisdiction: row.jurisdiction,
+    approvedAt: row.approved_at,
+  };
+}
+
+type CurrentConsentLookup = { scope: ConsentScope; byPatient: boolean; id: string };
+
+function currentConsentLookup(input: { scope: ConsentScope; patientRecordId?: string; consumerPersonId?: string }): CurrentConsentLookup {
+  assertConsentScope(input.scope);
+  const byPatient = typeof input.patientRecordId === "string";
+  const byConsumer = typeof input.consumerPersonId === "string";
+  if (byPatient === byConsumer) throw new ClinicalCoreAdapterError("request_context_invalid");
+  const id = (byPatient ? input.patientRecordId : input.consumerPersonId) as string;
+  assertUuid(id);
+  return { scope: input.scope, byPatient, id };
+}
+
+async function readCurrentConsent(
+  tx: ClinicalCoreTransaction,
+  context: ClinicalRequestContext,
+  lookup: CurrentConsentLookup,
+): Promise<CurrentConsentResult> {
+  const rows = (await tx.query<{
+    patient_record_id: string;
+    connection_id: string;
+    consent_id: string | null;
+    artifact_id: string | null;
+    artifact_version: string | null;
+    content_sha256: string | null;
+    artifact_status: "approved" | "retired" | null;
+    status: "granted" | "revoked" | null;
+    method: ConsentMethod | null;
+    representative_authority: RepresentativeAuthority | null;
+    version: number | null;
+    recorded_at: string | null;
+  }>(
+    `select c.patient_record_id, c.id as connection_id,
+            g.id as consent_id, g.artifact_id, a.artifact_version, a.content_sha256, a.status as artifact_status,
+            g.status, g.method, g.representative_authority, g.version, g.recorded_at
+       from clinical_core.patient_connections c
+       left join clinical_core.current_consent g
+         on g.connection_id = c.id and g.scope = $3
+       left join clinical_core.consent_artifacts a
+         on a.id = g.artifact_id
+      where c.organization_id = $1
+        and c.state in ('verified','paused')
+        and ${lookup.byPatient ? "c.patient_record_id = $2" : "c.consumer_person_id = $2"}
+      order by g.recorded_at desc nulls last, c.verified_at desc nulls last
+      limit 1`,
+    [clinicalUuid(context.organizationId), clinicalUuid(lookup.id), lookup.scope],
+  )).rows;
+  const row = rows[0];
+  if (!row || !row.status) {
+    return {
+      status: "none", patientRecordId: row?.patient_record_id ?? null, connectionId: row?.connection_id ?? null,
+      consentId: null, artifactId: null, artifactVersion: null, contentSha256: null, artifactStatus: null,
+      method: null, representativeAuthority: null, version: null, recordedAt: null,
+    };
+  }
+  return {
+    status: row.status,
+    patientRecordId: row.patient_record_id,
+    connectionId: row.connection_id,
+    consentId: row.consent_id,
+    artifactId: row.artifact_id,
+    artifactVersion: row.artifact_version,
+    contentSha256: row.content_sha256,
+    artifactStatus: row.artifact_status,
+    method: row.method,
+    representativeAuthority: row.representative_authority,
+    version: row.version,
+    recordedAt: row.recorded_at,
+  };
+}
+
+type PreparedInvitation = { patientRecordId: string; expiresAt: Date; token: string; tokenHash: string; idempotencyKey: string };
+
+function prepareInvitation(input: { patientRecordId: string; expiresAt: string; idempotencyKey?: string }): PreparedInvitation {
+  assertUuid(input.patientRecordId);
+  const expiresAt = new Date(input.expiresAt);
+  const lifetime = expiresAt.getTime() - Date.now();
+  if (!Number.isFinite(expiresAt.getTime()) || lifetime <= 0 || lifetime > 48 * 60 * 60 * 1_000) {
+    throw new ClinicalCoreAdapterError("request_context_invalid");
+  }
+
+  // Thirteen characters from a 32-symbol, ambiguity-free alphabet = 65 bits.
+  // The code remains short-lived, single-use, and hash-only at rest.
+  const token = generateInvitationCode();
+  const tokenHash = sha256(token);
+  const idempotencyKey = input.idempotencyKey ?? randomUUID();
+  assertBoundedIdempotencyKey(idempotencyKey);
+  return { patientRecordId: input.patientRecordId, expiresAt, token, tokenHash, idempotencyKey };
+}
+
+async function insertInvitation(
+  tx: ClinicalCoreTransaction,
+  context: ClinicalRequestContext,
+  invitation: PreparedInvitation,
+): Promise<InvitationResult> {
+  const row = firstRow<{
+    invitation_id: string;
+    connection_id: string;
+    expires_at: string;
+  }>(await tx.query(
+    "select * from clinical_core.issue_connection_invitation($1, $2, $3, $4::timestamptz, $5)",
+    [clinicalUuid(context.organizationId), clinicalUuid(invitation.patientRecordId), invitation.tokenHash,
+      invitation.expiresAt.toISOString(), invitation.idempotencyKey],
+  ));
+  return {
+    invitationId: row.invitation_id,
+    connectionId: row.connection_id,
+    expiresAt: row.expires_at,
+    token: invitation.token,
+  };
+}
+
+type ConsentGrantInput = {
+  connectionId: string; artifactId: string; scope: ConsentScope; method: ConsentMethod; representativeAuthority: RepresentativeAuthority;
+};
+
+function assertGrant(input: ConsentGrantInput) {
+  assertUuid(input.connectionId);
+  assertUuid(input.artifactId);
+  assertConsentScope(input.scope);
+}
+
+async function insertConsentGrant(tx: ClinicalCoreTransaction, input: ConsentGrantInput): Promise<ConsentResult> {
+  return toConsent(firstConsent(await tx.query(
+    "select * from clinical_core.record_consent_grant($1, $2, $3, $4, $5)",
+    [clinicalUuid(input.connectionId), clinicalUuid(input.artifactId), input.scope, input.method, input.representativeAuthority],
+  )));
+}
+
+type ConsentRevocationInput = {
+  connectionId: string; scope: ConsentScope; reasonCode: "patient_request" | "scope_changed" | "connection_revoked";
+};
+
+function assertRevocation(input: ConsentRevocationInput) {
+  assertUuid(input.connectionId);
+  assertConsentScope(input.scope);
+}
+
+async function insertConsentRevocation(tx: ClinicalCoreTransaction, input: ConsentRevocationInput): Promise<ConsentResult> {
+  return toConsent(firstConsent(await tx.query(
+    "select * from clinical_core.revoke_consent_grant($1, $2, $3)",
+    [clinicalUuid(input.connectionId), input.scope, input.reasonCode],
+  )));
+}
+
+/**
+ * One transaction: bind the current membership for the subject and selected clinic, then run the operation under
+ * the context it produced. A binding for any other clinic, or one that cannot be read, refuses.
+ */
+async function runCurrent<T>(
+  database: ClinicalCoreDatabase,
+  principal: CurrentWorkforcePrincipal,
+  purpose: ProductionClinicalRequestContext["purpose"],
+  work: (tx: ClinicalCoreTransaction, context: ProductionClinicalRequestContext, membership: CurrentWorkforceMembership) => Promise<T>,
+  operationRefusal: ClinicalCoreAdapterError["category"] = "database_unavailable",
+): Promise<T> {
+  if (!UUID_PATTERN.test(principal.subject) || !UUID_PATTERN.test(principal.selectedOrganizationId)) {
+    throw new ClinicalCoreAdapterError("production_boundary_refused");
+  }
+  try {
+    return await database.transaction(async (tx) => {
+      const { rows } = await tx.query<{ binding: unknown }>(
+        "select clinical_private.set_current_workforce_context($1,$2,$3) as binding",
+        [principal.subject, clinicalUuid(principal.selectedOrganizationId), purpose],
+      );
+      const binding = decodeCurrentMembership(rows[0]?.binding);
+      if (!binding || binding.organizationId !== principal.selectedOrganizationId) {
+        throw new ClinicalCoreAdapterError("production_boundary_refused");
+      }
+      const context: ProductionClinicalRequestContext = {
+        actorPersonId: binding.personId,
+        organizationId: binding.organizationId,
+        identityPool: "workforce",
+        identitySubject: principal.subject,
+        purpose,
+        environment: "production-clinical",
+        dataClassification: "clinical_phi",
+        containsPhi: true,
+        realPatientData: true,
+        productionBound: true,
+      };
+      assertContext(context, "production", "workforce", purpose);
+      return work(tx, context, { organizationId: binding.organizationId, role: binding.role });
+    });
+  } catch (error) {
+    if (error instanceof ClinicalCoreAdapterError) throw error;
+    if (error instanceof ClinicalCoreDatabaseRejection) {
+      throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "production_boundary_refused" : operationRefusal);
+    }
+    throw new ClinicalCoreAdapterError("database_unavailable");
+  }
+}
+
+/** Exactly the candidate's shape, or null: a clinic id that is not a UUID, a missing name or an unknown role is refused. */
+function decodeMembershipDiscovery(value: unknown): WorkforceMembershipDiscovery | null {
+  let row = value;
+  if (typeof row === "string") {
+    try { row = JSON.parse(row) as unknown; } catch { return null; }
+  }
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const { clinics, pending } = row as Record<string, unknown>;
+  if (!Array.isArray(clinics) || !Array.isArray(pending) || clinics.length > 200 || pending.length > 200) return null;
+  const roles: readonly string[] = ["owner", "admin", "practitioner", "staff"];
+  const entry = (item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item)
+    && typeof (item as Record<string, unknown>).organizationId === "string" && UUID_PATTERN.test((item as Record<string, string>).organizationId)
+    && typeof (item as Record<string, unknown>).name === "string" && (item as Record<string, string>).name.length <= 200;
+  if (!clinics.every((item) => entry(item) && roles.includes(String((item as Record<string, unknown>).role)))
+    || !pending.every(entry)) return null;
+  return {
+    clinics: clinics.map((item) => {
+      const value = item as Record<string, string>;
+      return { organizationId: value.organizationId!.toLowerCase(), name: value.name!, role: value.role as CurrentWorkforceMembership["role"] };
+    }),
+    pending: pending.map((item) => {
+      const value = item as Record<string, string>;
+      return { organizationId: value.organizationId!.toLowerCase(), name: value.name! };
+    }),
+  };
+}
+
+function decodeCurrentMembership(value: unknown): { personId: string; organizationId: string; role: CurrentWorkforceMembership["role"] } | null {
+  let row = value;
+  if (typeof row === "string") {
+    try { row = JSON.parse(row) as unknown; } catch { return null; }
+  }
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const binding = row as Record<string, unknown>;
+  const roles: readonly string[] = ["owner", "admin", "practitioner", "staff"];
+  if (typeof binding.personId !== "string" || !UUID_PATTERN.test(binding.personId)
+    || typeof binding.organizationId !== "string" || !UUID_PATTERN.test(binding.organizationId)
+    || typeof binding.role !== "string" || !roles.includes(binding.role)) return null;
+  return { personId: binding.personId, organizationId: binding.organizationId, role: binding.role as CurrentWorkforceMembership["role"] };
 }
 
 async function run<T>(

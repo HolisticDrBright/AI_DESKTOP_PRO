@@ -4,6 +4,10 @@ import { getRequestSession } from "@/server/session";
 import { PatientHeaderCard } from "@/components/patient/PatientHeaderCard";
 import { PatientPicker } from "@/components/patient/PatientPicker";
 import { PatientTabs } from "@/components/patient/PatientTabs";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { pageClinicBinding } from "@/server/clinic-fence";
+import { ClinicBindingMark } from "@/components/shell/ClinicBindingMark";
 
 export default async function PatientLayout({
   children,
@@ -14,7 +18,8 @@ export default async function PatientLayout({
 }) {
   const { patientId } = await params;
   const session = await getRequestSession();
-  const patient = await api.patients.get(patientId, session.token, session.orgId);
+  const selection = await getRequestSelectedClinic();
+  const patient = await withSelectedClinic(selection, () => api.patients.get(patientId, session.token, session.orgId));
   if (!patient) notFound();
 
   return (
@@ -22,6 +27,7 @@ export default async function PatientLayout({
       data-screen-label="Patient chart"
       className="relative mx-auto max-w-[1560px] px-[22px] pt-[14px] pb-5"
     >
+      <ClinicBindingMark token={pageClinicBinding(selection)} />
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[11.5px] font-semibold text-faint">Workspace / Patients / {patient.name}</div>
         <PatientPicker />

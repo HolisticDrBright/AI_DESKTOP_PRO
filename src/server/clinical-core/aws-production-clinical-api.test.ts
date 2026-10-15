@@ -216,7 +216,7 @@ describe("AWS production App and Desktop API", () => {
     input.desktopCompatibilityAdapter = { execute,executeWithCurrentMembership: current };
     const request = event({ iss: actualIssuer,aud: actualAudience,sub: subject,
       email_verified: "true","custom:person_id": "","custom:organization_id": "",
-      "custom:production_bound": "" });
+      "custom:production_bound": "",exp: String(Math.floor(Date.now() / 1000) + 3600) });
     request.requestContext!.accountId = "173535830222";
     request.headers!["x-alp-selected-organization-id"] = ORG;
     const handler = createAwsProductionIdentityApiHandler(input);
@@ -246,10 +246,14 @@ describe("AWS production App and Desktop API", () => {
       "custom:organization_id": ORG,
       "custom:production_bound": "true",
     });
-    request.routeKey = "GET /clinical-core/workforce/posture";
-    const result = await createAwsProductionIdentityApiHandler(input)(request);
-    expect(result.statusCode).toBe(503);
-    expect(result.body).toBe('{"error":"membership_authority_not_configured"}');
+    // Posture, invitations and consents now resolve current membership; these pilot routes have not been converted.
+    for (const routeKey of ["GET /clinical-core/workforce/lab-imports", "POST /clinical-core/workforce/lab-imports/review",
+      "GET /clinical-core/workforce/patient-labs"]) {
+      request.routeKey = routeKey;
+      const result = await createAwsProductionIdentityApiHandler(input)(request);
+      expect(result.statusCode).toBe(503);
+      expect(result.body).toBe('{"error":"membership_authority_not_configured"}');
+    }
     expect(legacy).not.toHaveBeenCalled();
   });
 

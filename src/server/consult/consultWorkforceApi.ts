@@ -1,4 +1,5 @@
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
+import { CLINIC_MEMBERSHIP_REFUSAL, refusedUnderClinicMembership } from '@/server/clinic-authority-families';
 import { clinicRecordWorkforceRequest, parseClinicRecordWorkforceResponse, type ClinicRecordWorkforceResponse } from '@/contracts/clinicRecordRequests';
 import {
   consultLinkAdminRequest, consultReviewRequest,
@@ -54,6 +55,11 @@ export class ConsultWorkforceError extends Error {
   constructor(readonly status: number, readonly code?: string) { super(`consult_workforce_${status}`); this.name = 'ConsultWorkforceError'; }
 }
 
+/** Not converted to clinic-membership sign-in: refused before anything else (src/server/clinic-authority-families.ts). */
+function refuseUnconverted() {
+  if (refusedUnderClinicMembership('consult_workforce')) throw new ConsultWorkforceError(503, CLINIC_MEMBERSHIP_REFUSAL);
+}
+
 function apiOrigin(): URL {
   const origin = new URL(process.env.CLINICAL_AWS_WORKFORCE_API_ORIGIN ?? '');
   if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash
@@ -70,6 +76,7 @@ function call<Request, Response>(input: {
 }) {
   const requestSignal = input.signal ?? AbortSignal.timeout(20000);
   return async (body: unknown): Promise<Response> => {
+    refuseUnconverted();
     const parsed = input.parse(body);
     const response = await fetch(`${apiOrigin().origin}${input.path}`, {
       method: 'POST', redirect: 'error', cache: 'no-store', signal: requestSignal,
@@ -91,6 +98,7 @@ function call<Request, Response>(input: {
 export const clinicRecordsWorkforceCall = (token: string, signal?: AbortSignal) => {
   const requestSignal = signal ?? AbortSignal.timeout(20000);
   return async (body: unknown): Promise<ClinicRecordWorkforceResponse> => {
+    refuseUnconverted();
     const parsed = clinicRecordWorkforceRequest.parse(body);
     const response = await fetch(`${apiOrigin().origin}/clinical-core/workforce/clinic-records`, {
       method: 'POST', redirect: 'error', cache: 'no-store', signal: requestSignal,

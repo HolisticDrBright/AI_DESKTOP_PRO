@@ -33,6 +33,8 @@ export const AUTH_COOKIES = {
   email: "aidp_em",
   /** Active organization (validated against memberships before it is set). */
   org: "aidp_org",
+  /** Digest of the Cognito subject that chose `aidp_org`; a selection from another account is never reused. */
+  orgBinding: "aidp_org_sub",
   /** Short-lived Cognito MFA transaction; never exposed to client JavaScript. */
   mfaSession: "aidp_mfa",
   mfaUsername: "aidp_mfu",
@@ -339,6 +341,8 @@ export async function signOutSession(refreshToken: string): Promise<void> {
 /** Minimal cookie-store shape (matches next/headers' ReadonlyRequestCookies). */
 export interface CookieStoreLike {
   get(name: string): { value: string } | undefined;
+  /** Every value the request carried for one name; two values for one cookie are ambiguous. */
+  getAll?(name: string): Array<{ value: string }>;
 }
 
 /** Read the session from a request cookie store passed in by an app-router file. */

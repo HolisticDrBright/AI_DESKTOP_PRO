@@ -5341,7 +5341,7 @@
         {
           "adapter": "telehealth.live.ts",
           "domain": "telehealth",
-          "line": 265,
+          "line": 278,
           "argumentKeys": [
             "_appointment_id",
             "_organization_id",
@@ -11527,7 +11527,7 @@
         {
           "adapter": "telehealth.live.ts",
           "domain": "telehealth",
-          "line": 499,
+          "line": 512,
           "argumentKeys": [
             "_admission",
             "_admission_signature",
@@ -12380,7 +12380,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "ee48fa0455f6953378e5a813deae6a1bbc39d10813c67310171e2a63ec47c1f5",
+        "sourceSha256": "4a28e7aa35772a16bd4120634c7ef154d1aa39af1a45300b81312ca50c2a77f6",
         "activationState": "phi_disabled"
       }
     },
@@ -12408,7 +12408,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "ee48fa0455f6953378e5a813deae6a1bbc39d10813c67310171e2a63ec47c1f5",
+        "sourceSha256": "4a28e7aa35772a16bd4120634c7ef154d1aa39af1a45300b81312ca50c2a77f6",
         "activationState": "phi_disabled"
       }
     },
@@ -12436,7 +12436,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "ee48fa0455f6953378e5a813deae6a1bbc39d10813c67310171e2a63ec47c1f5",
+        "sourceSha256": "4a28e7aa35772a16bd4120634c7ef154d1aa39af1a45300b81312ca50c2a77f6",
         "activationState": "phi_disabled"
       }
     },
@@ -12464,7 +12464,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "ee48fa0455f6953378e5a813deae6a1bbc39d10813c67310171e2a63ec47c1f5",
+        "sourceSha256": "4a28e7aa35772a16bd4120634c7ef154d1aa39af1a45300b81312ca50c2a77f6",
         "activationState": "phi_disabled"
       }
     },
@@ -12505,7 +12505,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "ee48fa0455f6953378e5a813deae6a1bbc39d10813c67310171e2a63ec47c1f5",
+        "sourceSha256": "4a28e7aa35772a16bd4120634c7ef154d1aa39af1a45300b81312ca50c2a77f6",
         "activationState": "phi_disabled"
       }
     }

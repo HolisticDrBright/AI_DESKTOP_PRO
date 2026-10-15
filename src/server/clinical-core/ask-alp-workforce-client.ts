@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("ask-alp-workforce-client is server-only");
 
 import { AdapterError, codeFromHttpStatus } from "@/adapters/errors";
+import { CLINIC_MEMBERSHIP_REFUSAL, CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, refusedUnderClinicMembership } from "@/server/clinic-authority-families";
 
 const API_HOST = /^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -53,6 +54,8 @@ export interface AskAlpActivationReceipt {
 }
 
 function origin(): string {
+  // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+  if (refusedUnderClinicMembership("ask_alp_workforce")) throw new AdapterError("unavailable", CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, CLINIC_MEMBERSHIP_REFUSAL);
   if (process.env.CLINICAL_AWS_RUNTIME_MODE !== "synthetic") throw new AdapterError("unavailable");
   let url: URL;
   try {

@@ -11,6 +11,7 @@ import {
 } from "./aws-desktop-compatibility";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import type { MembershipFenceChange, MembershipFenceWriter } from "./membership-fence";
 
 export type ProductionRequestContext = ProductionClinicalRequestContext;
 
@@ -22,8 +23,22 @@ export type AwsProductionDesktopAdapter = DesktopCompatibilityAdapter<Production
   ) => Promise<unknown>;
 };
 
+export type ProductionDesktopOptions = {
+  /**
+   * The workforce membership fence (`membership-fence/1`, see `membership-fence.ts`). A role change or a suspension
+   * reduces someone's authority, so it begins the fence for that member's workforce subject before its transaction can
+   * commit, and settles it after. Under `database_current` those two RPCs are refused as
+   * `membership_fence_unavailable` without it. The legacy path uses it when present and is otherwise unchanged.
+   */
+  membershipFence?: MembershipFenceWriter;
+};
+
+/** The RPCs that change an existing membership's role or status: each runs only under a begun membership fence. */
+const MEMBERSHIP_FENCED_RPCS: ReadonlySet<string> = new Set(["set_org_member_role", "remove_org_member"]);
+
 export class ProductionDesktopError extends Error {
-  constructor(readonly category: "request_invalid" | "operation_refused" | "database_unavailable" | "identity_refused") {
+  constructor(readonly category: "request_invalid" | "operation_refused" | "database_unavailable" | "identity_refused"
+    | "membership_fence_unavailable") {
     super(category);
     this.name = "ProductionDesktopError";
   }
@@ -309,6 +324,7 @@ const IMPORT_REVIEW_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
 export function createAwsProductionDesktopAdapter(
   database: ClinicalCoreDatabase,
   fallback: DesktopCompatibilityAdapter = createAwsDesktopCompatibilityAdapter(database),
+  options: ProductionDesktopOptions = {},
 ): AwsProductionDesktopAdapter {
   return {
     async executeWithCurrentMembership(principal, request) {
@@ -316,6 +332,7 @@ export function createAwsProductionDesktopAdapter(
         || !/^[A-Za-z0-9:_-]{8,128}$/.test(principal.subject)) {
         throw new ProductionDesktopError("identity_refused");
       }
+      const fenced: { change: MembershipFenceChange | null } = { change: null };
       try {
         return await database.transaction(async (tx) => {
           const { rows } = await tx.query<{ binding: unknown }>(
@@ -339,6 +356,10 @@ export function createAwsProductionDesktopAdapter(
             productionBound: true,
           };
           if (request.kind === "rpc" && CORE_RPCS.has(request.functionName)) {
+            if (MEMBERSHIP_FENCED_RPCS.has(request.functionName)) {
+              if (!options.membershipFence) throw new ProductionDesktopError("membership_fence_unavailable");
+              await beginMembershipChange(tx, request.args, options.membershipFence, fenced);
+            }
             return executeCoreRpc(tx, current, request.functionName, request.args);
           }
           if (request.kind === "select" && CORE_SELECTS.has(request.table)) {
@@ -354,12 +375,26 @@ export function createAwsProductionDesktopAdapter(
         }
         if (error instanceof DesktopCompatibilityError) throw new ProductionDesktopError("operation_refused");
         throw new ProductionDesktopError("database_unavailable");
+      } finally {
+        // After the transaction has committed or rolled back, never before: settling first would let a fenced write
+        // observe a settled fence while the change it covers is still about to commit.
+        if (fenced.change) await options.membershipFence!.settle(fenced.change);
       }
     },
     async execute(context, request) {
       assertContext(context);
       if (request.kind === "rpc" && CORE_RPCS.has(request.functionName)) {
-        return run(database, context, (tx) => executeCoreRpc(tx, context, request.functionName, request.args));
+        const writer = MEMBERSHIP_FENCED_RPCS.has(request.functionName) ? options.membershipFence : undefined;
+        if (!writer) return run(database, context, (tx) => executeCoreRpc(tx, context, request.functionName, request.args));
+        const fenced: { change: MembershipFenceChange | null } = { change: null };
+        try {
+          return await run(database, context, async (tx) => {
+            await beginMembershipChange(tx, request.args, writer, fenced);
+            return executeCoreRpc(tx, context, request.functionName, request.args);
+          });
+        } finally {
+          if (fenced.change) await writer.settle(fenced.change);
+        }
       }
       if (request.kind === "select" && CORE_SELECTS.has(request.table)) {
         return run(database, context, (tx) => executeCoreSelect(tx, context, request.table, request.query));
@@ -372,6 +407,39 @@ export function createAwsProductionDesktopAdapter(
       }
     },
   };
+}
+
+/**
+ * Begin the membership fence for every workforce subject of the membership being changed, inside the change's own open
+ * transaction and before it can commit, then hand the fence's acknowledgement to the database for the guard candidate
+ * (`workforce-membership-fence-guard.sql`) to check. The subjects come from the database, scoped to the request's
+ * clinic; a membership elsewhere names none, and the RPC itself then refuses it. A begin that cannot be confirmed
+ * refuses the change before it runs.
+ */
+async function beginMembershipChange(
+  tx: ClinicalCoreTransaction,
+  args: Record<string, unknown>,
+  writer: MembershipFenceWriter,
+  fenced: { change: MembershipFenceChange | null },
+) {
+  const membershipId = requiredUuid(args._membership_id);
+  const { rows } = await tx.query<{ subjects: unknown }>(
+    "select clinical_private.membership_fence_subjects($1) as subjects", [clinicalUuid(membershipId)]);
+  let subjects = rows[0]?.subjects;
+  if (typeof subjects === "string") {
+    try { subjects = JSON.parse(subjects) as unknown; } catch { throw new ProductionDesktopError("database_unavailable"); }
+  }
+  if (!Array.isArray(subjects) || subjects.length > 16
+    || subjects.some((subject) => typeof subject !== "string" || !UUID.test(subject))) {
+    throw new ProductionDesktopError("database_unavailable");
+  }
+  if (subjects.length === 0) return;
+  try {
+    fenced.change = await writer.begin(subjects.map((subject: string) => ({ kind: "subject" as const, subject })));
+  } catch {
+    throw new ProductionDesktopError("membership_fence_unavailable");
+  }
+  await tx.query("select set_config('clinical.membership_fence_ack',$1,true)", [fenced.change.acknowledgement]);
 }
 
 function decodeCurrentMembership(value: unknown): { personId: string; organizationId: string } | null {

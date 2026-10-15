@@ -2,6 +2,7 @@ if (typeof window !== 'undefined') throw new Error('Lab attestation transport is
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { getContractFixtureTransport } from '@/server/runtime/contractFixture';
 import { labAttestationReviewActivationFromEnvironment } from '@/server/clinical-core/lab-attestation-review';
+import { refusedUnderClinicMembership } from '@/server/clinic-authority-families';
 import {
   LAB_ATTESTATION_REFUSALS, labAttestationBoundReceipt, labAttestationReview,
   type LabAttestationBoundReceipt, type LabAttestationBoundRequest, type LabAttestationRefusal, type LabAttestationReview,
@@ -28,6 +29,9 @@ const PATHS = { review: '/clinical-core/workforce/lab-attestations/review', atte
 const unavailable = { ok: false, status: 503, code: 'service_unavailable' } as const;
 
 function target(path: string): { url: string; headers: Record<string, string> } | 'disabled' | null {
+  // Not converted to clinic-membership sign-in: disabled for such a session, decided here with no network call
+  // (src/server/clinic-authority-families.ts).
+  if (refusedUnderClinicMembership('lab_attestation')) return 'disabled';
   const fixture = getContractFixtureTransport();
   if (fixture) return { url: `${fixture.origin}${path}`, headers: { apikey: fixture.credential } };
   if (!labAttestationReviewActivationFromEnvironment(process.env.CLINICAL_LAB_ATTESTATION_ACTIVATION).enabled) return 'disabled';

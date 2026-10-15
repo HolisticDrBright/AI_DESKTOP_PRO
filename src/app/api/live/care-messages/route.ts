@@ -3,12 +3,15 @@ import {getRequestSession} from '@/server/session';
 import {readBoundedRequestBody} from '@/server/bounded-request-body';
 import {careMessageRequest,parseCareMessageResponse} from '@/contracts/careMessages';
 import {liveGuard} from '../route-helpers';
+import {CLINIC_MEMBERSHIP_REFUSAL,refusedUnderClinicMembership} from '@/server/clinic-authority-families';
 import {sameBrowserOrigin} from '@/server/same-browser-origin';
 const json=(status:number,value:unknown)=>NextResponse.json(value,{status,headers:{'Cache-Control':'no-store'}});
 export async function POST(request:Request){
  const blocked=liveGuard();if(blocked)return blocked;
  if(!sameBrowserOrigin(request))return json(403,{error:'identity_refused'});
  const session=await getRequestSession();if(!session.token)return json(401,{error:'reauth_required'});
+ // Not converted to clinic-membership sign-in: refused before the token leaves (src/server/clinic-authority-families.ts).
+ if(refusedUnderClinicMembership('care_messages'))return json(503,{error:CLINIC_MEMBERSHIP_REFUSAL});
  try{
   const body=careMessageRequest.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request,20480,5000))));
   const origin=new URL(process.env.CLINICAL_AWS_WORKFORCE_API_ORIGIN??'');

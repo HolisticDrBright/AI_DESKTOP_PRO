@@ -1,11 +1,14 @@
 if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is server-only");
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import type { AppointmentReminderChannels } from "../notifications/notification-dispatcher";
 import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand,
+  type GetCommandOutput, type PutCommandOutput, type QueryCommandOutput, type TransactWriteCommandOutput,
+  type UpdateCommandOutput } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { TELEHEALTH_RECORD_INVENTORY_CONTRACT, telehealthRecordLocation, type TelehealthRecordInventory } from "../../contracts/telehealthRecordInventory";
@@ -16,11 +19,74 @@ import { parseTelehealthConsentResponse, type TelehealthConsentRequest } from ".
 import { appointmentOperationIdentity, appointmentOperationScope, operationReceipt, type AppointmentOperation } from "./appointment-operation";
 import { confirmRecoveryMeetingAbsent, confirmRecoveryReminderAbsent, recoveryAwait,
   type AppointmentRecoveryProviderDependencies } from "./appointment-provider-recovery";
+import { membershipFenceCondition, readMembershipFence, type MembershipFenceTarget, type ObservedMembershipFence } from "./membership-fence";
 
-const document = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
+const tableClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const secrets = new SecretsManagerClient({});
 const ses = new SESv2Client({});
 const scheduler = new SchedulerClient({});
+
+/**
+ * One workforce write admitted under the membership fence (`membership-fence/1`, see `membership-fence.ts`).
+ * `checks` are the subject's and the clinic's fence conditions as read before the current-membership check;
+ * `violated` records that one of them failed; `effects` are the provider calls this write dispatched, each with the
+ * undo that reverses it, or `null` when it cannot be reversed.
+ */
+type MembershipFenceScope = {
+  checks: ReturnType<typeof membershipFenceCondition>[];
+  violated: boolean;
+  effects: Array<{ undo: (() => Promise<void>) | null }>;
+};
+const membershipFenceScope = new AsyncLocalStorage<MembershipFenceScope>();
+/**
+ * Bookkeeping that must still land after the fence fails: closing this invocation's own writer, and the disposition
+ * of an operation whose effects were all undone. Both only release what this invocation itself took.
+ */
+const unfenced = <T>(work: () => T) => membershipFenceScope.exit(work);
+type TableCommand = GetCommand | PutCommand | QueryCommand | TransactWriteCommand | UpdateCommand;
+/**
+ * Every telehealth table call. Outside a fenced write it is the plain client. Inside one, reads pass through and every
+ * write becomes one `TransactWrite` that also holds both fence conditions, so the write and "the membership it was
+ * admitted under has not changed" commit together or not at all.
+ */
+async function sendTable(command: TableCommand): Promise<unknown> {
+  const scope = membershipFenceScope.getStore();
+  if (!scope || command instanceof GetCommand || command instanceof QueryCommand) return tableClient.send(command as never);
+  if (scope.violated) throw new TelehealthError("membership_changed");
+  const own: RequestTransaction = command instanceof TransactWriteCommand ? [...(command.input.TransactItems ?? [])] : [fencedItem(command)];
+  try {
+    return await tableClient.send(new TransactWriteCommand({ TransactItems: [...own, ...scope.checks] }));
+  } catch (error) {
+    const reasons = (error as { CancellationReasons?: Array<{ Code?: string } | undefined> }).CancellationReasons;
+    if (Array.isArray(reasons) && reasons.slice(own.length).some((reason) => reason?.Code === "ConditionalCheckFailed")) {
+      scope.violated = true;
+      throw new TelehealthError("membership_changed");
+    }
+    // A single Put or Update keeps the failure its callers already recognise.
+    if (!(command instanceof TransactWriteCommand) && Array.isArray(reasons) && reasons[0]?.Code === "ConditionalCheckFailed") {
+      throw Object.assign(new Error("The conditional request failed"), { name: "ConditionalCheckFailedException" });
+    }
+    throw error;
+  }
+}
+function fencedItem(command: PutCommand | UpdateCommand): RequestTransaction[number] {
+  const { TableName, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues, ...rest } = command.input as Record<string, unknown>;
+  const common = Object.fromEntries(Object.entries({ TableName, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues })
+    .filter(([, value]) => value !== undefined));
+  if (command instanceof PutCommand) {
+    const { Item, ...unsupported } = rest;
+    if (Object.keys(unsupported).length > 0) throw new TelehealthError("service_unavailable");
+    return { Put: { ...common, Item } } as RequestTransaction[number];
+  }
+  const { Key, UpdateExpression, ...unsupported } = rest;
+  if (Object.keys(unsupported).length > 0) throw new TelehealthError("service_unavailable");
+  return { Update: { ...common, Key, UpdateExpression } } as RequestTransaction[number];
+}
+const document = { send: sendTable as {
+  (command: GetCommand): Promise<GetCommandOutput>; (command: QueryCommand): Promise<QueryCommandOutput>;
+  (command: PutCommand): Promise<PutCommandOutput>; (command: UpdateCommand): Promise<UpdateCommandOutput>;
+  (command: TransactWriteCommand): Promise<TransactWriteCommandOutput>;
+} };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const MAX_BODY = 16_384;
@@ -69,6 +135,28 @@ const WORKFORCE_VISIT_NOTE_TRANSFER = "POST /clinical-core/workforce/appointment
 const WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE = "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete";
 /** Record lifecycle: every telehealth text location for one visit, with digests — inventory, never deletion authority. */
 const WORKFORCE_VISIT_NOTE_INVENTORY = "GET /clinical-core/workforce/appointments/visits/notes/inventory";
+/**
+ * Under the `database_current` workforce authority, the reads: each first reads current membership for the request's
+ * selected clinic, and every identity-API call it makes names that clinic.
+ */
+export const TELEHEALTH_WORKFORCE_READ_ROUTES: ReadonlySet<string> = new Set([
+  WORKFORCE_LIST, WORKFORCE_SLOT_LIST, WORKFORCE_VISIT_LIST, WORKFORCE_VISIT_CONSENT_ARTIFACT, WORKFORCE_VISIT_NOTE,
+  WORKFORCE_VISIT_NOTE_INVENTORY,
+]);
+/**
+ * The writes. Each changes DynamoDB or a provider after a separate identity-API authority read, and nothing fences a
+ * membership change committed between the two. Under `database_current` they are refused as
+ * `membership_fence_unavailable` before any call; see docs/selected-clinic-authority-2026-10-15.md for the design that
+ * would let them run.
+ */
+export const TELEHEALTH_WORKFORCE_WRITE_ROUTES: ReadonlySet<string> = new Set([
+  WORKFORCE_ACTION, WORKFORCE_SLOT_CREATE, WORKFORCE_PAYMENT, WORKFORCE_VISIT_CONSENT, WORKFORCE_VISIT_CONSENT_WITHDRAW,
+  WORKFORCE_VISIT_START, WORKFORCE_VISIT_END, WORKFORCE_VISIT_NOTE_IMPORT, WORKFORCE_VISIT_NOTE_SIGN,
+  WORKFORCE_VISIT_NOTE_TRANSFER, WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE,
+]);
+/** The one clinic a `database_current` workforce request runs in, chosen by the caller's authenticated session. */
+const SELECTED_CLINIC_HEADER = "x-alp-selected-organization-id";
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /** The one combined consent a telehealth visit requires. Wording is versioned; the version is recorded, never the text. */
 export const TELEHEALTH_CONSENT_TYPE = "telehealth_recording_combined";
 /** Meeting SDK signatures are short-lived: long enough for a visit, never a standing credential. */
@@ -100,6 +188,21 @@ export type TelehealthConfiguration = {
   enquirerEmailsEnabled?: boolean;
   /** The clinic name the booked email names. Required when `enquirerEmailsEnabled`. */
   clinicDisplayName?: string;
+  /**
+   * Where a workforce caller's clinic comes from. Unset or `legacy_claims` (the deployed Lambda sets nothing): the
+   * token's custom claims, as before. `database_current`, production runtime only: exactly one
+   * `x-alp-selected-organization-id` on the request, forwarded on every identity-API call so the API decides
+   * membership from current rows; custom claims are ignored and the writes in `TELEHEALTH_WORKFORCE_WRITE_ROUTES` are
+   * refused. It does not change consumer routes.
+   */
+  workforceAuthority?: "legacy_claims" | "database_current";
+  /**
+   * The DynamoDB table of workforce membership fences (`membership-fence/1`), read and condition-checked here and
+   * moved by the membership writer before any authority-reducing change commits. `database_current` only, and a
+   * table of its own. Unset (the deployed Lambda sets nothing): the writes in `TELEHEALTH_WORKFORCE_WRITE_ROUTES` stay
+   * refused as `membership_fence_unavailable`.
+   */
+  membershipFenceTable?: string;
 };
 
 type AppointmentItem = {
@@ -219,50 +322,90 @@ export function createTelehealthHandler(config: TelehealthConfiguration, ports: 
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
+      if (actor.selectedClinic !== null && TELEHEALTH_WORKFORCE_WRITE_ROUTES.has(route)) {
+        // database_current: a membership read and a later table or provider write are separate calls, so a write is
+        // admitted only under the membership fence, which a revocation must move before it can commit. Without the
+        // fence table the writes stay refused before any call.
+        if (!config.membershipFenceTable) throw new TelehealthError("membership_fence_unavailable");
+        return await fencedWorkforceWrite(config, actor, (current) => serve(route, event, pool, current));
+      }
+      if (actor.selectedClinic !== null) {
+        if (TELEHEALTH_WORKFORCE_READ_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
       // A signed token identifies the caller, but is not current membership.
       // These routes do not otherwise consult current chart authority.
-      if (CURRENT_WORKFORCE_MEMBERSHIP_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
-      if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
-      if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
-      if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
-      if (route === CONSUMER_AVAILABILITY) return response(200, { data: await listAvailability(config, actor, body(event)) });
-      if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
-      if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
-      if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
-      if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
-      if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
-      if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
-      if (route === CONSUMER_RECOVER_CHANGE) return response(200, { data: await recoverConsumerChange(config, actor, body(event)) });
-      if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
-      if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
-      if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
-      if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
-      if (route === WORKFORCE_PAYMENT) return response(200, { data: await requestOperation(config, actor, pool, "payment", body(event), value => workforcePayment(config, actor, value)) });
-      if (route === WORKFORCE_VISIT_LIST) return response(200, { data: await listVisits(config, actor) });
-      if (route === WORKFORCE_VISIT_CONSENT_ARTIFACT) return response(200, { data: await readConsentArtifact(config, actor) });
-      if (route === WORKFORCE_VISIT_CONSENT) return response(200, { data: await recordVisitConsent(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_CONSENT_WITHDRAW) return response(200, { data: await withdrawVisitConsent(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_START) return response(200, { data: await startVisit(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_END) return response(200, { data: await endVisit(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
-      if (route === WORKFORCE_VISIT_NOTE_IMPORT) return response(200, { data: await importVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_TRANSFER) return response(200, { data: await transferVisitNote(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE) return response(200, { data: await completeVisitNoteTransfer(config, actor, body(event)) });
-      if (route === WORKFORCE_VISIT_NOTE_INVENTORY) return response(200, { data: await readVisitInventory(config, actor, event) });
-      return response(404, { error: "route_not_found" });
+      } else if (CURRENT_WORKFORCE_MEMBERSHIP_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
+      return await serve(route, event, pool, actor);
     } catch (error) {
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
       // Provider/SDK exception names and messages can contain credentials,
       // contact details or submitted clinical text. Log fixed labels only.
       console.warn(JSON.stringify({ event: "telehealth_request_refused", category }));
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
-        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch"].includes(category) ? 409
-        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable"].includes(category) ? 503 : 400;
+        : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch", "membership_changed"].includes(category) ? 409
+        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable", "membership_fence_unavailable"].includes(category) ? 503 : 400;
       return response(status, { error: category });
     }
   };
+  async function serve(route: string, event: ApiGatewayV2Event, pool: "consumer" | "workforce", actor: Actor): Promise<ApiGatewayV2Response> {
+    if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
+    if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
+    if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
+    if (route === CONSUMER_AVAILABILITY) return response(200, { data: await listAvailability(config, actor, body(event)) });
+    if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
+    if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
+    if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
+    if (route === CONSUMER_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "consumer_action", body(event), value => consumerAction(config, actor, value)) });
+    if (route === CONSUMER_CHANGE_OUTCOME) return response(200, { data: await readConsumerChangeOutcome(config, actor, body(event)) });
+    if (route === CONSUMER_PENDING_CHANGE) return response(200, { data: await readConsumerPendingChange(config, actor, body(event)) });
+    if (route === CONSUMER_RECOVER_CHANGE) return response(200, { data: await recoverConsumerChange(config, actor, body(event)) });
+    if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
+    if (route === WORKFORCE_ACTION) return response(200, { data: await requestOperation(config, actor, pool, "workforce_action", body(event), value => workforceAction(config, actor, value)) });
+    if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
+    if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
+    if (route === WORKFORCE_PAYMENT) return response(200, { data: await requestOperation(config, actor, pool, "payment", body(event), value => workforcePayment(config, actor, value)) });
+    if (route === WORKFORCE_VISIT_LIST) return response(200, { data: await listVisits(config, actor) });
+    if (route === WORKFORCE_VISIT_CONSENT_ARTIFACT) return response(200, { data: await readConsentArtifact(config, actor) });
+    if (route === WORKFORCE_VISIT_CONSENT) return response(200, { data: await recordVisitConsent(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_CONSENT_WITHDRAW) return response(200, { data: await withdrawVisitConsent(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_START) return response(200, { data: await startVisit(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_END) return response(200, { data: await endVisit(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_NOTE) return response(200, { data: await readVisitNote(config, actor, event) });
+    if (route === WORKFORCE_VISIT_NOTE_IMPORT) return response(200, { data: await importVisitNote(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_NOTE_SIGN) return response(200, { data: await signVisitNote(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_NOTE_TRANSFER) return response(200, { data: await transferVisitNote(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE) return response(200, { data: await completeVisitNoteTransfer(config, actor, body(event)) });
+    if (route === WORKFORCE_VISIT_NOTE_INVENTORY) return response(200, { data: await readVisitInventory(config, actor, event) });
+    return response(404, { error: "route_not_found" });
+  }
   return (event: ApiGatewayV2Event) => runZoomCredentialRequest(() => handler(event));
+}
+
+/**
+ * A workforce write under `database_current`, held to the membership fence:
+ *   1. read the subject's and the clinic's fence, strongly consistent, BEFORE current membership. A fence with a change
+ *      in flight refuses the write as `membership_changed`;
+ *   2. read current membership through the identity API's posture, under its own current-membership transaction: a
+ *      clinical role in the selected clinic, and the person the write is recorded as;
+ *   3. run the write with every table write holding both fence conditions. A change that began after step 1 fails the
+ *      first write that follows it, and every one after.
+ * A change that began before step 1 either shows as in flight, or has committed, and step 2 sees it. So a write that
+ * commits here committed while the membership it was admitted under was current. Whatever the work returns, a failed
+ * fence condition answers `membership_changed`.
+ */
+async function fencedWorkforceWrite(config: TelehealthConfiguration, actor: Actor, serve: (actor: Actor) => Promise<ApiGatewayV2Response>) {
+  const table = config.membershipFenceTable!;
+  const targets: MembershipFenceTarget[] = [{ kind: "subject", subject: actor.subject }, { kind: "clinic", organizationId: actor.organizationId }];
+  let observed: ObservedMembershipFence[];
+  try { observed = await Promise.all(targets.map((target) => readMembershipFence((command) => tableClient.send(command as never), table, target))); }
+  catch { throw new TelehealthError("service_unavailable"); }
+  if (observed.some((fence) => fence.state === "changing")) throw new TelehealthError("membership_changed");
+  const member = await currentWorkforceMember(config, actor);
+  const scope: MembershipFenceScope = { checks: observed.map((fence) => membershipFenceCondition(table, fence)), violated: false, effects: [] };
+  let answered: ApiGatewayV2Response;
+  try { answered = await membershipFenceScope.run(scope, () => serve({ ...actor, personId: member.personId })); }
+  catch (error) { throw scope.violated ? new TelehealthError("membership_changed") : error; }
+  if (scope.violated) throw new TelehealthError("membership_changed");
+  return answered;
 }
 
 async function createRequest(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
@@ -417,7 +560,9 @@ type RequestOperationRow = {
   admittedAt: string; committedAt?: string; committedVersion?: number; refusal?: TelehealthRefusal;
   /** Only a conditional pre-effects refusal may issue this disposition. Old
    * refused rows without it remain unresolved, not permission to abandon. */
-  dispositionProtocol?: "appointment-disposition/1"; sideEffects?: "none";
+  dispositionProtocol?: "appointment-disposition/1";
+  /** `compensated`: only for `membership_changed`, every provider call it dispatched was undone before release. */
+  sideEffects?: "none" | "compensated";
   reservedSlotKey?: { pk: string; sk: string };
   /** Private exact input for another device of the same consumer identity.
    * Never captured for workforce or legacy implicit-identity writes. */
@@ -634,6 +779,20 @@ async function executeRequestOperation(config: TelehealthConfiguration, operatio
       return { ...result, ...(supplied.operationProtocol === "appointment-change/1"
         ? { operationReceipt: operationReceipt(operation, receipt.committedVersion!, receipt.committedAt!) } : {}) };
     } catch (error) {
+      const fence = membershipFenceScope.getStore();
+      if (fence?.violated && !operation.committed) {
+        // The membership this operation was admitted under changed before it committed. Every provider call it
+        // dispatched is undone; only when all are undone (or there were none) is the appointment released, refused as
+        // `membership_changed`. Anything else stays pending, exactly as a post-effect commit failure does.
+        if (await undoFencedEffects(fence)) {
+          try {
+            await unfenced(() => commitRequestMutation(config, item, item.version, [{ Update: { TableName: config.tableName, Key: operation.requestKey,
+              UpdateExpression: "SET #version=:expected", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version" },
+              ExpressionAttributeValues: { ":expected": item.version } } }], "membership_changed", fence.effects.length > 0 ? "compensated" : "none"));
+          } catch { /* not released: the operation stays pending for reconciliation */ }
+        }
+        throw new TelehealthError("membership_changed");
+      }
       if (!operation.committed && !operation.effectsAttempted && error instanceof TelehealthError
         && ["request_invalid", "identity_refused", "conflict", "provider_unavailable", "not_found"].includes(error.category)) {
         await commitRequestMutation(config, item, item.version, [{ Update: { TableName: config.tableName, Key: operation.requestKey,
@@ -751,7 +910,7 @@ async function reconcileConsumerRecoveryProviders(config: TelehealthConfiguratio
   if (!operation?.recovery) throw new TelehealthError("appointment_change_pending");
   const signal = AbortSignal.timeout(20000);
   const deps: AppointmentRecoveryProviderDependencies = { signal, fetch,
-    zoomCredentials: child => recoveryZoomCredentials(config, child), beforeWrite: () => markRequestSideEffect(config),
+    zoomCredentials: child => recoveryZoomCredentials(config, child), beforeWrite: async () => { await markRequestSideEffect(config); },
     schedulerRead: async (name, child) => ({ ...await scheduler.send(new GetScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name }), { abortSignal: child }) }),
     schedulerDelete: (name, child) => scheduler.send(new DeleteScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name }), { abortSignal: child }),
     scheduleGroup: config.reminderScheduleGroup, scheduleTarget: config.reminderTargetArn, scheduleRole: config.reminderSchedulerRoleArn };
@@ -781,11 +940,12 @@ async function reconcileConsumerRecoveryProviders(config: TelehealthConfiguratio
 async function closeRequestWriter(config: TelehealthConfiguration, operation: AppointmentOperation): Promise<boolean> {
   const at = new Date().toISOString();
   try {
-    await document.send(new UpdateCommand({ TableName: config.tableName, Key: operation.key,
+    // Closing this invocation's own writer is never fenced: it must land after a membership change too.
+    await unfenced(() => document.send(new UpdateCommand({ TableName: config.tableName, Key: operation.key,
       UpdateExpression: "SET writerStatus=:closed,writerClosedAt=:at",
       ConditionExpression: "writerProtocol=:protocol AND writerToken=:writer AND writerStatus=:active AND inputSha256=:digest",
       ExpressionAttributeValues: { ":protocol": "appointment-writer/1", ":writer": operation.writerToken,
-        ":active": "active", ":closed": "closed", ":at": at, ":digest": operation.inputSha256 } }));
+        ":active": "active", ":closed": "closed", ":at": at, ":digest": operation.inputSha256 } })));
     return true;
   } catch {
     // Lost closure acknowledgements need a strong matching read. Failure to
@@ -800,23 +960,40 @@ async function closeRequestWriter(config: TelehealthConfiguration, operation: Ap
 }
 
 /** Called before a provider/scheduler write, including before obtaining its
- * secret. A lost dispatch receipt leaves the fence; it is never presumed safe. */
-async function markRequestSideEffect(config: TelehealthConfiguration) {
+ * secret. A lost dispatch receipt leaves the fence; it is never presumed safe.
+ * Under the membership fence the dispatch is also noted with its `undo`, known
+ * up front or attached by the caller once the provider's answer names what to
+ * undo; one left `null` is irreversible and keeps the operation pending. */
+async function markRequestSideEffect(config: TelehealthConfiguration, undo: (() => Promise<void>) | null = null) {
   const operation = appointmentOperationScope.getStore();
-  if (!operation) return;
+  if (!operation) return null;
   operation.effectsAttempted = true;
   await document.send(new UpdateCommand({ TableName: config.tableName, Key: operation.key,
     UpdateExpression: "SET #phase=:dispatched", ConditionExpression: "(#phase=:admitted OR #phase=:dispatched) AND inputSha256=:digest AND writerProtocol=:protocol AND writerToken=:writer AND writerStatus=:active",
     ExpressionAttributeNames: { "#phase": "phase" }, ExpressionAttributeValues: { ":dispatched": "effects_started", ":admitted": "admitted", ":digest": operation.inputSha256,
       ":protocol": "appointment-writer/1", ":writer": operation.writerToken, ":active": "active" } }));
   operation.effectsRecorded = true;
+  const fence = membershipFenceScope.getStore();
+  if (!fence) return null;
+  const effect = { undo };
+  fence.effects.push(effect);
+  return effect;
+}
+/** Undo, newest first and outside the fence, every provider call a fenced operation dispatched. True only when all were undone. */
+async function undoFencedEffects(fence: MembershipFenceScope) {
+  let undone = fence.effects.every((effect) => effect.undo !== null);
+  for (const effect of [...fence.effects].reverse()) {
+    if (!effect.undo) continue;
+    try { await unfenced(() => appointmentOperationScope.exit(effect.undo!)); } catch { undone = false; }
+  }
+  return undone;
 }
 
 /** Receipt, request version, slot/calendar changes and fence removal are one
  * transaction. A lost commit response is settled by its exact durable receipt,
  * never by an empty list, timestamp, elapsed lease or matching status. */
 async function commitRequestMutation(config: TelehealthConfiguration, item: AppointmentItem, nextVersion: number,
-  actions: RequestTransaction, refusal?: TelehealthRefusal) {
+  actions: RequestTransaction, refusal?: TelehealthRefusal, sideEffects: "none" | "compensated" = "none") {
   const operation = appointmentOperationScope.getStore();
   const request = actions.find(action => action.Update?.Key?.pk === item.pk && action.Update?.Key?.sk === item.sk)?.Update;
   if (!request) throw new TelehealthError("service_unavailable");
@@ -831,11 +1008,14 @@ async function commitRequestMutation(config: TelehealthConfiguration, item: Appo
   const committedAt = new Date().toISOString();
   actions.push({ Update: { TableName: config.tableName, Key: operation.key,
     UpdateExpression: "SET #phase=:committed,committedVersion=:version,committedAt=:at" + (refusal ? ",refusal=:refusal,dispositionProtocol=:protocol,sideEffects=:none" : ""),
-    ConditionExpression: (refusal ? "#phase=:admitted AND attribute_not_exists(reservedSlotKey)" : "(#phase=:admitted OR #phase=:dispatched)") + " AND inputSha256=:digest AND writerProtocol=:writerProtocol AND writerToken=:writer AND writerStatus=:activeWriter", ExpressionAttributeNames: { "#phase": "phase" },
+    // A compensated refusal (membership_changed only) may follow dispatched effects, because each was undone first.
+    ConditionExpression: (refusal && sideEffects === "none" ? "#phase=:admitted AND attribute_not_exists(reservedSlotKey)"
+      : refusal ? "(#phase=:admitted OR #phase=:dispatched) AND attribute_not_exists(reservedSlotKey)" : "(#phase=:admitted OR #phase=:dispatched)")
+      + " AND inputSha256=:digest AND writerProtocol=:writerProtocol AND writerToken=:writer AND writerStatus=:activeWriter", ExpressionAttributeNames: { "#phase": "phase" },
     ExpressionAttributeValues: { ":committed": refusal ? "refused" : "committed", ":version": nextVersion, ":at": committedAt,
-      ":admitted": "admitted", ...(!refusal ? { ":dispatched": "effects_started" } : {}), ":digest": operation.inputSha256,
+      ":admitted": "admitted", ...(!refusal || sideEffects === "compensated" ? { ":dispatched": "effects_started" } : {}), ":digest": operation.inputSha256,
       ":writerProtocol": "appointment-writer/1", ":writer": operation.writerToken, ":activeWriter": "active",
-      ...(refusal ? { ":refusal": refusal, ":protocol": "appointment-disposition/1", ":none": "none" } : {}) } } });
+      ...(refusal ? { ":refusal": refusal, ":protocol": "appointment-disposition/1", ":none": sideEffects } : {}) } } });
   if (operation.visitKey && !actions.some(action => (action.Put?.Item?.pk === operation.visitKey!.pk && action.Put?.Item?.sk === operation.visitKey!.sk)
     || (action.Update?.Key?.pk === operation.visitKey!.pk && action.Update?.Key?.sk === operation.visitKey!.sk))) {
     actions.push({ Update: { TableName: config.tableName, Key: operation.visitKey, UpdateExpression: "SET #version=#version+:increment REMOVE mutationOperationId",
@@ -982,7 +1162,7 @@ async function workforceAction(config: TelehealthConfiguration, actor: Actor, va
     if (!config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
     const meetingInput = { requestId: item.requestId, start, durationMinutes: Math.ceil((+new Date(end) - +new Date(start)) / 60_000), timeZone };
     meeting = item.providerMeetingId && item.joinUrl
-      ? await updateZoomMeeting(config, item.providerMeetingId, item.joinUrl, meetingInput)
+      ? await updateZoomMeeting(config, item.providerMeetingId, item.joinUrl, meetingInput, recordedMeetingTime(item))
       : await createZoomMeeting(config, meetingInput);
   }
   return scheduleRequest(config, item, Number(value.expectedVersion), {
@@ -1035,11 +1215,13 @@ async function zoomAccess(config: TelehealthConfiguration, sdkRequired = false, 
 }
 
 async function createZoomMeeting(config: TelehealthConfiguration, input: { requestId: string; start: string; durationMinutes: number; timeZone: string }) {
-  await markRequestSideEffect(config);
+  const effect = await markRequestSideEffect(config);
   const signal = AbortSignal.timeout(20_000);
   const { accessToken, userId } = await zoomAccess(config, false, signal);
   const meetingResponse = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(userId)}/meetings`, { method: "POST", redirect: "manual", cache: "no-store", signal, headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ topic: "AI Longevity Pro telehealth appointment", type: 2, start_time: input.start, duration: input.durationMinutes, timezone: input.timeZone, agenda: `Governed appointment request ${input.requestId}`, settings: { waiting_room: true, join_before_host: false, meeting_authentication: true } }) });
-  return zoomMeetingRecord(await zoomResponseJson(meetingResponse, signal, 65_536, 201));
+  const record = zoomMeetingRecord(await zoomResponseJson(meetingResponse, signal, 65_536, 201));
+  if (effect) effect.undo = () => removeZoomMeeting(config, record.providerMeetingId);
+  return record;
 }
 type ZoomMeetingRecord = { providerMeetingId: string; providerMeetingUuid: string | null; joinUrl: string; password: string };
 function zoomMeetingId(value: unknown): string {
@@ -1090,14 +1272,25 @@ async function getZoomMeeting(config: TelehealthConfiguration, meetingId: string
   return record;
 }
 
-async function updateZoomMeeting(config: TelehealthConfiguration, meetingId: string, joinUrl: string, input: { requestId: string; start: string; durationMinutes: number; timeZone: string }) {
-  await markRequestSideEffect(config);
+type ZoomMeetingTime = { requestId: string; start: string; durationMinutes: number; timeZone: string };
+/** The time the request still records for its meeting: what a moved meeting is put back to. Null when it records none. */
+function recordedMeetingTime(item: AppointmentItem): ZoomMeetingTime | null {
+  if (!item.scheduledStart || !item.scheduledEnd || !item.timeZone || !date(item.scheduledStart) || !date(item.scheduledEnd)) return null;
+  return { requestId: item.requestId, start: item.scheduledStart, timeZone: item.timeZone,
+    durationMinutes: Math.ceil((+new Date(item.scheduledEnd) - +new Date(item.scheduledStart)) / 60_000) };
+}
+async function updateZoomMeeting(config: TelehealthConfiguration, meetingId: string, joinUrl: string, input: ZoomMeetingTime, restore: ZoomMeetingTime | null = null) {
+  // Putting the recorded time back is idempotent, so the undo is known before the PATCH and holds whatever it did.
+  await markRequestSideEffect(config, restore ? () => patchZoomMeeting(config, meetingId, restore) : null);
+  await patchZoomMeeting(config, meetingId, input);
+  return { joinUrl, providerMeetingId: meetingId };
+}
+async function patchZoomMeeting(config: TelehealthConfiguration, meetingId: string, input: ZoomMeetingTime) {
   const { accessToken } = await zoomAccess(config);
   const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`, { method: "PATCH", redirect: "manual", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ start_time: input.start, duration: input.durationMinutes, timezone: input.timeZone, agenda: `Governed appointment request ${input.requestId}` }) });
   if (!result.ok) throw new TelehealthError("provider_unavailable");
-  return { joinUrl, providerMeetingId: meetingId };
 }
 
 async function deleteZoomMeeting(config: TelehealthConfiguration, meetingId: string) {
@@ -1107,6 +1300,10 @@ async function deleteZoomMeeting(config: TelehealthConfiguration, meetingId: str
     return;
   }
   await markRequestSideEffect(config);
+  await removeZoomMeeting(config, meetingId);
+}
+/** The provider DELETE alone. A meeting the provider no longer has is already removed. */
+async function removeZoomMeeting(config: TelehealthConfiguration, meetingId: string) {
   const { accessToken } = await zoomAccess(config);
   const result = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`, { method: "DELETE", redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${accessToken}` } });
   if (!result.ok && result.status !== 404) throw new TelehealthError("provider_unavailable");
@@ -1190,7 +1387,8 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
   let response: Response;
   try {
     response = await fetch(`${config.identityApiOrigin}${path}`, { method: init?.method ?? "GET", redirect: "manual", signal,
-      headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}) },
+      headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}),
+        ...(actor.selectedClinic !== null ? { [SELECTED_CLINIC_HEADER]: actor.selectedClinic } : {}) },
       ...(init ? { body: JSON.stringify(init.body) } : {}) });
   } catch { throw new TelehealthError("service_unavailable"); }
   let payload: unknown;
@@ -1213,6 +1411,21 @@ async function requireCurrentWorkforceMembership(config: TelehealthConfiguration
     && (row as Record<string, unknown>).organization_id === actor.organizationId
     && ["owner", "admin", "practitioner", "staff"].includes(String((row as Record<string, unknown>).role)));
   if (matches.length !== 1) throw new TelehealthError("identity_refused");
+}
+/**
+ * Current membership for a fenced write: the identity API's posture for the selected clinic, answered from current rows
+ * in its own current-membership transaction. The write needs a clinical role there and the person it is recorded as;
+ * the token carries neither. A posture without a person id cannot name the actor and is refused.
+ */
+async function currentWorkforceMember(config: TelehealthConfiguration, actor: Actor): Promise<{ personId: string }> {
+  if (!actor.bearer) throw new TelehealthError("identity_refused");
+  const posture = await identityApi<unknown>(config, actor, "/clinical-core/workforce/posture", undefined, "identity_refused", 65_536);
+  const membership = posture && typeof posture === "object" && !Array.isArray(posture) ? (posture as Record<string, unknown>).membership : null;
+  if (!membership || typeof membership !== "object" || Array.isArray(membership)) throw new TelehealthError("service_unavailable");
+  const row = membership as Record<string, unknown>;
+  if (row.organizationId !== actor.organizationId || !["owner", "admin", "practitioner", "staff"].includes(String(row.role))) throw new TelehealthError("identity_refused");
+  if (typeof row.personId !== "string" || !UUID.test(row.personId)) throw new TelehealthError("service_unavailable");
+  return { personId: row.personId };
 }
 type ArtifactRecord = { artifactId: string; scope: string; artifactVersion: string; contentSha256: string; jurisdiction: string; approvedAt: string };
 type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null; representativeAuthority: VisitConsent["representativeAuthority"] | null };
@@ -2271,34 +2484,60 @@ function reminderName(item: Pick<AppointmentItem, "requestId" | "reminderGenerat
   return `alp-${item.requestId.replaceAll("-", "").toLowerCase()}-${generation}-${offset}`;
 }
 function atExpression(value: Date) { return `at(${value.toISOString().slice(0, 19)})`; }
-async function deleteAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem) {
+async function deleteAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem, undo: (() => Promise<void>) | null = null) {
   const recovery = appointmentOperationScope.getStore()?.recovery;
   if (recovery) {
     if (!recovery.remindersConfirmed) throw new TelehealthError("appointment_change_pending");
     return;
   }
-  const names = (["24h", "1h"] as const).map(offset => reminderName(item, offset));
-  await markRequestSideEffect(config);
-  for (const name of names) {
+  // Malformed reminder metadata refuses before anything is dispatched.
+  for (const offset of ["24h", "1h"] as const) reminderName(item, offset);
+  await markRequestSideEffect(config, undo);
+  await deleteReminderSchedules(config, item);
+}
+async function deleteReminderSchedules(config: TelehealthConfiguration, item: AppointmentItem) {
+  for (const name of (["24h", "1h"] as const).map(offset => reminderName(item, offset))) {
     try { await scheduler.send(new DeleteScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name })); }
     catch (error) { if ((error as { name?: string }).name !== "ResourceNotFoundException") throw new TelehealthError("service_unavailable"); }
   }
 }
 async function scheduleAppointmentReminders(config: TelehealthConfiguration, item: AppointmentItem, previous: AppointmentItem) {
   if (!item.scheduledStart) throw new TelehealthError("service_unavailable");
-  await deleteAppointmentReminders(config, previous);
+  // One dispatch replaces the previous revision with this one; its undo, known up front, reverses both halves.
+  await deleteAppointmentReminders(config, previous, () => restoreReminders(config, item, previous));
+  await createReminderSchedules(config, item, false);
+}
+/**
+ * The undo of a reminder revision: remove the schedules this operation created and put back the revision it replaced.
+ * Reminders of an uncommitted revision could never send (`reminderRefusal` requires the committed generation); this is
+ * so the appointment keeps the reminders it had. A legacy unnamed revision cannot be recreated exactly and is refused.
+ */
+async function restoreReminders(config: TelehealthConfiguration, created: AppointmentItem, previous: AppointmentItem) {
+  await deleteReminderSchedules(config, created);
+  if (previous.reminderStatus !== "scheduled" || !previous.scheduledStart) return;
+  if (typeof previous.reminderGeneration !== "string") throw new TelehealthError("service_unavailable");
+  await createReminderSchedules(config, previous, true);
+}
+async function createReminderSchedules(config: TelehealthConfiguration, item: AppointmentItem, restoring: boolean) {
+  if (!item.scheduledStart) throw new TelehealthError("service_unavailable");
   const start = new Date(item.scheduledStart).getTime();
   for (const [offset, milliseconds] of [["24h", 86_400_000], ["1h", 3_600_000]] as const) {
     const runAt = new Date(start - milliseconds); if (runAt.getTime() <= Date.now()) continue;
     const name = reminderName(item, offset);
     const input = JSON.stringify({ internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId,
       scheduledStart: item.scheduledStart, reminderProtocol: "appointment-reminder/2", reminderGeneration: item.reminderGeneration });
-    const clientToken = createHash("sha256").update(JSON.stringify(["appointment-reminder/2", config.reminderScheduleGroup, name,
+    // A restore is a new request to the scheduler, never a replay of the original creation's token.
+    const clientToken = createHash("sha256").update(JSON.stringify([restoring ? "appointment-reminder/2-restore" : "appointment-reminder/2", config.reminderScheduleGroup, name,
       atExpression(runAt), config.reminderTargetArn, config.reminderSchedulerRoleArn, input])).digest("hex");
-    await scheduler.send(new CreateScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name, ClientToken: clientToken,
-      ScheduleExpression: atExpression(runAt), ScheduleExpressionTimezone: "UTC", FlexibleTimeWindow: { Mode: "OFF" }, ActionAfterCompletion: "DELETE",
-      Target: { Arn: config.reminderTargetArn, RoleArn: config.reminderSchedulerRoleArn,
-        Input: input } }));
+    try {
+      await scheduler.send(new CreateScheduleCommand({ GroupName: config.reminderScheduleGroup, Name: name, ClientToken: clientToken,
+        ScheduleExpression: atExpression(runAt), ScheduleExpressionTimezone: "UTC", FlexibleTimeWindow: { Mode: "OFF" }, ActionAfterCompletion: "DELETE",
+        Target: { Arn: config.reminderTargetArn, RoleArn: config.reminderSchedulerRoleArn,
+          Input: input } }));
+    } catch (error) {
+      // Restoring a schedule that was never deleted finds it still there: that is the state being restored.
+      if (!restoring || (error as { name?: string }).name !== "ConflictException") throw error;
+    }
   }
 }
 /** SES bounce and complaint events (via the reminder configuration set's SNS destination) suppress further reminders to that
@@ -2438,8 +2677,14 @@ async function stripeCredentials(config: TelehealthConfiguration) {
   if (!webhookSecret.startsWith("whsec_")) throw new TelehealthError("provider_unavailable");
   return { secretKey, webhookSecret };
 }
-async function stripePost(config: TelehealthConfiguration, path: string, values: Record<string, string>, idempotencyKey: string) {
-  await markRequestSideEffect(config);
+async function stripePost(config: TelehealthConfiguration, path: string, values: Record<string, string>, idempotencyKey: string,
+  reversal?: (payload: Record<string, unknown>) => () => Promise<void>) {
+  const effect = await markRequestSideEffect(config);
+  const payload = await stripeRequest(config, path, values, idempotencyKey);
+  if (effect && reversal) effect.undo = reversal(payload);
+  return payload;
+}
+async function stripeRequest(config: TelehealthConfiguration, path: string, values: Record<string, string>, idempotencyKey: string) {
   const { secretKey } = await stripeCredentials(config);
   const result = await fetch(`https://api.stripe.com/v1${path}`, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(15_000),
     headers: { authorization: `Bearer ${secretKey}`, "content-type": "application/x-www-form-urlencoded", "idempotency-key": idempotencyKey }, body: new URLSearchParams(values).toString() });
@@ -2529,15 +2774,43 @@ async function workforcePayment(config: TelehealthConfiguration, actor: Actor, v
     if (item.paymentAuthorizationStatus !== "authorized" || (item.cancellationFeeDueMinor === 0 && value.serviceDelivered !== true)) throw new TelehealthError("identity_refused");
     const profile = await rawPaymentProfile(config, { organizationId: item.organizationId, personId: item.consumerPersonId });
     if (profile?.status !== "active" || !profile.stripePaymentMethodId) throw new TelehealthError("provider_unavailable");
+    const operationId = appointmentOperationScope.getStore()!.operationId;
     const intent = await stripePost(config, "/payment_intents", { amount: String(amount), currency: item.currency.toLowerCase(), customer: profile.stripeCustomerId,
       payment_method: profile.stripePaymentMethodId, off_session: "true", confirm: "true", receipt_email: item.consumerEmail,
-      "metadata[organization_id]": item.organizationId, "metadata[request_id]": item.requestId }, `telehealth-charge:${item.requestId}:${appointmentOperationScope.getStore()!.operationId}`);
+      "metadata[organization_id]": item.organizationId, "metadata[request_id]": item.requestId }, `telehealth-charge:${item.requestId}:${operationId}`,
+    (created) => { const intentId = field(created, "id"); return () => reverseCharge(config, item, intentId, operationId); });
     return updatePaymentState(config, item, Number(value.expectedVersion), { paymentStatus: "processing", paymentIntentId: field(intent, "id") });
   }
   if (!item.paymentIntentId || !["paid", "partially_refunded"].includes(item.paymentStatus) || amount > item.paidMinor - item.refundedMinor || typeof value.reason !== "string" || value.reason.length < 3 || value.reason.length > 500) throw new TelehealthError("request_invalid");
   await stripePost(config, "/refunds", { payment_intent: item.paymentIntentId, amount: String(amount), "metadata[organization_id]": item.organizationId,
     "metadata[request_id]": item.requestId, "metadata[reason_code]": "workforce_approved" }, `telehealth-refund:${item.requestId}:${appointmentOperationScope.getStore()!.operationId}`);
   return updatePaymentState(config, item, Number(value.expectedVersion), { paymentStatus: amount === item.paidMinor - item.refundedMinor ? "refunded" : "partially_refunded", refundedMinor: item.refundedMinor + amount });
+}
+/**
+ * The undo of a charge whose operation lost its membership before committing: a succeeded charge is refunded in full,
+ * one Stripe can still cancel is cancelled, a cancelled one is already undone. A charge still `processing` cannot be
+ * undone yet; the operation then stays pending. Fixed idempotency keys make a repeated undo the same request.
+ */
+async function reverseCharge(config: TelehealthConfiguration, item: AppointmentItem, intentId: string, operationId: string) {
+  const intent = await stripeGet(config, `/payment_intents/${encodeURIComponent(intentId)}`);
+  const metadata = (intent.metadata ?? {}) as Record<string, unknown>;
+  if (intent.id !== intentId || metadata.request_id !== item.requestId || metadata.organization_id !== item.organizationId) throw new TelehealthError("provider_unavailable");
+  const status = String(intent.status ?? "");
+  if (status === "canceled") return;
+  if (status === "succeeded") {
+    const received = intent.amount_received;
+    if (!Number.isSafeInteger(received) || Number(received) < 1) throw new TelehealthError("provider_unavailable");
+    await stripeRequest(config, "/refunds", { payment_intent: intentId, amount: String(received), "metadata[organization_id]": item.organizationId,
+      "metadata[request_id]": item.requestId, "metadata[reason_code]": "membership_changed" }, `telehealth-compensate-refund:${item.requestId}:${operationId}`);
+    return;
+  }
+  if (["requires_payment_method", "requires_confirmation", "requires_action", "requires_capture"].includes(status)) {
+    const cancelled = await stripeRequest(config, `/payment_intents/${encodeURIComponent(intentId)}/cancel`, { cancellation_reason: "abandoned" },
+      `telehealth-compensate-cancel:${item.requestId}:${operationId}`);
+    if (cancelled.status !== "canceled") throw new TelehealthError("provider_unavailable");
+    return;
+  }
+  throw new TelehealthError("provider_unavailable");
 }
 async function updatePaymentState(config: TelehealthConfiguration, item: AppointmentItem, version: number, values: Partial<AppointmentItem>) {
   const next = { ...item, ...values, version: version + 1, updatedAt: new Date().toISOString(), lastActionBy: "workforce" as const };
@@ -2573,8 +2846,11 @@ async function handleStripeWebhook(config: TelehealthConfiguration, event: ApiGa
   return { received: true };
 }
 
-type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
+type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string;
+  /** Under `database_current` only: the request's one selected clinic, sent on every identity-API call. Null otherwise. */
+  selectedClinic: string | null };
 function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, pool: "consumer" | "workforce"): Actor {
+  if (pool === "workforce" && config.workforceAuthority === "database_current") return currentWorkforceIdentity(event, config);
   const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
   const issuer = pool === "consumer" ? config.consumerIssuer : config.workforceIssuer; const audience = pool === "consumer" ? config.consumerAudience : config.workforceAudience;
   const email = claim("email").toLowerCase();
@@ -2582,7 +2858,26 @@ function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, poo
     || (pool === "consumer" && !/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(email))
     || (config.runtimeMode === "synthetic" ? claim("custom:synthetic_attested") !== "true" || claim("custom:production_bound") === "true" : claim("custom:production_bound") !== "true")) throw new TelehealthError("identity_refused");
   const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
-  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, pool, bearer: authorization.replace(/^Bearer\s+/i, "") };
+  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, pool, bearer: authorization.replace(/^Bearer\s+/i, ""), selectedClinic: null };
+}
+/**
+ * The workforce caller under `database_current`, with the identity API's own checks: issuer, audience, an ID token, a
+ * UUID subject, a verified email, no synthetic attestation and a live expiry (not left to the gateway alone), plus
+ * exactly one selected clinic in canonical form. Two selections are ambiguous and refused. No custom claim is read:
+ * the clinic is the selection, and the person and role are whatever the identity API's current rows say. There is no
+ * person id here, so anything that would compare one (only the disabled writes) fails closed.
+ */
+function currentWorkforceIdentity(event: ApiGatewayV2Event, config: TelehealthConfiguration): Actor {
+  const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
+  const selected = Object.entries(event.headers ?? {}).filter(([key]) => key.toLowerCase() === SELECTED_CLINIC_HEADER).map(([, value]) => value ?? "");
+  const expiry = Number(claims?.exp);
+  if (claim("iss") !== config.workforceIssuer || claim("aud") !== config.workforceAudience || claim("token_use") !== "id" || !UUID.test(claim("sub"))
+    || claim("email_verified") !== "true" || claim("custom:synthetic_attested") === "true"
+    || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()
+    || selected.length !== 1 || !CANONICAL_UUID.test(selected[0]!)) throw new TelehealthError("identity_refused");
+  const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
+  return { personId: "", organizationId: selected[0]!, subject: claim("sub"), email: claim("email").toLowerCase(), pool: "workforce",
+    bearer: authorization.replace(/^Bearer\s+/i, ""), selectedClinic: selected[0]! };
 }
 
 function body(event: ApiGatewayV2Event): Record<string, unknown> { const content = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "content-type")?.[1]; if (!content?.startsWith("application/json") || typeof event.body !== "string" || Buffer.byteLength(event.body) > MAX_BODY) throw new TelehealthError("request_invalid"); try { const value = JSON.parse(event.body); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new TelehealthError("request_invalid"); } }
@@ -2603,10 +2898,14 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   return result;
 }
 function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))
-  || (config.enquirerEmailsEnabled === true && (!config.reminderSender || config.reminderConfigurationSet !== "alp-transactional" || !CLINIC_DISPLAY_NAME.test(config.clinicDisplayName ?? "")))) throw new Error("telehealth_configuration_invalid"); }
+  || (config.enquirerEmailsEnabled === true && (!config.reminderSender || config.reminderConfigurationSet !== "alp-transactional" || !CLINIC_DISPLAY_NAME.test(config.clinicDisplayName ?? "")))
+  || (config.workforceAuthority !== undefined && !["legacy_claims", "database_current"].includes(config.workforceAuthority))
+  || (config.workforceAuthority === "database_current" && config.runtimeMode !== "production")
+  || (config.membershipFenceTable !== undefined && (config.workforceAuthority !== "database_current"
+    || !/^[A-Za-z0-9_.-]{3,255}$/.test(config.membershipFenceTable) || config.membershipFenceTable === config.tableName))) throw new Error("telehealth_configuration_invalid"); }
 type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
   | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch" | "transfer_unavailable"
   | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"
-  | "provider_unavailable" | "service_unavailable";
+  | "provider_unavailable" | "service_unavailable" | "membership_fence_unavailable" | "membership_changed";
 class TelehealthError extends Error { constructor(readonly category: TelehealthRefusal) { super(category); } }
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response { return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) }; }
