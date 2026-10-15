@@ -281,8 +281,8 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   const message = record.message;
   const labAttestation = labAttestationRefusalReason(message);
   if (labAttestation) return new ClinicalCoreDatabaseRejection(LAB_ATTESTATION_CATEGORY[labAttestation], labAttestation);
-  // Program-step purchase refusals (the BLOCKED program-step-purchase candidate), by token only.
-  const programStep = /\b(program_step_[a-z_]+)\b/.exec(message)?.[1];
+  // Program-step purchase refusals (the BLOCKED program-step-purchase candidate and its priced successor), by token only.
+  const programStep = /\b(program_step_[a-z_]+|program_price_unset)\b/.exec(message)?.[1];
   if (programStep && (PROGRAM_STEP_REFUSALS as readonly string[]).includes(programStep)) return new ClinicalCoreDatabaseRejection(
     programStep === "program_step_refused" ? "identity_refused" : programStep === "program_step_purchase_disabled" ? "operation_refused" : "conflict", programStep);
   if (/\bcare_message_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
