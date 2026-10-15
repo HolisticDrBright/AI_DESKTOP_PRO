@@ -78,9 +78,9 @@ export const funnelDefinition = z.object({
    */
   channelConsultSlugs: z.object({ email: consultLinkSlug.optional(), text: consultLinkSlug.optional() }).strict().optional(),
   /**
-   * The program's list in the campaign service, or absent for no "Get updates" link. The page's `updatesUrl`
-   * is built from the configured `CAMPAIGN_SIGNUP_ORIGIN` plus this key, never written here: with that
-   * setting unset there is no link at all.
+   * The program's list in the campaign engine, or absent for no "Get updates" link. The page's `updatesUrl`
+   * is `/join/<practice>/<this key>`, shown only when a practice offering the list holds the `marketing`
+   * entitlement (`src/lib/marketingSignupLink.ts`); never written here.
    */
   updates: z.object({ programKey: slug }).strict().optional(),
   /**

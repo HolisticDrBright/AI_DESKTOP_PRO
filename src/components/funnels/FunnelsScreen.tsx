@@ -47,8 +47,8 @@ async function readLinks(): Promise<ConsultLinkState[]> {
   return body.data.links;
 }
 
-/** `updatesOrigin`: the campaign sign-up origin as the server read it (it is not a public build value), or null. */
-export function FunnelsScreen({ updatesOrigin = null }: { updatesOrigin?: string | null }) {
+/** `updatesUrls`: each page's "Get updates" address as the server decided it (null: no link on that page). */
+export function FunnelsScreen({ updatesUrls = {} }: { updatesUrls?: Readonly<Record<string, string | null>> }) {
   const [read, setRead] = useState<LinkRead>({ state: "loading" });
   const [queue, setQueue] = useState<QueueRead>({ state: "loading" });
   const [now, setNow] = useState(() => new Date());
@@ -63,7 +63,7 @@ export function FunnelsScreen({ updatesOrigin = null }: { updatesOrigin?: string
   useEffect(() => { void load(); }, [load]);
   // Read as a literal so the bundler inlines the public value for the browser.
   const origin = publicSiteOrigin({ NEXT_PUBLIC_SITE_ORIGIN: process.env.NEXT_PUBLIC_SITE_ORIGIN });
-  return <FunnelsView funnels={allFunnels()} read={read} queue={queue} origin={origin} updatesOrigin={updatesOrigin} now={now} onRetry={() => void load()} />;
+  return <FunnelsView funnels={allFunnels()} read={read} queue={queue} origin={origin} updatesUrls={updatesUrls} now={now} onRetry={() => void load()} />;
 }
 
 /** What a funnel's hand-off looks like against the link list that was actually read. */
@@ -110,8 +110,8 @@ function RequestCounts({ funnel, queue, now }: { funnel: FunnelDefinition; queue
   );
 }
 
-export function FunnelsView({ funnels, read, queue = { state: "loading" }, origin, updatesOrigin = null, now = new Date(), onRetry }: {
-  funnels: readonly FunnelDefinition[]; read: LinkRead; queue?: QueueRead; origin: string | null; updatesOrigin?: string | null; now?: Date; onRetry: () => void;
+export function FunnelsView({ funnels, read, queue = { state: "loading" }, origin, updatesUrls = {}, now = new Date(), onRetry }: {
+  funnels: readonly FunnelDefinition[]; read: LinkRead; queue?: QueueRead; origin: string | null; updatesUrls?: Readonly<Record<string, string | null>>; now?: Date; onRetry: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3" data-testid="funnels-screen" data-links={read.state} data-queue={queue.state}>
@@ -128,9 +128,9 @@ export function FunnelsView({ funnels, read, queue = { state: "loading" }, origi
           The consult link list could not be read. Nothing below says whether a link exists. <button type="button" className="underline" onClick={onRetry}>Read again</button>
         </p>
       )}
-      {updatesOrigin === null && (
+      {funnels.every(funnel => !updatesUrls[funnel.slug]) && (
         <p role="status" data-testid="funnels-no-updates-origin" className="m-0 text-[13px] text-subtle">
-          No campaign sign-up address is configured (CAMPAIGN_SIGNUP_ORIGIN), so no page shows &quot;Get updates about this program&quot;.
+          No practice offering these pages holds the marketing package, so no page shows &quot;Get updates about this program&quot;.
         </p>
       )}
       {queue.state === "failed" && (
@@ -157,7 +157,7 @@ export function FunnelsView({ funnels, read, queue = { state: "loading" }, origi
             <p className={`m-0 mt-2 text-[12.5px] ${handoff.tone === "warning" ? "font-semibold text-critical" : "text-body"}`} data-testid={`funnel-handoff-${funnel.slug}`}>{handoff.text}</p>
             {emailLink && <p className={`m-0 mt-1 text-[12.5px] ${emailLink.tone === "warning" ? "font-semibold text-critical" : "text-body"}`} data-testid={`funnel-email-link-${funnel.slug}`} data-handoff={emailLink.tone}>Email link: {emailLink.text}</p>}
             <p className="m-0 mt-1 break-all text-[12.5px] text-body" data-testid={`funnel-updates-${funnel.slug}`}>{funnel.updates
-              ? (updatesOrigin ? `Get updates: ${updatesOrigin}/signup/${funnel.updates.programKey}` : "Get updates: not shown on the page; the campaign sign-up address is not configured.")
+              ? (updatesUrls[funnel.slug] ? `Get updates: ${updatesUrls[funnel.slug]}` : "Get updates: not shown on the page; no practice offering this list holds the marketing package.")
               : "Get updates: this page has no campaign list."}</p>
             <RequestCounts funnel={funnel} queue={queue} now={now} />
             {funnel.status === "published"

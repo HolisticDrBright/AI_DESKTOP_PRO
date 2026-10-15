@@ -80,7 +80,7 @@ describe('a funnel page', () => {
     }
   });
   it('with the campaign sign-up page configured, its outbound addresses are exactly the consult page and the sign-up page, and it still has no form', () => {
-    const updatesUrl = 'https://updates.fictional.example/signup/longevity-program';
+    const updatesUrl = 'https://clinic.fictional.example/join/fictional-practice/longevity-program';
     for (const funnel of [withEverySection(), ...FUNNELS]) {
       const element = createElement(FunnelPage, { funnel, consultHref, purchase: held, buyHref, updatesUrl });
       const markup = renderToMarkup(element);

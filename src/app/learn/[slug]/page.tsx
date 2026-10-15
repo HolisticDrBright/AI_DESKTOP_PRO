@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { FunnelPage } from "@/components/funnels/FunnelPage";
 import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
 import { funnelPageLinks } from "@/lib/funnelPageLinks";
+import { marketingSignupDirectory } from "@/funnels/marketingSignup";
 import { funnelPageUrl, indexingAllowed } from "@/lib/publicSite";
 import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
 
@@ -39,7 +40,7 @@ export default async function FunnelRoute({ params, searchParams }: { params: Pr
   const { slug } = await params;
   const funnel = await resolvePublicFunnel(slug);
   if (!funnel) notFound();
-  const { consultHref, updatesUrl } = funnelPageLinks(funnel, (await searchParams).via);
+  const { consultHref, updatesUrl } = await funnelPageLinks(funnel, (await searchParams).via, marketingSignupDirectory());
   const purchase = await funnelPurchaseAvailability(funnel);
   return <FunnelPage funnel={funnel} consultHref={consultHref} purchase={purchase} buyHref={`/buy/${funnel.slug}`} updatesUrl={updatesUrl} />;
 }

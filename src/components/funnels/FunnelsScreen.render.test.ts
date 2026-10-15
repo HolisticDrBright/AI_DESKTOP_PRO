@@ -85,8 +85,8 @@ describe('requests per program and channel on the Funnels screen', () => {
     { slug: 'longevity-program', receivedAt: ago(1) }, { slug: 'longevity-program', receivedAt: ago(12) },
     { slug: 'longevity-program-email', receivedAt: ago(3) }, { slug: 'diabetes-program-email', receivedAt: ago(40) },
   ] };
-  const screen = (q: QueueRead, updatesOrigin: string | null = null, links: LinkRead = read) =>
-    createElement(FunnelsView, { funnels: FUNNELS, read: links, queue: q, origin: 'https://clinic.fictional.example', updatesOrigin, now, onRetry: noop });
+  const screen = (q: QueueRead, updatesUrls: Record<string, string | null> = {}, links: LinkRead = read) =>
+    createElement(FunnelsView, { funnels: FUNNELS, read: links, queue: q, origin: 'https://clinic.fictional.example', updatesUrls, now, onRetry: noop });
 
   it('counts requests per channel for the last 7 and 30 days, and shows counts only', () => {
     const element = screen(queue);
@@ -115,12 +115,13 @@ describe('requests per program and channel on the Funnels screen', () => {
     expect(describeChannelLink(longevityProgram, 'longevity-program-email', { state: 'failed' })).toMatchObject({ tone: 'unknown', text: expect.stringContaining('could not be read') });
     expect(renderToText(screen(queue))).toContain('Email link: No consult link with slug "weight-loss-program-email" exists.');
   });
-  it('says whether each page shows "Get updates", from the sign-up origin the server read', () => {
+  it('says whether each page shows "Get updates", from the addresses the server decided', () => {
     const off = screen(queue);
     expect(renderToMarkup(off)).toContain('data-testid="funnels-no-updates-origin"');
-    expect(renderToText(off)).toContain('Get updates: not shown on the page; the campaign sign-up address is not configured.');
-    const on = screen(queue, 'https://updates.fictional.example');
+    expect(renderToText(off)).toContain('Get updates: not shown on the page; no practice offering this list holds the marketing package.');
+    const urls = Object.fromEntries(FUNNELS.map(funnel => [funnel.slug, `https://clinic.fictional.example/join/fictional-practice/${funnel.updates!.programKey}`]));
+    const on = screen(queue, urls);
     expect(renderToMarkup(on)).not.toContain('funnels-no-updates-origin');
-    for (const funnel of FUNNELS) expect(renderToText(on)).toContain(`Get updates: https://updates.fictional.example/signup/${funnel.updates!.programKey}`);
+    for (const funnel of FUNNELS) expect(renderToText(on)).toContain(`Get updates: https://clinic.fictional.example/join/fictional-practice/${funnel.updates!.programKey}`);
   });
 });

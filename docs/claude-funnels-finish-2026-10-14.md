@@ -18,21 +18,27 @@ This is workstream 1 of the marketing-wiring handoff. The phase-1 funnel design 
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Second next step | `src/funnels/schema.ts`, `src/lib/campaignSignupUrl.ts`, `src/components/funnels/FunnelPage.tsx` | See "The updates link" below. |
+| Second next step | `src/funnels/schema.ts`, `src/lib/marketingSignupLink.ts`, `src/funnels/marketingSignup.ts`, `src/components/funnels/FunnelPage.tsx` | See "The updates link" below. |
 | Channel without tracking the person | `src/funnels/channels.ts`, `src/lib/funnelPageLinks.ts`, `src/app/learn/[slug]/page.tsx` | See "The channel" below. |
 | Requests tagged in the queue | `src/components/consult/ConsultRequestQueue.tsx` (`requestSource`) | Each waiting request says "From Longevity Program page · email" (or "link `<slug>`" for a link no program page uses), from the slug the row already carries. |
 | Counts on the Funnels screen | `src/components/funnels/funnelRequestCounts.ts`, `src/components/funnels/FunnelsScreen.tsx`, `src/app/funnels/page.tsx` | See "The Funnels screen" below. |
-| Staff preview | `src/app/funnels/[slug]/preview/page.tsx` | Shows the updates link exactly as a visitor would, or says it is not configured. |
+| Staff preview | `src/app/funnels/[slug]/preview/page.tsx` | Shows the updates link exactly as a visitor would, or says no practice offering the list holds the marketing package. |
 
 ### The updates link
 
 - **The definition.** Each funnel gains an optional `updates: { programKey }`.
-- **The address.** The page's `updatesUrl` is built at render from `CAMPAIGN_SIGNUP_ORIGIN` plus
-  `/signup/<programKey>`. It accepts a bare https origin only: no path, query, fragment, credentials or port.
+- **The address (revised 2026-10-15).** The handoff revised on 2026-10-14 moved the sign-up page into the
+  Desktop: the link is now the offering practice's own `/join/<practice>/<programKey>` page, prefixed with the
+  public site origin when one is set and same-origin otherwise. `CAMPAIGN_SIGNUP_ORIGIN` is gone.
+- **When it is shown.** Only when a `MarketingSignupDirectory` says a practice offering the program's list
+  holds the `marketing` entitlement (`src/lib/marketingSignupLink.ts`). An unentitled, unreadable or
+  malformed answer hides the link: a link to a sign-up page that would refuse the visitor is worse than none.
+- **On this branch.** `src/funnels/marketingSignup.ts` returns the "no practice" directory, so no page shows
+  the link. The campaign engine (workstream 2, `claude/campaign-engine-20261015`, cut from this branch's
+  head) supplies the real directory from its commercial store.
 - **Placement.** It is rendered as "Get updates about this program" beside the consult button, at the top and
   in the closing section.
-- **Unset.** With the setting unset there is no link, and the page says nothing about updates.
-- **No address in source.** No host is written into a definition.
+- **No address in source.** No host or practice is written into a definition.
 
 ### The channel
 
@@ -64,21 +70,21 @@ This is workstream 1 of the marketing-wiring handoff. The phase-1 funnel design 
 
 - **Email link state.** Each program's email link state is read from the link list. A missing link says
   "Create it through the link administration before campaign emails point at this page".
-- **Updates link.** Whether the page shows "Get updates", from the sign-up origin the server read.
+- **Updates link.** Whether each page shows "Get updates", and its exact address, as the server decided it.
 
 ## The content security policy is unchanged
 
-The sign-up origin is used for the link and nothing else. `src/lib/funnel-headers.test.ts` now asserts that
-the `/learn/:slug` policy is byte-identical with and without `CAMPAIGN_SIGNUP_ORIGIN` set, and never names
-that host. The page adds no form, field, script or cross-site request.
+The sign-up link is a same-origin `/join` path, so it needs no policy allowance. `src/lib/funnel-headers.test.ts`
+asserts the `/learn/:slug` policy is unchanged by the public origin and names no sign-up path or host. The
+page adds no form, field, script or cross-site request.
 
 ## Settings added
 
 | Setting | Default | Turns on |
 | --- | --- | --- |
-| `CAMPAIGN_SIGNUP_ORIGIN` (server-only) | unset | "Get updates about this program" on each page with a list |
+| The practice's `marketing` entitlement (data in the campaign engine's store, workstream 2) | not held | "Get updates about this program" on each page with a list |
 
-No other setting was added. With it unset, every page renders exactly as before (the existing
+No environment setting was added (the revision removed `CAMPAIGN_SIGNUP_ORIGIN`). Without an entitled practice, every page renders exactly as before (the existing
 "only the consult address" test is unchanged and passes).
 
 ## Consult links to create (the existing link administration; not done here)
@@ -109,15 +115,17 @@ reviewed work.
   - fallback when a channel has no link;
   - every consult slug is a valid contract slug, unique, and maps back to its funnel and channel;
   - definitions cannot share a link or write an address.
-- `src/lib/funnelPageLinks.test.ts` (5):
-  - the sign-up address refuses anything but a bare https origin;
+- `src/lib/funnelPageLinks.test.ts` (7):
+  - the sign-up address is the practice's `/join/<practice>/<program>` page only when the directory names an
+    entitled practice; an unentitled, failing or malformed answer hides it;
+  - the directory is asked only for the list's program key, and on this branch names no practice;
   - the consult link is chosen per channel;
   - only the two addresses come back.
 - `src/components/funnels/funnelRequestCounts.test.ts` (3): counts by channel and window, an exact zero, and
   the lower bound on a full page.
 - `src/app/learn/funnel-route.test.ts` (4), on the route itself with a published fictional clone:
   - `?via=email` points at the email link, and every other value at the web link;
-  - "Get updates" appears only with the setting;
+  - "Get updates" appears only when a practice holds the marketing entitlement;
   - the canonical address carries no channel;
   - a source guard: no cookie, header read, storage, fetch or log call in the route or its helpers.
 - `src/components/consult/ConsultRequestSource.test.ts` (1): the queue's "From …" tag.
@@ -125,15 +133,16 @@ reviewed work.
 **Added to existing files.**
 
 - `src/components/funnels/FunnelPage.render.test.ts` (+2):
-  - with the sign-up page configured, the outbound addresses are exactly the consult page and the sign-up
-    page, plus the buy page only when an offer is available;
-  - still no form; no link and no word of updates when unset.
+  - with a sign-up page, the outbound addresses are exactly the consult page and the sign-up page, plus the
+    buy page only when an offer is available;
+  - still no form; no link and no word of updates without one.
 - `src/components/funnels/FunnelsScreen.render.test.ts` (+4):
   - counts;
   - a failed queue against an empty one;
   - email link states;
   - the updates line.
-- `src/lib/funnel-headers.test.ts` (+1): the policy is unchanged by the sign-up origin.
+- `src/lib/funnel-headers.test.ts` (+1): the sign-up link needs no policy allowance; the policy names no sign-up
+  path or host.
 - `e2e/live-funnel-page.spec.ts`: `/learn/longevity-program?via=email` answers the same not-found for a draft,
   with no redirect to sign-in and no `Set-Cookie`, like every other path in that loop.
 
@@ -163,15 +172,15 @@ The gate results are in "Verification" below.
 
 ## Not verified
 
-- No campaign service is running, so the sign-up page the link points at has not been reached from a
-  browser. It is built in workstream 2.
+- The `/join` sign-up page the link points at is built in workstream 2 (the campaign engine branch); on this
+  branch no practice is entitled, so no page shows the link.
 - The email consult links do not exist in any database.
 - The counts were exercised against fictional queue rows only.
 
 ## Verification
 
-- **Unit suite.** `npm run test:unit`, full run on this branch: 552 files, 8,729 tests; 8,718 passed, 11 skipped
-  (the existing declared skips), 0 failed.
+- **Unit suite.** `npm run test:unit`, full run on this branch after the 2026-10-15 revision: 552 files; 8,720 passed,
+  11 skipped (the existing declared skips), 0 failed. (Before the revision: 8,718 passed.)
 - **Typecheck and lint.** `tsc --noEmit` clean, and `eslint` clean on every changed file.
 - **Clinical build.** `APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build` passes.
 - **Browser battery.** Run once on the integration branch that carries every workstream (workstream 7), not

@@ -36,7 +36,7 @@ describe("program funnel route headers", () => {
     expect(value("Permissions-Policy")).toBe("microphone=(), camera=(), geolocation=()");
     }
   });
-  it("is unchanged by the campaign sign-up origin: that address is a plain link on the page, never a policy allowance", async () => {
+  it("needs no allowance for the sign-up link: it is a same-origin /join path, and no sign-up host appears in the policy", async () => {
     vi.stubEnv("APP_EDITION", "clinical");
     vi.stubEnv("NODE_ENV", "production");
     const policy = async () => {
@@ -45,11 +45,10 @@ describe("program funnel route headers", () => {
       const entry = (await config.headers!()).find((candidate) => candidate.source === "/learn/:slug");
       return entry!.headers.find((header) => header.key === "Content-Security-Policy")!.value;
     };
-    const without = await policy();
-    vi.stubEnv("CAMPAIGN_SIGNUP_ORIGIN", "https://updates.fictional.example");
-    const withOrigin = await policy();
-    expect(withOrigin).toBe(without);
-    expect(withOrigin).not.toContain("updates.fictional.example");
+    const value = await policy();
+    vi.stubEnv("NEXT_PUBLIC_SITE_ORIGIN", "https://clinic.fictional.example");
+    expect(await policy()).toBe(value);
+    expect(value).not.toMatch(/join|updates|signup/i);
     vi.unstubAllEnvs();
   });
   it("adds no API route: the only unauthenticated Desktop route is still the consult intake", () => {

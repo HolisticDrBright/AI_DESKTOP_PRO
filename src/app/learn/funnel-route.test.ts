@@ -7,8 +7,8 @@ import type { FunnelDefinition } from '@/funnels';
 /**
  * The public funnel route as the server renders it, for a published page (a fictional clone; every real
  * funnel is a draft): `?via=email` points the consult button at the program's email link and does nothing
- * else, the canonical address never carries it, and "Get updates about this program" appears only with the
- * campaign sign-up origin configured. The route keeps no record of the visitor: no cookie, header read or
+ * else, the canonical address never carries it, and "Get updates about this program" appears only when a
+ * practice offering the list holds the marketing entitlement. The route keeps no record of the visitor: no cookie, header read or
  * log call exists in its source.
  */
 const publishedClone: FunnelDefinition = {
@@ -18,6 +18,8 @@ const publishedClone: FunnelDefinition = {
 };
 vi.mock('next/navigation', () => ({ notFound: () => { throw new Error('not-found'); } }));
 vi.mock('@/server/commerce/journey-fixture', () => ({ resolvePublicFunnel: async (slug: string) => (slug === 'longevity-program' ? publishedClone : null) }));
+const directory = vi.hoisted(() => ({ practice: null as null | string }));
+vi.mock('@/funnels/marketingSignup', () => ({ marketingSignupDirectory: () => ({ practiceFor: async () => (directory.practice ? { practiceSlug: directory.practice } : null) }) }));
 vi.mock('@/server/commerce/funnel-purchase', async () => {
   const { unavailable } = await import('@/contracts/programOffers');
   return { funnelPurchaseAvailability: async () => unavailable('program_unbound') };
@@ -30,7 +32,7 @@ const render = async (search: Record<string, string | string[] | undefined>) => 
 };
 const hrefs = (markup: string) => new Set([...markup.matchAll(/href="([^"]*)"/g)].map(m => m[1]));
 
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllEnvs(); directory.practice = null; });
 
 describe('the public funnel route', () => {
   it('points the consult button at the email link for ?via=email, and at the web link for anything else', async () => {
@@ -42,12 +44,12 @@ describe('the public funnel route', () => {
     const markup = await render({ via: 'email' });
     expect(markup).not.toContain('via=');
   });
-  it('adds "Get updates about this program" only when the campaign sign-up origin is configured', async () => {
+  it('adds "Get updates about this program" only when a practice offering the list holds the marketing entitlement', async () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_ORIGIN', 'https://clinic.fictional.example');
     expect(await render({})).not.toContain('Get updates');
-    vi.stubEnv('CAMPAIGN_SIGNUP_ORIGIN', 'https://updates.fictional.example');
+    directory.practice = 'fictional-practice';
     const markup = await render({ via: 'email' });
-    expect(hrefs(markup)).toEqual(new Set(['https://clinic.fictional.example/consult/longevity-program-email', 'https://updates.fictional.example/signup/longevity-program']));
+    expect(hrefs(markup)).toEqual(new Set(['https://clinic.fictional.example/consult/longevity-program-email', 'https://clinic.fictional.example/join/fictional-practice/longevity-program']));
     expect(markup).not.toMatch(/<(form|input|button|script|iframe|img)\b/i);
   });
   it('never puts the channel in the canonical address', async () => {
@@ -58,7 +60,7 @@ describe('the public funnel route', () => {
     expect(metadata.alternates?.canonical).toBe('https://clinic.fictional.example/learn/longevity-program');
   });
   it('keeps nothing about the visitor: no cookie, request header, storage or log call in the route or its link helpers', () => {
-    for (const file of ['src/app/learn/[slug]/page.tsx', 'src/lib/funnelPageLinks.ts', 'src/lib/campaignSignupUrl.ts', 'src/funnels/channels.ts']) {
+    for (const file of ['src/app/learn/[slug]/page.tsx', 'src/lib/funnelPageLinks.ts', 'src/lib/marketingSignupLink.ts', 'src/funnels/marketingSignup.ts', 'src/funnels/channels.ts']) {
       const source = readFileSync(file, 'utf8');
       expect(source, file).not.toMatch(/\bcookies\(|\bheaders\(|set-cookie|console\.|localStorage|sessionStorage|\bfetch\(/i);
     }

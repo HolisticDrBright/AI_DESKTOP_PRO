@@ -15,7 +15,7 @@ const H2 = 'm-0 text-[22px] font-bold leading-tight text-body';
 const P = 'm-0 mt-3 text-[15px] leading-relaxed text-body';
 const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
-/** `updatesUrl`: the campaign service's sign-up page for this program, or null when none is configured (then no link at all). */
+/** `updatesUrl`: the offering practice's /join sign-up page for this program, or null when no practice offering it holds the marketing entitlement (then no link at all). */
 export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string; updatesUrl?: string | null };
 
 export function FunnelPage({ funnel, consultHref, purchase, buyHref, updatesUrl = null }: FunnelPageProps) {
