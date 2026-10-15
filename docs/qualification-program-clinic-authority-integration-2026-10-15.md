@@ -61,7 +61,11 @@ old setter. The corrected body hash,
 `7054db763a6ff38b00a504a09398dcbd60f69b6476b6c85bab36da496d6e0cd6`,
 was independently read from the 106-migration fictional database. Updating
 only that pin made the care-message, route and setter suites pass **40/40**;
-typecheck, focused lint and the production migration gate also pass. This is
+typecheck, focused lint and the production migration gate also pass. The
+clinical production build passed all 262 pages and the strict bundle scan
+passed all 344 client chunks. Claude's next, test-only increment `b7c6603a`
+was cleanly merged into this local rehearsal and its mounted fictional
+patient–practitioner message/program journey passed **7/7**. This is
 not Claude's complete return or hosted acceptance. The new care-message mode
 remains opt-in and off, the setter remains unregistered, and the program,
 telehealth, clinic and PHI holds are unchanged. Do not promote this preliminary
