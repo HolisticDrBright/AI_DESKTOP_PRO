@@ -20,17 +20,22 @@ describe("production clinical catalog versus standalone catalog reader", () => {
       productTable: string | null;
       standaloneLabelTable: string | null;
       directProductRead: boolean;
+      catalogRpcExecute: boolean;
     }>(`select
       to_regclass('clinical_reference.catalog_product_versions')::text as "productTable",
       to_regclass('clinical_reference.product_label_versions')::text as "standaloneLabelTable",
-      has_table_privilege('clinical_core_api', 'clinical_reference.catalog_product_versions', 'SELECT') as "directProductRead"`);
+      has_table_privilege('clinical_core_api', 'clinical_reference.catalog_product_versions', 'SELECT') as "directProductRead",
+      has_function_privilege('clinical_core_api',
+        'clinical_core.get_product_catalog(uuid,text,text,integer)', 'EXECUTE') as "catalogRpcExecute"`);
     expect(rows[0]).toEqual({
       productTable: "clinical_reference.catalog_product_versions",
       standaloneLabelTable: null,
       directProductRead: false,
+      catalogRpcExecute: false,
     });
     // The standalone reader selects both tables directly. It cannot be used against this
     // production artifact merely by registering the current-membership function. A separate
-    // reviewed production projection, or an exact schema transition, remains release-blocking.
+    // reviewed production projection with an exact EXECUTE grant, or an exact schema
+    // transition, remains release-blocking.
   });
 });
