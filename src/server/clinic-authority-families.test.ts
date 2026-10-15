@@ -157,6 +157,7 @@ const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERT
   'src/server/clinical-core/aws-production-clinical-api.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/aws-telehealth-requests.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/aws-workforce-applications-api.ts': 'not_a_desktop_caller',
+  'src/server/clinical-core/current-membership-program-api.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/export-retention-acceptance.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/lab-attestation-review.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/privacy-operations-api.ts': 'not_a_desktop_caller',
