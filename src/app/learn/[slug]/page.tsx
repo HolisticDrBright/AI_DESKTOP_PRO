@@ -18,7 +18,7 @@ import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
  * `?via=` is read from a fixed list only to choose which consult link the button points at (a campaign
  * email's visitor reaches the program's email link). Nothing about it is stored, logged or set as a
  * cookie, and the canonical address never carries it. "Get updates about this program" appears only when
- * the campaign service's sign-up origin is configured.
+ * a practice offering the program's list holds the `marketing` entitlement (src/lib/marketingSignupLink.ts).
  */
 export const dynamic = "force-dynamic";
 

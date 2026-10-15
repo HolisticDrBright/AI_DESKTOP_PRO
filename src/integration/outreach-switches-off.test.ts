@@ -29,6 +29,16 @@ import { FictionalAppointmentStore } from '@/server/clinical-core/appointment-op
 import { identityNotificationPortsFrom, noticeDispatcherFrom, reminderTextPortFrom } from '@/server/notifications/notification-runtime';
 import { patientNotificationSwitches, PATIENT_NOTIFICATION_SWITCH_NAMES } from '@/server/notifications/notification-switches';
 import { outreachRows, readEngineStatus, readSignupPages } from '@/server/outreach-status';
+import { createElement } from 'react';
+import { renderToMarkup } from '@/test-support/renderToText';
+import { FunnelPage } from '@/components/funnels/FunnelPage';
+import { AppProgramAssignmentsPanel } from '@/components/programs/AppProgramAssignmentsPanel';
+import { POST as notificationSettingsRoute } from '@/app/api/live/patient-notification-settings/route';
+import { resolvePublicFunnel } from '@/server/commerce/journey-fixture';
+import { funnelPurchaseAvailability } from '@/server/commerce/funnel-purchase';
+import { funnelPageLinks } from '@/lib/funnelPageLinks';
+import { consultLinkUrl } from '@/lib/consultLinkUrl';
+import { publicSiteOrigin } from '@/lib/publicSite';
 
 const SITE = 'https://clinic.fictional.example', HOST = 'clinic.fictional.example';
 const CLINICAL_PUBLIC_API = 'https://klmnopqrst.execute-api.us-east-2.amazonaws.com';
@@ -127,5 +137,57 @@ describe('every switch off means no send of any kind', () => {
     const rows = outreachRows({ env: process.env, funnels: allFunnels(), engine, signup });
     expect(rows.filter(r => r.state === 'on').map(r => r.id)).toEqual([]);
     expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The set as a whole, as shipped: every setting any outreach workstream added unset at once, switches and companions
+ * alike. What a visitor, a patient and the clinic's Inbox get is what `22053299` gave them, held to that line's own
+ * formulas and text rather than to this line's readers. The staff-only additions (the Outreach and Campaigns screens,
+ * the Board view, the per-channel counts) are new screens by design and are not part of this claim.
+ */
+describe('with every outreach setting unset at once, nothing a visitor or patient gets has changed', () => {
+  /** Every setting the six workstreams added, by name, and the program pages' own setting (`status`, draft in source). */
+  const ADDED = [...SWITCHES, 'CAMPAIGN_API_ORIGIN', 'FUNNEL_PRACTICE_SLUG', 'CONSULT_ENQUIRER_SENDER', 'CONSULT_ENQUIRER_CONFIGURATION_SET',
+    'CONSULT_ENQUIRER_CONTACT_LINE', 'CLINIC_DISPLAY_NAME'];
+  beforeEach(() => { for (const name of [...ADDED, 'NEXT_PUBLIC_SITE_ORIGIN']) vi.stubEnv(name, ''); });
+  /** `22053299`'s footer, verbatim: two choices and no third. */
+  const BASE_FOOTER = (label: string) => `${label} is offered by The Holistic Approach LLC. This page describes a program and offers two choices: to request a consultation, or to buy the program when it is available. It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. No payment details are entered on this page; any purchase is completed on a separate secure checkout page.`;
+
+  it('program pages, the consult form, the Inbox, the settings route, the campaign routes and the status screen', async () => {
+    for (const name of ADDED) expect(process.env[name], name).toBe('');
+    for (const funnel of allFunnels()) {
+      // Draft, as shipped: the public page answers not-found, as it did.
+      expect(await resolvePublicFunnel(funnel.slug), funnel.slug).toBeNull();
+      // Rendered anyway (the staff preview): the base's consult address, no updates link, the base's footer.
+      const links = await funnelPageLinks(funnel, undefined, marketingSignupDirectory(process.env));
+      expect(links, funnel.slug).toEqual({ consultHref: consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`, updatesUrl: null });
+      const markup = renderToMarkup(createElement(FunnelPage, { funnel, consultHref: links.consultHref, purchase: await funnelPurchaseAvailability(funnel), buyHref: `/buy/${funnel.slug}`, updatesUrl: links.updatesUrl }));
+      expect(markup).not.toContain('funnel-updates');
+      expect(markup.replace(/<!-- -->/g, '')).toContain(BASE_FOOTER(funnel.programLabel));
+    }
+
+    // The consult form's answer is the clinical API's answer, unchanged, after one call and no email.
+    const answer = { action: 'submit', outcome: 'received', reference: 'ABCDEFGHJK', receivedAt: '2026-10-15T12:00:00.000Z', status: 'received' };
+    upstream.mockImplementationOnce(async () => new Response(JSON.stringify({ data: answer }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const response = await consultRoute(browser(`${SITE}/api/public/consult`, JSON.stringify({ action: 'submit', slug: 'longevity-program', name: 'Avery Fictional', email: 'avery@fictional.example',
+      phone: null, visitType: 'initial', reasonCode: 'program_question', preferredWindows: [], timeZone: 'America/Los_Angeles' }), 'application/json'));
+    expect(await response.json()).toEqual({ data: answer });
+    expect(upstream).toHaveBeenCalledTimes(1);
+
+    // The Inbox's panel renders as it did with no argument, and the clinic's notification route does not exist.
+    expect(renderToMarkup(createElement(AppProgramAssignmentsPanel, { notificationChoices: patientNotificationSwitches(process.env).NOTIFICATION_PREFERENCES_ENABLED })))
+      .toBe(renderToMarkup(createElement(AppProgramAssignmentsPanel)));
+    expect((await notificationSettingsRoute(browser('https://x/api/live/patient-notification-settings', '{"action":"read","connectionId":"c"}', 'application/json'))).status).toBe(404);
+
+    // Every campaign route is absent; the identity service gets no new port; the status screen reads nothing as on.
+    expect((await joinRoute(browser(`${SITE}/api/public/campaigns/join`, 'practice=fictional-clinic&program=longevity-program&email=a%40fictional.example&consent=yes&formToken=x&website='))).status).toBe(404);
+    expect((await staffRoute(browser('https://x/api/live/campaigns', '{"action":"overview"}', 'application/json'))).status).toBe(404);
+    expect(identityNotificationPortsFrom(process.env, { transaction: () => { throw new Error('no database call'); } } as never)).toEqual({});
+    const rows = outreachRows({ env: process.env, funnels: allFunnels(), engine: await readEngineStatus('fictional-workforce-token'), signup: await readSignupPages() });
+    expect(rows.filter(r => r.state === 'on').map(r => r.id)).toEqual([]);
+    expect(sesSend).not.toHaveBeenCalled();
+    expect(schedulerSend).not.toHaveBeenCalled();
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 });

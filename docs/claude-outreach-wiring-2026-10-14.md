@@ -1,28 +1,57 @@
 # Outreach wiring, end to end (marketing wiring, workstream 7) — 2026-10-15
 
-**Branch:** `claude/outreach-integrated-20261015`. It is the integration line for workstreams 1 to 6, built by merge
-from these heads. No history was rewritten.
+**Branch:** `claude/outreach-integration-20261015`, created from `claude/outreach-status-20261015` (`d9d0f1b8`),
+which already carries workstreams 1, 2 and 6. The other three were merged in, each with its own merge commit, in
+this order. No history was rewritten, nothing was squashed or rebased.
 
-| Workstream | Branch | Head |
-| --- | --- | --- |
-| 1, program pages | `claude/funnels-finish-20261014` | `3f2b8bbe` (carried by the engine branch) |
-| 2, the campaign engine | `claude/campaign-engine-20261015` | `f08b277a` |
-| 3, enquirer emails | `claude/consult-enquirer-emails-20261014` | `0c6c23a2` |
-| 4, reminders and notices | `claude/patient-notices-20261014` | `2ed79cde` |
-| 5, the leads board | `claude/leads-board-20261015` | `60e026f4` |
-| 6, Outreach status | `claude/outreach-status-20261015` | `d9d0f1b8` |
+| Order | Workstream | Branch | Head | Merge commit |
+| --- | --- | --- | --- | --- |
+| base | 1, program pages | `claude/funnels-finish-20261014` | `3f2b8bbe` | carried by the engine branch |
+| base | 2, the campaign engine | `claude/campaign-engine-20261015` | `f08b277a` | carried by the status branch |
+| base | 6, Outreach status | `claude/outreach-status-20261015` | `d9d0f1b8` | the branch point |
+| 1 | 3, enquirer emails | `claude/consult-enquirer-emails-20261014` | `0c6c23a2` | `47d7a64a` |
+| 2 | 4, reminders and notices | `claude/patient-notices-20261014` | `2ed79cde` | `99baf1dd`, then the brace fix `5da3002d` |
+| 3 | 5, the leads board | `claude/leads-board-20261015` | `60e026f4` | `8eb3617c` |
+
+`claude/campaign-service-20261014` (`a0046123`, the superseded Dittofeed version of workstream 2) was not merged.
+
+An earlier integration line, `claude/outreach-integrated-20261015` (`6367ae15`), merged the same six heads in a
+different order. Its code is identical to this line's at the point before the end-to-end tests (only the order of
+the `CLAUDE.md` rows differed), and its end-to-end tests were carried here as one commit. It is superseded by this
+branch.
 
 **Merging this line to `main` is Brandon's release decision, and it is not part of this work.**
 
-## Merge conflicts and the one seam
+## The three resolutions and the one seam
 
-**Conflicts.** Three were resolved, all by keeping both sides:
+1. **The lost closing brace** (`5da3002d`, its own commit). Workstreams 3 and 4 both inserted a new function directly
+   after `sendAppointmentReminder` in `src/server/clinical-core/aws-telehealth-requests.ts`. Git stitched the two
+   insertions together with no conflict marker and dropped the `}` that closes `sendBookedEmail`; `tsc` reported
+   `TS1005: '}' expected` at the end of the file. The merge commit `99baf1dd` records the tree as git produced it,
+   and `5da3002d` restores the one line after `} catch { return "failed"; }`. Brace balance was checked:
+   `sendBookedEmail`, `mailAppointmentReminder` and `sendAppointmentReminderOnChannels` are each complete.
+2. **`CLAUDE.md`, the return-notes table** (`47d7a64a`, `8eb3617c`). Every row is kept, in date order: the
+   2026-10-14 notes (program pages, enquirer emails, patient notices), then the 2026-10-15 notes (the campaign
+   engine, the leads board, Outreach status, the go-live order), then this note.
+3. **`.env.example`** (`47d7a64a`). Every block is kept: the campaign engine's, then the enquirer emails'.
 
-- `.env.example` (the campaign engine's and the enquirer emails' blocks);
-- `CLAUDE.md` (each workstream's documentation row);
-- `src/server/clinical-core/aws-telehealth-requests.ts`. Workstream 3 adds `bookedEmail` and `sendBookedEmail` after
-  the reminder sender, and workstream 4 adds `mailAppointmentReminder` and `sendAppointmentReminderOnChannels` at the
-  same place. Both sets are kept, one after the other.
+**The switch list, reconciled** (`b5c5b464`). Every setting a Desktop-server row of the Outreach status screen names
+was checked against `docs/outreach-go-live.md` and `.env.example`, not assumed:
+
+| Setting | Status screen | Go-live | `.env.example` before | Reconciled |
+| --- | --- | --- | --- | --- |
+| `NOTIFICATION_PREFERENCES_ENABLED` (Desktop, workstream 4) | rows 6 and 7 | steps 6 and 7 | **missing** | added as `false`, with what it turns on |
+| `NEXT_PUBLIC_SITE_ORIGIN`, `APP_RUNTIME_ENV` (existing) | row 1 | step 1 | **missing** | added as commented examples, so the default stays unset |
+| `CONSULT_ENQUIRER_*` (workstream 3) | row 4 | step 4 | present | none needed |
+| `CAMPAIGN_ENGINE_ENABLED`, `CAMPAIGN_API_ORIGIN`, `FUNNEL_PRACTICE_SLUG` | rows 10, 12 | steps 10, 12 | present | none needed |
+
+The identity and telehealth functions' switches (`PATIENT_NOTICES_ENABLED`, `SMS_NOTICES_ENABLED`, the identity copy
+of `NOTIFICATION_PREFERENCES_ENABLED`, `SMS_REMINDERS_ENABLED`, `REMINDERS_ENABLED`, `CLINIC_DISPLAY_NAME`) are read
+by those Lambdas, not the Desktop, so they belong in neither `.env.example` nor a Desktop setting; the status screen
+reads them as Can't tell and the go-live order names the function. `.env.example` now says so in a comment.
+`src/integration/outreach-status-agreement.test.ts` holds the three lists together: every setting a Desktop-server
+row names must be in `.env.example`, and each Desktop switch must be listed `false`. It failed before `b5c5b464`.
+`src/server/outreach-status.test.ts` and the go-live document still pin each other, and pass on this tree.
 
 **The seam.** On its own branch, workstream 6 read the "received" email's companions by name. On this line it asks
 workstream 3's own reader (`consultEnquirerEmailConfig`) whether the email would send, so the screen and the route
@@ -122,6 +151,23 @@ switch holds each piece off:
 - the Outreach status screen reads nothing as on.
 
 **The fake must record nothing.**
+
+**All off is unchanged, for the set as a whole.** One more test in `outreach-switches-off.test.ts` unsets every
+setting the six workstreams added at once, the switches and their companions alike, and holds what a visitor, a
+patient and the clinic's Inbox get to `22053299`'s own formulas and text rather than to this line's readers:
+
+- every program page is draft and answers not-found, as before;
+- rendered anyway, each page's consult address is the base's formula, there is no updates link, and the footer is
+  the base's sentence word for word;
+- the consult form's answer is the clinical API's answer, unchanged, after one call and no email;
+- the Inbox's panel renders exactly as it did with no argument, and the clinic's notification route does not exist;
+- every campaign route is absent, the identity service gets no new port, and the status screen reads nothing as On.
+
+What does change with everything off, by design, is staff-only: the Outreach and Campaigns screens exist (the
+Campaigns screen says the engine is off), the Requests queue has a Board view beside the unchanged list, and the
+Funnels screen counts requests per program and channel. One visitor-side difference is not behind a setting:
+`?via=email` on a program page points its button at that program's email consult link. Nothing links there while
+the campaign engine is off, and all three program pages are draft (not-found) as shipped.
 
 ## Gate results
 

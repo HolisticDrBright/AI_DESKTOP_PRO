@@ -5,9 +5,9 @@ import { formatAmount, type PurchaseAvailability } from '@/contracts/programOffe
  * A funnel page, rendered on the server from its definition and the program's offer as the server
  * read it. Fixed sections, plain text, no form control, no image, no script. Its destinations and no
  * more: the consult address built from the configured public origin; only when the program's offer is
- * actually available, the same-origin purchase page; and only when the campaign service's sign-up
- * origin is configured, that program's sign-up page ("Get updates about this program"), a plain link
- * to another site with no form or request on this one. When the offer is not available, the page says
+ * actually available, the same-origin purchase page; and only when a practice offering the program's
+ * list holds the `marketing` entitlement, that practice's `/join` sign-up page ("Get updates about this
+ * program"), a plain same-origin link with no form or request on this page. When the offer is not available, the page says
  * exactly why in the visitor's words, and prints no address, no price and no promise.
  */
 const SECTION = 'mx-auto w-full max-w-[760px] px-5 py-8 md:px-8';
