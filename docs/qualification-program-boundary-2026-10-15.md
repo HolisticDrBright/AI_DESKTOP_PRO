@@ -45,7 +45,7 @@ The 112-ledger test reproduces the mismatch on the same ledger with the parents 
 | Qualification adapter | `src/server/clinical-core/qualification-program-assignments.ts` | Built only under qualification execution. Admits only designated subjects. Runs the production request path (`boundedProgramExecutor`, now shared with the production adapter) behind a per-transaction function-digest binding |
 | Route handler | `src/server/clinical-core/qualification-program-api.ts` | The two routes, `POST /clinical-core/{consumer,workforce}/programs`, with every configuration pin checked before any data client exists |
 | Lambda entry and source build | `src/server/clinical-core/aws-qualification-program-lambda.ts` and `scripts/build-aws-qualification-program.mjs` | Bundles the exact reviewed function digests and compiled commit from a clean checkout; requires the real Sandbox billing verifier, never a synthetic Core bypass |
-| BLOCKED template successor | `infra/aws-clinical-core/qualification-program-api-successor.json` and `scripts/build-qualification-program-api-successor.mjs` | Two JWT-protected routes, correct qualification program context and immutable PHI/activation holds; requires exact fictional subjects, reviewed billing origin, schema review and source bundle before any deployment |
+| BLOCKED template successor | `infra/aws-clinical-core/qualification-program-api-successor.json` and `scripts/build-qualification-program-api-successor.mjs` | Two JWT-protected routes, correct qualification program context and immutable PHI/activation holds; requires exact fictional subjects, reviewed billing origin, schema review, clean-source bundle and S3 object version before any deployment |
 
 ### Qualification-open
 
@@ -158,7 +158,7 @@ What this does **not** prove:
 5. **Review the separate successor of `qualification-program-api-candidate.json`**. It now points the two routes at
    the source Lambda entry, keeps `PhiAllowed=false`, `Activation=blocked`, the pinned pools and API, and distinct log
    group and alarm names. Before any change set, pin the exact clean-source bundle/key, source commit, reviewed
-   qualification subjects and clinic, and a Sandbox billing API origin that actually exists and verifies those same
+   qualification subjects and clinic, a versioned S3 code object, and a Sandbox billing API origin that actually exists and verifies those same
    fictional consumer tokens. The origin is a required parameter, not an implicit fallback. Review resource ownership
    and replacement effects; the old candidate remains unchanged and must not be deployed.
 6. **Run the hosted cases on fictional identities.** A skip, an unavailable catalog or a mismatched source is a refusal,

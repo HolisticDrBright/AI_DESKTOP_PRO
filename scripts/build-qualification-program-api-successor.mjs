@@ -29,10 +29,12 @@ candidate.Parameters.QualificationProgramOrganizationId = { Type: 'String',
   AllowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' };
 candidate.Parameters.QualificationBillingApiOrigin = { Type: 'String',
   AllowedPattern: '^https://[a-z0-9]{10}\\.execute-api\\.us-east-2\\.amazonaws\\.com$' };
+candidate.Parameters.LambdaCodeVersion = { Type: 'String', MinLength: 1, MaxLength: 256 };
 
 const resources = candidate.Resources;
 resources.IdentityApiLogGroup.Properties.LogGroupName = { 'Fn::Sub': '/aws/lambda/${ClinicalApiId}-qualification-bound-programs' };
 resources.IdentityApiFunction.Properties.FunctionName = { 'Fn::Sub': '${ClinicalApiId}-qualification-bound-programs' };
+resources.IdentityApiFunction.Properties.Code.S3ObjectVersion = { Ref: 'LambdaCodeVersion' };
 const e = resources.IdentityApiFunction.Properties.Environment.Variables;
 delete e.CLINICAL_WORKFORCE_ISSUER;
 delete e.CLINICAL_WORKFORCE_AUDIENCE;

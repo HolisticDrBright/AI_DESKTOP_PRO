@@ -37,6 +37,7 @@ test('the successor admits only two JWT-protected routes and cannot accidentally
   assert.equal(e.QUALIFICATION_PROGRAM_BOUNDARY_SHA256, boundary.successor.sha256);
   assert.deepEqual(e.QUALIFICATION_BILLING_API_ORIGIN, { Ref: 'QualificationBillingApiOrigin' });
   assert.deepEqual(e.QUALIFICATION_IDENTITY_SUBJECTS, { Ref: 'QualificationIdentitySubjects' });
+  assert.deepEqual(resources.IdentityApiFunction.Properties.Code.S3ObjectVersion, { Ref: 'LambdaCodeVersion' });
   assert.ok(!('CLINICAL_CONSUMER_ISSUER' in e) && !('CLINICAL_WORKFORCE_ISSUER' in e));
   assert.ok(!JSON.stringify(candidate).includes('program_assignment_request(jsonb)'));
   assert.ok(!JSON.stringify(candidate).includes('synthetic_desktop_program_versions'));

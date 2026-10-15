@@ -122,6 +122,11 @@
     "QualificationBillingApiOrigin": {
       "Type": "String",
       "AllowedPattern": "^https://[a-z0-9]{10}\\.execute-api\\.us-east-2\\.amazonaws\\.com$"
+    },
+    "LambdaCodeVersion": {
+      "Type": "String",
+      "MinLength": 1,
+      "MaxLength": 256
     }
   },
   "Resources": {
@@ -261,6 +266,9 @@
           },
           "S3Key": {
             "Ref": "LambdaCodeKey"
+          },
+          "S3ObjectVersion": {
+            "Ref": "LambdaCodeVersion"
           }
         },
         "Environment": {
