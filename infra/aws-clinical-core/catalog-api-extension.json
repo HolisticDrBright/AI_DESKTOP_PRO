@@ -23,6 +23,12 @@
     "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
     "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
     "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "ProductionReferenceRouteEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["false", "true"],
+      "Description": "Separate production-only workforce reference route. Keep false until its exact SQL dependencies and hosted authority checks are reviewed."
+    },
     "QualificationAlarmTopicArn": {
       "Type": "String",
       "Default": "",
@@ -31,6 +37,13 @@
     }
   },
   "Conditions": {
+    "ProductionReferenceRoute": {
+      "Fn::And": [
+        { "Fn::Equals": [{ "Ref": "ProductionReferenceRouteEnabled" }, "true"] },
+        { "Fn::Equals": [{ "Ref": "EnvironmentName" }, "production-clinical"] },
+        { "Fn::Equals": [{ "Ref": "AWS::AccountId" }, "173535830222"] }
+      ]
+    },
     "SyntheticQualificationAlerting": {
       "Fn::And": [
         { "Fn::Equals": [{ "Ref": "EnvironmentName" }, "synthetic-staging"] },
@@ -185,6 +198,17 @@
       "Properties": {
         "ApiId": { "Ref": "ClinicalApiId" },
         "RouteKey": "GET /clinical-core/workforce/catalog/products",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "WorkforceCatalogJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${CatalogApiIntegration}" }
+      }
+    },
+    "WorkforceCatalogReferenceRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Condition": "ProductionReferenceRoute",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "GET /clinical-core/workforce/catalog/reference",
         "AuthorizationType": "JWT",
         "AuthorizerId": { "Ref": "WorkforceCatalogJwtAuthorizer" },
         "Target": { "Fn::Sub": "integrations/${CatalogApiIntegration}" }

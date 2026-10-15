@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 // current membership authority or are deployed. Review each changed route
 // against docs/workforce-membership-authority-decision-2026-10-15.md.
 const EXPECTED: Readonly<Record<string, { count: number; routeDigest: string }>> = {
-  "catalog-api-extension.json": { count: 2, routeDigest: "9dbfd13ced6ee1080ffc23ab493dd1373f8289c710b5c9c5d03788c6c1af5bfc" },
+  "catalog-api-extension.json": { count: 3, routeDigest: "a1245a439d1335882487d1c496bf073ac313927eccabe5d34830673aec032d2e" },
   "identity-api-extension.json": { count: 27, routeDigest: "2ed477b79ccfcd6362ceb37272bb20679976b6b27e65df19485e8164e5103178" },
   "production-clinical-api-candidate.json": { count: 9, routeDigest: "a16aaff34b883db2b4b332791771059fe1bde9ccb4bd6a7137f3d07b8845fc99" },
   "production-clinical-api-disabled.json": { count: 1, routeDigest: "5d42d3dd8e834a38864a43b8397a914066954411421db0b9f0ea3443e46dcd07" },
@@ -72,6 +72,6 @@ describe("workforce route authority inventory", () => {
   it("refuses an unreviewed addition, removal or rename in any top-level clinical-core template", () => {
     const actual = actualWorkforceRoutes();
     expect(actual).toEqual(EXPECTED);
-    expect(Object.values(actual).reduce((total, item) => total + item.count, 0)).toBe(58);
+    expect(Object.values(actual).reduce((total, item) => total + item.count, 0)).toBe(59);
   });
 });

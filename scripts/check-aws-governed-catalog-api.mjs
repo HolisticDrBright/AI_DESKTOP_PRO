@@ -28,13 +28,29 @@ export function validateGovernedCatalogApi(foundation, extension) {
     "GET /clinical-core/workforce/catalog/products",
     "GET /clinical-core/consumer/catalog/products",
     "GET /clinical-core/workforce/catalog/protocol-templates",
+    "GET /clinical-core/workforce/catalog/reference",
   ]);
-  assert(errors, routes.length === expected.size, "catalog extension must expose exactly three routes");
+  assert(errors, routes.length === expected.size, "catalog extension must declare exactly four routes");
   for (const route of routes) {
     assert(errors, expected.delete(route.Properties?.RouteKey), "catalog route is unexpected or duplicated");
     assert(errors, route.Properties?.AuthorizationType === "JWT" && route.Properties?.AuthorizerId, "every catalog route must require JWT authorization");
   }
   assert(errors, expected.size === 0, "one or more catalog routes are missing");
+  const referenceParameter = extension.Parameters?.ProductionReferenceRouteEnabled;
+  assert(errors, JSON.stringify(referenceParameter?.AllowedValues) === JSON.stringify(["false", "true"])
+    && referenceParameter?.Default === "false", "production reference route must default off");
+  const referenceCondition = extension.Conditions?.ProductionReferenceRoute;
+  assert(errors, JSON.stringify(referenceCondition) === JSON.stringify({ "Fn::And": [
+    { "Fn::Equals": [{ Ref: "ProductionReferenceRouteEnabled" }, "true"] },
+    { "Fn::Equals": [{ Ref: "EnvironmentName" }, "production-clinical"] },
+    { "Fn::Equals": [{ Ref: "AWS::AccountId" }, "173535830222"] },
+  ] }), "production reference route must be opt-in and production-account pinned");
+  const referenceRoute = resources.WorkforceCatalogReferenceRoute;
+  assert(errors, referenceRoute?.Condition === "ProductionReferenceRoute"
+    && referenceRoute?.Properties?.RouteKey === "GET /clinical-core/workforce/catalog/reference"
+    && JSON.stringify(referenceRoute?.Properties?.AuthorizerId) === JSON.stringify({ Ref: "WorkforceCatalogJwtAuthorizer" })
+    && JSON.stringify(referenceRoute?.Properties?.Target) === JSON.stringify({ "Fn::Sub": "integrations/${CatalogApiIntegration}" }),
+  "production reference route must use the exact workforce authorizer and integration behind its condition");
 
   for (const name of ["WorkforceCatalogJwtAuthorizer", "ConsumerCatalogJwtAuthorizer"]) {
     const authorizer = resources[name]?.Properties;
@@ -112,6 +128,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     errors.forEach((error) => console.error(`AWS governed catalog API check failed: ${error}`));
     process.exitCode = 1;
   } else {
-    console.log("AWS governed catalog API check passed: three JWT routes, bounded Data API access, encrypted logs, and PHI refusal are enforced.");
+    console.log("AWS governed catalog API check passed: three default JWT routes, one blocked production reference route, bounded Data API access, encrypted logs, and PHI refusal are enforced.");
   }
 }

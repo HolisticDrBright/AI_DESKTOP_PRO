@@ -26,6 +26,10 @@ for (const [name, mutate] of [
   ["API 5xx alarm replaced with Lambda errors", (copy) => { copy.Resources.SyntheticStagingApi5xxAlarm.Properties.MetricName = "Errors"; }],
   ["Lambda deadline too short for auto-resume", (copy) => { copy.Resources.CatalogApiFunction.Properties.Timeout = 15; }],
   ["HTTP deadline too short for auto-resume", (copy) => { copy.Resources.CatalogApiIntegration.Properties.TimeoutInMillis = 15000; }],
+  ["production reference default enabled", (copy) => { copy.Parameters.ProductionReferenceRouteEnabled.Default = "true"; }],
+  ["production reference account fence removed", (copy) => { copy.Conditions.ProductionReferenceRoute["Fn::And"].pop(); }],
+  ["production reference condition removed", (copy) => { delete copy.Resources.WorkforceCatalogReferenceRoute.Condition; }],
+  ["production reference consumer authorizer", (copy) => { copy.Resources.WorkforceCatalogReferenceRoute.Properties.AuthorizerId.Ref = "ConsumerCatalogJwtAuthorizer"; }],
 ]) {
   test(`catalog alert gate refuses ${name}`, () => {
     const copy = structuredClone(extension);
