@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {parseProgramAssignmentResponse,type ProgramAssignmentRequest,type ProgramAssignmentResponse} from '@/contracts/programAssignments';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
+import {clinicRefusal} from '@/lib/clinic-refusal';
 import {RevisionAnnouncePanel} from '@/components/governance/RevisionAnnouncePanel';
 import {ProtocolCartPanel} from './ProtocolCartPanel';
 import {OutcomeRecordPanel} from '@/components/reasoning/OutcomeRecordPanel';
@@ -64,6 +65,14 @@ export function AppProgramAssignmentsPanel({notificationChoices=false}:{notifica
    const response=await postAssignment(input);
    if(!alive.current||epoch.current!==generation)return;
    if(!response.ok){
+    // Clinic refusals first: a switched clinic is not an unpublished version, and an unserved family is not an empty list.
+    const refusal=await clinicRefusal(response);
+    if(!alive.current||epoch.current!==generation)return;
+    if(refusal==='clinic_changed'){clear();setError(mutation
+     ?'Your clinic changed in another window. Reload, then check current assignments before trying again.'
+     :'Your clinic changed in another window. Reload to continue.');return;}
+    if(refusal==='clinic_selection_required'){clear();setError('Choose your clinic in Settings before continuing.');return;}
+    if(refusal==='membership_authority_not_configured'){clear();setError('Program assignments are not available yet under clinic-membership sign-in. Nothing was assigned.');return;}
     if(response.status===401||response.status===403){clear();setError('Access changed. Sign in and check your clinic access before refreshing.');return;}
     // A conflict is the server refusing on purpose: an unpublished version, or content
     // that differs from what was already pinned under it.

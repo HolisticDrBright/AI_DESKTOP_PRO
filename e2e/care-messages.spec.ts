@@ -19,11 +19,12 @@ test('keeps refresh disabled until its client handler is mounted',async({page})=
 async function setup(page:Page){
  const origin='http://localhost:'+(process.env.E2E_PORT??'3114');
  await page.context().addCookies([{name:'aidp_at',value:'fictional-ui-only',url:origin},{name:'aidp_exp',value:String(Date.now()+3600000),url:origin}]);
- const state={refuse:0,failSend:true,sends:[] as Record<string,unknown>[],errors:[] as string[]};
+ const state={refuse:0,refusal:null as null|{status:number;json:unknown},failSend:true,sends:[] as Record<string,unknown>[],errors:[] as string[]};
  page.on('pageerror',error=>state.errors.push(error.message));
  await page.route('**/api/live/care-messages',async route=>{
   const input=route.request().postDataJSON();
   if(state.refuse){await route.fulfill({status:state.refuse,json:{error:'private-refusal-detail'}});return;}
+  if(state.refusal){await route.fulfill(state.refusal);return;}
   if(input.action==='send'){
    state.sends.push(input);
    if(state.failSend){state.failSend=false;await route.fulfill({status:503,json:{error:'private-error'}});return;}
@@ -70,4 +71,47 @@ test('real proxy refuses missing session and cross-origin mutation',async({reque
  expect(same.status()).toBe(401);
  const other=await request.post('/api/live/care-messages',{headers:{origin:'https://example.org'},data:{action:'list'}});
  expect(other.status()).toBe(403);
+});
+// Under clinic-membership sign-in each clinic refusal is its own claim: a clinic switched in another window, no usable
+// clinic selection, or a family this deployment does not serve yet. None is shown as an empty inbox or an empty list.
+const CLINIC_REFUSALS=[
+ {status:409,json:{error:'clinic_selection_changed'},text:'Your clinic changed in another window. Reload to continue.'},
+ {status:409,json:{error:{code:'conflict',message:'Your clinic changed in another window. Reload to continue.'}},text:'Your clinic changed in another window. Reload to continue.'},
+ {status:403,json:{error:'clinic_selection_required'},text:'Choose your clinic in Settings before continuing.'},
+ {status:503,json:{error:'membership_authority_not_configured'},text:'not available yet under clinic-membership sign-in'},
+];
+test('names each clinic refusal for messages and clears what was open',async({page})=>{
+ const {state,panel}=await setup(page);
+ for(const refusal of CLINIC_REFUSALS){
+  state.refusal={status:refusal.status,json:refusal.json};
+  await panel.getByRole('button',{name:'Load / refresh app messages'}).click();
+  await expect(panel.getByRole('alert')).toContainText(refusal.text);
+  await expect(panel.getByText('No app conversations yet.')).toHaveCount(0);
+  await expect(panel.getByText('Fictional message from the app.')).toHaveCount(0);
+  await expect(panel).not.toContainText('Access changed');
+ }
+ state.refusal=null;expect(state.errors).toEqual([]);
+});
+test('a reply refused because the clinic changed says to check before sending again',async({page})=>{
+ const {state,panel}=await setup(page);
+ await panel.getByLabel('Reply to patient').fill('Fictional practitioner response.');
+ state.refusal={status:409,json:{error:'clinic_selection_changed'}};
+ await panel.getByRole('button',{name:'Send reply',exact:true}).click();
+ await expect(panel.getByRole('alert')).toContainText('check whether the reply was stored before sending again');
+ await expect(panel.getByLabel('Reply to patient')).toHaveCount(0);
+});
+test('names each clinic refusal for program assignments, never as an unpublished version or an empty list',async({page})=>{
+ const origin='http://localhost:'+(process.env.E2E_PORT??'3114');
+ await page.context().addCookies([{name:'aidp_at',value:'fictional-ui-only',url:origin},{name:'aidp_exp',value:String(Date.now()+3600000),url:origin}]);
+ let refusal:{status:number;json:unknown}|null=null;
+ await page.route('**/api/live/program-assignments',async route=>{await route.fulfill(refusal??{status:503,json:{error:'service_unavailable'}});});
+ await page.goto('/inbox');
+ const panel=page.getByRole('region',{name:'Patient app programs'});
+ await expect(panel).toBeVisible();
+ for(const next of CLINIC_REFUSALS){
+  refusal={status:next.status,json:next.json};
+  await panel.getByRole('button',{name:'Load / refresh assignments'}).click();
+  await expect(panel.getByRole('alert')).toContainText(next.text);
+  await expect(panel).not.toContainText('Either that version is not published');
+ }
 });
