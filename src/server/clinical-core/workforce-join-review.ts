@@ -32,10 +32,8 @@ export const WORKFORCE_JOIN_REVIEW_FUNCTIONS = {
 
 /**
  * The SQL refusal names of the candidate, and what each means to an administrator. The production data client
- * (rds-data-database.ts, Codex's file) does not classify any of them yet, so through it they arrive as an unclassified
- * failure and answer `service_unavailable`. The classification it would need is the source-interface request recorded in
- * docs/practitioner-onboarding-approval-2026-10-15.md: each name below as a ClinicalCoreDatabaseRejection whose
- * `reason` is the name.
+ * (rds-data-database.ts) classifies these names into ClinicalCoreDatabaseRejection with `reason` set to the closed
+ * token only; it never forwards the database message, address, subject or SQL text.
  */
 export const JOIN_REVIEW_SQL_REFUSALS: Readonly<Record<string, JoinReviewRefusal>> = {
   workforce_review_invalid: 'request_invalid',

@@ -286,6 +286,29 @@ const LAB_ATTESTATION_CATEGORY: Readonly<Record<LabAttestationRefusal, ClinicalC
   lab_attestation_reading_rejected: "conflict", lab_attestation_conflict: "conflict",
 };
 
+/** Exact refusal names emitted by the BLOCKED clinic-approved onboarding successor.
+ * Only the token is carried out of RDS; the address, subject, SQL and details
+ * that may follow it are never copied into a response or application log. */
+const ONBOARDING_REJECTION_CATEGORY: Readonly<Record<string, ClinicalCoreDatabaseRejection["category"]>> = {
+  workforce_review_invalid: "request_invalid",
+  workforce_revocation_invalid: "request_invalid",
+  workforce_subject_invalid: "request_invalid",
+  workforce_application_not_found: "operation_refused",
+  membership_not_found: "operation_refused",
+  workforce_review_conflict: "conflict",
+  workforce_review_applicant_mismatch: "identity_refused",
+  workforce_self_approval_refused: "identity_refused",
+  self_suspension_refused: "identity_refused",
+  workforce_already_member: "conflict",
+  workforce_clinic_unavailable: "operation_refused",
+  workforce_binding_conflict: "conflict",
+  organization_admin_required: "identity_refused",
+  owner_role_required: "identity_refused",
+  last_owner_protected: "conflict",
+  workforce_operator_refused: "identity_refused",
+};
+const ONBOARDING_REJECTION_TOKEN = new RegExp(`(?:^|\\bERROR:\\s*)(${Object.keys(ONBOARDING_REJECTION_CATEGORY).join("|")})\\b`);
+
 /** Exported for embedded-database tests that stand the production dispatch in front of a real PGlite: the same classification, no other mapping. */
 export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejection | undefined {
   if (!error || typeof error !== "object") return undefined;
@@ -294,6 +317,8 @@ export function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseR
   const message = record.message;
   const labAttestation = labAttestationRefusalReason(message);
   if (labAttestation) return new ClinicalCoreDatabaseRejection(LAB_ATTESTATION_CATEGORY[labAttestation], labAttestation);
+  const onboarding = ONBOARDING_REJECTION_TOKEN.exec(message)?.[1];
+  if (onboarding) return new ClinicalCoreDatabaseRejection(ONBOARDING_REJECTION_CATEGORY[onboarding]!, onboarding);
   // Program-step purchase refusals (the BLOCKED program-step-purchase candidate and its priced successor), by token only.
   const programStep = /\b(program_step_[a-z_]+|program_price_unset)\b/.exec(message)?.[1];
   if (programStep && (PROGRAM_STEP_REFUSALS as readonly string[]).includes(programStep)) return new ClinicalCoreDatabaseRejection(

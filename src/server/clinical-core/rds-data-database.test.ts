@@ -213,6 +213,54 @@ describe("Aurora RDS Data API transaction adapter", () => {
   });
 
   test.each([
+    ["workforce_review_invalid", "request_invalid"],
+    ["workforce_revocation_invalid", "request_invalid"],
+    ["workforce_subject_invalid", "request_invalid"],
+    ["workforce_application_not_found", "operation_refused"],
+    ["membership_not_found", "operation_refused"],
+    ["workforce_review_conflict", "conflict"],
+    ["workforce_review_applicant_mismatch", "identity_refused"],
+    ["workforce_self_approval_refused", "identity_refused"],
+    ["self_suspension_refused", "identity_refused"],
+    ["workforce_already_member", "conflict"],
+    ["workforce_clinic_unavailable", "operation_refused"],
+    ["workforce_binding_conflict", "conflict"],
+    ["organization_admin_required", "identity_refused"],
+    ["owner_role_required", "identity_refused"],
+    ["last_owner_protected", "conflict"],
+    ["workforce_operator_refused", "identity_refused"],
+  ])("names onboarding SQL refusal %s as %s without leaking database detail", (sqlName, category) => {
+    const rejection = classifyDatabaseRejection({ name: "DatabaseErrorException", message: `ERROR: ${sqlName}: applicant 11111111-1111-4111-8111-111111111111 select * from clinical_private.workforce_access_requests` });
+    expect(rejection).toMatchObject({ category, reason: sqlName });
+    expect(JSON.stringify(rejection)).not.toMatch(/11111111|select|workforce_access_requests/);
+  });
+
+  test("does not promote incidental onboarding words or non-database errors into decided refusals", () => {
+    expect(classifyDatabaseRejection({ name: "DatabaseErrorException", message: "ERROR: syntax_error near user text workforce_review_invalid" })).toBeUndefined();
+    expect(classifyDatabaseRejection({ name: "Error", message: "ERROR: workforce_review_invalid" })).toBeUndefined();
+    expect(classifyDatabaseRejection({ name: "DatabaseErrorException", message: "ERROR: workforce_review_invalid_extra" })).toBeUndefined();
+  });
+
+  test("the production transaction adapter returns only the decided onboarding refusal and rolls back", async () => {
+    const mock = client((call) => {
+      if (call.name === "BeginTransactionCommand") return { transactionId: "tx-onboarding-refusal" };
+      if (call.name === "ExecuteStatementCommand" && call.input.sql !== "set local role clinical_core_api") {
+        throw Object.assign(new Error("ERROR: workforce_review_applicant_mismatch: applicant 11111111-1111-4111-8111-111111111111 email private@example.test"), { name: "DatabaseErrorException" });
+      }
+      return {};
+    });
+    const database = createRdsDataClinicalCoreDatabase(CONFIG, mock.value);
+    let rejected: unknown;
+    try { await database.transaction(tx => tx.query("select clinical_core.review_workforce_join_request_v2($1,$2,$3,$4)", ["request", true, "reason", "hash"])); }
+    catch (error) { rejected = error; }
+    expect(rejected).toBeInstanceOf(ClinicalCoreDatabaseRejection);
+    expect(rejected).toMatchObject({ category: "identity_refused", reason: "workforce_review_applicant_mismatch" });
+    expect(JSON.stringify(rejected)).not.toMatch(/11111111|private@example|select/);
+    expect(mock.calls.at(-1)?.name).toBe("RollbackTransactionCommand");
+    expect(mock.calls.some(call => call.name === "CommitTransactionCommand")).toBe(false);
+  });
+
+  test.each([
     ["care_erasure_intent_required", "request_invalid"],
     ["care_data_invalid", "request_invalid"],
     ["care_data_forbidden", "identity_refused"],
