@@ -111,6 +111,10 @@ test('full audit remains mandatory and the Docker dependency stage includes the 
   assert.match(ci, /run: npm audit --audit-level=high/);
   assert.doesNotMatch(ci, /npm audit[^\n]*(?:omit|production|\|\|)/);
   assert.match(ci, /run: npm run test:lint-root-matcher/);
+  assert.match(ci, /docker build --build-arg NODE_BASE_IMAGE=docker\.io\/library\/node:22-bookworm-slim --target dependencies -f Dockerfile\.production/);
+  const productionDockerfile = fs.readFileSync(path.join(root, 'Dockerfile.production'), 'utf8');
+  assert.match(productionDockerfile, /^ARG NODE_BASE_IMAGE=public\.ecr\.aws\/docker\/library\/node:22-bookworm-slim$/m);
+  assert.equal((productionDockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 2);
   for (const file of ['Dockerfile', 'Dockerfile.production']) {
     const dependencyStage = fs.readFileSync(path.join(root, file), 'utf8').split('AS builder')[0];
     assert.ok(dependencyStage.indexOf('COPY vendor/next-root-glob ./vendor/next-root-glob') > 0, file);

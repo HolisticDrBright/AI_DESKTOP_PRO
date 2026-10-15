@@ -286,7 +286,7 @@ jobs:
         run: npm run test:lint-root-matcher
       - name: Verify local lint dependency in the real Linux Node 22 container stage
         run: |
-          docker build --target dependencies -f Dockerfile.production --tag alp-lint-dependencies .
+          docker build --build-arg NODE_BASE_IMAGE=docker.io/library/node:22-bookworm-slim --target dependencies -f Dockerfile.production --tag alp-lint-dependencies .
           docker run --rm --entrypoint npm alp-lint-dependencies ls fast-glob braces micromatch
           docker run --rm --entrypoint node alp-lint-dependencies -e "const assert=require('node:assert/strict'); const {createRequire}=require('node:module'); const r=createRequire(require.resolve('@next/eslint-plugin-next')); assert.equal(r('fast-glob/package.json').name,'@alp/next-root-glob'); assert.deepEqual(r('./utils/get-root-dirs').getRootDirs({cwd:process.cwd(),settings:{next:{rootDir:'vendor/next-root-glob'}}}),['vendor/next-root-glob']); assert.deepEqual(r('fast-glob').globSync('/',{onlyDirectories:true}),['/']);"
       - run: npm run lint
