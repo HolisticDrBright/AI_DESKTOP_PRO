@@ -37,5 +37,32 @@ The clinical production build passed (262 pages) and its strict bundle scan
 passed (344 client chunks, none of the 21 server-only markers). The native
 two-session PostgreSQL harness requires local PostgreSQL binaries; they are
 absent on this Windows host, so that particular merged-head run is unobserved
-here. Exact-head CI is pending as this note is updated. Do not promote the
-integration on this preliminary evidence.
+here. The original merged head `cf18432d` subsequently passed all 11 jobs in
+[exact-head CI 38806424988](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38806424988).
+That CI result does not change any hosted or activation hold.
+
+## Follow-up clinic-message source integration
+
+Head `3074ac5c` fixes a fail-open input in the still-unregistered current-
+membership setter: SQL three-valued logic had admitted a null request purpose.
+The corrected candidate LF SHA-256 is
+`ff89c1a2d5b934a3a49437099d14b34e5dffed400ae332f26eea2c311a891342`;
+the matching rollback SHA-256 is
+`d0fae1b0c8565400f1f320db3ef765e5dea6d66b6bbe65c2be32d1ccd751dd08`.
+The old candidate was never registered or applied. The new test failed before
+the correction; 45 related database cases, typecheck, targeted lint and the
+production migration gate passed locally. CI 38809531439 was still running
+when this section was written.
+
+The first Claude care-messaging increment `fd10fb51` was then rehearsed on a
+**separate local integration branch**. A naive merge returned 503 for ten of
+its 16 database cases because its pinned `pg_proc.prosrc` hash described the
+old setter. The corrected body hash,
+`7054db763a6ff38b00a504a09398dcbd60f69b6476b6c85bab36da496d6e0cd6`,
+was independently read from the 106-migration fictional database. Updating
+only that pin made the care-message, route and setter suites pass **40/40**;
+typecheck, focused lint and the production migration gate also pass. This is
+not Claude's complete return or hosted acceptance. The new care-message mode
+remains opt-in and off, the setter remains unregistered, and the program,
+telehealth, clinic and PHI holds are unchanged. Do not promote this preliminary
+integration until Claude's final head is reconciled and exact-head CI passes.

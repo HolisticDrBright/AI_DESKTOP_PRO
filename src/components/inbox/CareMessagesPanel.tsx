@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {parseCareMessageResponse,MESSAGE_ACK,type CareMessageRequest,type CareMessageResponse} from '@/contracts/careMessages';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
+import {clinicRefusal} from '@/lib/clinic-refusal';
 type List=Extract<CareMessageResponse,{action:'list'}>;type Read=Extract<CareMessageResponse,{action:'read'}>;
 const subscribeHydration=()=>()=>undefined;
 const hydratedOnClient=()=>true;
@@ -22,7 +23,17 @@ export function CareMessagesPanel(){
    const response=await fetch('/api/live/care-messages',{method:'POST',credentials:'same-origin',cache:'no-store',
     headers:{'content-type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(25000)});
    if(!alive.current||epoch.current!==generation)return;
-   if(!response.ok){if(response.status===401||response.status===403){clear();setError('Access changed. Sign in and check your clinic connection before refreshing.');return;}throw new Error('refused');}
+   if(!response.ok){
+    // A clinic switched elsewhere, no usable selection, or messages not served under clinic-membership sign-in yet:
+    // each said as itself, and none of them as an empty inbox.
+    const refusal=await clinicRefusal(response);
+    if(!alive.current||epoch.current!==generation)return;
+    if(refusal==='clinic_changed'){clear();setError(input.action==='send'
+     ?'Your clinic changed in another window. Reload, then reopen the conversation to check whether the reply was stored before sending again.'
+     :'Your clinic changed in another window. Reload to continue.');return;}
+    if(refusal==='clinic_selection_required'){clear();setError('Choose your clinic in Settings before continuing.');return;}
+    if(refusal==='membership_authority_not_configured'){clear();setError('Patient app messages are not available yet under clinic-membership sign-in. Nothing was sent.');return;}
+    if(response.status===401||response.status===403){clear();setError('Access changed. Sign in and check your clinic connection before refreshing.');return;}throw new Error('refused');}
    const data=parseCareMessageResponse(input,(await response.json()).data);
    if(!alive.current||epoch.current!==generation)return;
    if(data.action!==input.action)throw new Error('invalid');

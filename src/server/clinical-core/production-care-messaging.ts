@@ -3,6 +3,8 @@ import { careMessageRequest, parseCareMessageResponse, type CareMessageResponse 
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from './database';
 import { careMessageExportRequest, parseCareMessageExportResponse } from '../../contracts/careMessageExport';
+import type { CurrentWorkforcePrincipal } from './aws-identity-consent';
+import { bindCurrentWorkforceContext, CurrentMembershipRefusal, currentMembershipSetterBound } from './current-membership-workforce';
 
 export class ProductionCareMessageError extends Error {
   constructor(readonly category: 'request_invalid' | 'identity_refused' | 'consent_required' | 'conflict' | 'account_deletion_write_blocked' | 'service_unavailable') { super(category); }
@@ -61,12 +63,48 @@ export function createProductionCareMessaging(database: ClinicalCoreDatabase) {
         return parseCareMessageResponse(request, typeof raw === 'string' ? JSON.parse(raw) : raw);
       });
     } catch (error) {
-      if (error instanceof ClinicalCoreDatabaseRejection) {
-        const category = error.category;
-        throw new ProductionCareMessageError(category === 'request_invalid' || category === 'conflict' || category === 'consent_required'
-          || category === 'account_deletion_write_blocked' ? category : 'identity_refused');
-      }
-      throw new ProductionCareMessageError('service_unavailable');
+      throw careMessageFailure(error);
+    }
+  };
+}
+function careMessageFailure(error: unknown): ProductionCareMessageError {
+  if (error instanceof ProductionCareMessageError) return error;
+  if (error instanceof CurrentMembershipRefusal) return new ProductionCareMessageError('identity_refused');
+  if (error instanceof ClinicalCoreDatabaseRejection) {
+    const category = error.category;
+    return new ProductionCareMessageError(category === 'request_invalid' || category === 'conflict' || category === 'consent_required'
+      || category === 'account_deletion_write_blocked' ? category : 'identity_refused');
+  }
+  return new ProductionCareMessageError('service_unavailable');
+}
+/**
+ * The workforce messaging route under the unactivated `database_current` authority. The practitioner's person and
+ * clinic come from current rows: one transaction binds the current membership of the signed-in subject in the selected
+ * clinic (the UNREGISTERED setter, rows locked for the transaction), then runs the same
+ * `production_care_message_request` as the legacy path, with its own role, connection, consent and idempotency checks.
+ * Nothing is read from a token claim and `set_request_context` is never called. While the setter is not registered,
+ * every request answers `service_unavailable` before any message function runs.
+ */
+export function createCurrentMembershipCareMessaging(database: ClinicalCoreDatabase) {
+  return async (principal: CurrentWorkforcePrincipal, body: unknown): Promise<CareMessageResponse> => {
+    const parsed = careMessageRequest.safeParse(body);
+    if (!parsed.success) throw new ProductionCareMessageError('request_invalid');
+    const request = parsed.data;
+    // Receipts and settlement are the patient app's own recovery of its own sends.
+    if (request.action === 'receipt' || request.action === 'settle') throw new ProductionCareMessageError('identity_refused');
+    if (request.action === 'send' && (request.threadId ? request.subject !== undefined : !request.subject)) {
+      throw new ProductionCareMessageError('request_invalid');
+    }
+    try {
+      return await database.transaction(async tx => {
+        if (!await currentMembershipSetterBound(tx)) throw new ProductionCareMessageError('service_unavailable');
+        await bindCurrentWorkforceContext(tx, principal, 'clinical_data');
+        const result = await tx.query<{ data: unknown }>('select clinical_core.production_care_message_request($1::jsonb) as data', [JSON.stringify(request)]);
+        const raw = result.rows[0]?.data;
+        return parseCareMessageResponse(request, typeof raw === 'string' ? JSON.parse(raw) : raw);
+      });
+    } catch (error) {
+      throw careMessageFailure(error);
     }
   };
 }

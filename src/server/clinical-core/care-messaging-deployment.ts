@@ -2,7 +2,7 @@ if (typeof window !== 'undefined') throw new Error('care-messaging-deployment is
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api';
 import type { ClinicalCoreDatabase } from './database';
 import { createProductionCareMessagingApi } from './production-care-messaging-api';
-import { createProductionCareMessaging, createProductionCareMessageExport, ProductionCareMessageError } from './production-care-messaging';
+import { createCurrentMembershipCareMessaging, createProductionCareMessaging, createProductionCareMessageExport, ProductionCareMessageError } from './production-care-messaging';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
 import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
@@ -36,6 +36,8 @@ function binding(e: Environment, build: CareMessagingBuild | InventoryCareMessag
   // synthetic schema test's approval or active-mode template conditions.
   if (!inventory && build.migrationCount === 112
     && (e.PHI_ALLOWED !== 'false' || e.CARE_MESSAGING_ACTIVATION !== 'blocked')) throw new Error('binding_refused');
+  // The workforce authority: unset is the deployed claim path. `database_current` is accepted only spelled exactly.
+  if (![undefined, '', 'legacy_claims', 'database_current'].includes(e.CARE_MESSAGING_WORKFORCE_AUTHORITY)) throw new Error('binding_refused');
   const activation = e.CARE_MESSAGING_ACTIVATION === 'approved' ? 'approved' as const : 'blocked' as const;
   const qualification = resolveQualificationExecution(e, activation);
   const serving = qualification !== undefined || e.PHI_ALLOWED === 'true';
@@ -137,7 +139,9 @@ function createHandler(environment: Environment, supplied: CareMessagingBuild | 
       ...(qualification ? { qualification } : {}), activationEvidenceSha256: e.CARE_MESSAGING_EVIDENCE_SHA256,
       databaseReviewSha256: e.DATABASE_REVIEW_SHA256, mfaReviewSha256: e.WORKFORCE_MFA_REVIEW_SHA256,
       messagingReviewSha256: e.MESSAGING_REVIEW_SHA256, retentionReviewSha256: e.RETENTION_REVIEW_SHA256,
+      workforceAuthority: e.CARE_MESSAGING_WORKFORCE_AUTHORITY === 'database_current' ? 'database_current' : 'legacy_claims',
     }, messaging: () => createProductionCareMessaging(getDatabase()),
+    currentMessaging: () => createCurrentMembershipCareMessaging(getDatabase()),
     exporter: () => createProductionCareMessageExport(getDatabase()), now });
   } catch {
     return async () => ({ statusCode: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
