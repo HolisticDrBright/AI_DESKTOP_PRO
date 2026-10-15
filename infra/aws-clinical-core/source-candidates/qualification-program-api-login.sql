@@ -1,6 +1,10 @@
 -- BLOCKED qualification-only candidate. This creates no usable credential.
 -- The reviewed operator must first verify the exact isolated database and
 -- independently provision a secret/password before changing NOLOGIN to LOGIN.
+-- Keep role/schema creation and the PUBLIC revokes in one transaction, even
+-- when an operator executes this file one statement at a time. A late error
+-- must not leave half-installed roles or a briefly executable proxy behind.
+begin;
 do $$
 begin
   if current_database() <> 'clinical_core_qualification' then
@@ -66,3 +70,4 @@ grant clinical_program_qualification_api to clinical_program_qualification_login
 -- has USAGE only on its isolated proxy schema, not clinical_core or
 -- clinical_private. No membership in the global API or migrator roles is
 -- granted; no password is set here.
+commit;

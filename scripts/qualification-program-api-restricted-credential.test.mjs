@@ -99,6 +99,7 @@ test('exact candidate refuses a non-qualification database without creating the 
   try {
     await db.exec('create role clinical_core_api nologin noinherit');
     await assert.rejects(db.exec(loginSql), /qualification_database_refused/);
+    await db.exec('rollback');
     const result = await db.query("select count(*)::integer as n from pg_roles where rolname = 'clinical_program_qualification_login'");
     assert.equal(result.rows[0].n, 0);
   } finally { await db.close(); }
@@ -110,8 +111,32 @@ test('candidate refuses a missing API role before creating the login', async () 
     const database = (await db.query('select current_database() as name')).rows[0].name;
     await assert.rejects(db.exec(loginSql.replace("current_database() <> 'clinical_core_qualification'",
       `current_database() <> '${database}'`)), /clinical_api_role_refused/);
+    await db.exec('rollback');
     const result = await db.query("select count(*)::integer as n from pg_roles where rolname = 'clinical_program_qualification_login'");
     assert.equal(result.rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+test('late apply failure rolls back roles, schema and publicly executable proxies together', async () => {
+  assert.match(loginSql, /^begin;\s*do \$\$/m);
+  assert.match(loginSql, /\bcommit;\s*$/);
+  const db = new PGlite();
+  try {
+    await db.exec(`create role clinical_core_api nologin noinherit;
+      create schema clinical_core; create schema clinical_private;
+      create function clinical_private.set_request_context(uuid,uuid,text,text,text,text,text)
+        returns void language sql as $$ select null::void $$;
+      create function clinical_core.production_program_bounded_request(jsonb)
+        returns jsonb language sql as $$ select $1 $$;`);
+    const database = (await db.query('select current_database() as name')).rows[0].name;
+    const scoped = loginSql.replace("current_database() <> 'clinical_core_qualification'",
+      `current_database() <> '${database}'`);
+    const failedLate = scoped.replace('grant clinical_program_qualification_api to clinical_program_qualification_login',
+      'grant nonexistent_qualification_role to clinical_program_qualification_login');
+    await assert.rejects(db.exec(failedLate), /nonexistent_qualification_role/);
+    await db.exec('rollback');
+    assert.equal((await db.query("select count(*)::integer as n from pg_roles where rolname like 'clinical_program_qualification_%'")).rows[0].n, 0);
+    assert.equal((await db.query("select count(*)::integer as n from pg_namespace where nspname='clinical_program_qualification'")).rows[0].n, 0);
   } finally { await db.close(); }
 });
 
