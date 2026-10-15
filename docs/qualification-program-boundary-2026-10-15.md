@@ -152,7 +152,10 @@ What this does **not** prove:
      never accepts the client-side synthetic bypass. A read-only October 15 inventory found no billing stack and no
      billing route on either the isolated qualification API (`6zt8e9qz04`) or the shared synthetic API
      (`wxv734oi12`), so every consumer request must remain refused until a real sandbox billing boundary is installed
-     and reviewed. The source verifier alone is not an entitlement or hosted pass;
+     and reviewed. The production-account billing readiness stack was also observed on October 15 with
+     `BillingActivation=blocked`, `EnabledStores=none`, `StoreEnvironment=Sandbox` and production consumer pool
+     `us-east-2_kl37QO1DJ`; it cannot verify tokens from the isolated fictional consumer pool. The source verifier
+     alone is not an entitlement or hosted pass;
    - the function digests from `qualification-program-boundary.json`;
    - the environment listed there.
 5. **Review the separate successor of `qualification-program-api-candidate.json`**. It now points the two routes at
