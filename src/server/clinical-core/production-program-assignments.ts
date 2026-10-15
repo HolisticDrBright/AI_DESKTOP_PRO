@@ -68,9 +68,20 @@ export function activationState(evidence:unknown):ProductionProgramActivation{
  return parsed.data;
 }
 export function createProductionProgramAssignments(deps:ProductionProgramAssignmentDependencies){
- const activation=activationState(deps.activation),boundary=boundaryActivationState(deps.boundaryActivation);
+ const activation=activationState(deps.activation),boundary=boundaryActivationState(deps.boundaryActivation),execute=boundedProgramExecutor(deps);
  return async(context:ClinicalRequestContext,body:unknown,authorization:string):Promise<ProgramAssignmentResponse>=>{
   if(!activation.enabled||!boundary.enabled)throw new ProductionProgramAssignmentError('activation_refused');
+  return execute(context,body,authorization);
+ };
+}
+/**
+ * The production-shaped program request through the consumer boundary, after activation was decided by the caller: the
+ * production adapter above (behind its activation evidence) and the qualification adapter
+ * (qualification-program-assignments.ts, behind qualification execution and designated fictional subjects) both run
+ * exactly this, so the route and the database function agree on one context and one contract. It never decides activation.
+ */
+export function boundedProgramExecutor(deps:Pick<ProductionProgramAssignmentDependencies,'database'|'verifyConsumerCore'>){
+ return async(context:ClinicalRequestContext,body:unknown,authorization:string):Promise<ProgramAssignmentResponse>=>{
   // The production target only: a synthetic context is the wrong target for this family, as a production one is for the other.
   if(context.environment!=='production-clinical'||context.dataClassification!=='clinical_phi'||!('productionBound' in context)||context.productionBound!==true
    ||context.purpose!=='clinical_data')throw new ProductionProgramAssignmentError('identity_refused');

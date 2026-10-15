@@ -1,0 +1,134 @@
+{
+  "contract": "qualification-program-boundary-candidate/1",
+  "status": "BLOCKED",
+  "deployment": "not_deployed",
+  "activation": "blocked",
+  "phiAllowed": false,
+  "seededSubjects": false,
+  "enabledRow": false,
+  "target": {
+    "environment": "isolated-qualification",
+    "accountId": "588966314750",
+    "region": "us-east-2",
+    "databaseName": "clinical_core_qualification",
+    "apiId": "6zt8e9qz04"
+  },
+  "ledger": {
+    "contract": "telehealth-consent-copy-candidate/1",
+    "migrationCount": 112,
+    "migrationReleaseSha256": "45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4",
+    "preserved": "no ledger row added; 112 rows byte-identical"
+  },
+  "parents": [
+    {
+      "file": "infra/aws-clinical-core/production-candidates/lab-result-transfer-v2.sql",
+      "sha256": "fa6ee162a03a85ab23543371d9d1dbaf8ee6dd486b4a8cc64b5545fc16be3b94",
+      "status": "BLOCKED"
+    },
+    {
+      "file": "infra/aws-clinical-core/production-candidates/lab-observation-attestation.sql",
+      "sha256": "d0423bcec5067a668f3522bbba65d096f642f083c1ef95448da190b38494bb83",
+      "status": "BLOCKED"
+    },
+    {
+      "file": "infra/aws-clinical-core/production-candidates/production-program-assignments.sql",
+      "sha256": "78bd5b3805d96443829f6e7380deba0d66ad2f03073374bd6681f4f6bc25b4f3",
+      "status": "BLOCKED"
+    },
+    {
+      "file": "infra/aws-clinical-core/production-candidates/production-program-consumer-boundary.sql",
+      "sha256": "ca0ce5a62e68638c7c29bd114018344c2755da946d1785f849e11088f8e1122d",
+      "status": "BLOCKED"
+    }
+  ],
+  "successor": {
+    "file": "infra/aws-clinical-core/source-candidates/qualification-program-boundary.sql",
+    "sha256": "0f07717d240d981b3900f6c2e926aa79025157f916e869c4a74def52214261a6"
+  },
+  "rollback": {
+    "file": "infra/aws-clinical-core/source-candidates/qualification-program-boundary-rollback.sql",
+    "sha256": "bfdf50b7bb0676d83fa2bb37fa653b8023e03cce1efa20d5916896a76274da9e"
+  },
+  "functions": [
+    {
+      "name": "clinical_core.production_program_bounded_request",
+      "bodySha256": "e9c77ccd0cb9be11d65a4a1a105de859717ecf7a2e98512228dc05bd0c234d6e",
+      "apiExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "name": "clinical_private.production_program_bounded_complete",
+      "bodySha256": "bacef375e5952a1283b0004d892dbe93516a401016da4cc75a95a310af98144a",
+      "apiExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "name": "clinical_core.production_program_assignment_request",
+      "bodySha256": "d9c07fec841cd1d68689be602c933fa67cddd343f4ee5228f336efe9362c981d",
+      "apiExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "name": "clinical_private.production_program_without_destinations",
+      "bodySha256": "4bd3cdd359d584414bd17791c62f828fb7244e204ce2742ed72ceb4e6c8989d2",
+      "apiExecute": false,
+      "securityDefiner": false
+    },
+    {
+      "name": "clinical_private.program_qualification_open",
+      "bodySha256": "83ce2f61711f9fa8b94962cf9330af8eb2e0c984a55e4c0edf2a40764c8a31af",
+      "apiExecute": false,
+      "securityDefiner": true
+    }
+  ],
+  "runtime": {
+    "adapter": "src/server/clinical-core/qualification-program-assignments.ts#createQualificationProgramAssignments",
+    "handler": "src/server/clinical-core/qualification-program-api.ts#createQualificationProgramHandler",
+    "lambdaEntry": null,
+    "entryFunction": "clinical_core.production_program_bounded_request(jsonb)",
+    "requestContext": {
+      "environment": "production-clinical",
+      "dataClassification": "clinical_phi",
+      "productionBound": true,
+      "purpose": "clinical_data"
+    },
+    "routes": [
+      "POST /clinical-core/consumer/programs",
+      "POST /clinical-core/workforce/programs"
+    ],
+    "environment": {
+      "PHI_ALLOWED": "false",
+      "PROGRAM_ACTIVATION": "blocked",
+      "QUALIFICATION_EXECUTION": "enabled",
+      "DEPLOYMENT_ACCOUNT_ID": "588966314750",
+      "AWS_REGION": "us-east-2",
+      "MIGRATION_RELEASE_SHA256": "45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4",
+      "QUALIFICATION_PROGRAM_BOUNDARY_SHA256": "0f07717d240d981b3900f6c2e926aa79025157f916e869c4a74def52214261a6",
+      "required": [
+        "SOURCE_COMMIT",
+        "QUALIFICATION_REVIEW_SHA256",
+        "QUALIFICATION_ACCOUNT_ID",
+        "QUALIFICATION_IDENTITY_SUBJECTS",
+        "QUALIFICATION_PROGRAM_ORGANIZATION_ID",
+        "CLINICAL_DATABASE_NAME",
+        "CLINICAL_DATABASE_CLUSTER_ARN",
+        "CLINICAL_DATABASE_SECRET_ARN",
+        "CONSUMER_ISSUER",
+        "CONSUMER_AUDIENCE",
+        "WORKFORCE_ISSUER",
+        "WORKFORCE_AUDIENCE"
+      ]
+    },
+    "consumerCoreEntitlement": "required port verifyConsumerCore; no qualification verifier exists in source"
+  },
+  "supersedes": {
+    "file": "infra/aws-clinical-core/qualification-program-api-candidate.json",
+    "reason": "its projected Lambda routes to createProgramAssignments (synthetic-staging, program_assignment_request), which the 112 ledger does not have; that candidate is left unchanged and must not be deployed"
+  },
+  "neverOpens": [
+    "production_program_activation",
+    "program_consumer_boundary_activation",
+    "program-step-purchase.sql",
+    "program-step-purchase-priced.sql"
+  ]
+}
