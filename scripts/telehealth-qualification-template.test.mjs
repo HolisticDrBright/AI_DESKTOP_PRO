@@ -10,8 +10,10 @@ const target = {
   ...example, sourceCommit: sha, migrationReleaseHash: 'b'.repeat(64),
   databaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-secret',
   identitySubjects: {
-    consumer: 'fictional-consumer', workforce: 'fictional-workforce',
-    foreignConsumer: 'fictional-other-consumer', retentionService: 'fictional-retention-service',
+    consumer: '51cb2580-5051-70ca-eb9c-3a3a86cd9b8a',
+    workforce: '41cb4540-b031-70a6-7027-836d074e4075',
+    foreignConsumer: 'e18b95e0-d021-70e8-0969-d36f36ac8e1d',
+    retentionService: 'svc-qualification-b7599066',
   },
 };
 const candidate = () => telehealthQualificationTemplate(base, target, sha);
@@ -21,6 +23,15 @@ test('pins qualification to the source, API and immutable code version, with pro
   assert.deepEqual(template.Parameters.ClinicalApiId.AllowedValues, [target.apiId]);
   assert.deepEqual(template.Parameters.SourceCommit.AllowedValues, [sha]);
   assert.deepEqual(template.Parameters.LambdaCodeKey.AllowedValues, [`telehealth-qualification/${sha}/deployment.zip`]);
+  assert.deepEqual(template.Parameters.LambdaCodeBucket.AllowedValues, ['alp-qualification-code-588966314750-us-east-2']);
+  assert.deepEqual(template.Parameters.ConsumerUserPoolId.AllowedValues, ['us-east-2_G2Hvf9wzJ']);
+  assert.deepEqual(template.Parameters.ConsumerUserPoolClientId.AllowedValues, ['18q2q70rlsv8ti37knolpq7qsu']);
+  assert.deepEqual(template.Parameters.WorkforceUserPoolId.AllowedValues, ['us-east-2_zGOVBoeGT']);
+  assert.deepEqual(template.Parameters.WorkforceUserPoolClientId.AllowedValues, ['1ffcdpnh0k45b3gc2hm9938ebl']);
+  assert.deepEqual(template.Parameters.ClinicalCoreKeyArn.AllowedValues,
+    ['arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900']);
+  assert.equal(template.Parameters.ChartAdmissionSecretArn.AllowedPattern, '^$');
+  assert.deepEqual(template.Metadata.ClinicalCore.QualificationTarget.identitySubjects, target.identitySubjects);
   assert.deepEqual(template.Resources.TelehealthFunction.Properties.Code.S3ObjectVersion, { Ref: 'LambdaCodeVersion' });
   assert.equal(template.Parameters.LambdaCodeVersion.AllowedPattern, '^(?!null$)[A-Za-z0-9._~+=/-]{1,1024}$');
   assert.equal(template.Metadata.ClinicalCore.QualificationTarget.accountId, '588966314750');
@@ -57,6 +68,8 @@ test('refuses substituted source, API, account, database, PHI and provider postu
     b => { b.Resources.TelehealthFunction.Properties.Environment.Variables.PHI_ALLOWED = 'true'; },
     b => { b.Resources.TelehealthFunction.Properties.Environment.Variables.RUNTIME_MODE = 'production'; },
     b => { b.Parameters.ZoomEnabled.Default = 'true'; },
+    b => { b.Parameters.ConsumerUserPoolId.AllowedValues = ['us-east-2_nYngyyYGE']; },
+    b => { b.Parameters.ChartAdmissionSecretArn.Default = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:wrong'; },
   ]) {
     const changed = structuredClone(base); mutate(changed);
     assert.throws(() => telehealthQualificationTemplate(changed, target, sha), /telehealth_qualification_target_invalid/);

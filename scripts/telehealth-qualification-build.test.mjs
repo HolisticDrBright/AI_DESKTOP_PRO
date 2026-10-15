@@ -14,8 +14,10 @@ test('clean source builds one immutable synthetic candidate and refuses the plac
     ...example, sourceCommit, migrationReleaseHash: 'b'.repeat(64),
     databaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-secret',
     identitySubjects: {
-      consumer: 'fictional-consumer', workforce: 'fictional-workforce',
-      foreignConsumer: 'fictional-other-consumer', retentionService: 'fictional-retention-service',
+      consumer: '51cb2580-5051-70ca-eb9c-3a3a86cd9b8a',
+      workforce: '41cb4540-b031-70a6-7027-836d074e4075',
+      foreignConsumer: 'e18b95e0-d021-70e8-0969-d36f36ac8e1d',
+      retentionService: 'svc-qualification-b7599066',
     },
   };
   const targetPath = join(directory, 'target.json');

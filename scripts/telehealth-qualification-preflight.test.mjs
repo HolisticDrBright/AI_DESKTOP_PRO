@@ -11,8 +11,10 @@ const target = {
   ...JSON.parse(readFileSync('infra/aws-clinical-core/qualification-target-connections.example.json', 'utf8')),
   sourceCommit, migrationReleaseHash: 'b'.repeat(64),
   databaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-secret',
-  identitySubjects: { consumer: 'fictional-consumer', workforce: 'fictional-workforce',
-    foreignConsumer: 'fictional-other-consumer', retentionService: 'fictional-retention-service' },
+  identitySubjects: { consumer: '51cb2580-5051-70ca-eb9c-3a3a86cd9b8a',
+    workforce: '41cb4540-b031-70a6-7027-836d074e4075',
+    foreignConsumer: 'e18b95e0-d021-70e8-0969-d36f36ac8e1d',
+    retentionService: 'svc-qualification-b7599066' },
 };
 const base = JSON.parse(readFileSync('infra/aws-clinical-core/telehealth-requests-extension.json', 'utf8'));
 const template = telehealthQualificationTemplate(base, target, sourceCommit);
@@ -36,11 +38,28 @@ const foundation = { StackStatus: 'CREATE_COMPLETE', Outputs: Object.entries({
   DatabaseClusterArn: target.databaseClusterArn, DatabaseSecretArn: target.databaseSecretArn,
   CodeBucket: codeBucket,
 }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) };
+const pool = (id, mfa) => ({ Id: id,
+  Arn: `arn:aws:cognito-idp:us-east-2:588966314750:userpool/${id}`,
+  MfaConfiguration: mfa, AdminCreateUserConfig: { AllowAdminCreateUserOnly: true } });
+const client = (id, userPoolId) => ({ ClientId: id, UserPoolId: userPoolId,
+  ExplicitAuthFlows: ['ALLOW_USER_PASSWORD_AUTH'] });
+const user = (subject, workforce = false) => ({ Username: subject, Enabled: true,
+  UserStatus: 'CONFIRMED', UserAttributes: [{ Name: 'sub', Value: subject }],
+  ...(workforce ? { UserMFASettingList: ['SOFTWARE_TOKEN_MFA'] } : {}) });
 const input = () => ({ artifact: structuredClone(artifact), template: structuredClone(template), target: structuredClone(target),
   targetBytes, templateBytes, codeBytes, localZipBytes, downloadedZipBytes: localZipBytes,
   versionId, sourceCommit, caller: { Account: target.awsAccountId,
     Arn: `arn:aws:sts::${target.awsAccountId}:assumed-role/OrganizationAccountAccessRole/fictional-session` },
   foundation: structuredClone(foundation), api: { ApiId: target.apiId, ApiEndpoint: target.apiOrigin, ProtocolType: 'HTTP' },
+  consumerPool: pool('us-east-2_G2Hvf9wzJ', 'OPTIONAL'),
+  workforcePool: pool('us-east-2_zGOVBoeGT', 'ON'),
+  consumerClient: client('18q2q70rlsv8ti37knolpq7qsu', 'us-east-2_G2Hvf9wzJ'),
+  workforceClient: client('1ffcdpnh0k45b3gc2hm9938ebl', 'us-east-2_zGOVBoeGT'),
+  consumerUser: user(target.identitySubjects.consumer),
+  foreignConsumerUser: user(target.identitySubjects.foreignConsumer),
+  workforceUser: user(target.identitySubjects.workforce, true),
+  clinicalKey: { Arn: 'arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900',
+    Enabled: true, KeyState: 'Enabled', KeyUsage: 'ENCRYPT_DECRYPT' },
   versioning: { Status: 'Enabled' }, objectHead: { VersionId: versionId, ContentLength: localZipBytes.length },
   stackAbsent: true, rebuilt: { codeSha256: artifact.codeSha256,
     deploymentZipSha256: artifact.deploymentZipSha256, templateSha256: artifact.templateSha256 } });
@@ -60,6 +79,14 @@ test('refuses substituted target, caller, foundation, API, object version, bytes
     x => { x.foundation.Outputs.find(o => o.OutputKey === 'PhiAllowed').OutputValue = 'true'; },
     x => { x.foundation.Outputs.find(o => o.OutputKey === 'ApiId').OutputValue = 'aaaaaaaaaa'; },
     x => { x.api.ApiEndpoint = target.refused.stagingApiOrigin; },
+    x => { x.consumerPool.Id = 'us-east-2_nYngyyYGE'; },
+    x => { x.workforcePool.MfaConfiguration = 'OPTIONAL'; },
+    x => { x.consumerClient.UserPoolId = 'us-east-2_nYngyyYGE'; },
+    x => { x.workforceClient.ClientSecret = 'unexpected'; },
+    x => { x.consumerUser.Enabled = false; },
+    x => { x.foreignConsumerUser.UserAttributes[0].Value = 'another-subject'; },
+    x => { x.workforceUser.UserMFASettingList = []; },
+    x => { x.clinicalKey.KeyState = 'Disabled'; },
     x => { x.versioning.Status = 'Suspended'; }, x => { x.versionId = 'null'; },
     x => { x.objectHead.VersionId = 'other'; }, x => { x.downloadedZipBytes = Buffer.from('different'); },
     x => { x.stackAbsent = false; }, x => { x.template.Parameters.ZoomEnabled.AllowedValues = ['false', 'true']; },
@@ -67,5 +94,23 @@ test('refuses substituted target, caller, foundation, API, object version, bytes
   ]) {
     const changed = input(); change(changed);
     assert.throws(() => verifyTelehealthQualificationPreflight(changed), /telehealth_qualification_preflight_refused/);
+  }
+});
+
+test('refuses a separately rehashed template that swaps private pools, bucket, key or chart-admission posture', () => {
+  for (const change of [
+    x => { x.template.Parameters.ConsumerUserPoolId.AllowedValues = ['us-east-2_nYngyyYGE']; },
+    x => { x.template.Parameters.WorkforceUserPoolId.AllowedValues = ['us-east-2_ueGlFRbNB']; },
+    x => { x.template.Parameters.LambdaCodeBucket.AllowedValues = ['another-synthetic-bucket']; },
+    x => { x.template.Parameters.ClinicalCoreKeyArn.AllowedValues = ['arn:aws:kms:us-east-2:588966314750:key/other']; },
+    x => { x.template.Parameters.ChartAdmissionSecretArn.AllowedPattern = '.*'; },
+    x => { x.template.Metadata.ClinicalCore.QualificationTarget.identitySubjects.consumer = 'other-consumer'; },
+  ]) {
+    const changed = input(); change(changed);
+    changed.templateBytes = Buffer.from(JSON.stringify(changed.template, null, 2) + '\n');
+    changed.artifact.templateSha256 = hash(changed.templateBytes);
+    changed.rebuilt.templateSha256 = changed.artifact.templateSha256;
+    assert.throws(() => verifyTelehealthQualificationPreflight(changed),
+      /telehealth_qualification_preflight_refused:template/);
   }
 });

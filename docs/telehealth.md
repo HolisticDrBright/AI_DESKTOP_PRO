@@ -787,16 +787,31 @@ builder refuses dirty source or a target that names the staging API/database.
 
 The generated template pins the API ID, source commit and deployment ZIP key,
 requires an S3 object **version**, and permits only disabled Zoom, reminders and
-Stripe test flags. Its manifest records the SHA-256 of the source target,
+Stripe test flags. It also pins the isolated fictional consumer and workforce
+Cognito pools and public clients, the observed synthetic KMS key and qualification
+code bucket; the three designated subjects are bound to the template metadata.
+The chart-admission secret is forced empty. A changed pool, client, key, bucket or
+subject requires a new reviewed candidate instead of an operator-supplied value.
+Its manifest records the SHA-256 of the source target,
 compiled Lambda, deterministic ZIP and template. It performs no upload,
 CloudFormation change, provider activation or hosted test. After a reviewed
 target and immutable code version exist, run
 `npm run preflight:aws-telehealth-qualification -- --artifact-dir=<artifact> --target=<reviewed-target.json> --version-id=<S3-version> --profile=<assumed-role-profile>`.
 This read-only check validates the current shared target schema, rebuilds the
 artifact from clean source, verifies the assumed role, foundation and API,
+re-reads both private pools and clients, the three confirmed fictional users,
+workforce software-token MFA status and the enabled KMS key,
 downloads the exact S3 version to compare its bytes, and refuses an existing
 or staging stack. It performs no deployment. A separate operator must verify
 the post-deployment Lambda CodeSha256 and stack identity. Then run the fictional hosted
 membership, consent, appointment, cancellation and two-participant race matrix.
 An artifact build or green source test does **not** count as hosted acceptance,
 Zoom approval, PHI readiness or a real-patient launch.
+
+The existing qualification candidate fleet is not yet one matched identity
+release: care-connections and care-messaging still name the older shared staging
+pools, and personal-storage carries earlier designated subjects. The new
+telehealth candidate intentionally refuses those shared pools. A passing
+telehealth preflight therefore would not qualify cross-candidate messaging,
+personal-storage or complete-fleet journeys; those require an independently
+reviewed identity and source reconciliation first.

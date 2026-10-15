@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { verifyTelehealthQualificationPreflight } from './telehealth-qualification-preflight.mjs';
+import { TELEHEALTH_QUALIFICATION_RESOURCES, TELEHEALTH_QUALIFICATION_SUBJECTS }
+  from './telehealth-qualification-template.mjs';
 
 const args = process.argv.slice(2);
 const names = ['artifact-dir', 'target', 'version-id', 'profile'];
@@ -45,6 +47,21 @@ const foundation = aws('cloudformation', 'describe-stacks', '--stack-name', targ
 const f = Object.fromEntries((foundation?.Outputs ?? []).map(row => [row.OutputKey, row.OutputValue]));
 if (!f.CodeBucket) throw new Error('telehealth_qualification_preflight_foundation_refused');
 const api = aws('apigatewayv2', 'get-api', '--api-id', target.apiId);
+const resources = TELEHEALTH_QUALIFICATION_RESOURCES;
+const subjects = TELEHEALTH_QUALIFICATION_SUBJECTS;
+const consumerPool = aws('cognito-idp', 'describe-user-pool', '--user-pool-id', resources.ConsumerUserPoolId).UserPool;
+const workforcePool = aws('cognito-idp', 'describe-user-pool', '--user-pool-id', resources.WorkforceUserPoolId).UserPool;
+const consumerClient = aws('cognito-idp', 'describe-user-pool-client', '--user-pool-id', resources.ConsumerUserPoolId,
+  '--client-id', resources.ConsumerUserPoolClientId).UserPoolClient;
+const workforceClient = aws('cognito-idp', 'describe-user-pool-client', '--user-pool-id', resources.WorkforceUserPoolId,
+  '--client-id', resources.WorkforceUserPoolClientId).UserPoolClient;
+const consumerUser = aws('cognito-idp', 'admin-get-user', '--user-pool-id', resources.ConsumerUserPoolId,
+  '--username', subjects.consumer);
+const foreignConsumerUser = aws('cognito-idp', 'admin-get-user', '--user-pool-id', resources.ConsumerUserPoolId,
+  '--username', subjects.foreignConsumer);
+const workforceUser = aws('cognito-idp', 'admin-get-user', '--user-pool-id', resources.WorkforceUserPoolId,
+  '--username', subjects.workforce);
+const clinicalKey = aws('kms', 'describe-key', '--key-id', resources.ClinicalCoreKeyArn).KeyMetadata;
 const versioning = aws('s3api', 'get-bucket-versioning', '--bucket', f.CodeBucket);
 const objectHead = aws('s3api', 'head-object', '--bucket', f.CodeBucket,
   '--key', artifact.codeKey, '--version-id', versionId);
@@ -81,5 +98,6 @@ try {
 
 const report = verifyTelehealthQualificationPreflight({ artifact, template, target, targetBytes, templateBytes,
   codeBytes, localZipBytes, downloadedZipBytes, versionId, sourceCommit, caller, foundation, api,
-  versioning, objectHead, stackAbsent, rebuilt });
+  versioning, objectHead, stackAbsent, rebuilt, consumerPool, workforcePool, consumerClient, workforceClient,
+  consumerUser, foreignConsumerUser, workforceUser, clinicalKey });
 process.stdout.write(JSON.stringify(report) + '\n');
