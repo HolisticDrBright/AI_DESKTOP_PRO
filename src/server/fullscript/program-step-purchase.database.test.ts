@@ -14,7 +14,7 @@ import type {GovernedCatalogProduct,GovernedCommercialOffer} from '../clinical-c
 import {CONSUMER_PURCHASE_RELEASES,consumerPurchaseCandidate,createConsumerPurchaseCandidate,type AdmissionRecord,type ConsumerPurchasePorts,
  type ConsumerPurchaseRelease,type ConsumerSession,type ProductActionRecord} from './consumer-product-action';
 import {createProgramStepDatabasePorts,createProgramStepPurchase,programStepPurchaseActivationState,DISABLED_PROGRAM_STEP_PURCHASE_ACTIVATION,
- PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256} from './program-step-purchase';
+ PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256,PROGRAM_STEP_PURCHASE_PRICED_CANDIDATE_SHA256} from './program-step-purchase';
 import {PROGRAM_STEP_PURCHASE_RELEASED,type ProgramStepBinding} from '../../contracts/programStepPurchase';
 
 /**
@@ -28,6 +28,8 @@ const CANDIDATES=['infra/aws-clinical-core/production-candidates/lab-result-tran
  // The program family is reached only through its consumer boundary (independent of the step candidate).
  'infra/aws-clinical-core/production-candidates/production-program-consumer-boundary.sql'];
 const STEP_CANDIDATE='infra/aws-clinical-core/production-candidates/program-step-purchase.sql';
+// The priced successor: the API role's only step check, behind the boundary and the owner's program price.
+const PRICED_CANDIDATE='infra/aws-clinical-core/production-candidates/program-step-purchase-priced.sql';
 const IRON='prd_fictional_iron',OTHER='prd_fictional_other',HOST='us.fullscript.com',SLUG='fictional-test-dispensary';
 const DESTINATION=`https://${HOST}/s/${SLUG}/shop/product/RklDVElPTkFMMQ==`;
 const DOC='d'.repeat(64);
@@ -51,8 +53,9 @@ const programs=createProductionProgramAssignments({database,verifyConsumerCore:v
  boundaryActivation:{contract:'program-consumer-boundary-activation/1',enabled:true,target:'production-clinical',programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,
   boundaryCandidateSha256:PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256,evidenceSha256:'d'.repeat(64),reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-14T00:00:00Z'}});
 const call=(input:ProgramAssignmentRequest,context=production(consumer,'consumer'))=>programs(context,input,'Bearer fictional-token');
-const evidence=(parts:Record<string,unknown>={})=>({contract:'program-step-purchase-activation/1',enabled:true,target:'production-clinical',
- programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,stepCandidateSha256:PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),
+const evidence=(parts:Record<string,unknown>={})=>({contract:'program-step-purchase-activation/2',enabled:true,target:'production-clinical',
+ programCandidateSha256:PRODUCTION_PROGRAM_SCHEMA_CANDIDATE_SHA256,boundaryCandidateSha256:PRODUCTION_PROGRAM_BOUNDARY_CANDIDATE_SHA256,
+ stepCandidateSha256:PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256,pricedCandidateSha256:PROGRAM_STEP_PURCHASE_PRICED_CANDIDATE_SHA256,evidenceSha256:'e'.repeat(64),
  reviewedBy:'FICTIONAL REVIEW FIXTURE',reviewedAt:'2026-10-14T00:00:00Z',...parts});
 const lesson=(suffix:string)=>({id:'lesson-'+suffix,title:'Fictional lesson '+suffix,kind:'lesson',instructions:'Read the fictional lesson.',released:true,authorship:'practitioner_authored'});
 const ironStep=(id='supp-iron')=>({id,title:'Fictional iron step',kind:'supplement',instructions:'Fictional instruction.',released:true,
@@ -158,10 +161,10 @@ beforeAll(async()=>{
  expect(manifest.migrations.some((m:{file:string})=>/program_step_purchase|production_program_assignments/.test(m.file))).toBe(false);
  db=new PGlite({extensions:{pgcrypto}});
  for(const migration of manifest.migrations)await db.exec(files[migration.file]);
- for(const candidate of [...CANDIDATES,STEP_CANDIDATE])await db.exec(readFileSync(candidate,'utf8'));
+ for(const candidate of [...CANDIDATES,STEP_CANDIDATE,PRICED_CANDIDATE])await db.exec(readFileSync(candidate,'utf8'));
  for(const scope of ['protocols_supplements','lab_history'])await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
   values($1,'program-fixture','FICTIONAL ONLY',encode(public.digest('FICTIONAL ONLY','sha256'),'hex'),'FIXTURE NOT APPROVAL',now()-interval '1 day')`,[scope]);
- for(const table of ['production_program_activation','program_consumer_boundary_activation','lab_result_transfer_v2_activation','lab_observation_attestation_activation'])
+ for(const table of ['production_program_activation','program_consumer_boundary_activation','lab_result_transfer_v2_activation','lab_observation_attestation_activation','program_step_purchase_priced_activation'])
   await db.query(`update clinical_core.${table} set enabled=true,evidence_sha256=repeat('e',64),reviewed_by='FICTIONAL REVIEW FIXTURE',reviewed_at=now()`);
 },120_000);
 afterAll(async()=>{await db?.close();});
@@ -190,6 +193,8 @@ beforeEach(async()=>{
  await db.query(`insert into clinical_core.program_versions(id,organization_id,program_id,version,status,created_by_person_id,approved_by_person_id,approved_at,published_at)
   values($1,$2,$3,1,'published',$4,$4,clock_timestamp(),clock_timestamp())`,[version,org,program,staff]);
  await publish(phases());
+ // The owner has priced this program (a FICTIONAL test price, not a decided one); the price cases below remove it.
+ await db.query("insert into clinical_core.program_offers(organization_id,program_id,name,payment_mode,price_cents,currency,enrollment_open,status) values($1,$2,'FICTIONAL PRICE FOR TESTS ONLY','invoice_required',1,'usd',true,'active')",[org,program]);
  await completeInventory();
  // A verified ferritin within its range: the iron step is available.
  await attest(await clinicReading(80,'2026-09-01T09:00:00.000Z'));
@@ -200,7 +205,9 @@ describe('disabled by default and pinned',()=>{
   expect(sha(STEP_CANDIDATE)).toBe(PROGRAM_STEP_PURCHASE_CANDIDATE_SHA256);
   expect(PROGRAM_STEP_PURCHASE_RELEASED).toBe(false);
   expect(programStepPurchaseActivationState(undefined)).toEqual(DISABLED_PROGRAM_STEP_PURCHASE_ACTIVATION);
-  for(const wrong of [{stepCandidateSha256:'f'.repeat(64)},{programCandidateSha256:'f'.repeat(64)},{target:'synthetic-staging'}])
+  expect(sha(PRICED_CANDIDATE)).toBe(PROGRAM_STEP_PURCHASE_PRICED_CANDIDATE_SHA256);
+  for(const wrong of [{stepCandidateSha256:'f'.repeat(64)},{programCandidateSha256:'f'.repeat(64)},{boundaryCandidateSha256:'f'.repeat(64)},{pricedCandidateSha256:'f'.repeat(64)},
+   {contract:'program-step-purchase-activation/1'},{target:'synthetic-staging'}])
    expect(programStepPurchaseActivationState(evidence(wrong))).toEqual(DISABLED_PROGRAM_STEP_PURCHASE_ACTIVATION);
   const read=vi.fn();
   const spyPurchase={issueForProgramStep:read,redeemForProgramStep:read} as never;
@@ -333,5 +340,81 @@ describe('education-only Core exposes no destination, even to a crafted request'
    {contract:'program-step-purchase/1',step,action:{...action(),price:12}},
    {contract:'program-step-purchase/1',step,action:action(OTHER)}])
    expect(await w.steps.issue(w.session(),body)).toEqual({ok:false,refused:'request_invalid'});
+ });
+});
+
+describe('the priced successor: the boundary in force and a price the owner set (core launch closure WP3)',()=>{
+ const unpriced=async()=>{await db.query("update clinical_core.program_offers set status='archived' where program_id=$1",[program]);};
+ it('the predecessor’s unpriced verdict answers available with no price set: the gap this successor closes (the failing-before evidence)',async()=>{
+  const {step}=await enrolled();
+  await unpriced();
+  // As the schema owner, not the API role (which no longer holds EXECUTE on it).
+  const verdict=await db.transaction(async tx=>{
+   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[consumer,org,'consumer',subject(consumer),'clinical_data','production-clinical','clinical_phi']);
+   return (await tx.query<{data:{state:string}}>('select clinical_core.program_step_purchase_check($1::jsonb) as data',[JSON.stringify({contract:'program-step-purchase/1',step})])).rows[0]!.data;
+  });
+  expect(verdict.state).toBe('available');
+ });
+ it('with no price the owner set, an available step is refused before any action is issued, and nothing is written (fails before: no price was asked)',async()=>{
+  const {step}=await enrolled();
+  await unpriced();
+  const w=world();await w.admit();
+  expect(await w.ports.steps.check(w.session(),step)).toBe('program_price_unset');
+  const issued=await w.steps.issue(w.session(),{contract:'program-step-purchase/1',step,action:action()});
+  expect(issued).toEqual({ok:false,refused:'program_price_unset'});
+  noDestination(issued);
+  expect(w.actions.size).toBe(0);
+ });
+ it.each([
+  ['a complimentary offer',"payment_mode='complimentary',price_cents=0"],
+  ['a zero price',"price_cents=0"],
+  ['a draft offer',"status='draft'"],
+ ])('%s is not a price the owner set',async(_name,change)=>{
+  const {step}=await enrolled();
+  await db.query(`update clinical_core.program_offers set ${change} where program_id=$1`,[program]);
+  const w=world();
+  expect(await w.ports.steps.check(w.session(),step)).toBe('program_price_unset');
+ });
+ it('a price removed between issue and redemption refuses the redemption; the destination never leaves',async()=>{
+  const {step}=await enrolled();
+  const w=world();await w.admit();
+  const issued=await w.steps.issue(w.session(),{contract:'program-step-purchase/1',step,action:action()});
+  const actionId=(issued as {issued:{data:{actionId:string}}}).issued.data.actionId;
+  await unpriced();
+  const redeemed=await w.steps.redeem(w.session(),{contract:'program-step-purchase/1',actionId});
+  expect(redeemed).toEqual({ok:false,refused:'program_price_unset'});
+  noDestination(redeemed);
+  expect(w.actions.get(actionId)!.redeemedAt).toBeNull();
+ });
+ it('the price says nothing about a step that is not this person’s: another owner’s binding is refused as such first',async()=>{
+  const {step}=await enrolled();
+  await unpriced();
+  const w=world();
+  expect(await w.ports.steps.check(w.session(other),step)).toBe('program_step_refused');
+ });
+ it('with the consumer boundary off, the priced check refuses as disabled; the unpriced check is not the API role’s to call',async()=>{
+  const {step}=await enrolled();
+  await db.query("update clinical_core.program_consumer_boundary_activation set enabled=false,evidence_sha256=null,reviewed_by=null,reviewed_at=null");
+  try {
+   const w=world();
+   expect(await w.ports.steps.check(w.session(),step)).toBe('program_step_purchase_disabled');
+  } finally {
+   await db.query("update clinical_core.program_consumer_boundary_activation set enabled=true,evidence_sha256=repeat('e',64),reviewed_by='FICTIONAL REVIEW FIXTURE',reviewed_at=now()");
+  }
+  await expect(exec(consumer,'consumer','select clinical_core.program_step_purchase_check($1::jsonb) as data',[JSON.stringify({contract:'program-step-purchase/1',step})]))
+   .rejects.toThrow(/permission denied/);
+  await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');await tx.exec('update clinical_core.program_step_purchase_priced_activation set enabled=false');})).rejects.toThrow(/permission denied/);
+ });
+ it('the rollback restores the predecessor’s check to the API role and removes only what the successor created',async()=>{
+  const rolled=await db.transaction(async tx=>{
+   await tx.exec(readFileSync('infra/aws-clinical-core/production-candidates/program-step-purchase-priced-rollback.sql','utf8'));
+   const grant=(await tx.query<{allowed:boolean}>("select has_function_privilege('clinical_core_api','clinical_core.program_step_purchase_check(jsonb)','execute') as allowed")).rows[0]!.allowed;
+   const left=(await tx.query<{n:number}>("select count(*)::int as n from pg_proc where proname in ('program_step_purchase_priced_check','program_step_price_configured')")).rows[0]!.n;
+   const table=(await tx.query<{t:string|null}>("select to_regclass('clinical_core.program_step_purchase_priced_activation')::text as t")).rows[0]!.t;
+   await tx.rollback();
+   return {grant,left,table};
+  });
+  expect(rolled).toEqual({grant:true,left:0,table:null});
+  expect((await db.query<{n:number}>("select count(*)::int as n from clinical_core.program_offers where program_id=$1",[program])).rows[0]!.n).toBe(1);
  });
 });

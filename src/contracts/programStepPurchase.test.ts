@@ -15,7 +15,7 @@ it('Git preserves LF on checkout for the byte-pinned mirror', () => {
   expect(attributes).toContain(`${PATH}: eol: lf`);
 });
 it('carries the pinned bytes, is not released, and binds the action to the step’s own catalog product', () => {
-  expect(createHash('sha256').update(readFileSync(PATH)).digest('hex')).toBe('417d0573c241262b4356a625627e2bf83e3db94468cdd0547f4e0891597d92a1');
+  expect(createHash('sha256').update(readFileSync(PATH)).digest('hex')).toBe('0b1f34aeb7b8ed731fbd8f7b490660ef038d1b89198e5bfc8415eb6225385e7f');
   expect(PROGRAM_STEP_PURCHASE).toBe('program-step-purchase/1');
   expect(PROGRAM_STEP_PURCHASE_RELEASED).toBe(false);
   const step = { enrollmentId: '11111111-1111-4111-8111-111111111111', itemId: 'supp-iron', assignmentRevision: '2', planRevision: 'plan:1:labs:abc',

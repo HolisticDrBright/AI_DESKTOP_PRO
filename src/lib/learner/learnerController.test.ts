@@ -160,3 +160,44 @@ describe('an outline that cannot name its lessons offers nothing to save', () =>
     }
   });
 });
+
+describe('access withdrawn by policy while a lesson is open (core launch closure WP4)', () => {
+  const refusedWith = (action: 'complete' | 'position', reason: string) => ({ reply: { action, outcome: { outcome: 'refused', reason } }, host: 'reviewed' as const });
+  it('a save refused as not_active closes the lesson and lists the course as it now stands (fails before: lesson and completion stayed)', async () => {
+    const h = await opened(harness());
+    await h.controller.goTo(lessonA);
+    h.t.progress.mockResolvedValueOnce(refusedWith('complete', 'not_active'));
+    h.t.access.mockResolvedValueOnce({ view: view({ entitlements: [entitlement({ state: 'revoked', window: null })] }), host: 'reviewed' });
+    await h.controller.complete(lessonA);
+    expect(h.state()).toMatchObject({ course: null, outline: null, lesson: null, pending: null, progress: { state: 'none' } });
+    expect(h.text()).not.toContain('Fictional private text of lesson-a');
+    expect(h.state().error).toContain('This course is not open on this account right now');
+    expect(h.state().view?.entitlements[0]).toMatchObject({ state: 'revoked' });
+  });
+  it('a retry after access lapsed sends nothing (fails before: the earlier complete was resent)', async () => {
+    let clock = new Date('2026-10-12T00:00:00Z');
+    const t = { access: vi.fn(async () => ({ view: view({ entitlements: [entitlement({ window: { startsAt: '2026-10-11T00:00:00Z', endsAt: '2026-10-12T00:05:00Z' } })] }), host: 'reviewed' as const })),
+      curriculum: vi.fn(async () => ({ read: served(), host: 'reviewed' as const })),
+      progress: vi.fn(async () => ({ reply: { action: 'read', read: { outcome: 'read', progress: progress() } }, host: 'reviewed' as const })) };
+    let last: LearnerSnapshot | null = null;
+    const controller = createLearnerController({ transport: t as unknown as LearnerTransport, requestId, now: () => clock, onChange: snapshot => { last = snapshot; } });
+    await controller.start(); await controller.open(entitlementId); await controller.goTo(lessonA);
+    t.progress.mockRejectedValueOnce(new LearnerTransportError('unavailable'));
+    await controller.complete(lessonA);
+    const unsaved = last!.pending;
+    expect(unsaved).toMatchObject({ state: 'unsaved' });
+    clock = new Date('2026-10-12T00:06:00Z');
+    const before = t.progress.mock.calls.length;
+    await controller.retry(unsaved!.command);
+    expect(t.progress.mock.calls.length).toBe(before);
+    expect(last!.pending).toBeNull();
+    expect(last!.error).toContain('This course is not open on this account right now');
+  });
+  it('a lesson outside the readable outline is never opened or sent as a place', async () => {
+    const h = await opened(harness());
+    const before = h.t.progress.mock.calls.length;
+    await h.controller.goTo({ phaseId: 'phase-1', itemId: 'not-in-this-version' });
+    expect(h.state().lesson).toBeNull();
+    expect(h.t.progress.mock.calls.length).toBe(before);
+  });
+});
