@@ -118,13 +118,23 @@ describe('every switch off means no send of any kind', () => {
     const start = new Date(Date.now() + 3 * 86_400_000);
     const claims = { iss: config.workforceIssuer, aud: config.workforceAudience, token_use: 'id', sub: 'synthetic-workforce-1234', 'custom:person_id': '99999999-9999-4999-8999-999999999999',
       'custom:organization_id': org, 'custom:synthetic_attested': 'true', 'custom:production_bound': 'false' };
-    const reply = await createTelehealthHandler(config)({ routeKey: 'POST /clinical-core/workforce/appointments/actions', headers: { 'content-type': 'application/json' },
+    // The handler rechecks the caller's current clinic membership with the identity service on every workforce request.
+    // That one read is answered for this clinic; any other outbound call fails the request, so nothing reaches a network.
+    const membership = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === `${config.identityApiOrigin}/clinical-core/workforce/data-compatibility` && JSON.parse(String(init?.body)).functionName === 'list_my_organizations')
+        return new Response(JSON.stringify({ data: [{ organization_id: org, role: 'practitioner' }] }), { status: 200 });
+      throw new Error(`unexpected outbound call: ${url}`);
+    });
+    vi.stubGlobal('fetch', membership);
+    const reply = await createTelehealthHandler(config)({ routeKey: 'POST /clinical-core/workforce/appointments/actions',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer fictional-workforce-token' },
       body: JSON.stringify({ requestId: request, action: 'schedule', expectedVersion: 1, scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 2_700_000).toISOString(), timeZone: 'America/Los_Angeles' }),
       requestContext: { authorizer: { jwt: { claims } } } } as never);
     expect(reply.statusCode, reply.body).toBe(200);
     expect(JSON.parse(reply.body ?? '{}').data).toMatchObject({ reminderStatus: 'disabled' });
     expect(sesSend).not.toHaveBeenCalled();
     expect(schedulerSend).not.toHaveBeenCalled();
+    expect(membership).toHaveBeenCalledTimes(1);
 
     const database = { transaction: () => { throw new Error('no database call is made with every switch off'); } };
     expect(identityNotificationPortsFrom(process.env, database as never)).toEqual({});

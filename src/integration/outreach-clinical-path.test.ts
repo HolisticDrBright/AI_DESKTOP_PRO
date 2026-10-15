@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { readFileSync } from 'node:fs';
@@ -139,7 +139,8 @@ const telehealth: TelehealthConfiguration = {
 };
 const staffClaims = { iss: telehealth.workforceIssuer, aud: telehealth.workforceAudience, token_use: 'id', sub: 'synthetic-workforce-1234', email: 'staff@example.test',
   'custom:person_id': clinician, 'custom:organization_id': org, 'custom:synthetic_attested': 'true', 'custom:production_bound': 'false' };
-const staffEvent = (body: Record<string, unknown>) => ({ routeKey: 'POST /clinical-core/workforce/appointments/actions', headers: { 'content-type': 'application/json' },
+const staffEvent = (body: Record<string, unknown>) => ({ routeKey: 'POST /clinical-core/workforce/appointments/actions',
+  headers: { 'content-type': 'application/json', authorization: 'Bearer fictional-workforce-token' },
   body: JSON.stringify(body), requestContext: { authorizer: { jwt: { claims: staffClaims } } } }) as never;
 const appointmentRequest = () => ({
   pk: `ORG#${org}`, sk: `REQ#2026-10-01T00:00:00.000Z#${REQUEST}`, gsi1pk: `PERSON#${ava}`, gsi1sk: `REQ#2026-10-01T00:00:00.000Z#${REQUEST}`,
@@ -169,7 +170,15 @@ describe('the clinical path: booked, reminders, texts, STOP, quiet hours, lab no
   beforeEach(() => {
     sesSend.mockReset(); sesSend.mockResolvedValue({ MessageId: 'fictional-ses' });
     schedulerSend.mockReset(); schedulerSend.mockResolvedValue({});
+    // The telehealth handler rechecks the staff member's current clinic membership with the identity service on every
+    // workforce request. That read is answered for this clinic; any other outbound call fails, so nothing reaches a network.
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === `${telehealth.identityApiOrigin}/clinical-core/workforce/data-compatibility` && JSON.parse(String(init?.body)).functionName === 'list_my_organizations')
+        return new Response(JSON.stringify({ data: [{ organization_id: org, role: 'practitioner' }] }), { status: 200 });
+      throw new Error(`unexpected outbound call: ${url}`);
+    }));
   });
+  afterEach(() => { vi.unstubAllGlobals(); });
 
   it('booked email, reminders at 24 h and 1 h that move and go, a text only to the opted-in number, quiet hours, and STOP', async () => {
     store = new FictionalAppointmentStore().seed(appointmentRequest(), bookedSlot());
