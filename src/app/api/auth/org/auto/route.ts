@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIES, cookieOptions } from "@/adapters/auth.server";
 import { isAdapterError } from "@/adapters/errors";
 import { safeOrganizationRecoveryPath } from "@/adapters/organization-recovery";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { getRequestSession } from "@/server/session";
+import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
 const WEEK = 60 * 60 * 24 * 7;
 
@@ -49,6 +49,6 @@ export async function GET(req: NextRequest) {
   }
 
   const response = localRedirect(nextPath);
-  response.cookies.set(AUTH_COOKIES.org, available[0].organizationId, cookieOptions(WEEK));
+  writeSelectedClinic(response, available[0].organizationId, session.token, WEEK);
   return response;
 }

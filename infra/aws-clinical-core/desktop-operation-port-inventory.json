@@ -5341,7 +5341,7 @@
         {
           "adapter": "telehealth.live.ts",
           "domain": "telehealth",
-          "line": 265,
+          "line": 274,
           "argumentKeys": [
             "_appointment_id",
             "_organization_id",
@@ -11527,7 +11527,7 @@
         {
           "adapter": "telehealth.live.ts",
           "domain": "telehealth",
-          "line": 499,
+          "line": 508,
           "argumentKeys": [
             "_admission",
             "_admission_signature",

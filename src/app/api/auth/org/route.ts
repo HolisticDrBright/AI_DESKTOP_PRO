@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIES, cookieOptions } from "@/adapters/auth.server";
 import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { getRequestSession } from "@/server/session";
+import { clinicalAuthorityMode, selectedClinicCookieValues, withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
+import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
 const WEEK = 60 * 60 * 24 * 7;
 
@@ -21,7 +23,8 @@ export async function GET() {
   try {
     const session = await getRequestSession();
     const token = await getClinicalAccessToken(session.token);
-    const orgs = await organizationsLive.mine(token);
+    // The list runs under the session's own current selection (it names every clinic the person belongs to).
+    const orgs = await withSelectedClinic(await getRequestSelectedClinic(), () => organizationsLive.mine(token));
     return NextResponse.json({
       data: {
         mode: "live",
@@ -49,7 +52,15 @@ export async function POST(req: NextRequest) {
     }
     const session = await getRequestSession();
     const token = await getClinicalAccessToken(session.token);
-    const orgs = await organizationsLive.mine(token);
+    // Under database_current the switch is checked against the clinic being chosen, never the previous selection: the
+    // API resolves a current membership in that clinic for this subject or refuses.
+    const candidate = selectedClinicCookieValues(body.organizationId, token);
+    if (clinicalAuthorityMode() === "database_current" && !candidate) {
+      throw new AdapterError("invalid", "Choose a clinic from your memberships.");
+    }
+    const orgs = await withSelectedClinic(candidate
+      ? { state: "selected", organizationId: candidate.organization, binding: candidate.binding }
+      : { state: "malformed" }, () => organizationsLive.mine(token));
     const match = orgs.find((o) => o.organizationId === body.organizationId);
     if (!match) {
       throw new AdapterError("forbidden", "You are not a member of that organization.");
@@ -57,7 +68,7 @@ export async function POST(req: NextRequest) {
     const res = NextResponse.json({
       data: { activeOrgId: match.organizationId, name: match.name },
     });
-    res.cookies.set(AUTH_COOKIES.org, body.organizationId, cookieOptions(WEEK));
+    writeSelectedClinic(res, body.organizationId, token, WEEK);
     return res;
   } catch (e) {
     const err = toAdapterError(e);

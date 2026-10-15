@@ -4,7 +4,7 @@ import { getRequestSession } from '@/server/session';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
 import { sameBrowserOrigin } from '@/server/same-browser-origin';
 import { CampaignApiError, campaignApiCall, campaignEngineEnabled } from '@/server/campaign-api';
-import { liveGuard } from '../route-helpers';
+import { liveGuard } from '../route-guard';
 
 /**
  * The Campaigns screen's route. The practitioner's cookie session is exchanged for the workforce token here, and the

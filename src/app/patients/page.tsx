@@ -4,6 +4,8 @@ import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
 import { ClinicalError } from "@/components/ui/ClinicalStates";
 import { getRequestSession } from "@/server/session";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
 
 export const metadata: Metadata = { title: "Patients — AI Longevity Pro" };
 
@@ -15,7 +17,7 @@ export const metadata: Metadata = { title: "Patients — AI Longevity Pro" };
 export default async function PatientsPage() {
   try {
     const session = await getRequestSession();
-    const entries = await api.patients.list(session.token, session.orgId);
+    const entries = await withSelectedClinic(await getRequestSelectedClinic(), () => api.patients.list(session.token, session.orgId));
     const syntheticOnly =
       process.env.APP_RUNTIME_ENV === "staging" ||
       process.env.CLINICAL_DATA_PLANE === "supabase_staging";

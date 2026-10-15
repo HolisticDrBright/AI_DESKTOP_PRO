@@ -99,6 +99,9 @@ const SERVER_ONLY_MARKERS = [
   "RDSDataClient",
   "clinical-core/rds-data-database is server-only",
   "clinical-core/aws-identity-api is server-only",
+  // The selected-clinic binding and header are server-side only: a client chunk carrying either could choose a clinic.
+  "aidp-selected-clinic/1",
+  "x-alp-selected-organization-id",
 ];
 
 function walk(dir) {

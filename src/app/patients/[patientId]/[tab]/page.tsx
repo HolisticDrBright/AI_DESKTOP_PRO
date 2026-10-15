@@ -18,6 +18,8 @@ import { PatientNutritionLive } from "@/components/nutrition/PatientNutritionLiv
 import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
 import { patientAppIntakeLive } from "@/adapters/patient-app-intake.live";
 import type { LivePatientAppIntake } from "@/adapters/live-types";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = {
@@ -77,7 +79,7 @@ export default async function PatientTabPage({
   if (!isPatientTabId(tab)) notFound();
 
   const session = await getRequestSession();
-  const patient = await api.patients.get(patientId, session.token, session.orgId);
+  const patient = await withSelectedClinic(await getRequestSelectedClinic(), () => api.patients.get(patientId, session.token, session.orgId));
   if (!patient) notFound();
   const name = patient.name;
   const syntheticOnly =
@@ -86,7 +88,7 @@ export default async function PatientTabPage({
   let initialAppIntake: LivePatientAppIntake | null = null;
   if (showsPatientAppData) {
     try {
-      initialAppIntake = await patientAppIntakeLive.get(patientId, session.orgId, session.token);
+      initialAppIntake = await withSelectedClinic(await getRequestSelectedClinic(), () => patientAppIntakeLive.get(patientId, session.orgId, session.token));
       console.info("[patient-app-intake:ssr] loaded", {
         connectionState: initialAppIntake.connectionState,
         questionnaireCount: initialAppIntake.questionnaireResponses.length,

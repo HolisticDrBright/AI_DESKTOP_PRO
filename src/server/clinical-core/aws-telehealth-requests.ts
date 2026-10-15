@@ -69,6 +69,28 @@ const WORKFORCE_VISIT_NOTE_TRANSFER = "POST /clinical-core/workforce/appointment
 const WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE = "POST /clinical-core/workforce/appointments/visits/notes/transfer/complete";
 /** Record lifecycle: every telehealth text location for one visit, with digests — inventory, never deletion authority. */
 const WORKFORCE_VISIT_NOTE_INVENTORY = "GET /clinical-core/workforce/appointments/visits/notes/inventory";
+/**
+ * Under the `database_current` workforce authority, the reads: each first reads current membership for the request's
+ * selected clinic, and every identity-API call it makes names that clinic.
+ */
+export const TELEHEALTH_WORKFORCE_READ_ROUTES: ReadonlySet<string> = new Set([
+  WORKFORCE_LIST, WORKFORCE_SLOT_LIST, WORKFORCE_VISIT_LIST, WORKFORCE_VISIT_CONSENT_ARTIFACT, WORKFORCE_VISIT_NOTE,
+  WORKFORCE_VISIT_NOTE_INVENTORY,
+]);
+/**
+ * The writes. Each changes DynamoDB or a provider after a separate identity-API authority read, and nothing fences a
+ * membership change committed between the two. Under `database_current` they are refused as
+ * `membership_fence_unavailable` before any call; see docs/selected-clinic-authority-2026-10-15.md for the design that
+ * would let them run.
+ */
+export const TELEHEALTH_WORKFORCE_WRITE_ROUTES: ReadonlySet<string> = new Set([
+  WORKFORCE_ACTION, WORKFORCE_SLOT_CREATE, WORKFORCE_PAYMENT, WORKFORCE_VISIT_CONSENT, WORKFORCE_VISIT_CONSENT_WITHDRAW,
+  WORKFORCE_VISIT_START, WORKFORCE_VISIT_END, WORKFORCE_VISIT_NOTE_IMPORT, WORKFORCE_VISIT_NOTE_SIGN,
+  WORKFORCE_VISIT_NOTE_TRANSFER, WORKFORCE_VISIT_NOTE_TRANSFER_COMPLETE,
+]);
+/** The one clinic a `database_current` workforce request runs in, chosen by the caller's authenticated session. */
+const SELECTED_CLINIC_HEADER = "x-alp-selected-organization-id";
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /** The one combined consent a telehealth visit requires. Wording is versioned; the version is recorded, never the text. */
 export const TELEHEALTH_CONSENT_TYPE = "telehealth_recording_combined";
 /** Meeting SDK signatures are short-lived: long enough for a visit, never a standing credential. */
@@ -100,6 +122,14 @@ export type TelehealthConfiguration = {
   enquirerEmailsEnabled?: boolean;
   /** The clinic name the booked email names. Required when `enquirerEmailsEnabled`. */
   clinicDisplayName?: string;
+  /**
+   * Where a workforce caller's clinic comes from. Unset or `legacy_claims` (the deployed Lambda sets nothing): the
+   * token's custom claims, as before. `database_current`, production runtime only: exactly one
+   * `x-alp-selected-organization-id` on the request, forwarded on every identity-API call so the API decides
+   * membership from current rows; custom claims are ignored and the writes in `TELEHEALTH_WORKFORCE_WRITE_ROUTES` are
+   * refused. It does not change consumer routes.
+   */
+  workforceAuthority?: "legacy_claims" | "database_current";
 };
 
 type AppointmentItem = {
@@ -219,9 +249,14 @@ export function createTelehealthHandler(config: TelehealthConfiguration, ports: 
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
+      if (actor.selectedClinic !== null) {
+        // database_current: a membership read and a later table or provider write are separate calls, so a write
+        // here could land after a revocation committed between them. Refused before either; reads check first.
+        if (TELEHEALTH_WORKFORCE_WRITE_ROUTES.has(route)) throw new TelehealthError("membership_fence_unavailable");
+        if (TELEHEALTH_WORKFORCE_READ_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
       // A signed token identifies the caller, but is not current membership.
       // These routes do not otherwise consult current chart authority.
-      if (CURRENT_WORKFORCE_MEMBERSHIP_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
+      } else if (CURRENT_WORKFORCE_MEMBERSHIP_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
       if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
       if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
       if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
@@ -258,7 +293,7 @@ export function createTelehealthHandler(config: TelehealthConfiguration, ports: 
       console.warn(JSON.stringify({ event: "telehealth_request_refused", category }));
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404
         : ["conflict", "appointment_cancelled", "consent_required", "consent_withdrawn", "consent_superseded", "consent_version_refused", "consent_artifact_unavailable", "transfer_source_stale", "transfer_mismatch"].includes(category) ? 409
-        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable"].includes(category) ? 503 : 400;
+        : ["provider_unavailable", "service_unavailable", "appointment_change_pending", "transfer_unavailable", "membership_fence_unavailable"].includes(category) ? 503 : 400;
       return response(status, { error: category });
     }
   };
@@ -1190,7 +1225,8 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
   let response: Response;
   try {
     response = await fetch(`${config.identityApiOrigin}${path}`, { method: init?.method ?? "GET", redirect: "manual", signal,
-      headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}) },
+      headers: { authorization: `Bearer ${actor.bearer}`, accept: "application/json", ...(init ? { "content-type": "application/json" } : {}),
+        ...(actor.selectedClinic !== null ? { [SELECTED_CLINIC_HEADER]: actor.selectedClinic } : {}) },
       ...(init ? { body: JSON.stringify(init.body) } : {}) });
   } catch { throw new TelehealthError("service_unavailable"); }
   let payload: unknown;
@@ -2573,8 +2609,11 @@ async function handleStripeWebhook(config: TelehealthConfiguration, event: ApiGa
   return { received: true };
 }
 
-type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string };
+type Actor = { personId: string; organizationId: string; subject: string; email: string; pool: "consumer" | "workforce"; /** The caller's own JWT, forwarded to the identity API for consent reads/writes. */ bearer: string;
+  /** Under `database_current` only: the request's one selected clinic, sent on every identity-API call. Null otherwise. */
+  selectedClinic: string | null };
 function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, pool: "consumer" | "workforce"): Actor {
+  if (pool === "workforce" && config.workforceAuthority === "database_current") return currentWorkforceIdentity(event, config);
   const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
   const issuer = pool === "consumer" ? config.consumerIssuer : config.workforceIssuer; const audience = pool === "consumer" ? config.consumerAudience : config.workforceAudience;
   const email = claim("email").toLowerCase();
@@ -2582,7 +2621,26 @@ function identity(event: ApiGatewayV2Event, config: TelehealthConfiguration, poo
     || (pool === "consumer" && !/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(email))
     || (config.runtimeMode === "synthetic" ? claim("custom:synthetic_attested") !== "true" || claim("custom:production_bound") === "true" : claim("custom:production_bound") !== "true")) throw new TelehealthError("identity_refused");
   const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
-  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, pool, bearer: authorization.replace(/^Bearer\s+/i, "") };
+  return { personId: claim("custom:person_id"), organizationId: claim("custom:organization_id"), subject: claim("sub"), email, pool, bearer: authorization.replace(/^Bearer\s+/i, ""), selectedClinic: null };
+}
+/**
+ * The workforce caller under `database_current`, with the identity API's own checks: issuer, audience, an ID token, a
+ * UUID subject, a verified email, no synthetic attestation and a live expiry (not left to the gateway alone), plus
+ * exactly one selected clinic in canonical form. Two selections are ambiguous and refused. No custom claim is read:
+ * the clinic is the selection, and the person and role are whatever the identity API's current rows say. There is no
+ * person id here, so anything that would compare one (only the disabled writes) fails closed.
+ */
+function currentWorkforceIdentity(event: ApiGatewayV2Event, config: TelehealthConfiguration): Actor {
+  const claims = event.requestContext?.authorizer?.jwt?.claims; const claim = (key: string) => typeof claims?.[key] === "string" ? claims[key] as string : "";
+  const selected = Object.entries(event.headers ?? {}).filter(([key]) => key.toLowerCase() === SELECTED_CLINIC_HEADER).map(([, value]) => value ?? "");
+  const expiry = Number(claims?.exp);
+  if (claim("iss") !== config.workforceIssuer || claim("aud") !== config.workforceAudience || claim("token_use") !== "id" || !UUID.test(claim("sub"))
+    || claim("email_verified") !== "true" || claim("custom:synthetic_attested") === "true"
+    || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()
+    || selected.length !== 1 || !CANONICAL_UUID.test(selected[0]!)) throw new TelehealthError("identity_refused");
+  const authorization = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "authorization")?.[1] ?? "";
+  return { personId: "", organizationId: selected[0]!, subject: claim("sub"), email: claim("email").toLowerCase(), pool: "workforce",
+    bearer: authorization.replace(/^Bearer\s+/i, ""), selectedClinic: selected[0]! };
 }
 
 function body(event: ApiGatewayV2Event): Record<string, unknown> { const content = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === "content-type")?.[1]; if (!content?.startsWith("application/json") || typeof event.body !== "string" || Buffer.byteLength(event.body) > MAX_BODY) throw new TelehealthError("request_invalid"); try { const value = JSON.parse(event.body); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new TelehealthError("request_invalid"); } }
@@ -2603,10 +2661,12 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   return result;
 }
 function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))
-  || (config.enquirerEmailsEnabled === true && (!config.reminderSender || config.reminderConfigurationSet !== "alp-transactional" || !CLINIC_DISPLAY_NAME.test(config.clinicDisplayName ?? "")))) throw new Error("telehealth_configuration_invalid"); }
+  || (config.enquirerEmailsEnabled === true && (!config.reminderSender || config.reminderConfigurationSet !== "alp-transactional" || !CLINIC_DISPLAY_NAME.test(config.clinicDisplayName ?? "")))
+  || (config.workforceAuthority !== undefined && !["legacy_claims", "database_current"].includes(config.workforceAuthority))
+  || (config.workforceAuthority === "database_current" && config.runtimeMode !== "production")) throw new Error("telehealth_configuration_invalid"); }
 type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
   | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch" | "transfer_unavailable"
   | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"
-  | "provider_unavailable" | "service_unavailable";
+  | "provider_unavailable" | "service_unavailable" | "membership_fence_unavailable";
 class TelehealthError extends Error { constructor(readonly category: TelehealthRefusal) { super(category); } }
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response { return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) }; }

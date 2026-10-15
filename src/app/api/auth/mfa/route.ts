@@ -8,6 +8,7 @@ import {
 import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
+import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
 const MAX_BODY = 1024;
 
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
     res.cookies.set(AUTH_COOKIES.refresh, tokens.refreshToken, cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(twelveHours));
-    if (orgId) res.cookies.set(AUTH_COOKIES.org, orgId, cookieOptions(twelveHours));
+    writeSelectedClinic(res, orgId, tokens.accessToken, twelveHours);
     for (const name of [
       AUTH_COOKIES.mfaSession,
       AUTH_COOKIES.mfaUsername,

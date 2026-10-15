@@ -5,6 +5,8 @@ import { sameBrowserOrigin } from '@/server/same-browser-origin';
 import { programCatalogObservationRequest } from '@/contracts/programCatalogObservation';
 import { CatalogObservationError, observeProgramCatalog, workforceApiOrigin } from '@/server/programs/program-catalog-observation';
 import { liveGuard } from '../../route-helpers';
+import { clinicalAuthorityMode } from '@/adapters/selected-clinic.server';
+import { getRequestSelectedClinic } from '@/server/request-clinic';
 
 /**
  * The Studio's governed catalog read. The practitioner's cookie session is exchanged for the
@@ -22,6 +24,13 @@ export async function POST(request: Request) {
   if (!sameBrowserOrigin(request)) return json(403, { error: { code: 'forbidden', message: 'identity_refused' } });
   const session = await getRequestSession();
   if (!session.token || !session.orgId) return json(401, { error: { code: 'unauthenticated', message: 'reauth_required' } });
+  // Under database_current the clinic named upstream is the session's own selection, bound to this account; an
+  // unbound or another account's selection refuses before any request leaves the server.
+  const selection = await getRequestSelectedClinic();
+  if (clinicalAuthorityMode() === 'database_current' && selection?.state !== 'selected') {
+    return json(400, { error: { code: 'invalid', message: 'clinic_selection_required' } });
+  }
+  const clinic = selection?.state === 'selected' && clinicalAuthorityMode() === 'database_current' ? selection.organizationId : session.orgId;
   let body: ReturnType<typeof programCatalogObservationRequest.parse>;
   try {
     body = programCatalogObservationRequest.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request, 4096, 5000))));
@@ -35,7 +44,7 @@ export async function POST(request: Request) {
     // Production never falls back from the exact-label projection to the incompatible old reader.
     const source = process.env.CLINICAL_AWS_RUNTIME_MODE === 'synthetic' && process.env.PHI_ALLOWED !== 'true'
       ? 'legacy-synthetic' : 'production-reference';
-    const data = await observeProgramCatalog({ token: session.token, clinic: session.orgId, versionId: body.versionId, query: body.query, origin, source });
+    const data = await observeProgramCatalog({ token: session.token, clinic, versionId: body.versionId, query: body.query, origin, source });
     return json(200, { data });
   } catch (error) {
     const category = error instanceof CatalogObservationError ? error.category : 'service_unavailable';

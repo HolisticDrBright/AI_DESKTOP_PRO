@@ -5,6 +5,8 @@ import { getRequestSession } from "@/server/session";
 import { toAdapterError } from "@/adapters/errors";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { StartEncounterButton } from "./StartEncounterButton";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
 
 /**
  * Longitudinal patient timeline (live, server component). Backed by
@@ -25,14 +27,15 @@ const EVENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
 
 export async function PatientTimeline({ patientId }: { patientId: string }) {
   const session = await getRequestSession();
+  const selection = await getRequestSelectedClinic();
   let events: TimelineEvent[] = [];
   let errorMessage: string | null = null;
   let encounterByEvent = new Map<string, string>();
 
   try {
     const [timeline, encounters] = await Promise.all([
-      encountersLive.timeline(patientId, session.token),
-      encountersLive.forPatient(patientId, session.token),
+      withSelectedClinic(selection, () => encountersLive.timeline(patientId, session.token)),
+      withSelectedClinic(selection, () => encountersLive.forPatient(patientId, session.token)),
     ]);
     events = timeline;
     // Encounter events link straight into the workspace.

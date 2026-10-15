@@ -3,6 +3,7 @@ import { AUTH_COOKIES, cookieOptions, passwordSignIn } from "@/adapters/auth.ser
 import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
+import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
 /**
  * POST { email, password } → practitioner sign-in against the clinical
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
     res.cookies.set(AUTH_COOKIES.refresh, tokens.refreshToken, cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(week));
-    if (orgId) res.cookies.set(AUTH_COOKIES.org, orgId, cookieOptions(week));
+    writeSelectedClinic(res, orgId, tokens.accessToken, week);
     return res;
   } catch (e) {
     const err = toAdapterError(e);

@@ -8,6 +8,8 @@ import { organizationsLive } from "@/adapters/organizations.live";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { OrgSwitcher } from "@/components/settings/OrgSwitcher";
 import { Card, CardTitle } from "@/components/ui/bits";
+import { withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { getRequestSelectedClinic } from "@/server/request-clinic";
 
 /**
  * Data source & environment status (server component).
@@ -28,7 +30,7 @@ export async function DataSourceCard() {
   let organizationLookupFailed = false;
   if (mode.live && session?.signedIn && session.accessToken) {
     try {
-      const orgs = await organizationsLive.mine(session.accessToken);
+      const orgs = await withSelectedClinic(await getRequestSelectedClinic(), () => organizationsLive.mine(session.accessToken));
       organizations = orgs
         .filter((o): o is typeof o & { organizationId: string } => Boolean(o.organizationId))
         .map((o) => ({ organizationId: o.organizationId, name: o.name, role: o.role }));
