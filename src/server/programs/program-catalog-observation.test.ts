@@ -71,6 +71,16 @@ describe('observing the governed catalog', () => {
     }
   });
 
+  it('refuses a product behind the production cursor across pages', async () => {
+    const first = productionProduct({ productId: 'prd_fictional_m' });
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json(productionPage([first], { nextCursor: 'prd_fictional_m' })))
+      .mockResolvedValueOnce(json(productionPage([productionProduct({ productId: 'prd_fictional_a' })])));
+    await expect(observeProgramCatalog({ token: 'fictional-workforce-token', clinic: 'clinic-a',
+      versionId: VERSION, query: '', origin: ORIGIN, fetchImpl, source: 'production-reference' }))
+      .rejects.toMatchObject({ category: 'catalog_unverifiable' });
+  });
+
   it('presents the workforce token, follows the cursor, requires one target and returns identity and declared facts only', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json(page([product('prd_fictional_magnesium')], {}, { nextCursor: 'prd_fictional_magnesium' })))

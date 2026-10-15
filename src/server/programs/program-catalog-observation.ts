@@ -114,6 +114,7 @@ export async function observeProgramCatalog(input: {
     }
     let environment: ProgramCatalogObservation['target'];
     let next: string | undefined;
+    const pageStart = all.length;
     if (source === 'production-reference') {
       const parsed = productionCatalogReferencePage.safeParse(decoded);
       if (!parsed.success) throw new CatalogObservationError('catalog_unverifiable');
@@ -142,6 +143,11 @@ export async function observeProgramCatalog(input: {
           labelVersion: product.label ? product.label.version : null,
         });
       }
+    }
+    const pageCursor = cursor;
+    if (source === 'production-reference' && pageCursor
+      && all.slice(pageStart).some(product => product.stableId <= pageCursor)) {
+      throw new CatalogObservationError('catalog_unverifiable');
     }
     if (target === null) target = environment;
     else if (target !== environment) throw new CatalogObservationError('catalog_target_changed');
