@@ -73,6 +73,25 @@ describe('unregistered workforce token binding lookup', () => {
     expect((await lookup(subject))?.personId).toBe(person);
   });
 
+  it('the existing workforce directory reflects current membership for the bearer-backed telehealth guard', async () => {
+    const directory = () => db.transaction(async (tx) => {
+      await tx.exec('set local role clinical_core_api');
+      await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', [
+        person, organization, 'workforce', subject, 'clinical_data', 'production-clinical', 'clinical_phi',
+      ]);
+      return (await tx.query<{ organization_id: string; role: string }>(
+        'select organization_id, role from clinical_core.list_my_organizations()',
+      )).rows;
+    });
+    expect(await directory()).toEqual([{ organization_id: organization, role: 'practitioner' }]);
+    await db.query("update clinical_core.organization_memberships set status='suspended' where organization_id=$1 and person_id=$2", [organization, person]);
+    try {
+      expect(await directory()).toEqual([]);
+    } finally {
+      await db.query("update clinical_core.organization_memberships set status='active' where organization_id=$1 and person_id=$2", [organization, person]);
+    }
+  });
+
   it('refuses disabled identity, disabled person, suspended clinic, absent membership and multiple clinics', async () => {
     await db.query("update clinical_core.identities set status='disabled' where identity_subject=$1", [subject]);
     expect(await lookup(subject)).toBeNull();
