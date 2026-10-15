@@ -2354,6 +2354,7 @@ async function sendBookedEmail(config: TelehealthConfiguration, item: Appointmen
       Destination: { ToAddresses: [item.consumerEmail] }, Content: { Simple: { Subject: { Data: message.subject }, Body: { Text: { Data: message.text } } } } }));
     return "sent";
   } catch { return "failed"; }
+}
 /** The same email, for the channel-aware path; always to the rechecked recipient. */
 async function mailAppointmentReminder(config: TelehealthConfiguration, current: AppointmentItem) {
   const when = new Date(current.scheduledStart ?? "").toISOString();
