@@ -36,20 +36,23 @@ const slot = (patch: Record<string, unknown> = {}) => ({ pk: `ORG#${org}`, sk: `
 const replacement = () => slot({ sk: `SLOT#2026-11-11#${replacementId}`, slotId: replacementId, status: "held", start: "2026-11-11T17:00:00.000Z", end: "2026-11-11T17:30:00.000Z" });
 const cancel = (patch: Record<string, unknown> = {}) => ({ requestId, expectedVersion: 4, action: "cancel", operationId, operationProtocol: "appointment-change/1", ...patch });
 function event(input: Record<string, unknown>, pool: "consumer" | "workforce" = "consumer", path = "actions", person = owner) {
-  return { routeKey: `POST /clinical-core/${pool}/appointments/${path}`, headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  return { routeKey: `POST /clinical-core/${pool}/appointments/${path}`, headers: { "content-type": "application/json",
+    ...(pool === "workforce" ? { authorization: "Bearer fictional-workforce-token" } : {}) }, body: JSON.stringify(input),
     requestContext: { authorizer: { jwt: { claims: { iss: pool === "consumer" ? config.consumerIssuer : config.workforceIssuer,
       aud: pool === "consumer" ? config.consumerAudience : config.workforceAudience, token_use: "id", sub: `fictional-${pool}`,
       email: "fictional@example.test", "custom:person_id": person, "custom:organization_id": org, "custom:synthetic_attested": "true" } } } } } as never;
 }
 let store: FictionalAppointmentStore;
-let provider: ReturnType<typeof vi.fn>;
+let provider: ReturnType<typeof vi.fn<(url: string, init?: RequestInit) => Promise<Response>>>;
 beforeEach(() => {
   store = new FictionalAppointmentStore().seed(request(), slot(), replacement()); send.mockReset(); send.mockImplementation(store.send);
   secretSend.mockReset(); secretSend.mockResolvedValue({ SecretString: JSON.stringify({ accountId: "fictional", clientId: "fictional", clientSecret: "fictional",
     userId: "fictional", sdkKey: "fictional", sdkSecret: "fictional", secretKey: "sk_test_fictional", webhookSecret: "whsec_fictional" }) });
   provider = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("oauth/token") ? { access_token: "fictional" }
     : url.includes("payment_intents") ? { id: "pi_fictional", livemode: false } : {}), { status: 200 }));
-  vi.stubGlobal("fetch", provider);
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => url.includes("/data-compatibility")
+    ? Promise.resolve(new Response(JSON.stringify({ data: [{ organization_id: org, role: "practitioner" }] }), { status: 200 }))
+    : provider(url, init)));
 });
 afterEach(() => vi.unstubAllGlobals());
 const run = (input: Record<string, unknown> = cancel(), cfg = config, pool: "consumer" | "workforce" = "consumer", path = "actions", person = owner) => createTelehealthHandler(cfg)(event(input, pool, path, person));

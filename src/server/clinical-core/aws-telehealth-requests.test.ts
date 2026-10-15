@@ -105,11 +105,15 @@ const workforceClaims = {
   aud: config.workforceAudience,
   sub: "synthetic-workforce-1234",
 };
+const membershipResponse = (rows: unknown = [{ organization_id: workforceClaims["custom:organization_id"], role: "practitioner" }]) => ({
+  ok: true, status: 200, json: async () => ({ data: rows }),
+});
 
 function event(routeKey: string, body?: Record<string, unknown>, suppliedClaims = claims) {
   return {
     routeKey,
-    headers: body ? { "content-type": "application/json" } : {},
+    headers: { ...(body ? { "content-type": "application/json" } : {}),
+      ...(suppliedClaims.iss === config.workforceIssuer ? { authorization: "Bearer fictional-workforce-token" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
     requestContext: { authorizer: { jwt: { claims: suppliedClaims } } },
   } as never;
@@ -138,7 +142,8 @@ describe("workforce payment failure reconciliation", () => {
   };
   beforeEach(() => { resetRequest(); secretSend.mockReset(); secretSend.mockResolvedValue({ SecretString: JSON.stringify({ secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic" }) }); });
   const reconcile = (intent: Record<string, unknown>, expectedVersion = 4, ok = true) => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok, json: async () => intent })));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/data-compatibility")
+      ? membershipResponse() : { ok, json: async () => intent }));
     return createTelehealthHandler(stripeConfig)(event("POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion }, workforceClaims));
   };
   it("settles a processing charge from the official intent only when its metadata names this request", async () => {
@@ -178,6 +183,63 @@ describe("workforce payment failure reconciliation", () => {
 
 describe("AWS telehealth request boundary", () => {
   beforeEach(() => { send.mockReset(); vi.unstubAllGlobals(); });
+
+  it.each([
+    ["GET /clinical-core/workforce/appointments/requests", undefined],
+    ["POST /clinical-core/workforce/appointments/actions", { requestId: "33333333-3333-4333-8333-333333333333", action: "cancel", expectedVersion: 1 }],
+    ["GET /clinical-core/workforce/appointments/slots", undefined],
+    ["POST /clinical-core/workforce/appointments/slots", {}],
+    ["POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion: 1 }],
+  ] as const)("refuses %s when the current clinic membership is gone before reading its partition", async (route, requestBody) => {
+    vi.stubGlobal("fetch", vi.fn(async () => membershipResponse([])));
+    const result = await createTelehealthHandler(config)(event(route, requestBody, workforceClaims));
+    expect(result.statusCode).toBe(403);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "identity_refused" });
+    expect(send).not.toHaveBeenCalled();
+    expect(secretSend).not.toHaveBeenCalled();
+  });
+
+  it("rechecks current membership on every request, so an older token loses access after revocation", async () => {
+    let current = true;
+    const authority = vi.fn(async (_url: string, _init?: RequestInit) => membershipResponse(current
+      ? [{ organization_id: workforceClaims["custom:organization_id"], role: "practitioner" }] : []));
+    vi.stubGlobal("fetch", authority);
+    send.mockResolvedValue({ Items: [] });
+    const handler = createTelehealthHandler(config);
+    const first = await handler(event("GET /clinical-core/workforce/appointments/requests", undefined, workforceClaims));
+    expect(first.statusCode).toBe(200);
+    current = false;
+    const revoked = await handler(event("GET /clinical-core/workforce/appointments/requests", undefined, workforceClaims));
+    expect(revoked.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(authority).toHaveBeenCalledTimes(2);
+    for (const [url, init] of authority.mock.calls) {
+      expect(url).toBe(`${config.identityApiOrigin}/clinical-core/workforce/data-compatibility`);
+      expect(init).toMatchObject({ method: "POST", headers: { authorization: "Bearer fictional-workforce-token" } });
+      expect(JSON.parse(String(init?.body))).toEqual({ kind: "rpc", functionName: "list_my_organizations", args: {} });
+    }
+  });
+
+  it.each([
+    [{ organization_id: "99999999-9999-4999-8999-999999999999", role: "practitioner" }],
+    [{ organization_id: workforceClaims["custom:organization_id"], role: "retired" }],
+  ])("does not accept a foreign clinic or an unknown role from the membership read", async (row) => {
+    vi.stubGlobal("fetch", vi.fn(async () => membershipResponse([row])));
+    const result = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/slots", undefined, workforceClaims));
+    expect(result.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a current-membership outage or a missing bearer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: "database_unavailable" }) })));
+    const outage = await createTelehealthHandler(config)(event("GET /clinical-core/workforce/appointments/slots", undefined, workforceClaims));
+    expect(outage.statusCode).toBe(503);
+    const withoutBearer = event("GET /clinical-core/workforce/appointments/slots", undefined, workforceClaims) as unknown as { headers: Record<string, string> };
+    delete withoutBearer.headers.authorization;
+    const missing = await createTelehealthHandler(config)(withoutBearer as never);
+    expect(missing.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it("refuses production traffic until the PHI activation gate is opened", async () => {
     const handler = createTelehealthHandler({ ...config, runtimeMode: "production" });
@@ -408,6 +470,7 @@ describe("AWS telehealth request boundary", () => {
   });
 
   it("will not revive a cancelled request from the workforce queue", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => membershipResponse()));
     send.mockResolvedValueOnce({}).mockResolvedValueOnce({ Items: [{
       pk: `ORG#${workforceClaims["custom:organization_id"]}`,
       sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
@@ -445,6 +508,7 @@ describe("AWS telehealth request boundary", () => {
   });
 
   it("aliases DynamoDB's reserved timeZone name when scheduling the canonical appointment", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => membershipResponse()));
     const store = new FictionalAppointmentStore().seed({
       pk: `ORG#${workforceClaims["custom:organization_id"]}`, sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
       gsi1pk: `PERSON#${claims["custom:person_id"]}`, gsi1sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
@@ -588,6 +652,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   const compatibilityRoute = (options: { calendar?: Array<Record<string, unknown>> | (() => unknown); authority?: Record<string, unknown> | null | (() => unknown) }) =>
     (url: string, init?: RequestInit) => {
       const body = typeof init?.body === "string" ? JSON.parse(init.body) as { functionName?: string } : {};
+      if (body.functionName === "list_my_organizations") return membershipResponse();
       if (body.functionName === "get_telehealth_record_authority") {
         if (typeof options.authority === "function") return options.authority();
         if (options.authority === null) return jsonResponse(403, { error: "operation_refused" });
@@ -1496,7 +1561,7 @@ describe("AWS telehealth visit boundary (consent authority, meeting lease, provi
   });
 
   it("closes a visit when its booking is cancelled, deleting a meeting the visit itself created", async () => {
-    const calls = fetchRouter([...zoomRoutes()]);
+    const calls = fetchRouter([...identityRoutes(), ...zoomRoutes()]);
     const store = new FictionalAppointmentStore().seed(requestRecord({ providerMeetingId: null }),
       { pk: `ORG#${ORG}`, sk: "SLOT#x", slotId: "55555555-5555-4555-8555-555555555555", start: "2026-10-09T17:00:00.000Z", cancellationWindowHours: 24, status: "booked" },
       visitRecord({ status: "scheduled", providerMeetingId: "900000003", joinUrl: "https://zoom.us/j/900000003" }));

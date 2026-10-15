@@ -39,6 +39,12 @@ const CONSUMER_PAYMENT_PROFILE = "GET /clinical-core/consumer/appointments/payme
 const CONSUMER_PAYMENT_SETUP = "POST /clinical-core/consumer/appointments/payment-methods/setup";
 const CONSUMER_PAYMENT_AUTHORIZE = "POST /clinical-core/consumer/appointments/payment-authorizations";
 const WORKFORCE_PAYMENT = "POST /clinical-core/workforce/appointments/payments";
+// These DynamoDB-backed workforce routes do not read a chart row, so they
+// require their own current membership check before touching that partition.
+const CURRENT_WORKFORCE_MEMBERSHIP_ROUTES = new Set([
+  WORKFORCE_LIST, WORKFORCE_ACTION, WORKFORCE_SLOT_LIST,
+  WORKFORCE_SLOT_CREATE, WORKFORCE_PAYMENT,
+]);
 const STRIPE_WEBHOOK = "POST /clinical-core/webhooks/stripe/appointments";
 // Telehealth VISIT boundary (desktop): one record per appointment that holds
 // the combined telehealth + recording/AI-notes consent, the Zoom meeting the
@@ -196,6 +202,9 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
+      // A signed token identifies the caller, but is not current membership.
+      // These routes do not otherwise consult current chart authority.
+      if (CURRENT_WORKFORCE_MEMBERSHIP_ROUTES.has(route)) await requireCurrentWorkforceMembership(config, actor);
       if (route === CONSUMER_PAYMENT_PROFILE) return response(200, { data: await getPaymentProfile(config, actor) });
       if (route === CONSUMER_PAYMENT_SETUP) return response(201, { data: await startPaymentSetup(config, actor) });
       if (route === CONSUMER_PAYMENT_AUTHORIZE) return response(200, { data: await requestOperation(config, actor, pool, "authorize", body(event), value => authorizeAppointmentPayment(config, actor, value)) });
@@ -1171,6 +1180,17 @@ async function identityApi<T>(config: TelehealthConfiguration, actor: Actor, pat
     throw new TelehealthError("service_unavailable");
   }
   return (payload as { data: T }).data;
+}
+async function requireCurrentWorkforceMembership(config: TelehealthConfiguration, actor: Actor): Promise<void> {
+  if (!actor.bearer) throw new TelehealthError("identity_refused");
+  const rows = await identityApi<unknown>(config, actor, "/clinical-core/workforce/data-compatibility", {
+    method: "POST", body: { kind: "rpc", functionName: "list_my_organizations", args: {} },
+  }, "identity_refused");
+  if (!Array.isArray(rows)) throw new TelehealthError("service_unavailable");
+  const matches = rows.filter((row) => row !== null && typeof row === "object" && !Array.isArray(row)
+    && (row as Record<string, unknown>).organization_id === actor.organizationId
+    && ["owner", "admin", "practitioner", "staff"].includes(String((row as Record<string, unknown>).role)));
+  if (matches.length !== 1) throw new TelehealthError("identity_refused");
 }
 type ArtifactRecord = { artifactId: string; scope: string; artifactVersion: string; contentSha256: string; jurisdiction: string; approvedAt: string };
 type CurrentConsentRecord = { status: "granted" | "revoked" | "none"; patientRecordId: string | null; connectionId: string | null; consentId: string | null; artifactId: string | null; artifactVersion: string | null; contentSha256: string | null; artifactStatus: "approved" | "retired" | null; representativeAuthority: VisitConsent["representativeAuthority"] | null };

@@ -31,7 +31,8 @@ const request = (patch: Record<string, unknown> = {}) => ({ ...key, requestId, o
   consumerEmail: "fictional@example.test", reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1", paymentAuthorizationStatus: "authorized",
   paymentStatus: "not_due", paymentIntentId: null, paidMinor: 0, refundedMinor: 0, ...patch });
 function event(input: Record<string, unknown>, pool = "workforce", method = "POST", path = "actions") {
-  return { routeKey: `${method} /clinical-core/${pool}/appointments/${path}`, headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  return { routeKey: `${method} /clinical-core/${pool}/appointments/${path}`, headers: { "content-type": "application/json",
+    ...(pool === "workforce" ? { authorization: "Bearer fictional-workforce-token" } : {}) }, body: JSON.stringify(input),
     requestContext: { authorizer: { jwt: { claims: { iss: pool === "consumer" ? config.consumerIssuer : config.workforceIssuer,
       aud: pool === "consumer" ? config.consumerAudience : config.workforceAudience, token_use: "id", sub: `fictional-${pool}`,
       email: "fictional@example.test", "custom:person_id": owner, "custom:organization_id": org, "custom:synthetic_attested": "true" } } } } } as never;
@@ -62,6 +63,7 @@ beforeEach(() => {
     organizationId: org, start, end, status: "booked", cancellationWindowHours: 24 });
   schedules = new Map(); send.mockReset(); send.mockImplementation(store.send);
   schedulerSend.mockReset(); schedulerSend.mockImplementation(applySchedule); sesSend.mockReset(); sesSend.mockResolvedValue({});
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [{ organization_id: org, role: "practitioner" }] }), { status: 200 })));
 });
 afterEach(() => vi.unstubAllGlobals());
 
