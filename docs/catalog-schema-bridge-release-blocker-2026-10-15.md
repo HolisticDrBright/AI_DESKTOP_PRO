@@ -30,4 +30,10 @@ The workforce catalog API is a source candidate, not a deployable production cat
 
 `get_product_catalog` currently reports a `verificationState` based on the presence of any label-verification row. That is a practitioner review summary, not proof that an ingredient-level source-`V` release exists. Its response and permissions cannot be adopted as the consumer purchase contract by renaming fields.
 
+## Unregistered source-verification building block
+
+`infra/aws-clinical-core/source-candidates/production-catalog-source-verification.sql` defines a private, non-API-callable helper against the assembled production schema. Its local database test requires a current approved product/version, a succeeded import, a complete exact source-`V` proof tied to the real version UUID and hashes, active reviewer authority, unique ingredient/source arrays, and no later withdrawal or malformed event. Missing, null, extra, or mistyped proof fields refuse. It grants neither the public nor the API role direct use. This does **not** establish that a reviewer actually checked the label or sources, nor that an ingredient list matches a particular program step; those require reviewed evidence and a separate projection/release decision.
+
+The helper has not been registered as a migration, deployed, called by the runtime, or approved for patient-facing recommendations. The workforce and consumer projections, clinic/owner authority, exact EXECUTE grant, release data, hosted revocation/race tests, and separate commercial/clinical approvals remain open.
+
 This note is not permission to apply SQL, enable commerce, deploy a catalog route, process PHI or mark any original readiness phase complete.
