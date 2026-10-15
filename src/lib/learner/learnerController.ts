@@ -102,10 +102,17 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
   const usable = () => snapshot.outline !== null && snapshot.outline.problem !== 'ambiguous' && snapshot.outline.problem !== 'oversized';
   const ready = () => (snapshot.progress.state === 'ready' ? snapshot.progress.progress : null);
 
+  /** A lesson of the readable outline; a completion must also be completable there. */
+  const inOutline = (target: LessonRef, completable = false) => (snapshot.outline?.lessons ?? []).some(entry => sameLesson(entry.ref, target) && (!completable || entry.completable));
+
   const send = (command: WriteCommand) => run(async current => {
     const course = snapshot.course, saved = ready();
     if (!course || !saved) return;
     const isComplete = command.action === 'complete';
+    // Access is checked when the write is sent, not when its button was drawn: a window that lapsed in between, or a
+    // retry of an earlier command, sends nothing. Only a lesson of the readable outline is ever named.
+    if (!isAccessActive(course.entitlement, now())) { if (isComplete) emit({ pending: null, error: progressRefusalMessage('not_active') }); return; }
+    if (!inOutline(command.lesson, isComplete)) { if (isComplete) emit({ pending: null }); return; }
     const binding: ProgressBinding = { entitlementId: course.entitlement.entitlementId, enrollmentId: saved.enrollmentId, curriculum: course.entitlement.curriculum };
     if (isComplete) emit({ pending: { command, state: 'saving' } });
     let reply;
@@ -125,6 +132,15 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
     }
     if (outcome.reason === 'revision_stale' && outcome.progress) {
       emit({ progress: { state: 'ready', progress: outcome.progress }, ...(isComplete ? { pending: null, notice: 'This course was updated in another tab or on another device. Your progress is shown as it is saved now; nothing from here was added.' } : {}) });
+      return;
+    }
+    if (outcome.reason === 'not_active' || outcome.reason === 'not_owner') {
+      // Access ended (revoked, expired, refunded) or the course is someone else's: the lesson closes, nothing of it
+      // stays, and the access view is read again so the course is listed as it now stands.
+      lastOpened = null;
+      emit({ course: null, outline: null, lesson: null, pending: null, placeNote: '', progress: { state: 'none' }, error: progressRefusalMessage(outcome.reason) });
+      const { view, host } = await deps.transport.access();
+      if (current() && adopt(view)) emit({ phase: 'ready', host, view });
       return;
     }
     if (isComplete) emit({ pending: null, error: progressRefusalMessage(outcome.reason) });
@@ -149,6 +165,8 @@ export function createLearnerController(deps: { transport: LearnerTransport; req
     }),
     /** Show a lesson; when it is not already the recorded place, record it as the resume point (never a completion). */
     goTo: (target: LessonRef | null): Promise<void> => {
+      // A target outside the readable outline is not a lesson: it is neither opened nor sent as a place.
+      if (target && !inOutline(target)) return Promise.resolve();
       emit({ lesson: target, pending: null, error: '', notice: '' });
       const course = snapshot.course, saved = ready();
       if (!target || !course || !saved || !usable() || !isAccessActive(course.entitlement, now())) return Promise.resolve();
