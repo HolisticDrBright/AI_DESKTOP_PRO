@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { AUTH_COOKIES, readAuthSession } from "@/adapters/auth.server";
-import { resolveSelectedClinic, type SelectedClinic } from "@/adapters/selected-clinic.server";
+import type { SelectedClinic } from "@/adapters/selected-clinic.server";
+import { resolveSelectedClinic } from "@/server/selected-clinic-binding";
 
 /**
  * The selected clinic of the request in progress, bound to the account whose token it carries. Kept apart from

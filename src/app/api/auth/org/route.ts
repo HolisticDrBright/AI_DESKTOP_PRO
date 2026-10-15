@@ -4,7 +4,8 @@ import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { getRequestSession } from "@/server/session";
-import { clinicalAuthorityMode, selectedClinicCookieValues, withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { clinicalAuthorityMode, withSelectedClinic } from "@/adapters/selected-clinic.server";
+import { selectedClinicCookieValues } from "@/server/selected-clinic-binding";
 import { getRequestSelectedClinic } from "@/server/request-clinic";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "Choose a clinic from your memberships.");
     }
     const orgs = await withSelectedClinic(candidate
-      ? { state: "selected", organizationId: candidate.organization, binding: candidate.binding }
+      ? { state: "selected", organizationId: candidate.organization, subject: candidate.subject }
       : { state: "malformed" }, () => organizationsLive.mine(token));
     const match = orgs.find((o) => o.organizationId === body.organizationId);
     if (!match) {

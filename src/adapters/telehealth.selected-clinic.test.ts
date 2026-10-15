@@ -7,14 +7,14 @@ vi.mock("@/server/runtime/contractFixture", () => ({ getContractFixtureTransport
 
 import { telehealthLive } from "./telehealth.live";
 import { telehealthRequestsLive } from "./telehealth-requests.live";
-import { subjectBinding, withSelectedClinic, type SelectedClinic } from "./selected-clinic.server";
+import { withSelectedClinic, type SelectedClinic } from "./selected-clinic.server";
 
 const ORIGIN = "https://abcdefghij.execute-api.us-east-2.amazonaws.com";
 const HEADER = "x-alp-selected-organization-id";
 const sub = randomUUID(), clinic = randomUUID();
 const token = (subject: string) => [{ alg: "RS256" }, { sub: subject, token_use: "id" }]
   .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url")).join(".") + ".fictional";
-const selected = (organizationId: string): SelectedClinic => ({ state: "selected", organizationId, binding: subjectBinding(token(sub))! });
+const selected = (organizationId: string): SelectedClinic => ({ state: "selected", organizationId, subject: sub });
 const artifact = { artifactId: randomUUID(), artifactVersion: "telehealth-recording/1", contentSha256: "b".repeat(64), jurisdiction: "US-CA",
   approvedAt: "2026-10-01T00:00:00.000Z", scope: "telehealth_recording" };
 let fetchMock: ReturnType<typeof vi.fn>;

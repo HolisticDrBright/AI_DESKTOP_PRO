@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clinicalLabSpecimenContext, clinicalRpc, clinicalSelect } from "./aws-clinical-data.server";
-import { clinicalAuthorityMode, resolveSelectedClinic, subjectBinding, withSelectedClinic, type SelectedClinic } from "./selected-clinic.server";
+import { clinicalAuthorityMode, tokenSubject, withSelectedClinic, type SelectedClinic } from "./selected-clinic.server";
+import { resolveSelectedClinic, subjectBinding } from "@/server/selected-clinic-binding";
 
 const ORIGIN = "https://abcdefghij.execute-api.us-east-2.amazonaws.com";
 const sub = randomUUID(), clinicA = randomUUID(), clinicB = randomUUID();
 const token = (subject: string) => [{ alg: "RS256" }, { sub: subject, token_use: "id" }]
   .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url")).join(".") + ".fictional";
 const selected = (organizationId: string, subject = sub): SelectedClinic =>
-  ({ state: "selected", organizationId, binding: subjectBinding(token(subject))! });
+  ({ state: "selected", organizationId, subject });
 let fetchMock: ReturnType<typeof vi.fn>;
 const headerOf = (index: number) => Object.entries((fetchMock.mock.calls[index]![1] as RequestInit).headers as Record<string, string>)
   .filter(([key]) => key.toLowerCase() === "x-alp-selected-organization-id").map(([, value]) => value);
@@ -30,7 +31,7 @@ describe("selected-clinic resolution", () => {
       resolveSelectedClinic({ organizationCookies, bindingCookies, token: t }).state;
     expect(resolve([clinicA.toUpperCase()], [bound])).toBe("selected");
     expect(resolveSelectedClinic({ organizationCookies: [clinicA.toUpperCase()], bindingCookies: [bound], token: token(sub) }))
-      .toEqual({ state: "selected", organizationId: clinicA, binding: bound });
+      .toEqual({ state: "selected", organizationId: clinicA, subject: sub });
     expect(resolve([], [bound])).toBe("missing");
     expect(resolve([clinicA, clinicB], [bound])).toBe("duplicate");
     expect(resolve([clinicA], [bound, bound])).toBe("duplicate");
@@ -41,6 +42,8 @@ describe("selected-clinic resolution", () => {
     expect(resolve([clinicA], [bound], "not.a.jwt")).toBe("account_mismatch");
     expect(resolve([clinicA], [bound], null)).toBe("account_mismatch");
     expect(subjectBinding(token("not-a-uuid"))).toBeNull();
+    expect(tokenSubject(token(sub.toUpperCase()))).toBe(sub);
+    expect(tokenSubject("a.%%%.c")).toBeNull();
   });
 
   it("only database_current selects the new behaviour; anything else is the legacy default", () => {

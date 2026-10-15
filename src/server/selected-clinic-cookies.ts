@@ -1,6 +1,6 @@
 import type { NextResponse } from "next/server";
 import { AUTH_COOKIES, cookieOptions } from "@/adapters/auth.server";
-import { selectedClinicCookieValues } from "@/adapters/selected-clinic.server";
+import { selectedClinicCookieValues } from "@/server/selected-clinic-binding";
 
 /**
  * Write the session's clinic selection after the server has checked membership. The `aidp_org` cookie is written

@@ -27,8 +27,15 @@ and nothing else.
 - **Scope.** `runLive` (all 203 `/api/live` route files that use it) and the clinical server components resolve the
   selection once per request, into an `AsyncLocalStorage` context. The transport reads that context. Two requests in
   one server process never see each other's choice; this is tested with interleaved requests.
-- **Binding.** The transport recomputes the binding from the token it is about to send. A selection made by another
-  account is refused, not reused.
+- **Binding.** The resolver (`src/server/selected-clinic-binding.ts`) checks the cookie digest against the session
+  token and puts that token's subject into the request context. The transport compares it with the subject of the
+  token it is about to send. A selection made by another account is refused, not reused.
+- **No Node built-in on the transport side.** The adapter index loads the clinical transport through a dynamic import,
+  so the client build compiles the transport and this module. A `node:` import there fails the clinical build. So:
+  - the hashing lives in the server-only binding module;
+  - the request context uses the runtime's own `AsyncLocalStorage`: Next.js's global, or `process.getBuiltinModule`
+    in plain Node;
+  - with neither available, there is no context and every `database_current` request refuses.
 - **Operation agreement.** Some operations name a clinic: an RPC's `_organization_id`, or a select's
   `organization_id=eq.`. That clinic must be the selection. Work prepared in one window cannot run under a clinic
   chosen in another.
@@ -220,6 +227,9 @@ transaction. That is a larger migration.
 | `src/adapters/selected-clinic.server.test.ts`: resolver, mode flag, concurrent contexts, operation agreement, specimen read | import fails (module absent) | 6 passed |
 | `src/adapters/telehealth.selected-clinic.test.ts`: both telehealth adapters, the disabled-write message, legacy | import fails (module absent) | 5 passed |
 | `src/server/clinical-core/aws-telehealth-current-membership.test.ts` | 69 failed, 5 passed | 74 passed |
+
+The first clinical build of this change failed: `node:async_hooks` and `node:crypto` reached the client compile
+through the transport. The module split above fixed it; the build and bundle results are in the return.
 
 The 5 that pass at the base telehealth handler:
 
