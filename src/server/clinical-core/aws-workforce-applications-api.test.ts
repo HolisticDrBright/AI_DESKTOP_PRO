@@ -23,7 +23,8 @@ function setup(activation: 'blocked' | 'qualification' = 'qualification') {
   const currentApplicant = vi.fn(async () => ({ subject,email,emailVerified: true,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] }));
   const store: WorkforceApplicationStore = {
     submit: vi.fn(async ({ requestId: id }) => id),
-    list: vi.fn(async () => [{ id: requestId,status: 'pending' }]),
+    // The status function's row shape (workforce_access_status_for_subject).
+    list: vi.fn(async () => [{ id: requestId,kind: 'join',status: 'pending',createdAt: '2026-10-15T12:00:00Z',organizationId: organization }]),
     withdraw: vi.fn(async () => {}),
   };
   const handler = createWorkforceApplicationsCandidate({
@@ -171,5 +172,97 @@ describe('blocked workforce applications API candidate', () => {
       { requestId,kind: 'join',organizationId: organization }));
     expect(reply.statusCode).toBe(503);
     expect(reply.body).toBe('{"error":"workforce_application_unavailable"}');
+  });
+});
+
+describe('the applicant\'s own next step, retries and projection', () => {
+  const pendingRow = (id = requestId) => ({ id,kind: 'join',status: 'pending',createdAt: '2026-10-15T12:00:00Z',organizationId: organization });
+  function withRows(rows: unknown[], abuse?: Parameters<typeof createWorkforceApplicationsCandidate>[0]['abuse']) {
+    const f = setup();
+    vi.mocked(f.store.list).mockResolvedValue(rows);
+    const handler = createWorkforceApplicationsCandidate({
+      configuration: { activation: 'qualification',phiAllowed: false,accountId: ACCOUNT,issuer: ISSUER,audience: AUDIENCE,reviewEvidenceSha256: evidence },
+      currentApplicant: f.currentApplicant,store: f.store,abuse,
+    });
+    return { ...f,handler };
+  }
+
+  it('names a missing MFA method and an unverified address, and keeps every other account refusal uniform', async () => {
+    const f = setup();
+    f.currentApplicant.mockResolvedValueOnce({ subject,email,emailVerified: true,enabled: true,mfaMethods: [] });
+    expect(result((await f.handler(event('GET /clinical-core/workforce/applications'))).body)).toEqual({ error: 'workforce_applicant_mfa_required' });
+    f.currentApplicant.mockResolvedValueOnce({ subject,email,emailVerified: false,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] });
+    expect(result((await f.handler(event('GET /clinical-core/workforce/applications'))).body)).toEqual({ error: 'workforce_applicant_email_unverified' });
+    for (const current of [null, { subject,email,emailVerified: true,enabled: false,mfaMethods: ['SOFTWARE_TOKEN_MFA'] },
+      { subject,email: 'switched.account@example.invalid',emailVerified: true,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] }]) {
+      f.currentApplicant.mockResolvedValueOnce(current as never);
+      expect(result((await f.handler(event('GET /clinical-core/workforce/applications'))).body)).toEqual({ error: 'workforce_applicant_refused' });
+    }
+    // A direct Cognito sign-up outside the fictional qualification attestation never reaches the account read.
+    const direct = await f.handler(event('GET /clinical-core/workforce/applications',undefined,{ 'custom:synthetic_attested': 'false' }));
+    expect(result(direct.body)).toEqual({ error: 'workforce_applicant_refused' });
+    expect(f.store.list).not.toHaveBeenCalled();
+  });
+
+  it('a retried submission converges on the same request; a second one while one is pending is named, not an outage', async () => {
+    const f = withRows([pendingRow()]);
+    const retry = await f.handler(event('POST /clinical-core/workforce/applications',{ requestId,kind: 'join',organizationId: organization }));
+    expect(retry.statusCode).toBe(202);
+    const second = await f.handler(event('POST /clinical-core/workforce/applications',{ requestId: randomUUID(),kind: 'join',organizationId: organization }));
+    expect(second.statusCode).toBe(409);
+    expect(result(second.body)).toEqual({ error: 'workforce_application_already_pending',requestId });
+    expect(f.store.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('a withdrawal answers from the applicant\'s own request: unknown, already withdrawn, already decided', async () => {
+    const other = randomUUID();
+    const f = withRows([{ ...pendingRow(other),status: 'withdrawn' },{ ...pendingRow(),status: 'rejected',decisionReason: 'not_known_to_clinic' }]);
+    expect((await f.handler(event('POST /clinical-core/workforce/applications/withdraw',{ requestId: randomUUID() }))).statusCode).toBe(404);
+    expect(result((await f.handler(event('POST /clinical-core/workforce/applications/withdraw',{ requestId: other }))).body)).toEqual({ data: { withdrawn: true,duplicate: true } });
+    expect((await f.handler(event('POST /clinical-core/workforce/applications/withdraw',{ requestId }))).statusCode).toBe(409);
+    expect(f.store.withdraw).not.toHaveBeenCalled();
+  });
+
+  it('projects status strictly: a parent row\'s approval reads unknown access, and any extra field is refused', async () => {
+    const approved = { ...pendingRow(),status: 'approved' };
+    const parent = await withRows([approved]).handler(event('GET /clinical-core/workforce/applications'));
+    expect(result(parent.body)).toEqual({ data: [{ ...approved,decisionReason: null,clinicalAccess: 'unknown' }] });
+    for (const rows of [[{ ...approved,email_sha256: 'a'.repeat(64) }],[{ ...pendingRow(),clinicalAccess: 'available' }],
+      Array.from({ length: 51 },() => pendingRow(randomUUID()))]) {
+      const answer = await withRows(rows).handler(event('GET /clinical-core/workforce/applications'));
+      expect(answer.statusCode).toBe(503);
+      expect(answer.body).toBe('{"error":"workforce_application_unavailable"}');
+    }
+  });
+
+  it('asks the shared abuse boundary first, with digests only, and fails closed when it cannot answer', async () => {
+    const decide = vi.fn(async () => 'limited' as const);
+    const limited = withRows([pendingRow()],{ active: true,decide });
+    const answer = await limited.handler({ ...event('GET /clinical-core/workforce/applications'),
+      requestContext: { ...event('GET /clinical-core/workforce/applications').requestContext,http: { sourceIp: '198.51.100.7' } } as never });
+    expect(answer.statusCode).toBe(429);
+    expect(limited.currentApplicant).not.toHaveBeenCalled();
+    const [surface,keys] = decide.mock.calls[0] as unknown as [string,Record<string,string>];
+    expect(surface).toBe('workforce_application_status');
+    expect(Object.keys(keys).sort()).toEqual(['client','subject']);
+    for (const value of Object.values(keys)) expect(value).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(keys)).not.toContain(subject);
+    expect(JSON.stringify(keys)).not.toContain('198.51.100.7');
+    const down = withRows([],{ active: true,decide: async () => 'unavailable' as const });
+    expect((await down.handler(event('POST /clinical-core/workforce/applications',{ requestId,kind: 'join',organizationId: organization }))).statusCode).toBe(503);
+    expect(down.store.submit).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing to the logs on any path', async () => {
+    const spies = (['log','info','warn','error','debug'] as const).map(name => vi.spyOn(console,name).mockImplementation(() => {}));
+    try {
+      const f = withRows([pendingRow()]);
+      vi.mocked(f.store.submit).mockRejectedValue(new Error(`detail with ${email}`));
+      await f.handler(event('POST /clinical-core/workforce/applications',{ requestId,kind: 'create_clinic',proposedLabel: 'Fictional Proposed Clinic' }));
+      await f.handler(event('GET /clinical-core/workforce/applications'));
+      f.currentApplicant.mockRejectedValueOnce(new Error(`provider said ${email}`));
+      await f.handler(event('GET /clinical-core/workforce/applications'));
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of spies) spy.mockRestore(); }
   });
 });

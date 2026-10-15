@@ -5,6 +5,8 @@ if (typeof window !== 'undefined') {
 import { createHash } from 'node:crypto';
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api';
 import type { ClinicalCoreDatabase } from './database';
+import { normalizeApplicationRows } from '../../contracts/workforceApplication';
+import { abuseKey, INACTIVE_ABUSE_BOUNDARY, type AbuseSurface, type PublicAbuseBoundary } from '../public-abuse-boundary';
 
 /** Source-only candidate: no Lambda entrypoint or deployed API imports it. */
 export const WORKFORCE_APPLICATION_API_RELEASE = 'blocked' as const;
@@ -69,7 +71,10 @@ export function createWorkforceApplicationsCandidate(input: {
     accountId: string; issuer: string; audience: string; reviewEvidenceSha256?: string };
   currentApplicant: CurrentWorkforceApplicant;
   store: WorkforceApplicationStore;
+  /** The shared abuse boundary (src/server/public-abuse-boundary.ts). Inactive unless a reviewed service is supplied. */
+  abuse?: PublicAbuseBoundary;
 }) {
+  const abuse = input.abuse ?? INACTIVE_ABUSE_BOUNDARY;
   const config = input.configuration;
   if (config.phiAllowed !== false || config.accountId !== ACCOUNT
     || config.issuer !== ISSUER || config.audience !== CLIENT
@@ -93,46 +98,67 @@ export function createWorkforceApplicationsCandidate(input: {
       || claim('custom:person_id') || claim('custom:organization_id')) {
       return reply(403, { error: 'workforce_applicant_refused' });
     }
+    const surface: AbuseSurface = event.routeKey === 'GET /clinical-core/workforce/applications' ? 'workforce_application_status'
+      : event.routeKey === 'POST /clinical-core/workforce/applications/withdraw' ? 'workforce_application_withdraw' : 'workforce_application_submit';
+    const sourceIp = (event.requestContext as { http?: { sourceIp?: unknown } } | undefined)?.http?.sourceIp;
+    const admitted = await abuse.decide(surface, { subject: abuseKey('subject', subject),
+      ...(typeof sourceIp === 'string' && sourceIp ? { client: abuseKey('client', sourceIp) } : {}) });
+    if (admitted === 'limited') return reply(429, { error: 'workforce_application_rate_limited' });
+    if (admitted !== 'admitted') return reply(503, { error: 'workforce_application_unavailable' });
     let current: WorkforceApplicant | null;
     try { current = await input.currentApplicant(subject); }
     catch { return reply(503, { error: 'identity_unavailable' }); }
+    // A changed or disabled account is refused without saying which: that is about the account, not its owner's next
+    // step. An unverified address and a missing MFA method are the owner's own next step, so they are named.
     if (!current || current.subject !== subject || !current.enabled
-      || !current.emailVerified || normalizeEmail(current.email) !== tokenEmail
-      || !Array.isArray(current.mfaMethods)
-      || !current.mfaMethods.some(method => method === 'SOFTWARE_TOKEN_MFA'
-        || method === 'SMS_MFA' || method === 'EMAIL_OTP')) {
+      || normalizeEmail(current.email) !== tokenEmail || !Array.isArray(current.mfaMethods)) {
       return reply(403, { error: 'workforce_applicant_refused' });
+    }
+    if (!current.emailVerified) return reply(403, { error: 'workforce_applicant_email_unverified' });
+    if (!current.mfaMethods.some(method => method === 'SOFTWARE_TOKEN_MFA'
+        || method === 'SMS_MFA' || method === 'EMAIL_OTP')) {
+      return reply(403, { error: 'workforce_applicant_mfa_required' });
     }
     try {
       if (event.routeKey === 'GET /clinical-core/workforce/applications') {
         if (event.body || Object.keys(event.queryStringParameters ?? {}).length) return invalid();
-        return reply(200, { data: await input.store.list(subject) });
+        return reply(200, { data: normalizeApplicationRows(await input.store.list(subject)) });
       }
       const body = parseBody(event);
+      // The body is validated in full before anything is read. Then the applicant's own requests are read, so a retry,
+      // a second request and a decided one each get their own answer; the database still decides each write under its
+      // subject lock, and a change between the read and the write answers 503 rather than a guess.
       if (event.routeKey === 'POST /clinical-core/workforce/applications/withdraw') {
         if (!exactKeys(body,['requestId']) || !UUID.test(body.requestId as string)) return invalid();
+        const own = normalizeApplicationRows(await input.store.list(subject));
+        const target = own.find(entry => entry.id === (body.requestId as string).toLowerCase());
+        if (!target) return reply(404, { error: 'workforce_application_not_found' });
+        if (target.status === 'withdrawn') return reply(200, { data: { withdrawn: true, duplicate: true } });
+        if (target.status !== 'pending') return reply(409, { error: 'workforce_application_already_decided' });
         await input.store.withdraw(body.requestId as string,subject);
-        return reply(200, { data: { withdrawn: true } });
+        return reply(200, { data: { withdrawn: true, duplicate: false } });
       }
+      let submission: Parameters<WorkforceApplicationStore['submit']>[0];
       if (body.kind === 'join') {
         if (!exactKeys(body,['requestId','kind','organizationId'])
           || !UUID.test(body.requestId as string) || !UUID.test(body.organizationId as string)) return invalid();
-        const id = await input.store.submit({ requestId: body.requestId as string,subject,
-          emailSha256: sha256(tokenEmail),kind: 'join',organizationId: body.organizationId as string,
-          proposedLabel: null });
-        return reply(202, { data: { requestId: id, status: 'pending' } });
-      }
-      if (body.kind === 'create_clinic') {
+        submission = { requestId: body.requestId as string,subject,emailSha256: sha256(tokenEmail),kind: 'join',
+          organizationId: body.organizationId as string,proposedLabel: null };
+      } else if (body.kind === 'create_clinic') {
         if (!exactKeys(body,['requestId','kind','proposedLabel'])
           || !UUID.test(body.requestId as string) || typeof body.proposedLabel !== 'string'
           || body.proposedLabel.trim().length < 3 || body.proposedLabel.trim().length > 120
           || /[\u0000-\u001f\u007f]/.test(body.proposedLabel)) return invalid();
-        const id = await input.store.submit({ requestId: body.requestId as string,subject,
-          emailSha256: sha256(tokenEmail),kind: 'create_clinic',organizationId: null,
-          proposedLabel: body.proposedLabel.trim() });
-        return reply(202, { data: { requestId: id, status: 'pending' } });
+        submission = { requestId: body.requestId as string,subject,emailSha256: sha256(tokenEmail),kind: 'create_clinic',
+          organizationId: null,proposedLabel: body.proposedLabel.trim() };
+      } else return invalid();
+      const pending = normalizeApplicationRows(await input.store.list(subject)).find(entry => entry.status === 'pending');
+      // A lost reply is retried with the same request id and converges on the same request; another id is a second one.
+      if (pending && pending.id !== submission.requestId.toLowerCase()) {
+        return reply(409, { error: 'workforce_application_already_pending', requestId: pending.id });
       }
-      return invalid();
+      const id = await input.store.submit(submission);
+      return reply(202, { data: { requestId: id, status: 'pending' } });
     } catch (error) {
       if (error instanceof InvalidBody) return invalid();
       // Neither SQL text nor clinic-existence details reach an applicant.

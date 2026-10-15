@@ -10,6 +10,7 @@ import {
 import { readBoundedRequestBody } from "@/server/bounded-request-body";
 import { sameBrowserOrigin } from "@/server/same-browser-origin";
 import { WORKFORCE_SELF_SIGNUP_READY } from "@/server/clinical-core/workforce-self-signup-release";
+import { abuseKey, sharedAbuseBoundary } from "@/server/public-abuse-boundary";
 
 /** Public identity enrollment only; clinic access still needs admin membership. */
 const MAX_BODY_BYTES = 2048;
@@ -64,6 +65,12 @@ export async function POST(req: NextRequest) {
     if (!takeAttempt(`ip:${ip}`, 30, now) || !takeAttempt(`email:${emailKey}:${action}`, action === "confirm" ? 10 : 4, now)) {
       return refuse(new AdapterError("unavailable", "Too many attempts. Please try again later."), 429);
     }
+    // The shared boundary (inactive until a reviewed counter service exists) is asked with digests only.
+    const shared = await sharedAbuseBoundary().decide(
+      action === "resend" ? "workforce_signup_code_resend" : action === "confirm" ? "workforce_signup_confirm" : "workforce_signup_start",
+      { client: abuseKey("client", ip), email: abuseKey("email", email) });
+    if (shared === "limited") return refuse(new AdapterError("unavailable", "Too many attempts. Please try again later."), 429);
+    if (shared !== "admitted") return refuse(new AdapterError("unavailable", "Registration is unavailable right now."));
 
     if (action === "start") {
       const password = body.password;

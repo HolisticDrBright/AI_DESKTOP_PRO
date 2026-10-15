@@ -39,6 +39,7 @@ export type UnconvertedClinicFamily = keyof typeof UNCONVERTED_CLINIC_FAMILIES;
 export const CURRENT_MEMBERSHIP_GATED_FAMILIES = {
   care_messages: "/clinical-core/workforce/messages (production care messaging API, CARE_MESSAGING_WORKFORCE_AUTHORITY=database_current)",
   program_assignments: "/clinical-core/workforce/programs (production program family; no deployed host serves it under database_current yet)",
+  workforce_join_review: "/clinical-core/workforce/join-requests and /memberships/revocations (BLOCKED join-review API; no host, SQL candidate unregistered)",
 } as const;
 export type GatedClinicFamily = keyof typeof CURRENT_MEMBERSHIP_GATED_FAMILIES;
 
@@ -54,7 +55,11 @@ export function servedCurrentMembershipFamilies(): ReadonlySet<GatedClinicFamily
  * Not clinical authority at all, so not converted and not refused: the campaign engine has its own API and authorizer,
  * imports nothing clinical, and never names or reads a clinic selection.
  */
-export const INDEPENDENT_FAMILIES = { campaign_api: "the campaign engine's own API (CAMPAIGN_API_ORIGIN)" } as const;
+export const INDEPENDENT_FAMILIES = {
+  campaign_api: "the campaign engine's own API (CAMPAIGN_API_ORIGIN)",
+  /** A practitioner applying to a clinic has no clinic: the applicant API decides by the signed-in subject alone. */
+  workforce_applications: "/clinical-core/workforce/applications (BLOCKED applicant API; WORKFORCE_APPLICATIONS_API_ORIGIN)",
+} as const;
 
 /** The machine word for the refusal, the same one the identity API answers for an unconverted workforce route. */
 export const CLINIC_MEMBERSHIP_REFUSAL = "membership_authority_not_configured";

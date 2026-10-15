@@ -25,7 +25,7 @@ import { getSyntheticClinicalCorePosture, issueSyntheticPatientInvitation } from
 import { consultLinkCall, clinicRecordsWorkforceCall } from '@/server/consult/consultWorkforceApi';
 import { labAttestationReviewUpstream, labAttestationUpstream } from '@/server/lab-attestation-upstream';
 import { campaignApiCall } from '@/server/campaign-api';
-import { CLINIC_MEMBERSHIP_REFUSAL, CURRENT_MEMBERSHIP_GATED_FAMILIES, UNCONVERTED_CLINIC_FAMILIES } from './clinic-authority-families';
+import { CLINIC_MEMBERSHIP_REFUSAL, CURRENT_MEMBERSHIP_GATED_FAMILIES, INDEPENDENT_FAMILIES, UNCONVERTED_CLINIC_FAMILIES } from './clinic-authority-families';
 
 const API = 'https://abcdefghij.execute-api.us-east-2.amazonaws.com';
 const host = 'penrnyupn3.us-east-2.awsapprunner.com';
@@ -128,7 +128,7 @@ describe('intentionally independent', () => {
 
 /** Every source file that names a workforce route, and what it is. A new caller must be classified here. */
 const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERTED_CLINIC_FAMILIES}`
-  | `gated:${keyof typeof CURRENT_MEMBERSHIP_GATED_FAMILIES}` | 'not_a_desktop_caller'> = {
+  | `gated:${keyof typeof CURRENT_MEMBERSHIP_GATED_FAMILIES}` | `independent:${keyof typeof INDEPENDENT_FAMILIES}` | 'not_a_desktop_caller'> = {
   'src/adapters/aws-clinical-data.server.ts': 'converted',
   'src/adapters/telehealth.live.ts': 'converted',
   'src/adapters/telehealth-requests.live.ts': 'converted',
@@ -143,6 +143,8 @@ const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERT
   'src/app/api/live/care-messages/route.ts': 'gated:care_messages',
   'src/app/api/live/patient-notification-settings/route.ts': 'refused:patient_notification_settings',
   'src/app/api/live/program-assignments/route.ts': 'gated:program_assignments',
+  'src/app/api/live/org/join-requests/route.ts': 'gated:workforce_join_review',
+  'src/app/api/onboarding/application/route.ts': 'independent:workforce_applications',
   'src/server/clinical-core/ask-alp-workforce-client.ts': 'refused:ask_alp_workforce',
   'src/server/clinical-core/privacy-operations-client.ts': 'refused:privacy_operations',
   'src/server/lab-attestation-upstream.ts': 'refused:lab_attestation',
@@ -158,6 +160,7 @@ const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERT
   'src/server/clinical-core/aws-telehealth-requests.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/aws-workforce-applications-api.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/current-membership-program-api.ts': 'not_a_desktop_caller',
+  'src/server/clinical-core/workforce-join-review-api.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/export-retention-acceptance.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/lab-attestation-review.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/privacy-operations-api.ts': 'not_a_desktop_caller',
@@ -200,6 +203,11 @@ describe('the audit is exhaustive', () => {
       }
       if (decision === 'converted') expect(source, path).toMatch(/selectedClinicHeaders|x-alp-selected-organization-id/);
       // A gated caller keeps its refusal, then sends only the session's clinic and accepts only an answer that names it.
+      // An independent caller has no clinic: it never sends, reads or fences a clinic selection.
+      if (decision.startsWith('independent:')) {
+        expect(Object.keys(INDEPENDENT_FAMILIES), path).toContain(decision.slice(12));
+        expect(source, path).not.toMatch(/currentMembershipCall|selectedClinicHeaders|x-alp-selected-organization-id|SELECTED_CLINIC|getRequestSelectedClinic|aidp_org/);
+      }
       if (decision.startsWith('gated:')) {
         expect(source, path).toMatch(new RegExp(`refusedUnderClinicMembership\\(["']${decision.slice(6)}["']\\)`));
         expect(source, path).toMatch(/currentMembershipCall\(session\.token\)/);
