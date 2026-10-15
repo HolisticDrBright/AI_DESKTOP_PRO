@@ -273,7 +273,8 @@
     "test:release-record": "node --test scripts/build-release-record.test.mjs",
     "check:aws-qualification-target": "node scripts/check-aws-qualification-target.mjs",
     "check:aws-qualification-capacity": "node scripts/check-aws-qualification-capacity.mjs",
-    "test:aws-qualification-capacity": "node --test scripts/check-aws-qualification-capacity.test.mjs"
+    "test:aws-qualification-capacity": "node --test scripts/check-aws-qualification-capacity.test.mjs",
+    "build:campaign-engine": "node scripts/build-campaign-engine.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1",
@@ -281,6 +282,7 @@
     "@aws-sdk/client-cognito-identity-provider": "^3.1120.0",
     "@aws-sdk/client-dynamodb": "^3.1109.0",
     "@aws-sdk/client-lambda": "3.1149.0",
+    "@aws-sdk/client-pinpoint-sms-voice-v2": "3.1149.0",
     "@aws-sdk/client-rds-data": "^3.1108.0",
     "@aws-sdk/client-s3": "^3.1109.0",
     "@aws-sdk/client-scheduler": "^3.1124.0",

@@ -3,6 +3,7 @@ if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is s
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
+import type { AppointmentReminderChannels } from "../notifications/notification-dispatcher";
 import { CreateScheduleCommand, DeleteScheduleCommand, GetScheduleCommand, SchedulerClient } from "@aws-sdk/client-scheduler";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -91,6 +92,14 @@ export type TelehealthConfiguration = {
    * `transfer_unavailable`, nothing written). The key never leaves this process.
    */
   chartAdmissionSecretArn: string;
+  /**
+   * "Your consultation is booked": one email to the patient when staff schedule or reschedule the visit, sent
+   * through the same sender and `alp-transactional` configuration set as the reminders. Off unless true; it
+   * then needs the reminder sender, exactly that configuration set and the clinic's display name.
+   */
+  enquirerEmailsEnabled?: boolean;
+  /** The clinic name the booked email names. Required when `enquirerEmailsEnabled`. */
+  clinicDisplayName?: string;
 };
 
 type AppointmentItem = {
@@ -189,14 +198,22 @@ type BookingSlot = {
   createdAt: string; createdBy: string;
 };
 
-export function createTelehealthHandler(config: TelehealthConfiguration) {
+/**
+ * Optional ports. `textReminders` adds the patient's own reminder preferences and a text beside the
+ * email, on the same schedules; unset, reminders are email only and behave exactly as before.
+ */
+export type TelehealthPorts = { textReminders?: AppointmentReminderChannels };
+export function createTelehealthHandler(config: TelehealthConfiguration, ports: TelehealthPorts = {}) {
   validateConfiguration(config);
+  if (ports.textReminders && !config.remindersEnabled) throw new Error("telehealth_configuration_invalid");
   const handler = async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (config.runtimeMode === "production" && !config.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
     const route = event.routeKey ?? "internal";
     try {
       const reminder = event as unknown as ReminderEvent;
-      if (reminder.internalEvent === "send_appointment_reminder") return response(200, { data: await sendAppointmentReminder(config, reminder) });
+      if (reminder.internalEvent === "send_appointment_reminder") return response(200, { data: ports.textReminders
+        ? await sendAppointmentReminderOnChannels(config, reminder, ports.textReminders)
+        : await sendAppointmentReminder(config, reminder) });
       const envelope = event as unknown as SnsEnvelope;
       if (Array.isArray(envelope.Records) && envelope.Records.some((r) => r.EventSource === "aws:sns")) return response(200, { data: await recordEmailSuppressions(config, envelope) });
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
@@ -996,6 +1013,8 @@ async function scheduleRequest(config: TelehealthConfiguration, item: Appointmen
   ];
   await appendRequestVisitChange(config, { ...item, appointmentId }, actions, "scheduled", next);
   await commitRequestMutation(config, item, next.version, actions);
+  // After the schedule is committed, and never part of it: the email cannot fail, delay or change the visit.
+  if (config.enquirerEmailsEnabled) await sendBookedEmail(config, next);
   return publicItem(next, "workforce");
 }
 
@@ -2329,6 +2348,76 @@ async function sendAppointmentReminder(config: TelehealthConfiguration, event: R
       Body: { Text: { Data: `Your telehealth appointment is scheduled for ${when}.${link}\n\nTo reschedule or cancel, open AI Longevity Pro. Do not reply with health information.` } } } } }));
   return { sent: true };
 }
+/**
+ * The booked email's fixed text: the clinic, the local date and time, and how to join or reschedule, by the
+ * same rules as the reminders. Nothing about the reason for the visit, its type, the practitioner or any
+ * program. A time zone that cannot be read refuses the template rather than guessing one.
+ */
+const CLINIC_DISPLAY_NAME = /^[\p{L}\p{N} .,'&-]{2,120}$/u;
+export function bookedEmail(input: { clinic: string; scheduledStart: string; timeZone: string; joinUrl: string | null }) {
+  if (!CLINIC_DISPLAY_NAME.test(input.clinic) || !date(input.scheduledStart)) throw new TelehealthError("service_unavailable");
+  let when: string;
+  try {
+    when = new Intl.DateTimeFormat("en-US", { timeZone: input.timeZone, weekday: "short", month: "short", day: "numeric", year: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(input.scheduledStart));
+  } catch { throw new TelehealthError("service_unavailable"); }
+  const join = input.joinUrl ? `Join your secure visit: ${input.joinUrl}` : "When it is time, open AI Longevity Pro for the secure visit details.";
+  return {
+    subject: "Your consultation is booked",
+    text: `${input.clinic} has booked your consultation for ${when}.\n\n${join}\n\nTo reschedule or cancel, open AI Longevity Pro.\n\nPlease do not reply to this email with health information.\n`,
+  };
+}
+/** Sent to the address the appointment already carries (the one the reminders use); a bounced or complained address is skipped. Never throws. */
+async function sendBookedEmail(config: TelehealthConfiguration, item: AppointmentItem): Promise<"sent" | "suppressed" | "failed"> {
+  try {
+    if (!item.scheduledStart || !item.consumerEmail) return "failed";
+    if (await emailSuppressed(config, item.consumerEmail)) return "suppressed";
+    const message = bookedEmail({ clinic: config.clinicDisplayName ?? "", scheduledStart: item.scheduledStart, timeZone: item.timeZone, joinUrl: item.joinUrl });
+    await ses.send(new SendEmailCommand({ FromEmailAddress: config.reminderSender, ConfigurationSetName: config.reminderConfigurationSet,
+      Destination: { ToAddresses: [item.consumerEmail] }, Content: { Simple: { Subject: { Data: message.subject }, Body: { Text: { Data: message.text } } } } }));
+    return "sent";
+  } catch { return "failed"; }
+}
+/** The same email, for the channel-aware path; always to the rechecked recipient. */
+async function mailAppointmentReminder(config: TelehealthConfiguration, current: AppointmentItem) {
+  const when = new Date(current.scheduledStart ?? "").toISOString();
+  const link = current.joinUrl ? `\nJoin your secure visit: ${current.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
+  await ses.send(new SendEmailCommand({ FromEmailAddress: config.reminderSender, ConfigurationSetName: config.reminderConfigurationSet,
+    Destination: { ToAddresses: [current.consumerEmail] }, Content: { Simple: { Subject: { Data: "Your AI Longevity Pro appointment reminder" },
+      Body: { Text: { Data: `Your telehealth appointment is scheduled for ${when}.${link}\n\nTo reschedule or cancel, open AI Longevity Pro. Do not reply with health information.` } } } } }));
+}
+/**
+ * The same reminder event, with the patient's own channels: the email unless the patient turned
+ * reminder emails off (or the address bounced), and a text when the notification ledger allows one.
+ * Every refusal and staleness check of the email path runs first and applies to both. The offset is
+ * read from the time left before the visit, as the schedules fire exactly 24 hours and 1 hour before.
+ */
+async function sendAppointmentReminderOnChannels(config: TelehealthConfiguration, event: ReminderEvent, channels: AppointmentReminderChannels) {
+  if (!config.remindersEnabled || !UUID.test(String(event.organizationId)) || !UUID.test(String(event.requestId)) || !date(String(event.scheduledStart))) throw new TelehealthError("service_unavailable");
+  const item = await find(config, String(event.organizationId), String(event.requestId));
+  const refusal = reminderRefusal(item, event);
+  if (refusal) return { sent: false, reason: refusal };
+  let plan: Awaited<ReturnType<AppointmentReminderChannels["channels"]>>;
+  // Without the patient's preferences nobody can say which channel they agreed to; send nothing rather than guess.
+  try { plan = await channels.channels(item.organizationId, item.consumerPersonId); } catch { return { sent: false, reason: "preferences_unavailable" }; }
+  const suppressed = plan.email ? await emailSuppressed(config, item.consumerEmail) : false;
+  const current = await find(config, String(event.organizationId), String(event.requestId));
+  const currentRefusal = reminderRefusal(current, event);
+  if (currentRefusal) return { sent: false, reason: currentRefusal };
+  if (current.version !== item.version || current.consumerPersonId !== item.consumerPersonId
+    || current.consumerEmail !== item.consumerEmail || current.joinUrl !== item.joinUrl) return { sent: false, reason: "stale" };
+  let email: { sent: boolean; reason?: string } = { sent: false, reason: plan.email ? "suppressed" : "patient_preference" };
+  if (plan.email && !suppressed) { await mailAppointmentReminder(config, current); email = { sent: true }; }
+  let text: { sent: boolean; reason?: string } = { sent: false, reason: plan.textReason ?? "texts_disabled" };
+  if (plan.text && current.reminderGeneration && UUID.test(current.reminderGeneration) && current.scheduledStart) {
+    const offset = Date.parse(current.scheduledStart) - Date.now() > 2 * 3_600_000 ? "24h" as const : "1h" as const;
+    try {
+      text = await channels.sendText({ organizationId: current.organizationId, personId: current.consumerPersonId, requestId: current.requestId,
+        generation: current.reminderGeneration, offset, scheduledStart: current.scheduledStart, text: plan.text });
+    } catch { text = { sent: false, reason: "text_unavailable" }; }
+  } else if (plan.text) text = { sent: false, reason: "legacy_reminder" };
+  return { sent: email.sent || text.sent, email, text };
+}
 function reminderRefusal(item: AppointmentItem, event: ReminderEvent): "change_pending" | "stale" | null {
   if (item.mutationOperationId) return "change_pending";
   if (item.reminderStatus !== "scheduled" || !["scheduled", "awaiting_provider"].includes(item.status)
@@ -2513,7 +2602,8 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   if (pool === "consumer") delete result.consumerPersonId;
   return result;
 }
-function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
+function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))
+  || (config.enquirerEmailsEnabled === true && (!config.reminderSender || config.reminderConfigurationSet !== "alp-transactional" || !CLINIC_DISPLAY_NAME.test(config.clinicDisplayName ?? "")))) throw new Error("telehealth_configuration_invalid"); }
 type TelehealthRefusal = "identity_refused" | "request_invalid" | "not_found" | "conflict" | "appointment_cancelled"
   | "appointment_change_pending" | "transfer_source_stale" | "transfer_mismatch" | "transfer_unavailable"
   | "consent_required" | "consent_withdrawn" | "consent_superseded" | "consent_version_refused" | "consent_artifact_unavailable"

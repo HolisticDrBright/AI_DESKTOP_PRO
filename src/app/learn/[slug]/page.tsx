@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 
 import { FunnelPage } from "@/components/funnels/FunnelPage";
 import { resolvePublicFunnel } from "@/server/commerce/journey-fixture";
-import { consultLinkUrl } from "@/lib/consultLinkUrl";
-import { funnelPageUrl, indexingAllowed, publicSiteOrigin } from "@/lib/publicSite";
+import { funnelPageLinks } from "@/lib/funnelPageLinks";
+import { marketingSignupDirectory } from "@/funnels/marketingSignup";
+import { funnelPageUrl, indexingAllowed } from "@/lib/publicSite";
 import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
 
 /**
@@ -13,6 +14,11 @@ import { funnelPurchaseAvailability } from "@/server/commerce/funnel-purchase";
  * slug answer the same not-found. Search engines may index it only on the production origin;
  * everywhere else it is served noindex and its canonical address is omitted, whatever the definition
  * says. The buy choice is a link only when the offer is available now; otherwise the page says why.
+ *
+ * `?via=` is read from a fixed list only to choose which consult link the button points at (a campaign
+ * email's visitor reaches the program's email link). Nothing about it is stored, logged or set as a
+ * cookie, and the canonical address never carries it. "Get updates about this program" appears only when
+ * a practice offering the program's list holds the `marketing` entitlement (src/lib/marketingSignupLink.ts).
  */
 export const dynamic = "force-dynamic";
 
@@ -30,11 +36,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   };
 }
 
-export default async function FunnelRoute({ params }: { params: Promise<{ slug: string }> }) {
+export default async function FunnelRoute({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { slug } = await params;
   const funnel = await resolvePublicFunnel(slug);
   if (!funnel) notFound();
-  const consultHref = consultLinkUrl(funnel.consultSlug, publicSiteOrigin() ?? undefined) ?? `/consult/${funnel.consultSlug}`;
+  const { consultHref, updatesUrl } = await funnelPageLinks(funnel, (await searchParams).via, marketingSignupDirectory());
   const purchase = await funnelPurchaseAvailability(funnel);
-  return <FunnelPage funnel={funnel} consultHref={consultHref} purchase={purchase} buyHref={`/buy/${funnel.slug}`} />;
+  return <FunnelPage funnel={funnel} consultHref={consultHref} purchase={purchase} buyHref={`/buy/${funnel.slug}`} updatesUrl={updatesUrl} />;
 }

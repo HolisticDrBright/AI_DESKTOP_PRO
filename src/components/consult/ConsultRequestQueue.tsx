@@ -7,6 +7,7 @@ import type { ConsultLinkAdminResponse, ConsultReviewResponse } from "@/contract
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Pill } from "@/components/ui/Pill";
 import { consultLinkUrl } from "@/lib/consultLinkUrl";
+import { allFunnels, CHANNEL_LABEL, funnelSourceOf } from "@/funnels";
 
 /**
  * The clinic's consult link and the requests it has produced.
@@ -14,6 +15,10 @@ import { consultLinkUrl } from "@/lib/consultLinkUrl";
  * Contact details are shown only when a practitioner asks for them, one request at a time,
  * because opening one is recorded on the clinical side and a screen that opened all of them
  * to draw a list would make that record meaningless.
+ *
+ * Each request names where it came from: the program page and channel its link belongs to (the queue
+ * already carries the link's slug, so nothing new is recorded), or the link itself when no program page
+ * uses it.
  *
  * Converting a request creates a chart and a link that is still waiting for an invitation.
  * The panel says so, rather than implying the person is now a verified patient: nobody has
@@ -23,16 +28,22 @@ type Links = Extract<ConsultLinkAdminResponse, { action: "list" }>;
 type Queue = Extract<ConsultReviewResponse, { action: "list" }>;
 type Contact = { requestId: string; reference: string; contact: { name: string; email: string; phone: string | null } };
 
-const REASON_LABEL: Record<string, string> = {
+export const REASON_LABEL: Record<string, string> = {
   new_consultation: "Wants to become a patient", lab_review: "Lab review",
   follow_up_care: "Continuing care", supplement_question: "Supplement question",
   program_question: "Program question", insurance_question: "Payment question", other: "Other",
 };
-const VISIT_LABEL: Record<string, string> = {
+/** Where a request came from, from the slug alone: a program page and channel, or the link's own slug. */
+export function requestSource(slug: string): string {
+  const source = funnelSourceOf(allFunnels(), slug);
+  return source ? `${source.funnel.programLabel} page · ${CHANNEL_LABEL[source.channel]}` : `link ${slug}`;
+}
+
+export const VISIT_LABEL: Record<string, string> = {
   initial: "First consultation", follow_up: "Follow-up", urgent_question: "Urgent question",
 };
 
-async function post(body: unknown) {
+export async function post(body: unknown) {
   const response = await fetch("/api/live/consult-requests", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(body), cache: "no-store",
@@ -156,6 +167,7 @@ export function ConsultRequestQueue() {
                 {REASON_LABEL[request.reasonCode] ?? request.reasonCode} · reference {request.reference}
                 {request.timeZone ? ` · ${request.timeZone}` : ""}
               </p>
+              <p className="text-[12px] text-faint" data-testid="consult-request-source">From {requestSource(request.slug)}</p>
               {contact?.requestId === request.requestId ? (
                 <p data-testid="consult-contact" className="mt-1 text-[12px]">
                   {contact.contact.name} · {contact.contact.email}

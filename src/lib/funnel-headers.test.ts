@@ -36,12 +36,31 @@ describe("program funnel route headers", () => {
     expect(value("Permissions-Policy")).toBe("microphone=(), camera=(), geolocation=()");
     }
   });
-  it("adds no API route: the only unauthenticated Desktop route is still the consult intake", () => {
+  it("needs no allowance for the sign-up link: it is a same-origin /join path, and no sign-up host appears in the policy", async () => {
+    vi.stubEnv("APP_EDITION", "clinical");
+    vi.stubEnv("NODE_ENV", "production");
+    const policy = async () => {
+      vi.resetModules();
+      const config = (await import("../../next.config")).default;
+      const entry = (await config.headers!()).find((candidate) => candidate.source === "/learn/:slug");
+      return entry!.headers.find((header) => header.key === "Content-Security-Policy")!.value;
+    };
+    const value = await policy();
+    vi.stubEnv("NEXT_PUBLIC_SITE_ORIGIN", "https://clinic.fictional.example");
+    expect(await policy()).toBe(value);
+    expect(value).not.toMatch(/join|updates|signup/i);
+    vi.unstubAllEnvs();
+  });
+  it("declares exactly four unauthenticated Desktop routes: the consult intake and the three campaign routes", () => {
     const routes: string[] = [];
     const walk = (dir: string) => { for (const entry of readdirSync(dir)) { const path = join(dir, entry); if (statSync(path).isDirectory()) walk(path); else if (entry === "route.ts") routes.push(path.replace(/\\/g, "/")); } };
     walk("src/app/api");
     const publicRoutes = routes.filter((route) => route.includes("/api/public/"));
-    expect(publicRoutes).toEqual(["src/app/api/public/consult/route.ts"]);
+    // The campaign engine (marketing wiring, workstream 2) adds the sign-up post, the confirmation and the RFC 8058
+    // one-click unsubscribe. Each answers not-found while CAMPAIGN_ENGINE_ENABLED is off; SES events reach the engine
+    // by SNS straight into its own function, with no route here.
+    expect(publicRoutes.sort()).toEqual(["src/app/api/public/campaigns/confirm/route.ts", "src/app/api/public/campaigns/join/route.ts",
+      "src/app/api/public/campaigns/unsubscribe/route.ts", "src/app/api/public/consult/route.ts"]);
     expect(routes.some((route) => /funnel|learn|\/buy\//.test(route))).toBe(false);
   });
 });

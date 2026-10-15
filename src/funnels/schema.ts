@@ -14,6 +14,8 @@ import { z } from 'zod';
  * public route answers not-found for it exactly as for an unknown slug.
  */
 const slug = z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/);
+/** The consult link's own slug shape (`consultSlug` in the consult contract, which this module does not import). */
+const consultLinkSlug = z.string().regex(/^[a-z0-9][a-z0-9-]{2,38}[a-z0-9]$/);
 
 const FORBIDDEN: Array<[RegExp, string]> = [
   [/https?:\/\/|www\.|\.com\b|\.net\b|\.org\b/i, 'no address of any kind in funnel copy'],
@@ -68,6 +70,20 @@ export const funnelDefinition = z.object({
   /** The consult link this funnel hands off to; one of the page's two destinations. */
   consultSlug: slug,
   /**
+   * One consult link per channel other than the web, created through the existing link administration. A
+   * campaign email points at the page with `?via=email`; the page uses that value only to choose which of
+   * these slugs its button points at, so queue rows (which carry the slug) count requests per channel with
+   * no schema change and nothing about the visitor stored. A channel with no slug here falls back to
+   * `consultSlug`.
+   */
+  channelConsultSlugs: z.object({ email: consultLinkSlug.optional(), text: consultLinkSlug.optional() }).strict().optional(),
+  /**
+   * The program's list in the campaign engine, or absent for no "Get updates" link. The page's `updatesUrl`
+   * is `/join/<practice>/<this key>`, shown only when a practice offering the list holds the `marketing`
+   * entitlement (`src/lib/marketingSignupLink.ts`); never written here.
+   */
+  updates: z.object({ programKey: slug }).strict().optional(),
+  /**
    * The program this page sells, by clinic and program id, or null while Brandon has not named one. The
    * purchase choice reads the program's offer through this binding and nothing else: a slug or a title is
    * not a product identity, and an unbound page cannot be bought from.
@@ -81,6 +97,8 @@ export const funnelDefinition = z.object({
 }).strict().superRefine((funnel, ctx) => {
   const kinds = funnel.sections.map(s => s.kind);
   if (new Set(kinds).size !== kinds.length) ctx.addIssue({ code: 'custom', message: 'each section kind appears at most once' });
+  const channelSlugs = Object.values(funnel.channelConsultSlugs ?? {});
+  if (new Set([funnel.consultSlug, ...channelSlugs]).size !== channelSlugs.length + 1) ctx.addIssue({ code: 'custom', message: 'each channel hands off to its own consult slug' });
   for (const required of ['hero', 'call-to-action'] as const) if (!kinds.includes(required)) ctx.addIssue({ code: 'custom', message: `a funnel needs a ${required} section` });
   const included = funnel.sections.find(s => s.kind === 'what-is-included');
   if (funnel.status === 'published') {

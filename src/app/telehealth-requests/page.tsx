@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ConsultRequestQueue } from "@/components/consult/ConsultRequestQueue";
+import { ConsultRequestsView } from "@/components/consult/ConsultRequestsView";
 import { ConsultRetentionPanel } from "@/components/consult/ConsultRetentionPanel";
 import { TelehealthRequestQueue } from "@/components/schedule/TelehealthRequestQueue";
 
@@ -24,7 +24,8 @@ export default function TelehealthRequestsPage() {
     <section className="mx-auto max-w-[1000px] px-[22px] pt-[18px] pb-8">
       <PageHeader crumb="Workspace / Inbox / Telehealth" title="Requests"
         sub="New enquiries from your public consult link, and existing patients waiting for scheduling. Meeting links remain pending until an approved video provider is active." />
-      <ConsultRequestQueue />
+      {/* The list by default (unchanged); "Board" shows the same rows as the leads board. */}
+      <ConsultRequestsView />
       <div className="mt-4">
         <ConsultRetentionPanel />
       </div>

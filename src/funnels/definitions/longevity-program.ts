@@ -14,6 +14,8 @@ export const longevityProgram: FunnelDefinition = {
   indexable: true,
   programLabel: 'Longevity Program',
   consultSlug: 'longevity-program',
+  channelConsultSlugs: { email: 'longevity-program-email' },
+  updates: { programKey: 'longevity-program' },
   programBinding: null,
   sections: [
     { kind: 'hero', heading: 'A structured program for long-term health, led by a practitioner',

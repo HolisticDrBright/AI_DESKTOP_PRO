@@ -216,6 +216,18 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Campaign sign-up, confirmation and unsubscribe pages: public, no script from anywhere, never cached, and never
+        // referred, because confirmation and unsubscribe links carry a sealed token in the address.
+        source: "/join/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: FUNNEL_CSP },
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(), camera=(), geolocation=()" },
+        ],
+      },
+      {
         // My courses: a learner's private lesson text once read, so same-origin only, never cached, never referred.
         source: "/courses",
         headers: [

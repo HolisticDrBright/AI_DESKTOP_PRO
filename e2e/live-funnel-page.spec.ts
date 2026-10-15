@@ -15,10 +15,12 @@ test("a signed-out visitor reaches the funnel route and the consult page without
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
-    for (const path of ["/learn/longevity-program", "/learn/no-such-program", "/buy/longevity-program", "/buy/no-such-program"]) {
+    for (const path of ["/learn/longevity-program", "/learn/longevity-program?via=email", "/learn/no-such-program", "/buy/longevity-program", "/buy/no-such-program"]) {
       const response = await page.goto(`${baseURL}${path}`, { waitUntil: "domcontentloaded" });
       expect(response?.status(), path).toBe(404);
       expect(page.url(), path).not.toContain("/login");
+      // The channel a visitor came through is never remembered: no cookie is set for it, or for anything else here.
+      expect(response?.headers()["set-cookie"], path).toBeUndefined();
       await expect(page.getByText("Page not found")).toBeVisible();
       await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
       const csp = response?.headers()["content-security-policy"] ?? "";

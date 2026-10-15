@@ -324,6 +324,7 @@ jobs:
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint infra/aws-clinical-core/telehealth-requests-extension.json
+          cfn-lint infra/campaigns/campaign-engine.json
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
           cfn-lint infra/aws-clinical-core/qualification-program-api-candidate.json
       - name: Build and validate independent voice deployment candidate (no deployment)
@@ -334,6 +335,10 @@ jobs:
         run: |
           node scripts/build-aws-owned-lab.mjs
           cfn-lint dist/aws-clinical-core/owned-lab/template.json
+      - name: Check empty fictional lab-range release store candidate (no deployment or release)
+        run: |
+          node --test scripts/qualification-lab-range-release-store.test.mjs
+          cfn-lint infra/aws-clinical-core/qualification-lab-range-release-store.json
       - name: Build the authenticated API Lambda artifact
         run: npm run build:aws-authenticated-api
       - name: Build governed catalog and deployment artifacts

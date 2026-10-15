@@ -17,3 +17,4 @@ src/contracts/fullscriptConsumerAction.ts text eol=lf
 src/contracts/programStepPurchase.ts text eol=lf
 src/contracts/programCompletion.ts text eol=lf
 src/contracts/fixtures/lab-consideration-trace.json text eol=lf
+src/contracts/patientNotifications.ts text eol=lf

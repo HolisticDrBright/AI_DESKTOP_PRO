@@ -1,0 +1,1432 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AI Desktop Pro campaign engine (commercial; email to people who are not patients yet). Its own table, key, API, functions, SES configuration sets and schedule; no route to or credential for anything clinical. Written and validated, not applied. Every switch defaults off.",
+  "Metadata": {
+    "alp:commercial": true,
+    "alp:defaultsOff": [
+      "CampaignEngineEnabled=false",
+      "SendScheduleState=DISABLED"
+    ],
+    "alp:noClinicalAccess": true
+  },
+  "Parameters": {
+    "CampaignEngineEnabled": {
+      "Type": "String",
+      "AllowedValues": [
+        "false",
+        "true"
+      ],
+      "Default": "false",
+      "Description": "CAMPAIGN_ENGINE_ENABLED for every campaign Lambda. false: every route answers 503 and the sending job does nothing."
+    },
+    "SendScheduleState": {
+      "Type": "String",
+      "AllowedValues": [
+        "DISABLED",
+        "ENABLED"
+      ],
+      "Default": "DISABLED",
+      "Description": "The 5-minute sending schedule. Stays DISABLED until Brandon switches campaign sending on."
+    },
+    "SiteOrigin": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^https://[a-z0-9.-]+$",
+      "Description": "The Desktop's public https origin (program pages, /join, unsubscribe). No default: Brandon chooses the public address."
+    },
+    "FromLocalPart": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-z0-9]([a-z0-9._-]{0,30}[a-z0-9])?$",
+      "Description": "The local part every practice sends from: <local part>@<practice domain>. No default."
+    },
+    "WorkforceIssuer": {
+      "Type": "String",
+      "Default": "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_unset",
+      "Description": "The workforce Cognito pool's issuer, for the staff route's JWT authorizer."
+    },
+    "WorkforceAudience": {
+      "Type": "String",
+      "Default": "unset",
+      "Description": "The workforce app client id, for the staff route's JWT authorizer."
+    },
+    "LambdaCodeBucket": {
+      "Type": "String",
+      "Default": "unset-code-bucket",
+      "Description": "Bucket holding the three campaign Lambda artifacts (npm run build:campaign-engine)."
+    },
+    "ApiCodeKey": {
+      "Type": "String",
+      "Default": "campaigns/api.zip"
+    },
+    "SenderCodeKey": {
+      "Type": "String",
+      "Default": "campaigns/sender.zip"
+    },
+    "EventsCodeKey": {
+      "Type": "String",
+      "Default": "campaigns/events.zip"
+    }
+  },
+  "Resources": {
+    "CampaignKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Description": "Campaign engine (commercial data): table, key secret, event topic, dead-letter queue and logs. No clinical resource uses it.",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AccountAdministers",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "SesPublishesEncryptedEvents",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ses.amazonaws.com"
+              },
+              "Action": [
+                "kms:GenerateDataKey*",
+                "kms:Decrypt"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "LogsUseKey",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": {
+                  "Fn::Sub": "logs.${AWS::Region}.amazonaws.com"
+                }
+              },
+              "Action": [
+                "kms:Encrypt*",
+                "kms:Decrypt*",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:Describe*"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "ArnLike": {
+                  "kms:EncryptionContext:aws:logs:arn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/alp/campaigns/*"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CampaignKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": "alias/alp-campaigns",
+        "TargetKeyId": {
+          "Ref": "CampaignKey"
+        }
+      }
+    },
+    "CampaignTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": "alp-campaigns",
+        "BillingMode": "PAY_PER_REQUEST",
+        "DeletionProtectionEnabled": true,
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "PK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "SK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "duePK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "dueAt",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "PK",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "SK",
+            "KeyType": "RANGE"
+          }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "due",
+            "KeySchema": [
+              {
+                "AttributeName": "duePK",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "dueAt",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "ALL"
+            }
+          }
+        ],
+        "TimeToLiveSpecification": {
+          "AttributeName": "ttl",
+          "Enabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true,
+          "SSEType": "KMS",
+          "KMSMasterKeyId": {
+            "Ref": "CampaignKey"
+          }
+        },
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp-data-class",
+            "Value": "commercial"
+          }
+        ]
+      }
+    },
+    "CampaignKeySecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Name": "alp/campaigns/master-key",
+        "Description": "Campaign token and address-hash master (SHA-256 of this value). Generated here; never copied.",
+        "KmsKeyId": {
+          "Ref": "CampaignKey"
+        },
+        "GenerateSecretString": {
+          "PasswordLength": 64,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "CampaignEventsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "alp-campaign-events",
+        "KmsMasterKeyId": {
+          "Ref": "CampaignKey"
+        }
+      }
+    },
+    "CampaignEventsTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "CampaignEventsTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "SesPublishes",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ses.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "CampaignEventsTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "MarketingSet": {
+      "Type": "AWS::SES::ConfigurationSet",
+      "Properties": {
+        "Name": "alp-marketing",
+        "SuppressionOptions": {
+          "SuppressedReasons": [
+            "BOUNCE",
+            "COMPLAINT"
+          ]
+        },
+        "ReputationOptions": {
+          "ReputationMetricsEnabled": true
+        },
+        "SendingOptions": {
+          "SendingEnabled": true
+        }
+      }
+    },
+    "MarketingSetEvents": {
+      "Type": "AWS::SES::ConfigurationSetEventDestination",
+      "Properties": {
+        "ConfigurationSetName": {
+          "Ref": "MarketingSet"
+        },
+        "EventDestination": {
+          "Name": "campaign-events",
+          "Enabled": true,
+          "MatchingEventTypes": [
+            "BOUNCE",
+            "COMPLAINT",
+            "DELIVERY",
+            "REJECT"
+          ],
+          "SnsDestination": {
+            "TopicARN": {
+              "Ref": "CampaignEventsTopic"
+            }
+          }
+        }
+      }
+    },
+    "MarketingTrackedSet": {
+      "Type": "AWS::SES::ConfigurationSet",
+      "Properties": {
+        "Name": "alp-marketing-tracked",
+        "SuppressionOptions": {
+          "SuppressedReasons": [
+            "BOUNCE",
+            "COMPLAINT"
+          ]
+        },
+        "ReputationOptions": {
+          "ReputationMetricsEnabled": true
+        },
+        "SendingOptions": {
+          "SendingEnabled": true
+        }
+      }
+    },
+    "MarketingTrackedSetEvents": {
+      "Type": "AWS::SES::ConfigurationSetEventDestination",
+      "Properties": {
+        "ConfigurationSetName": {
+          "Ref": "MarketingTrackedSet"
+        },
+        "EventDestination": {
+          "Name": "campaign-events",
+          "Enabled": true,
+          "MatchingEventTypes": [
+            "BOUNCE",
+            "COMPLAINT",
+            "DELIVERY",
+            "REJECT",
+            "OPEN",
+            "CLICK"
+          ],
+          "SnsDestination": {
+            "TopicARN": {
+              "Ref": "CampaignEventsTopic"
+            }
+          }
+        }
+      }
+    },
+    "CampaignApiLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/alp/campaigns/api",
+        "RetentionInDays": 90,
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CampaignSenderLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/alp/campaigns/sender",
+        "RetentionInDays": 90,
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CampaignEventsLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/alp/campaigns/events",
+        "RetentionInDays": 90,
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CampaignApiAccessLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/alp/campaigns/api-access",
+        "RetentionInDays": 90,
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CampaignEventsDeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "alp-campaign-events-dlq",
+        "MessageRetentionPeriod": 1209600,
+        "KmsMasterKeyId": {
+          "Ref": "CampaignKey"
+        }
+      }
+    },
+    "CampaignApiRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "Logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignApiLogs",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CampaignTable",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:ConditionCheckItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "CampaignTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${CampaignTable.Arn}/index/due"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignKey",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "CampaignKeySecret"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "MarketingSendOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "SendFromMarketingIdentities",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/alp-purpose": "marketing"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ThroughMarketingSets",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-marketing"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-marketing-tracked"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "AsPracticeTenants",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:tenant/alp-practice-*"
+                  }
+                },
+                {
+                  "Sid": "NeverTransactional",
+                  "Effect": "Deny",
+                  "Action": "ses:*",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-transactional"
+                  }
+                },
+                {
+                  "Sid": "SendingRate",
+                  "Effect": "Allow",
+                  "Action": "ses:GetAccount",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PracticeDomains",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "CreateMarketingIdentitiesAndTenants",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:CreateEmailIdentity",
+                    "ses:CreateTenant",
+                    "ses:TagResource"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestTag/alp-purpose": "marketing"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ManageMarketingIdentities",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:GetEmailIdentity",
+                    "ses:PutEmailIdentityMailFromAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/alp-purpose": "marketing"
+                    }
+                  }
+                },
+                {
+                  "Sid": "AssociateWithPracticeTenants",
+                  "Effect": "Allow",
+                  "Action": "ses:CreateTenantResourceAssociation",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:tenant/alp-practice-*"
+                  }
+                },
+                {
+                  "Sid": "NeverTransactional",
+                  "Effect": "Deny",
+                  "Action": "ses:*",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-transactional"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ]
+      }
+    },
+    "CampaignSenderRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "Logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignSenderLogs",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CampaignTable",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:ConditionCheckItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "CampaignTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${CampaignTable.Arn}/index/due"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignKey",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "CampaignKeySecret"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "MarketingSendOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "SendFromMarketingIdentities",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/alp-purpose": "marketing"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ThroughMarketingSets",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-marketing"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-marketing-tracked"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "AsPracticeTenants",
+                  "Effect": "Allow",
+                  "Action": "ses:SendEmail",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:tenant/alp-practice-*"
+                  }
+                },
+                {
+                  "Sid": "NeverTransactional",
+                  "Effect": "Deny",
+                  "Action": "ses:*",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/alp-transactional"
+                  }
+                },
+                {
+                  "Sid": "SendingRate",
+                  "Effect": "Allow",
+                  "Action": "ses:GetAccount",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ]
+      }
+    },
+    "CampaignEventsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "Logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignEventsLogs",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CampaignTable",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:ConditionCheckItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "CampaignTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${CampaignTable.Arn}/index/due"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignKey",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "CampaignKeySecret"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "DeadLetters",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignEventsDeadLetters",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ]
+      }
+    },
+    "CampaignApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "alp-campaign-api",
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 15,
+        "Role": {
+          "Fn::GetAtt": [
+            "CampaignApiRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "S3Bucket": {
+            "Ref": "LambdaCodeBucket"
+          },
+          "S3Key": {
+            "Ref": "ApiCodeKey"
+          }
+        },
+        "KmsKeyArn": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        },
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "CampaignApiLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "CAMPAIGN_ENGINE_ENABLED": {
+              "Ref": "CampaignEngineEnabled"
+            },
+            "CAMPAIGN_TABLE_NAME": {
+              "Ref": "CampaignTable"
+            },
+            "CAMPAIGN_KEY_SECRET_ARN": {
+              "Ref": "CampaignKeySecret"
+            },
+            "CAMPAIGN_SITE_ORIGIN": {
+              "Ref": "SiteOrigin"
+            },
+            "CAMPAIGN_CONFIGURATION_SET": {
+              "Ref": "MarketingSet"
+            },
+            "CAMPAIGN_TRACKED_CONFIGURATION_SET": {
+              "Ref": "MarketingTrackedSet"
+            },
+            "CAMPAIGN_FROM_LOCAL_PART": {
+              "Ref": "FromLocalPart"
+            },
+            "CAMPAIGN_ACCOUNT_ID": {
+              "Ref": "AWS::AccountId"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ]
+      }
+    },
+    "CampaignSenderFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "alp-campaign-sender",
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 300,
+        "Role": {
+          "Fn::GetAtt": [
+            "CampaignSenderRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "S3Bucket": {
+            "Ref": "LambdaCodeBucket"
+          },
+          "S3Key": {
+            "Ref": "SenderCodeKey"
+          }
+        },
+        "KmsKeyArn": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        },
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "CampaignSenderLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "CAMPAIGN_ENGINE_ENABLED": {
+              "Ref": "CampaignEngineEnabled"
+            },
+            "CAMPAIGN_TABLE_NAME": {
+              "Ref": "CampaignTable"
+            },
+            "CAMPAIGN_KEY_SECRET_ARN": {
+              "Ref": "CampaignKeySecret"
+            },
+            "CAMPAIGN_SITE_ORIGIN": {
+              "Ref": "SiteOrigin"
+            },
+            "CAMPAIGN_CONFIGURATION_SET": {
+              "Ref": "MarketingSet"
+            },
+            "CAMPAIGN_TRACKED_CONFIGURATION_SET": {
+              "Ref": "MarketingTrackedSet"
+            },
+            "CAMPAIGN_FROM_LOCAL_PART": {
+              "Ref": "FromLocalPart"
+            },
+            "CAMPAIGN_ACCOUNT_ID": {
+              "Ref": "AWS::AccountId"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ],
+        "ReservedConcurrentExecutions": 1
+      }
+    },
+    "CampaignEventsFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "alp-campaign-events",
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "CampaignEventsRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "S3Bucket": {
+            "Ref": "LambdaCodeBucket"
+          },
+          "S3Key": {
+            "Ref": "EventsCodeKey"
+          }
+        },
+        "KmsKeyArn": {
+          "Fn::GetAtt": [
+            "CampaignKey",
+            "Arn"
+          ]
+        },
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "CampaignEventsLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "CAMPAIGN_ENGINE_ENABLED": {
+              "Ref": "CampaignEngineEnabled"
+            },
+            "CAMPAIGN_TABLE_NAME": {
+              "Ref": "CampaignTable"
+            },
+            "CAMPAIGN_KEY_SECRET_ARN": {
+              "Ref": "CampaignKeySecret"
+            },
+            "CAMPAIGN_SITE_ORIGIN": {
+              "Ref": "SiteOrigin"
+            },
+            "CAMPAIGN_CONFIGURATION_SET": {
+              "Ref": "MarketingSet"
+            },
+            "CAMPAIGN_TRACKED_CONFIGURATION_SET": {
+              "Ref": "MarketingTrackedSet"
+            },
+            "CAMPAIGN_FROM_LOCAL_PART": {
+              "Ref": "FromLocalPart"
+            },
+            "CAMPAIGN_ACCOUNT_ID": {
+              "Ref": "AWS::AccountId"
+            },
+            "CAMPAIGN_EVENTS_TOPIC_ARN": {
+              "Ref": "CampaignEventsTopic"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "alp-purpose",
+            "Value": "marketing"
+          }
+        ],
+        "DeadLetterConfig": {
+          "TargetArn": {
+            "Fn::GetAtt": [
+              "CampaignEventsDeadLetters",
+              "Arn"
+            ]
+          }
+        }
+      }
+    },
+    "CampaignHttpApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": "alp-campaign-api",
+        "ProtocolType": "HTTP",
+        "DisableExecuteApiEndpoint": false
+      }
+    },
+    "CampaignStaffAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "AuthorizerType": "JWT",
+        "Name": "workforce",
+        "IdentitySource": [
+          "$request.header.Authorization"
+        ],
+        "JwtConfiguration": {
+          "Issuer": {
+            "Ref": "WorkforceIssuer"
+          },
+          "Audience": [
+            {
+              "Ref": "WorkforceAudience"
+            }
+          ]
+        }
+      }
+    },
+    "CampaignApiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "CampaignApiFunction",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 15000
+      }
+    },
+    "RoutePublicJoinPage": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "GET /campaigns/public/join/{practice}/{program}",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "NONE"
+      }
+    },
+    "RoutePublicSignupOpen": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "GET /campaigns/public/signup-open/{practice}/{program}",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "NONE"
+      }
+    },
+    "RoutePublicJoin": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "POST /campaigns/public/join",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "NONE"
+      }
+    },
+    "RoutePublicConfirm": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "POST /campaigns/public/confirm",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "NONE"
+      }
+    },
+    "RoutePublicUnsubscribe": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "POST /campaigns/public/unsubscribe",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "NONE"
+      }
+    },
+    "RouteStaff": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "RouteKey": "POST /campaigns/workforce",
+        "Target": {
+          "Fn::Sub": "integrations/${CampaignApiIntegration}"
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "CampaignStaffAuthorizer"
+        }
+      }
+    },
+    "CampaignApiStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": {
+        "ApiId": {
+          "Ref": "CampaignHttpApi"
+        },
+        "StageName": "$default",
+        "AutoDeploy": true,
+        "DefaultRouteSettings": {
+          "ThrottlingBurstLimit": 20,
+          "ThrottlingRateLimit": 10
+        },
+        "AccessLogSettings": {
+          "DestinationArn": {
+            "Fn::GetAtt": [
+              "CampaignApiAccessLogs",
+              "Arn"
+            ]
+          },
+          "Format": "{\"requestId\": \"$context.requestId\", \"routeKey\": \"$context.routeKey\", \"status\": \"$context.status\", \"latency\": \"$context.responseLatency\"}"
+        }
+      }
+    },
+    "CampaignApiInvoke": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "CampaignApiFunction"
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${CampaignHttpApi}/*"
+        }
+      }
+    },
+    "CampaignEventsSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "CampaignEventsTopic"
+        },
+        "Protocol": "lambda",
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "CampaignEventsFunction",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CampaignEventsInvoke": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "CampaignEventsFunction"
+        },
+        "Principal": "sns.amazonaws.com",
+        "SourceArn": {
+          "Ref": "CampaignEventsTopic"
+        }
+      }
+    },
+    "CampaignScheduleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "InvokeSender",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:InvokeFunction",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignSenderFunction",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CampaignSendSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Properties": {
+        "Name": "alp-campaign-send",
+        "Description": "Every 5 minutes: send due sequence steps and broadcasts. Idempotent per send.",
+        "ScheduleExpression": "rate(5 minutes)",
+        "State": {
+          "Ref": "SendScheduleState"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "CampaignSenderFunction",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "CampaignScheduleRole",
+              "Arn"
+            ]
+          },
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 0
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "CampaignApiOrigin": {
+      "Value": {
+        "Fn::Sub": "https://${CampaignHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+      },
+      "Description": "CAMPAIGN_API_ORIGIN for the Desktop."
+    },
+    "CampaignTableName": {
+      "Value": {
+        "Ref": "CampaignTable"
+      }
+    },
+    "CampaignEventsTopicArn": {
+      "Value": {
+        "Ref": "CampaignEventsTopic"
+      }
+    }
+  }
+}

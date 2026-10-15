@@ -3,25 +3,28 @@ import { formatAmount, type PurchaseAvailability } from '@/contracts/programOffe
 
 /**
  * A funnel page, rendered on the server from its definition and the program's offer as the server
- * read it. Fixed sections, plain text, no form control, no image, no script. Two destinations and no
- * more: the consult address built from the configured public origin, and, only when the program's
- * offer is actually available, the same-origin purchase page. When it is not, the page says exactly
- * why in the visitor's words, and prints no address, no price and no promise.
+ * read it. Fixed sections, plain text, no form control, no image, no script. Its destinations and no
+ * more: the consult address built from the configured public origin; only when the program's offer is
+ * actually available, the same-origin purchase page; and only when a practice offering the program's
+ * list holds the `marketing` entitlement, that practice's `/join` sign-up page ("Get updates about this
+ * program"), a plain same-origin link with no form or request on this page. When the offer is not available, the page says
+ * exactly why in the visitor's words, and prints no address, no price and no promise.
  */
 const SECTION = 'mx-auto w-full max-w-[760px] px-5 py-8 md:px-8';
 const H2 = 'm-0 text-[22px] font-bold leading-tight text-body';
 const P = 'm-0 mt-3 text-[15px] leading-relaxed text-body';
 const BUTTON = 'inline-flex h-11 items-center rounded-lg bg-action px-5 text-[15px] font-semibold text-white';
 
-export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string };
+/** `updatesUrl`: the offering practice's /join sign-up page for this program, or null when no practice offering it holds the marketing entitlement (then no link at all). */
+export type FunnelPageProps = { funnel: FunnelDefinition; consultHref: string; purchase: PurchaseAvailability; buyHref: string; updatesUrl?: string | null };
 
-export function FunnelPage({ funnel, consultHref, purchase, buyHref }: FunnelPageProps) {
+export function FunnelPage({ funnel, consultHref, purchase, buyHref, updatesUrl = null }: FunnelPageProps) {
   return (
     <article data-testid="funnel-page" data-slug={funnel.slug} data-purchase={purchase.available ? 'available' : purchase.reason} className="w-full">
-      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} purchase={purchase} buyHref={buyHref} />)}
+      {funnel.sections.map(section => <Section key={section.kind} section={section} consultHref={consultHref} programLabel={funnel.programLabel} purchase={purchase} buyHref={buyHref} updatesUrl={updatesUrl} />)}
       <footer className={`${SECTION} border-t border-line`} data-testid="funnel-footer">
         <p className="m-0 text-[12.5px] leading-relaxed text-subtle">
-          {funnel.programLabel} is offered by The Holistic Approach LLC. This page describes a program and offers two choices: to request a consultation, or to buy the program when it is available. It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. No payment details are entered on this page; any purchase is completed on a separate secure checkout page.
+          {funnel.programLabel} is offered by The Holistic Approach LLC. This page describes a program and offers two choices: to request a consultation, or to buy the program when it is available.{updatesUrl ? " You can also ask for email updates about this program on a separate sign-up page; nothing is entered on this page." : ""} It is not medical advice, a diagnosis or a prescription, and it does not replace your own doctor. No payment details are entered on this page; any purchase is completed on a separate secure checkout page.
         </p>
       </footer>
     </article>
@@ -45,7 +48,13 @@ export function PurchaseChoice({ purchase, buyHref, place }: { purchase: Purchas
   );
 }
 
-function Section({ section, consultHref, programLabel, purchase, buyHref }: { section: FunnelSection; consultHref: string; programLabel: string; purchase: PurchaseAvailability; buyHref: string }) {
+/** The second next step: a plain link to the campaign service's sign-up page, shown only when one is configured. */
+function UpdatesLink({ updatesUrl, place }: { updatesUrl: string | null; place: 'top' | 'bottom' }) {
+  if (!updatesUrl) return null;
+  return <a href={updatesUrl} className="text-[14px] text-action underline" data-testid={`funnel-updates-${place}`}>Get updates about this program</a>;
+}
+
+function Section({ section, consultHref, programLabel, purchase, buyHref, updatesUrl }: { section: FunnelSection; consultHref: string; programLabel: string; purchase: PurchaseAvailability; buyHref: string; updatesUrl: string | null }) {
   switch (section.kind) {
     case 'hero':
       return (
@@ -53,7 +62,7 @@ function Section({ section, consultHref, programLabel, purchase, buyHref }: { se
           <p className="m-0 text-[12px] font-bold uppercase tracking-[0.08em] text-subtle">{programLabel}</p>
           <h1 className="m-0 mt-2 text-[34px] font-bold leading-[1.15] text-body">{section.heading}</h1>
           <p className={`${P} text-[17px]`}>{section.lead}</p>
-          <p className="mt-6 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta-top">Request a consultation</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="top" /></p>
+          <p className="mt-6 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta-top">Request a consultation</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="top" /><UpdatesLink updatesUrl={updatesUrl} place="top" /></p>
         </header>
       );
     case 'who-it-is-for':
@@ -116,7 +125,7 @@ function Section({ section, consultHref, programLabel, purchase, buyHref }: { se
         <section className={`${SECTION} rounded-[12px] bg-card`} data-testid="funnel-section-call-to-action">
           <h2 className={H2}>{section.heading}</h2>
           <p className={P}>{section.detail}</p>
-          <p className="mt-5 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta">{section.buttonLabel}</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="bottom" /></p>
+          <p className="mt-5 flex flex-wrap items-center gap-3"><a href={consultHref} className={BUTTON} data-testid="funnel-cta">{section.buttonLabel}</a><PurchaseChoice purchase={purchase} buyHref={buyHref} place="bottom" /><UpdatesLink updatesUrl={updatesUrl} place="bottom" /></p>
         </section>
       );
   }

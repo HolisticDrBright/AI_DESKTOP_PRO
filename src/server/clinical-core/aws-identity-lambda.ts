@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { createAwsIdentityApiHandler } from "./aws-identity-api";
 import { createRdsDataClinicalCoreDatabase } from "./rds-data-database";
+import { identityNotificationPortsFrom } from "../notifications/notification-runtime";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -20,6 +21,9 @@ const database = createRdsDataClinicalCoreDatabase({
 
 export const handler = createAwsIdentityApiHandler({
   database,
+  // PATIENT_NOTICES_ENABLED / SMS_NOTICES_ENABLED and NOTIFICATION_PREFERENCES_ENABLED. The identity
+  // template sets neither, so both ports stay unset and both settings routes answer 503.
+  ...identityNotificationPortsFrom(process.env, database),
   configuration: {
     workforceIssuer: required("CLINICAL_WORKFORCE_ISSUER"),
     workforceAudience: required("CLINICAL_WORKFORCE_AUDIENCE"),
