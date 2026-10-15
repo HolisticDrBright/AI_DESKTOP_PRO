@@ -176,8 +176,9 @@ describe('with every outreach setting unset at once, nothing a visitor or patien
     expect(upstream).toHaveBeenCalledTimes(1);
 
     // The Inbox's panel renders as it did with no argument, and the clinic's notification route does not exist.
-    expect(renderToMarkup(createElement(AppProgramAssignmentsPanel, { notificationChoices: patientNotificationSwitches(process.env).NOTIFICATION_PREFERENCES_ENABLED })))
-      .toBe(renderToMarkup(createElement(AppProgramAssignmentsPanel)));
+    const Panel = AppProgramAssignmentsPanel as (props: { notificationChoices?: boolean }) => ReturnType<typeof AppProgramAssignmentsPanel>;
+    expect(renderToMarkup(createElement(Panel, { notificationChoices: patientNotificationSwitches(process.env).NOTIFICATION_PREFERENCES_ENABLED })))
+      .toBe(renderToMarkup(createElement(Panel)));
     expect((await notificationSettingsRoute(browser('https://x/api/live/patient-notification-settings', '{"action":"read","connectionId":"c"}', 'application/json'))).status).toBe(404);
 
     // Every campaign route is absent; the identity service gets no new port; the status screen reads nothing as on.
