@@ -41,5 +41,10 @@ test('clean source builds one immutable synthetic candidate and refuses the plac
   assert.equal(manifest.deployed, false);
   assert.deepEqual(template.Parameters.SourceCommit.AllowedValues, [sourceCommit]);
   assert.deepEqual(template.Resources.TelehealthFunction.Properties.Code.S3ObjectVersion, { Ref: 'LambdaCodeVersion' });
+  const placeholderPreflight = spawnSync(process.execPath, ['scripts/preflight-aws-telehealth-qualification.mjs',
+    `--artifact-dir=${out}`, '--target=infra/aws-clinical-core/qualification-target-connections.example.json',
+    '--version-id=fictional-version', '--profile=fictional-profile'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(placeholderPreflight.status, 1);
+  assert.match(placeholderPreflight.stderr, /telehealth_qualification_preflight_target_refused/);
   assert.equal(run(targetPath, out).status, 1, 'an existing artifact is never overwritten');
 });

@@ -789,10 +789,14 @@ The generated template pins the API ID, source commit and deployment ZIP key,
 requires an S3 object **version**, and permits only disabled Zoom, reminders and
 Stripe test flags. Its manifest records the SHA-256 of the source target,
 compiled Lambda, deterministic ZIP and template. It performs no upload,
-CloudFormation change, provider activation or hosted test. Before any separate
-deployment, independently verify the signed-in account and API, the reviewed
-target, the uploaded version's bytes and the Lambda's resulting CodeSha256;
-refuse an existing or staging stack name. Then run the fictional hosted
+CloudFormation change, provider activation or hosted test. After a reviewed
+target and immutable code version exist, run
+`npm run preflight:aws-telehealth-qualification -- --artifact-dir=<artifact> --target=<reviewed-target.json> --version-id=<S3-version> --profile=<assumed-role-profile>`.
+This read-only check validates the current shared target schema, rebuilds the
+artifact from clean source, verifies the assumed role, foundation and API,
+downloads the exact S3 version to compare its bytes, and refuses an existing
+or staging stack. It performs no deployment. A separate operator must verify
+the post-deployment Lambda CodeSha256 and stack identity. Then run the fictional hosted
 membership, consent, appointment, cancellation and two-participant race matrix.
 An artifact build or green source test does **not** count as hosted acceptance,
 Zoom approval, PHI readiness or a real-patient launch.
