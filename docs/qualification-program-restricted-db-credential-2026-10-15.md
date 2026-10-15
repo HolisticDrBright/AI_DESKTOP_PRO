@@ -19,6 +19,8 @@ AWS documents that RDS Data API uses the Secrets Manager credential named in eac
 
 The PostgreSQL least-privilege skill guided the separation between a login role and the NOLOGIN API authority role. The candidate does not silently inherit clinical privileges and does not assign administrator or migrator membership.
 
+The first source CI run (`38785904796`) failed the workforce-route inventory because the new top-level template was not yet listed. The reviewed inventory now includes its one workforce route, pins the same route digest as the existing program successor, and keeps the path/issuer and JWT checks. This resolves the inventory failure without relaxing the tripwire; exact-head CI for the repaired source must still pass.
+
 ## Required reviewed operator work before any execution
 
 1. Review the exact SQL and template hashes above, the 112-row qualification ledger, account/region/database identity, row custody and rollback. A preserving schema upgrade needs its own authorization. Do not apply this to staging or production.

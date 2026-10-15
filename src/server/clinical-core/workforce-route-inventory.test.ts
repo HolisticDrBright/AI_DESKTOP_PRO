@@ -13,6 +13,7 @@ const EXPECTED: Readonly<Record<string, { count: number; routeDigest: string }>>
   "production-clinical-api-candidate.json": { count: 9, routeDigest: "a16aaff34b883db2b4b332791771059fe1bde9ccb4bd6a7137f3d07b8845fc99" },
   "production-clinical-api-disabled.json": { count: 1, routeDigest: "5d42d3dd8e834a38864a43b8397a914066954411421db0b9f0ea3443e46dcd07" },
   "qualification-program-api-candidate.json": { count: 1, routeDigest: "63dc618177aac7f1fd6ae3a3b0a79041260aa5259de3a9769ea40fad00c3a95d" },
+  "qualification-program-api-restricted-credential.json": { count: 1, routeDigest: "63dc618177aac7f1fd6ae3a3b0a79041260aa5259de3a9769ea40fad00c3a95d" },
   "qualification-program-api-successor.json": { count: 1, routeDigest: "63dc618177aac7f1fd6ae3a3b0a79041260aa5259de3a9769ea40fad00c3a95d" },
   "telehealth-requests-extension.json": { count: 17, routeDigest: "ad21d7a35fe1d5f98cf9fd62fbb88e3519bb4f8d1bc8499bed6ed6933a559e2e" },
 };
@@ -72,6 +73,8 @@ describe("workforce route authority inventory", () => {
   it("refuses an unreviewed addition, removal or rename in any top-level clinical-core template", () => {
     const actual = actualWorkforceRoutes();
     expect(actual).toEqual(EXPECTED);
-    expect(Object.values(actual).reduce((total, item) => total + item.count, 0)).toBe(59);
+    expect(actual["qualification-program-api-restricted-credential.json"])
+      .toEqual(actual["qualification-program-api-successor.json"]);
+    expect(Object.values(actual).reduce((total, item) => total + item.count, 0)).toBe(60);
   });
 });
