@@ -46,6 +46,8 @@ export const QUALIFICATION_PROGRAM_FUNCTIONS = [
   ['clinical_program_qualification.set_request_context', '(uuid,uuid,text,text,text,text,text)', true, true],
   ['clinical_program_qualification.bounded_request', '(jsonb)', true, true],
 ] as const;
+/** An additive, still-BLOCKED proxy. The base qualification route may coexist with it only at this exact body. */
+export const QUALIFICATION_CURRENT_MEMBERSHIP_PROXY_BODY_SHA256 = '5bfb5080bc9bd3bb5613574fdd15a4bff65ef31f8fb3062cd2784c770377f077';
 
 export function validateQualificationProgramFunctions(supplied: readonly QualificationProgramFunctionBinding[]): QualificationProgramFunctionBinding[] {
   const functions = supplied.map(f => ({ name: f.name, bodySha256: f.bodySha256 }));
@@ -59,7 +61,8 @@ export function validateQualificationProgramFunctions(supplied: readonly Qualifi
  * Deployed-contract metadata check before every transaction, through the qualification role only: each family function has the
  * reviewed body (SHA-256 of prosrc), the reviewed SECURITY DEFINER setting and an empty search_path, is callable by that role exactly
  * when it should be and never by PUBLIC; the qualification boundary and subject tables force row security and grant the
- * role nothing. It also refuses clinical-schema usage and extra functions in the proxy schema. It reads no row of any table.
+ * role nothing. It also refuses clinical-schema usage and every extra proxy except the exact, reviewed optional
+ * current-membership proxy. This compatibility must be deployed before that SQL is ever applied. It reads no table row.
  */
 export function bindQualificationProgramDatabase(database: ClinicalCoreDatabase, supplied: readonly QualificationProgramFunctionBinding[]): ClinicalCoreDatabase {
   const functions = validateQualificationProgramFunctions(supplied);
@@ -86,15 +89,27 @@ export function bindQualificationProgramDatabase(database: ClinicalCoreDatabase,
         and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee=0)) valid
       from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where n.nspname='clinical_core' and c.relname in('program_qualification_boundary','program_qualification_subjects')
+    ), checked_optional_proxy as (
+      select coalesce((select p.prokind='f' and p.prosecdef
+        and p.proconfig=array['search_path=""']::text[]
+        and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=$2
+        and has_function_privilege('clinical_program_qualification_api',p.oid,'EXECUTE')
+        and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+          where a.privilege_type='EXECUTE' and a.grantee not in
+            (p.proowner,(select oid from pg_roles where rolname='clinical_program_qualification_api')))
+        from pg_proc p where p.oid=to_regprocedure('clinical_program_qualification.set_current_workforce_context(text,uuid,text)')),true) as valid
     ), checked_schema as (
       select has_schema_privilege(current_user,'clinical_program_qualification','USAGE')
         and not has_schema_privilege(current_user,'clinical_core','USAGE')
         and not has_schema_privilege(current_user,'clinical_private','USAGE')
-        and (select count(*)=2 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        and (select count(*)=2+case when to_regprocedure('clinical_program_qualification.set_current_workforce_context(text,uuid,text)') is null then 0 else 1 end
+          from pg_proc p join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='clinical_program_qualification') as valid
     ) select current_user='clinical_program_qualification_api'
       and not pg_has_role(current_user,'clinical_core_api','MEMBER')
-      and f.valid and t.valid and s.valid as valid from checked_functions f cross join checked_tables t cross join checked_schema s`, [expected]);
+      and f.valid and t.valid and o.valid and s.valid as valid
+      from checked_functions f cross join checked_tables t cross join checked_optional_proxy o cross join checked_schema s`,
+    [expected, QUALIFICATION_CURRENT_MEMBERSHIP_PROXY_BODY_SHA256]);
     if (check.rows[0]?.valid !== true) throw new ProductionProgramAssignmentError('service_unavailable');
     return work(tx);
   }) };
