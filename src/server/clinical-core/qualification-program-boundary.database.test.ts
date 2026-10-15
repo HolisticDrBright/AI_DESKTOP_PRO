@@ -28,6 +28,7 @@ const DIR = 'infra/aws-clinical-core/production-candidates/';
 const PARENTS = ['lab-result-transfer-v2.sql', 'lab-observation-attestation.sql', 'production-program-assignments.sql', 'production-program-consumer-boundary.sql'].map(f => DIR + f);
 const SUCCESSOR = 'infra/aws-clinical-core/source-candidates/qualification-program-boundary.sql';
 const LOGIN = 'infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql';
+const LOGIN_ROLLBACK = 'infra/aws-clinical-core/source-candidates/qualification-program-api-login-rollback.sql';
 const ROLLBACK = 'infra/aws-clinical-core/source-candidates/qualification-program-boundary-rollback.sql';
 const REDEFINED = ['clinical_core.production_program_assignment_request(jsonb)', 'clinical_private.production_program_bounded_complete(jsonb)', 'clinical_core.production_program_bounded_request(jsonb)'];
 const OPEN_LINE = '\n  and not clinical_private.program_qualification_open()';
@@ -444,5 +445,19 @@ describe('the rollback', () => {
       environment: 'synthetic-staging', dataClassification: 'synthetic_only', containsPhi: false, realPatientData: false }, { action: 'list' })).rejects.toMatchObject({ category: 'identity_refused' });
     expect((await db.query("select to_regprocedure('clinical_core.program_assignment_request(jsonb)')::text f, to_regclass('clinical_core.synthetic_desktop_program_versions')::text t")).rows[0]).toEqual({ f: null, t: null });
     await db.exec(lf(SUCCESSOR));
+  });
+  it('removes the inactive proxy credential candidate without changing the 112 ledger or clinical records', async () => {
+    const databaseName = (await db.query<{ name: string }>('select current_database() as name')).rows[0]!.name;
+    const recordsBefore = (await db.query<{ count: number }>('select count(*)::int as count from clinical_core.program_assignments')).rows[0]!.count;
+    const ledger = JSON.stringify((await db.query('select version,name,sha256 from clinical_core.schema_migrations order by version')).rows);
+    const original = (await db.query<{ definition: string }>(`select pg_get_functiondef(
+      'clinical_private.set_request_context(uuid,uuid,text,text,text,text,text)'::regprocedure) as definition`)).rows[0]!.definition;
+    await db.exec(lf(LOGIN_ROLLBACK).replace("current_database() <> 'clinical_core_qualification'", `current_database() <> '${databaseName}'`));
+    expect((await db.query("select count(*)::int as count from pg_roles where rolname like 'clinical_program_qualification_%'")).rows[0]).toEqual({ count: 0 });
+    expect((await db.query("select count(*)::int as count from pg_namespace where nspname='clinical_program_qualification'")).rows[0]).toEqual({ count: 0 });
+    expect((await db.query<{ count: number }>('select count(*)::int as count from clinical_core.program_assignments')).rows[0]!.count).toBe(recordsBefore);
+    expect(JSON.stringify((await db.query('select version,name,sha256 from clinical_core.schema_migrations order by version')).rows)).toBe(ledger);
+    expect((await db.query<{ definition: string }>(`select pg_get_functiondef(
+      'clinical_private.set_request_context(uuid,uuid,text,text,text,text,text)'::regprocedure) as definition`)).rows[0]!.definition).toBe(original);
   });
 });
