@@ -37,6 +37,9 @@ const CONVERTED = [
   'POST /clinical-core/workforce/data-compatibility',
 ];
 
+// Answered by the current authority with no selected clinic (workforce-membership-discovery.database.test.ts).
+const SUBJECT_ONLY = ['GET /clinical-core/workforce/memberships/current'];
+
 let db: PGlite;
 let outage = false;
 let atStart: ((tx: Transaction) => Promise<void>) | undefined;
@@ -394,8 +397,10 @@ describe('workforce identity and consent under current database membership', () 
     const routes = [...source.matchAll(/"((?:GET|POST) \/clinical-core\/workforce\/[^"]+)"/g)].map((match) => match[1]!);
     // The handler's own list must be exactly this one: a route cannot join the current authority unnoticed.
     expect((await import('./aws-identity-api')).CURRENT_MEMBERSHIP_WORKFORCE_ROUTES).toEqual([...CONVERTED].sort());
-    const unconverted = [...new Set(routes)].filter((route) => !CONVERTED.includes(route));
-    expect(new Set(routes).size).toBe(unconverted.length + CONVERTED.length);
+    // The one subject-only route (first-clinic discovery) is named too; it is tested in its own file.
+    expect((await import('./aws-identity-api')).SUBJECT_ONLY_WORKFORCE_ROUTES).toEqual([...SUBJECT_ONLY]);
+    const unconverted = [...new Set(routes)].filter((route) => !CONVERTED.includes(route) && !SUBJECT_ONLY.includes(route));
+    expect(new Set(routes).size).toBe(unconverted.length + CONVERTED.length + SUBJECT_ONLY.length);
     for (const route of unconverted) {
       const result = await handler(event(route, { sub: practitioner.sub, body: {}, claims: {
         'custom:person_id': practitioner.person, 'custom:organization_id': CLINIC, 'custom:production_bound': 'true' } }));

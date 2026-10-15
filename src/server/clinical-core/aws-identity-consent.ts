@@ -174,6 +174,16 @@ export type CurrentWorkforcePrincipal = { subject: string; selectedOrganizationI
 export type CurrentWorkforceMembership = { organizationId: string; role: "owner" | "admin" | "practitioner" | "staff" };
 
 /**
+ * The signed-in subject's clinics, from current rows and before any clinic is selected: `clinics` are active
+ * memberships with a clinical role, `pending` are memberships still awaiting approval and carry no role (not access).
+ * Nothing about any patient or record is in it.
+ */
+export type WorkforceMembershipDiscovery = {
+  clinics: Array<{ organizationId: string; name: string; role: CurrentWorkforceMembership["role"] }>;
+  pending: Array<{ organizationId: string; name: string }>;
+};
+
+/**
  * The workforce identity and consent family under the unactivated `database_current` authority.
  *
  * Every call opens its own transaction and first runs `clinical_private.set_current_workforce_context` (the
@@ -184,6 +194,8 @@ export type CurrentWorkforceMembership = { organizationId: string; role: "owner"
  * read from the token, and `set_request_context` (which trusts the claimed person and clinic) is never called.
  */
 export interface CurrentMembershipIdentityConsent {
+  /** Subject-only: the UNREGISTERED discovery candidate, for choosing a first clinic. It binds no request context. */
+  discoverMemberships(subject: string): Promise<WorkforceMembershipDiscovery>;
   posture(principal: CurrentWorkforcePrincipal): Promise<CurrentWorkforceMembership>;
   getCurrentConsentArtifact(principal: CurrentWorkforcePrincipal, input: { scope: ConsentScope }): Promise<ConsentArtifactResult>;
   getCurrentConsent(principal: CurrentWorkforcePrincipal, input: {
@@ -301,6 +313,24 @@ function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>
 
 function createCurrentMembershipIdentityConsent(database: ClinicalCoreDatabase): CurrentMembershipIdentityConsent {
   return {
+    async discoverMemberships(subject) {
+      if (!UUID_PATTERN.test(subject)) throw new ClinicalCoreAdapterError("production_boundary_refused");
+      try {
+        return await database.transaction(async (tx) => {
+          const { rows } = await tx.query<{ discovery: unknown }>(
+            "select clinical_private.discover_current_workforce_memberships($1) as discovery", [subject]);
+          const discovery = decodeMembershipDiscovery(rows[0]?.discovery);
+          if (!discovery) throw new ClinicalCoreAdapterError("database_unavailable");
+          return discovery;
+        });
+      } catch (error) {
+        if (error instanceof ClinicalCoreAdapterError) throw error;
+        if (error instanceof ClinicalCoreDatabaseRejection) {
+          throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "production_boundary_refused" : "database_unavailable");
+        }
+        throw new ClinicalCoreAdapterError("database_unavailable");
+      }
+    },
     async posture(principal) {
       return runCurrent(database, principal, "identity_link", async (_tx, _context, membership) => membership);
     },
@@ -557,6 +587,33 @@ async function runCurrent<T>(
     }
     throw new ClinicalCoreAdapterError("database_unavailable");
   }
+}
+
+/** Exactly the candidate's shape, or null: a clinic id that is not a UUID, a missing name or an unknown role is refused. */
+function decodeMembershipDiscovery(value: unknown): WorkforceMembershipDiscovery | null {
+  let row = value;
+  if (typeof row === "string") {
+    try { row = JSON.parse(row) as unknown; } catch { return null; }
+  }
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const { clinics, pending } = row as Record<string, unknown>;
+  if (!Array.isArray(clinics) || !Array.isArray(pending) || clinics.length > 200 || pending.length > 200) return null;
+  const roles: readonly string[] = ["owner", "admin", "practitioner", "staff"];
+  const entry = (item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item)
+    && typeof (item as Record<string, unknown>).organizationId === "string" && UUID_PATTERN.test((item as Record<string, string>).organizationId)
+    && typeof (item as Record<string, unknown>).name === "string" && (item as Record<string, string>).name.length <= 200;
+  if (!clinics.every((item) => entry(item) && roles.includes(String((item as Record<string, unknown>).role)))
+    || !pending.every(entry)) return null;
+  return {
+    clinics: clinics.map((item) => {
+      const value = item as Record<string, string>;
+      return { organizationId: value.organizationId!.toLowerCase(), name: value.name!, role: value.role as CurrentWorkforceMembership["role"] };
+    }),
+    pending: pending.map((item) => {
+      const value = item as Record<string, string>;
+      return { organizationId: value.organizationId!.toLowerCase(), name: value.name! };
+    }),
+  };
 }
 
 function decodeCurrentMembership(value: unknown): { personId: string; organizationId: string; role: CurrentWorkforceMembership["role"] } | null {

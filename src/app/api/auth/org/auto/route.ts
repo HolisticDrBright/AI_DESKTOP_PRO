@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdapterError } from "@/adapters/errors";
 import { safeOrganizationRecoveryPath } from "@/adapters/organization-recovery";
-import { organizationsLive } from "@/adapters/organizations.live";
+import type { OrgMembership } from "@/adapters/organizations.live";
+import { clinicChoices } from "@/server/clinic-choices";
 import { getRequestSession } from "@/server/session";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
 
@@ -31,10 +32,11 @@ export async function GET(req: NextRequest) {
     return localRedirect(`/login?next=${encodeURIComponent(nextPath)}`);
   }
 
-  let organizations: Awaited<ReturnType<typeof organizationsLive.mine>> | null = null;
+  let organizations: OrgMembership[] | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      organizations = await organizationsLive.mine(session.token);
+      // Under database_current, the subject's own discovered clinics; never a clinic the request names.
+      organizations = (await clinicChoices(session.token)).clinics;
       break;
     } catch (error) {
       const retryable = isAdapterError(error) && error.code === "unavailable";

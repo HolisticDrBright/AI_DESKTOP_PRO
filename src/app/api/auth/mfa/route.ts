@@ -9,6 +9,7 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
+import { signInClinic } from "@/server/clinic-choices";
 
 const MAX_BODY = 1024;
 
@@ -61,8 +62,7 @@ export async function POST(req: NextRequest) {
     let orgId: string | null = null;
     try {
       await organizationsLive.claim(tokens.accessToken).catch(() => undefined);
-      const orgs = await organizationsLive.mine(tokens.accessToken);
-      orgId = orgs.find((org) => org.organizationId)?.organizationId ?? null;
+      orgId = await signInClinic(tokens.accessToken);
     } catch {
       orgId = null;
     }

@@ -172,29 +172,28 @@ describe("the selection is written for the account that made it", () => {
     expect(cookieValue(response, "aidp_org_sub")).toBe(binding(subB));
   });
 
-  it("checks a clinic switch against the clinic being chosen, not the previous selection", async () => {
+  it("checks a clinic switch against the account's current clinics, never by asking with the clinic being chosen", async () => {
     session(subA, selected(clinicA, subA));
-    reply = (url, init) => {
-      const asked = Object.entries(init.headers as Record<string, string>).find(([key]) => key.toLowerCase() === HEADER)?.[1];
-      return asked === clinicB
-        ? new Response(JSON.stringify({ data: [{ organization_id: clinicA, name: "A", slug: "a", role: "practitioner" },
-          { organization_id: clinicB, name: "B", slug: "b", role: "staff" }] }), { status: 200 })
-        : new Response(JSON.stringify({ error: "production_boundary_refused" }), { status: 403 });
-    };
+    const discovery = `${ORIGIN}/clinical-core/workforce/memberships/current`;
+    reply = (url) => url === discovery
+      ? new Response(JSON.stringify({ data: { clinics: [{ organizationId: clinicA, name: "A", role: "practitioner" },
+        { organizationId: clinicB, name: "B", role: "staff" }], pending: [] } }), { status: 200 })
+      : new Response(JSON.stringify({ error: "production_boundary_refused" }), { status: 403 });
     const switched = await switchClinic(new NextRequest("https://desktop.example.test/api/auth/org", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId: clinicB }),
     }));
     expect(switched.status).toBe(200);
-    expect(sent().map(clinicHeaders)).toEqual([[clinicB]]);
+    expect(sent().map((call) => call.url)).toEqual([discovery]);
+    expect(sent().map(clinicHeaders)).toEqual([[]]);
     expect(cookieValue(switched, "aidp_org")).toBe(clinicB);
     expect(cookieValue(switched, "aidp_org_sub")).toBe(binding(subA));
-    // A clinic this person is not a member of is refused by the API, and nothing is written.
+    // A clinic this person is not a member of is refused, nothing is written, and it was never sent as a selection.
     const other = randomUUID();
     const refused = await switchClinic(new NextRequest("https://desktop.example.test/api/auth/org", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId: other }),
     }));
     expect(refused.status).toBe(403);
     expect(setCookies(refused).some((line) => line.startsWith("aidp_org"))).toBe(false);
-    expect(sent().map(clinicHeaders)[1]).toEqual([other]);
+    expect(JSON.stringify(sent())).not.toContain(other);
   });
 });

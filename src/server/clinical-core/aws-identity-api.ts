@@ -137,7 +137,7 @@ type RouteDefinition = {
       | "revisions_workforce" | "revisions_consumer"
       | "note_templates" | "note_drafting_context" | "protocol_carts"
       | "outcome_ledger" | "outcome_report" | "consult_retention"
-      | "notification_settings" | "notification_settings_clinic";
+      | "notification_settings" | "notification_settings_clinic" | "discover_memberships";
 };
 
 /**
@@ -183,6 +183,8 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/note-drafting-context": {pool:"workforce",purpose:"clinical_data",operation:"note_drafting_context"},
   "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
+  // Subject-only, production `database_current` only: the signed-in subject's clinics before any is selected.
+  "GET /clinical-core/workforce/memberships/current": { pool: "workforce", purpose: "identity_link", operation: "discover_memberships" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
   "POST /clinical-core/workforce/invitations": { pool: "workforce", purpose: "identity_link", operation: "issue" },
   "POST /clinical-core/consumer/invitations/claim": { pool: "consumer", purpose: "identity_link", operation: "claim" },
@@ -228,6 +230,10 @@ const CURRENT_MEMBERSHIP_WORKFORCE_OPERATIONS: ReadonlySet<RouteDefinition["oper
   "desktop_compatibility",
   "posture", "issue", "grant", "revoke", "get_consent_artifact", "get_current_consent",
 ]);
+/** Workforce routes the current authority answers with no selected clinic: only first-clinic discovery. */
+export const SUBJECT_ONLY_WORKFORCE_ROUTES = Object.entries(ROUTES)
+  .filter(([, route]) => route.pool === "workforce" && route.operation === "discover_memberships")
+  .map(([key]) => key).sort();
 export const CURRENT_MEMBERSHIP_WORKFORCE_ROUTES = Object.entries(ROUTES)
   .filter(([, route]) => route.pool === "workforce" && CURRENT_MEMBERSHIP_WORKFORCE_OPERATIONS.has(route.operation))
   .map(([key]) => key).sort();
@@ -393,6 +399,26 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (!route) return response(404, { error: "route_not_found" });
       if (input.productionPilot && !isProductionPilotRouteAllowed(event.routeKey)) {
         return response(403, { error: "pilot_scope_refused" });
+      }
+      if (route.operation === "discover_memberships") {
+        // The only workforce route with no selected clinic: a first clinic cannot be chosen through a read that
+        // needs one. It answers nothing outside the production `database_current` authority, never reads a
+        // selection (one on the request is refused, not ignored), and binds no request context.
+        if (input.boundary !== "production" || input.productionAuthorityMode !== "database_current") {
+          return response(503, { error: "membership_authority_not_configured" });
+        }
+        const current = (input.adapter as AwsProductionIdentityConsentAdapter | undefined)?.currentMembership;
+        if (!current) return response(503, { error: "membership_authority_not_configured" });
+        if (event.body || Object.keys(event.queryStringParameters ?? {}).length
+          || Object.keys(event.headers ?? {}).some((key) => key.toLowerCase() === "x-alp-selected-organization-id")) {
+          throw new IdentityApiError("request_invalid");
+        }
+        const discovery = await current.discoverMemberships(verifiedWorkforceSubject(event, input.configuration));
+        const pilot = input.productionPilot?.organizationId;
+        return response(200, { data: pilot === undefined ? discovery : {
+          clinics: discovery.clinics.filter((clinic) => clinic.organizationId === pilot),
+          pending: discovery.pending.filter((clinic) => clinic.organizationId === pilot),
+        } });
       }
       if (input.boundary === "production" && input.productionAuthorityMode === "database_current"
         && route.pool === "workforce") {
@@ -1120,18 +1146,14 @@ class IdentityApiError extends Error {
  * group or MFA-looking claim is ignored. Whether this sign-in completed MFA is the pool's guarantee; the token
  * cannot prove it, so it is neither inferred nor required here.
  */
-function currentWorkforcePrincipal(
-  event: ApiGatewayV2Event,
-  configuration: IdentityApiConfiguration,
-  pilotOrganizationId?: string,
-): CurrentWorkforcePrincipal {
+/**
+ * The verified workforce subject of a `database_current` request: the production account, the configured issuer and
+ * audience, an ID token, a UUID `sub`, a verified email, no synthetic attestation and a live expiry. The API Gateway
+ * authorizer also checks expiry; the handler does not depend on that alone. No custom claim is read.
+ */
+function verifiedWorkforceSubject(event: ApiGatewayV2Event, configuration: IdentityApiConfiguration): string {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const get = (name: string) => typeof claims?.[name] === "string" ? claims[name] as string : "";
-  // Two selections in one request are ambiguous: refused, not decided by whichever is read first.
-  const selected = Object.entries(event.headers ?? {})
-    .filter(([key]) => key.toLowerCase() === "x-alp-selected-organization-id");
-  const selectedOrganizationId = selected.length === 1 ? selected[0]![1] ?? "" : "";
-  // The API Gateway authorizer also checks expiry; the handler does not depend on that alone.
   const expiry = Number(claims?.exp);
   if (event.requestContext?.accountId !== "173535830222"
     || get("iss") !== configuration.workforceIssuer
@@ -1139,12 +1161,26 @@ function currentWorkforcePrincipal(
     || get("token_use") !== "id" || !UUID.test(get("sub"))
     || get("email_verified") !== "true"
     || get("custom:synthetic_attested") === "true"
-    || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()
-    || !UUID.test(selectedOrganizationId)
-    || selectedOrganizationId !== pilotOrganizationId) {
+    || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()) {
     throw new IdentityApiError("identity_refused");
   }
-  return { subject: get("sub"),selectedOrganizationId };
+  return get("sub");
+}
+
+function currentWorkforcePrincipal(
+  event: ApiGatewayV2Event,
+  configuration: IdentityApiConfiguration,
+  pilotOrganizationId?: string,
+): CurrentWorkforcePrincipal {
+  const subject = verifiedWorkforceSubject(event, configuration);
+  // Two selections in one request are ambiguous: refused, not decided by whichever is read first.
+  const selected = Object.entries(event.headers ?? {})
+    .filter(([key]) => key.toLowerCase() === "x-alp-selected-organization-id");
+  const selectedOrganizationId = selected.length === 1 ? selected[0]![1] ?? "" : "";
+  if (!UUID.test(selectedOrganizationId) || selectedOrganizationId !== pilotOrganizationId) {
+    throw new IdentityApiError("identity_refused");
+  }
+  return { subject, selectedOrganizationId };
 }
 
 /**

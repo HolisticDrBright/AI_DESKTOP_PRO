@@ -4,6 +4,7 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
+import { signInClinic } from "@/server/clinic-choices";
 
 /**
  * POST { email, password } → practitioner sign-in against the clinical
@@ -96,8 +97,8 @@ export async function POST(req: NextRequest) {
     let orgId: string | null = null;
     try {
       await organizationsLive.claim(tokens.accessToken).catch(() => undefined);
-      const orgs = await organizationsLive.mine(tokens.accessToken);
-      orgId = orgs.find((o) => o.organizationId)?.organizationId ?? null;
+      // Under database_current: the new account's own discovered clinics, and only a single one is selected.
+      orgId = await signInClinic(tokens.accessToken);
     } catch {
       orgId = null;
     }

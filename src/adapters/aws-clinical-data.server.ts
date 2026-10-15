@@ -220,3 +220,45 @@ export async function clinicalLabSpecimenContext(
     ||record.context.observedOn!==matches[0].observed_at.slice(0,10)))throw new AdapterError("unavailable");
   return record;
 }
+
+/**
+ * The signed-in subject's clinics, before any clinic is selected (`database_current` only): the identity API's
+ * subject-only discovery route. It is the one clinical call that sends NO selected-clinic header, because it is how a
+ * first clinic is chosen. `clinics` are active clinical memberships; `pending` await approval and are not access.
+ */
+const discoverySchema = z.object({
+  clinics: z.array(z.object({
+    organizationId: z.string().uuid(), name: z.string().max(200), role: z.enum(["owner", "admin", "practitioner", "staff"]),
+  }).strict()).max(200),
+  pending: z.array(z.object({ organizationId: z.string().uuid(), name: z.string().max(200) }).strict()).max(200),
+}).strict();
+export type ClinicMembershipDiscovery = z.infer<typeof discoverySchema>;
+
+export async function clinicalMembershipDiscovery(token: string | null): Promise<ClinicMembershipDiscovery> {
+  if (!token) throw new AdapterError("unauthenticated");
+  const config = clinicalConfig();
+  if (config.kind !== "aws") throw new AdapterError("unavailable", undefined, "clinic_discovery_unavailable");
+  let response: Response;
+  try {
+    response = await fetch(`${config.origin}/clinical-core/workforce/memberships/current`, {
+      method: "GET", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15000),
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+  } catch (error) {
+    throw new AdapterError("unavailable", undefined, `AWS clinic discovery fetch: ${error instanceof Error ? error.name : "network error"}`);
+  }
+  let payload: unknown;
+  try { payload = await response.json(); } catch {
+    throw new AdapterError("unknown", undefined, `AWS clinic discovery returned non-JSON (${response.status})`);
+  }
+  if (!response.ok) {
+    const serverCode = payload && typeof payload === "object" ? (payload as ClinicalServiceError).code ?? (payload as { error?: string }).error : undefined;
+    throw new AdapterError(mapClinicalServiceError(response.status, serverCode), undefined, `AWS clinic discovery ${response.status}`);
+  }
+  const parsed = discoverySchema.safeParse(payload && typeof payload === "object" ? (payload as { data?: unknown }).data : undefined);
+  if (!parsed.success) throw new AdapterError("unknown", undefined, "AWS clinic discovery envelope invalid");
+  return {
+    clinics: parsed.data.clinics.map((clinic) => ({ ...clinic, organizationId: clinic.organizationId.toLowerCase() })),
+    pending: parsed.data.pending.map((clinic) => ({ ...clinic, organizationId: clinic.organizationId.toLowerCase() })),
+  };
+}
