@@ -14,6 +14,7 @@ begin
   if _subject is null or _subject !~
       '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
     or _selected_organization_id is null
+    or _purpose is null
     or _purpose not in ('clinical_data','identity_link','consent_management') then
     raise exception using errcode='42501',message='workforce_membership_refused';
   end if;

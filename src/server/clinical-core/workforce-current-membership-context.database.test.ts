@@ -132,6 +132,14 @@ describe('unregistered current workforce membership context', () => {
     }
   });
 
+  it('refuses a missing purpose before setting a clinical request context', async () => {
+    await expect(db.transaction(async (tx) => {
+      await tx.exec('set local role clinical_core_api');
+      return tx.query('select clinical_private.set_current_workforce_context($1,$2,$3)',
+        [subject,first,null]);
+    })).rejects.toThrow(/workforce_membership_refused/);
+  });
+
   it('refuses disabled identity, person and clinic at the transaction boundary', async () => {
     await db.query("update clinical_core.identities set status='disabled' where identity_subject=$1",[subject]);
     await expect(context(subject,first)).rejects.toThrow(/workforce_membership_refused/);

@@ -196,10 +196,14 @@ The family needed no new SQL. The existing unregistered setter and the unchanged
 Codex's later review, not now:
 
 - **Candidate:** `infra/aws-clinical-core/source-candidates/workforce-current-membership-context.sql`, SHA-256
-  `dd53a3041fc5a6dc9827e112dfc74a5583768d3ecd4cc65c176f78dbb1d00f06`. It is additive and preserving: one
+  `ff89c1a2d5b934a3a49437099d14b34e5dffed400ae332f26eea2c311a891342`. It is additive and preserving: one
   `security definer` function with `search_path=''`, and no table, row or policy change.
+  This revised digest explicitly refuses a null purpose. The prior candidate digest
+  `dd53a3041fc5a6dc9827e112dfc74a5583768d3ecd4cc65c176f78dbb1d00f06` is withdrawn: its SQL three-valued
+  comparison admitted a null purpose, as reproduced by a failing-before embedded database test. Neither candidate
+  has been registered or applied.
 - **Rollback (new, unregistered):** `infra/aws-clinical-core/source-candidates/workforce-current-membership-context-rollback.sql`,
-  SHA-256 `02adfa04eaa0fec9d3f768822e119abc702caf7155de0a7254fd8074b2808d88`. It drops that one function, which
+  SHA-256 `d0fae1b0c8565400f1f320db3ef765e5dea6d66b6bbe65c2be32d1ccd751dd08`. It drops that one function, which
   removes its grant with it. Afterwards `database_current` requests answer 503; there is no fallback.
 - **Ownership and lock order:**
   - The function is owned by the migration owner.

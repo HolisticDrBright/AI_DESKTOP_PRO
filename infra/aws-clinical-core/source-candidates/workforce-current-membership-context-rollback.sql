@@ -1,5 +1,5 @@
 -- Rollback for workforce-current-membership-context.sql (UNREGISTERED; applied nowhere). The candidate
--- (SHA-256 dd53a3041fc5a6dc9827e112dfc74a5583768d3ecd4cc65c176f78dbb1d00f06) only creates this one function and
+-- (SHA-256 ff89c1a2d5b934a3a49437099d14b34e5dffed400ae332f26eea2c311a891342) only creates this one function and
 -- grants it to clinical_core_api. Dropping it removes the grant with it and touches no table, row, policy or other
 -- function. It fails if the function is absent, so a rollback cannot be mistaken for one that did nothing.
 --
