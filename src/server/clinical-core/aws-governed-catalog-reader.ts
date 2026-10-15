@@ -121,6 +121,13 @@ export function createAwsGovernedCatalogReader(
               input.currentWorkforce.subject, clinicalUuid(input.currentWorkforce.selectedOrganizationId), "clinical_data",
             ]);
           }
+          if (environment === "production-clinical") {
+            const shape = await tx.query<{ compatible: boolean }>(
+              `select (to_regclass('clinical_reference.product_label_versions') is not null
+                and to_regclass('clinical_reference.protocol_template_steps') is not null) as compatible`,
+            );
+            if (shape.rows[0]?.compatible !== true) throw new GovernedCatalogReadError("catalog_unavailable");
+          }
           await tx.query("select set_config('clinical.catalog.environment', $1, true)", [environment]);
           const rows = await tx.query<ProductRow>(
             `select v.product_stable_id, v.version, v.display_name, v.product_type, v.access_tier,
@@ -235,6 +242,13 @@ export function createAwsGovernedCatalogReader(
             await tx.query("select clinical_private.set_current_workforce_context($1,$2,$3)", [
               input.currentWorkforce.subject, clinicalUuid(input.currentWorkforce.selectedOrganizationId), "clinical_data",
             ]);
+          }
+          if (environment === "production-clinical") {
+            const shape = await tx.query<{ compatible: boolean }>(
+              `select (to_regclass('clinical_reference.product_label_versions') is not null
+                and to_regclass('clinical_reference.protocol_template_steps') is not null) as compatible`,
+            );
+            if (shape.rows[0]?.compatible !== true) throw new GovernedCatalogReadError("catalog_unavailable");
           }
           await tx.query("select set_config('clinical.catalog.environment', $1, true)", [environment]);
           const rows = await tx.query<TemplateRow>(

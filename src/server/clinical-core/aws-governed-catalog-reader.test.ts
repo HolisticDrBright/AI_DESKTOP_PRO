@@ -20,6 +20,9 @@ function database(responses: Array<Array<Record<string, unknown>>>) {
         ): Promise<ClinicalCoreQueryResult<Row>> {
           calls.push({ sql, parameters });
           if (sql.includes("set_current_workforce_context")) return { rows: [] };
+          if (sql.includes("to_regclass('clinical_reference.product_label_versions')")) {
+            return { rows: [{ compatible: true }] as unknown as Row[] };
+          }
           if (sql.includes("set_config('clinical.catalog.environment'")) return { rows: [] };
           return { rows: (responses[index++] ?? []) as Row[] };
         },
@@ -63,10 +66,11 @@ describe("AWS governed catalog reader", () => {
       commercial: { offers: [expect.objectContaining({ stableId: "off_reviewed_omega", reviewStatus: "approved" })] },
     });
     expect(db.calls[0]!.parameters).toEqual([currentWorkforce.subject, clinicalUuid(currentWorkforce.selectedOrganizationId), "clinical_data"]);
-    expect(db.calls[1]!.parameters).toEqual(["production-clinical"]);
-    expect(db.calls[2]!.sql).not.toContain("commercial_reference");
-    expect(db.calls[3]!.sql).toContain("product_label_versions");
-    expect(db.calls[4]!.sql).not.toContain("clinical_payload");
+    expect(db.calls[1]!.sql).toContain("to_regclass");
+    expect(db.calls[2]!.parameters).toEqual(["production-clinical"]);
+    expect(db.calls[3]!.sql).not.toContain("commercial_reference");
+    expect(db.calls[4]!.sql).toContain("product_label_versions");
+    expect(db.calls[5]!.sql).not.toContain("clinical_payload");
     expect(db.calls.every((call) => !call.sql.toLowerCase().includes("supabase"))).toBe(true);
   });
 
@@ -157,5 +161,25 @@ describe("AWS governed catalog reader", () => {
       .rejects.toMatchObject({ category: "identity_refused" });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("set_current_workforce_context");
+  });
+
+  test("a production schema without the standalone catalog contract refuses even an empty page", async () => {
+    const calls: string[] = [];
+    const value: ClinicalCoreDatabase = { async transaction(work) {
+      return work({ async query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string): Promise<ClinicalCoreQueryResult<Row>> {
+        calls.push(sql);
+        if (sql.includes("to_regclass")) return { rows: [{ compatible: false }] as unknown as Row[] };
+        return { rows: [] };
+      } });
+    } };
+    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProducts({ limit: 50, currentWorkforce }))
+      .rejects.toMatchObject({ category: "catalog_unavailable" });
+    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProducts({ limit: 50, audience: "consumer" }))
+      .rejects.toMatchObject({ category: "catalog_unavailable" });
+    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProtocolTemplates({ limit: 50, currentWorkforce }))
+      .rejects.toMatchObject({ category: "catalog_unavailable" });
+    expect(calls.filter(sql => sql.includes("to_regclass"))).toHaveLength(3);
+    expect(calls.some(sql => sql.includes("from clinical_reference.catalog_product_versions"))).toBe(false);
+    expect(calls.some(sql => sql.includes("from clinical_reference.protocol_template_versions"))).toBe(false);
   });
 });
