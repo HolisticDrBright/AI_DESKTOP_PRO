@@ -171,7 +171,21 @@ the campaign engine is off, and all three program pages are draft (not-found) as
 
 ## Gate results
 
-See the table at the end of this document, filled in from the run on this tree.
+Run on this branch. `a04c4c03` is the all-off test; `bab82016` changes only that test's typing (a cast for the
+Inbox panel's props), and the two outreach integration files were re-run at `bab82016` (11 passed).
+
+| Gate | Head | Result |
+| --- | --- | --- |
+| Typecheck (`tsc --noEmit -p .`) | `bab82016` | clean (at `a04c4c03` it found the props typing, repaired in `bab82016`) |
+| Lint (`eslint --max-warnings=0`, the 121 script files changed since `22053299`) | `a04c4c03` | 0 problems |
+| Unit (`npm run test:unit`) | `a04c4c03` | 582 files; 8,967 passed, 11 skipped by declaration |
+| Clinical build (`APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build`) | `a04c4c03` | succeeded |
+| cfn-lint 1.57.2 and 1.55.0: `infra/campaigns/campaign-engine.json`, `infra/aws-clinical-core/telehealth-requests-extension.json` | `a04c4c03` | clean, both versions, both templates |
+| Ordered battery (`npm run test:e2e:order`) | `bab82016` | **PASS.** Forward: 324 passed, 0 failed or did not run. Reverse: the same 324 passed. 99 skipped by declaration in each order, not counted as passes. 0 worker restarts; max heap used 2,397 MiB. |
+| `npm run check:stub-reset` | `bab82016` | PASS: 142 mutable bindings, every one covered |
+
+The battery runs fictional local fixtures only. None of it reaches SES, End User Messaging, EventBridge Scheduler or
+any AWS account, so none of it is evidence that a message would be sent or delivered.
 
 ## Settings, all off by default
 
