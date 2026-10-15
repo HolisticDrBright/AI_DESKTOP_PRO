@@ -696,7 +696,10 @@ test("EMR conflict recovery saves local edits against the selected server versio
   expect(external.status()).toBe(200);
 
   await page.getByLabel("Subjective").fill("Practitioner keeps this local edit.");
-  await expect(page.getByTestId("conflict-view")).toBeVisible({ timeout: 10_000 });
+  // Use the suite's configured budget: in next dev, the save itself has a
+  // 12-second deadline, so a 10-second assertion could fail while it is still
+  // legitimately "Saving…" and before the conflict response arrives.
+  await expect(page.getByTestId("conflict-view")).toBeVisible();
   await page.getByRole("button", { name: "Keep my edits (save over v2)" }).click();
   await expect(page.getByTestId("conflict-view")).toHaveCount(0);
   await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v3/, { timeout: 10_000 });
