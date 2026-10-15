@@ -85,6 +85,12 @@ const candidate = {
       PhiAllowed: false,
       Activation: 'blocked',
       SourceTemplate: 'infra/aws-clinical-core/identity-api-extension.json',
+      RuntimeSchemaRequirement: {
+        Adapter: 'synthetic_program_assignments',
+        Function: 'clinical_core.program_assignment_request(jsonb)',
+        ParentTable: 'clinical_core.synthetic_desktop_program_versions',
+        ProductionFunctionIsNotCompatible: 'clinical_core.production_program_assignment_request(jsonb)',
+      },
     },
   },
   Parameters: parameters,

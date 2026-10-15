@@ -14,6 +14,12 @@ test('candidate is a generated, drift-checked source projection', () => {
 test('only the isolated fictional qualification target can satisfy parameters', () => {
   assert.equal(template.Metadata.ClinicalCore.PhiAllowed, false);
   assert.equal(template.Metadata.ClinicalCore.Activation, 'blocked');
+  assert.deepEqual(template.Metadata.ClinicalCore.RuntimeSchemaRequirement, {
+    Adapter: 'synthetic_program_assignments',
+    Function: 'clinical_core.program_assignment_request(jsonb)',
+    ParentTable: 'clinical_core.synthetic_desktop_program_versions',
+    ProductionFunctionIsNotCompatible: 'clinical_core.production_program_assignment_request(jsonb)',
+  });
   assert.deepEqual(template.Parameters.ClinicalApiId.AllowedValues, ['6zt8e9qz04']);
   assert.deepEqual(template.Parameters.DatabaseName.AllowedValues, ['clinical_core_qualification']);
   assert.deepEqual(template.Parameters.LambdaCodeBucket.AllowedValues, ['alp-qualification-code-588966314750-us-east-2']);

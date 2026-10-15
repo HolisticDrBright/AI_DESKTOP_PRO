@@ -24,14 +24,26 @@ This is **not deployed or approved**. The template alone cannot attest the
 Lambda bundle's source commit, the database's exact migration ledger, the
 consent copies or the users behind the JWTs.
 
-**Observed blocker, October 14 Pacific / October 15 UTC:** a read-only Data API
-query of `clinical_core_qualification` returned 112 migration receipts, latest
-`20261010100000`, but no `20260929120000` synthetic program parent and no
-`clinical_core.program_assignments` table. The two routes cannot pass hosted
-program acceptance on this target. A production program-assignment candidate
-exists separately and is still BLOCKED; this observation does not approve its
-registration or application. Resolve the schema lineage with a reviewed,
-preserving qualification upgrade and rollback proof before deploying this API.
+**Observed blocker, October 14 Pacific / October 15 UTC:** read-only Data API
+queries of `clinical_core_qualification` returned 112 migration receipts, latest
+`20261010100000`, but neither `20260929120000` nor the synthetic parent table
+`clinical_core.synthetic_desktop_program_versions`. The target has production-style
+`program_versions`, `program_enrollments`, and related tables, but no
+`clinical_core.program_assignments`. It has neither
+`clinical_core.program_assignment_request(jsonb)` nor
+`clinical_core.production_program_assignment_request(jsonb)`.
+
+This is **a runtime-family mismatch, not merely one missing table**. The projected
+Lambda calls `createProgramAssignments`, which requires a synthetic-staging
+context and calls `program_assignment_request(jsonb)`. The separate BLOCKED
+production candidate defines `production_program_assignment_request(jsonb)`;
+its adapter requires a production-clinical, production-bound context and reviewed
+activation. Installing that candidate alone would not make these two projected
+routes work in this fictional target. Do not deploy this API candidate or graft
+the old synthetic migration onto the populated qualification database. First
+design and review a preserving qualification program boundary, prove its
+rollback and isolation, then build an exact-source candidate for that boundary.
+This observation approves no SQL registration, activation, provider or PHI use.
 
 Before a change set, the operator must:
 
@@ -41,10 +53,11 @@ Before a change set, the operator must:
 2. Bind a built `aws-identity-lambda` artifact to one exact source commit and
    verify its S3 version/checksum and the template hash. The `SourceCommit`
    parameter is an audit label, not proof of bundle contents by itself.
-3. Confirm the qualification database contains the exact program schema and
-   required consent/connection dependencies, using the approved migration
-   operator and read-only ledger inspection. Do not apply a migration just to
-   make this candidate pass.
+3. Resolve the runtime-family mismatch above. Confirm the actual Lambda adapter,
+   function signature, schema lineage and consent/connection dependencies match
+   the same reviewed qualification contract. The currently generated candidate
+   is a blocked design input, not a deployable release. Do not apply a migration
+   merely to make its old adapter pass.
 4. Review the CloudFormation change set for only the candidate's resources,
    with no replacement of the foundation or existing route-owning stacks, and
    preserve `PhiAllowed=false` and all production activation holds.
