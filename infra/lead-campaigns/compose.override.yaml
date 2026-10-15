@@ -1,0 +1,56 @@
+# Lead campaigns, LOCAL use only: an overlay for Dittofeed's own docker-compose.lite.yaml at release v0.23.0
+# (https://github.com/dittofeed/dittofeed/blob/v0.23.0/docker-compose.lite.yaml, MIT; commit
+# fe2b311643f63cad4c9851a87359d1ed0b152070). Dittofeed's file is fetched from that pinned release by the
+# operator; none of it is copied here. The AWS deployment is campaigns-stack.json beside this file.
+# Not run, not deployed: no AWS resource, DNS name, vendor account or list exists.
+#
+# Use:  docker compose -f docker-compose.lite.yaml -f compose.override.yaml up
+#
+# - Upstream's lite service defaults its image tag to v0.22.0 even in the v0.23.0 file; this overlay pins
+#   v0.23.0 explicitly.
+# - The Dittofeed dashboard listens on localhost only. The only open-source sign-in is one shared password
+#   (AUTH_MODE single-tenant): the open-source build's multi-tenant mode decodes a sign-in token without
+#   verifying it, so it is never used here.
+# - Locally nothing is public. In AWS the only public paths are /signup, /confirm and Dittofeed's
+#   subscription-management (unsubscribe) pages. Dittofeed's SES webhook is never public: SES events reach
+#   it through the SES events function on the private network (src/lead-signup/bounces.ts).
+# - Neither service has credentials for, or a network path to, the clinical API or clinical stores.
+# - The sending settings (CAMPAIGN_*) may be left unset: the sign-up service then starts, says sign-ups
+#   are not open, and sends nothing.
+services:
+  lite:
+    image: dittofeed/dittofeed-lite:v0.23.0
+    ports: !override
+      - "127.0.0.1:3000:3000"
+    environment:
+      AUTH_MODE: single-tenant
+      # Required: the upstream defaults ("password", and a SECRET_KEY printed in the upstream file) must never run.
+      PASSWORD: ${DITTOFEED_DASHBOARD_PASSWORD:?set a long dashboard password}
+      SECRET_KEY: ${DITTOFEED_SECRET_KEY:?set a 32-byte base64 secret}
+  lead-signup:
+    # Built from this repository: npm run build:lead-campaigns, then infra/lead-campaigns/lead-signup.Dockerfile.
+    image: ${LEAD_SIGNUP_IMAGE:?set the reviewed lead-signup image}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - lite
+    environment:
+      LEAD_SIGNUP_PUBLIC_ORIGIN: ${LEAD_SIGNUP_PUBLIC_ORIGIN:?}
+      LEAD_SIGNUP_LINK_KEY: ${LEAD_SIGNUP_LINK_KEY:?}
+      LEAD_SIGNUP_ID_KEY: ${LEAD_SIGNUP_ID_KEY:?}
+      LEAD_SIGNUP_STATS_TOKEN: ${LEAD_SIGNUP_STATS_TOKEN:?}
+      DITTOFEED_INTERNAL_URL: http://lite:3000
+      DITTOFEED_WORKSPACE_ID: ${DITTOFEED_WORKSPACE_ID:?}
+      DITTOFEED_WRITE_KEY: ${DITTOFEED_WRITE_KEY:?}
+      DITTOFEED_ADMIN_KEY: ${DITTOFEED_ADMIN_KEY:?}
+      DITTOFEED_GROUP_LONGEVITY_PROGRAM: ${DITTOFEED_GROUP_LONGEVITY_PROGRAM:?}
+      DITTOFEED_GROUP_WEIGHT_LOSS_PROGRAM: ${DITTOFEED_GROUP_WEIGHT_LOSS_PROGRAM:?}
+      DITTOFEED_GROUP_DIABETES_PROGRAM: ${DITTOFEED_GROUP_DIABETES_PROGRAM:?}
+      LEAD_SES_REGION: ${LEAD_SES_REGION:?}
+      LEAD_SES_CONFIGURATION_SET: ${LEAD_SES_CONFIGURATION_SET:?}
+      CAMPAIGN_SENDING_SUBDOMAIN: ${CAMPAIGN_SENDING_SUBDOMAIN:-}
+      CAMPAIGN_FROM_NAME: ${CAMPAIGN_FROM_NAME:-}
+      CAMPAIGN_MAILING_ADDRESS: ${CAMPAIGN_MAILING_ADDRESS:-}
+      CAMPAIGN_TRACKING: ${CAMPAIGN_TRACKING:-}
+      CAMPAIGN_APPROVED_TEXT_VERSION: ${CAMPAIGN_APPROVED_TEXT_VERSION:-}

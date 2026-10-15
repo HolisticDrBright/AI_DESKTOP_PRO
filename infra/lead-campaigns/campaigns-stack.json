@@ -1,0 +1,3091 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AI Longevity Pro campaign service (marketing plane, leads only): Dittofeed v0.23.0 with its Postgres, ClickHouse and Temporal, the sign-up service and the SES events function, in a network of its own with no route to the clinical plane. Written and validated; NOT applied. Services start at 0 tasks.",
+  "Metadata": {
+    "alp": {
+      "contract": "lead-campaigns/1",
+      "status": "not-applied",
+      "dittofeedRelease": "v0.23.0",
+      "dittofeedCommit": "fe2b311643f63cad4c9851a87359d1ed0b152070",
+      "publicPaths": [
+        "/signup",
+        "/signup/*",
+        "/confirm",
+        "/dashboard/public/subscription-management",
+        "/dashboard/public/subscription-management/*",
+        "/dashboard/_next/static/*",
+        "/api/public/subscription-management/*"
+      ]
+    }
+  },
+  "Parameters": {
+    "SendingSubdomain": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.){2,}[a-z]{2,63}$",
+      "Description": "Brandon's decision, empty until made: the dedicated subdomain SES verifies for marketing mail only (never the clinical domain's sending identity). Empty creates no identity, and the sign-up service refuses to send."
+    },
+    "CampaignTracking": {
+      "Type": "String",
+      "Default": "",
+      "AllowedValues": [
+        "",
+        "on",
+        "off"
+      ],
+      "Description": "Brandon's decision, empty until made: whether open and click events are recorded. Must equal the service's CAMPAIGN_TRACKING. Empty records neither and the service refuses to send."
+    },
+    "CampaignFromName": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Brandon's decision, empty until made: the sender name. Passed to the service as CAMPAIGN_FROM_NAME."
+    },
+    "CampaignMailingAddress": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Brandon's decision, empty until made: the physical mailing address printed in every email (CAMPAIGN_MAILING_ADDRESS)."
+    },
+    "CampaignApprovedTextVersion": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^lead-signup-text/[0-9]+$",
+      "Description": "The text version Brandon approved (CAMPAIGN_APPROVED_TEXT_VERSION); the service sends nothing unless it is the current one."
+    },
+    "PublicHostName": {
+      "Type": "String",
+      "AllowedPattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.){2,}[a-z]{2,63}$",
+      "Description": "The campaign service's public host name (sign-up, confirmation and unsubscribe pages). The Desktop's CAMPAIGN_SIGNUP_ORIGIN is https://<this>."
+    },
+    "PublicCertificateArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]{36}$",
+      "Description": "ACM certificate for PublicHostName."
+    },
+    "LeadSignupImage": {
+      "Type": "String",
+      "AllowedPattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(@sha256:[a-f0-9]{64})$",
+      "Description": "The sign-up service image (infra/lead-campaigns/lead-signup.Dockerfile), in this account's ECR, pinned by digest."
+    },
+    "DittofeedLiteImage": {
+      "Type": "String",
+      "Default": "dittofeed/dittofeed-lite:v0.23.0",
+      "AllowedPattern": "^(dittofeed/dittofeed-lite:v0\\.23\\.0|[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(@sha256:[a-f0-9]{64}))$",
+      "Description": "Dittofeed, pinned to release v0.23.0 (commit fe2b311643f63cad4c9851a87359d1ed0b152070), or that release mirrored into this account's ECR by digest."
+    },
+    "TemporalImage": {
+      "Type": "String",
+      "Default": "temporalio/auto-setup:1.22.4",
+      "AllowedPattern": "^(temporalio/auto-setup:1\\.22\\.4|[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(@sha256:[a-f0-9]{64}))$",
+      "Description": "Temporal, the version Dittofeed v0.23.0's own lite compose file runs, or its ECR mirror by digest."
+    },
+    "ClickHouseImage": {
+      "Type": "String",
+      "Default": "clickhouse/clickhouse-server:24.12.6.70-alpine",
+      "AllowedPattern": "^(clickhouse/clickhouse-server:24\\.12\\.6\\.70-alpine|[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(@sha256:[a-f0-9]{64}))$",
+      "Description": "ClickHouse, the version Dittofeed v0.23.0's own compose file runs, or its ECR mirror by digest."
+    },
+    "SesEventsCodeBucket": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "Description": "Bucket holding the SES events function bundle (dist/lead-campaigns/ses-events)."
+    },
+    "SesEventsCodeKey": {
+      "Type": "String",
+      "AllowedPattern": "^[A-Za-z0-9!_.*'()/-]{1,1024}\\.zip$",
+      "Description": "Key of that bundle's zip."
+    },
+    "DittofeedWorkspaceId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[0-9a-f-]{36}$",
+      "Description": "Filled after Dittofeed's first start."
+    },
+    "LongevityProgramGroupId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[0-9a-f-]{36}$",
+      "Description": "The Longevity Program's OPT-IN subscription group, created in Dittofeed."
+    },
+    "WeightLossProgramGroupId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[0-9a-f-]{36}$",
+      "Description": "The weight loss program's OPT-IN subscription group."
+    },
+    "DiabetesProgramGroupId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[0-9a-f-]{36}$",
+      "Description": "The diabetes program's OPT-IN subscription group."
+    },
+    "DesiredTaskCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1
+      ],
+      "Description": "0 creates the services stopped. Raised to 1 only after review, Brandon's go-ahead, and the settings above."
+    },
+    "DittofeedBootstrap": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "Description": "Dittofeed's first-start bootstrap; set to false after the first start, as its compose file says."
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.64.0.0/16",
+      "AllowedPattern": "^10\\.[0-9]{1,3}\\.0\\.0/16$",
+      "Description": "The campaign network's own range. It is never peered or attached to anything."
+    },
+    "BackupRetentionDays": {
+      "Type": "Number",
+      "Default": 35,
+      "MinValue": 7,
+      "MaxValue": 365
+    },
+    "CountsReaderCidr": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^([0-9]{1,3}\\.){3}[0-9]{1,3}/(2[4-9]|3[0-2])$",
+      "Description": "The Desktop server's egress range, the only source that may read /internal/counts (counts only, with the bearer token as well). Empty: the counts are not reachable and the Campaigns screen says it cannot reach the service."
+    }
+  },
+  "Conditions": {
+    "HasSendingSubdomain": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "SendingSubdomain"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "TrackingOn": {
+      "Fn::Equals": [
+        {
+          "Ref": "CampaignTracking"
+        },
+        "on"
+      ]
+    },
+    "HasCountsReader": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "CountsReaderCidr"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "VpcCidr"
+        },
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          },
+          {
+            "Key": "Name",
+            "Value": "alp-campaigns"
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "InternetGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "VpcCidr"
+                },
+                4,
+                12
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PrivateSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            2,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "VpcCidr"
+                },
+                4,
+                12
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "VpcCidr"
+                },
+                4,
+                12
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PrivateSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            3,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "VpcCidr"
+                },
+                4,
+                12
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "NatAddress": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DependsOn": "InternetGatewayAttachment"
+    },
+    "NatGateway": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "NatAddress",
+            "AllocationId"
+          ]
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnet1"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PublicDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      },
+      "DependsOn": "InternetGatewayAttachment"
+    },
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "PrivateDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Ref": "NatGateway"
+        }
+      }
+    },
+    "PublicSubnet1Routes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet1"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "PrivateSubnet1Routes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PrivateSubnet1"
+        },
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        }
+      }
+    },
+    "PublicSubnet2Routes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet2"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "PrivateSubnet2Routes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PrivateSubnet2"
+        },
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        }
+      }
+    },
+    "LoadBalancerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public HTTPS only",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Public pages"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SignupSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Sign-up service",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "SourceSecurityGroupId": {
+              "Ref": "LoadBalancerSecurityGroup"
+            },
+            "Description": "From the load balancer"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SesEventsSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "SES events function (no ingress)",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DittofeedSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Dittofeed",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3000,
+            "ToPort": 3000,
+            "SourceSecurityGroupId": {
+              "Ref": "LoadBalancerSecurityGroup"
+            },
+            "Description": "Public unsubscribe pages only, by listener rule"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3000,
+            "ToPort": 3000,
+            "SourceSecurityGroupId": {
+              "Ref": "SignupSecurityGroup"
+            },
+            "Description": "Write key and counts from the sign-up service"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3000,
+            "ToPort": 3000,
+            "SourceSecurityGroupId": {
+              "Ref": "SesEventsSecurityGroup"
+            },
+            "Description": "Suppression and the SES event relay"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "TemporalSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Temporal",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 7233,
+            "ToPort": 7233,
+            "SourceSecurityGroupId": {
+              "Ref": "DittofeedSecurityGroup"
+            },
+            "Description": "From Dittofeed"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "ClickHouseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ClickHouse",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8123,
+            "ToPort": 8123,
+            "SourceSecurityGroupId": {
+              "Ref": "DittofeedSecurityGroup"
+            },
+            "Description": "From Dittofeed"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DatabaseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Dittofeed and Temporal Postgres",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": {
+              "Ref": "DittofeedSecurityGroup"
+            },
+            "Description": "From Dittofeed"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": {
+              "Ref": "TemporalSecurityGroup"
+            },
+            "Description": "From Temporal"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "ClickHouseStorageSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ClickHouse data volume",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 2049,
+            "ToPort": 2049,
+            "SourceSecurityGroupId": {
+              "Ref": "ClickHouseSecurityGroup"
+            },
+            "Description": "NFS from ClickHouse"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound through the campaign network's own NAT"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DatabaseSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Campaign Postgres (Dittofeed and Temporal)",
+        "GenerateSecretString": {
+          "PasswordLength": 40,
+          "ExcludePunctuation": true,
+          "SecretStringTemplate": "{\"username\":\"dittofeed\"}",
+          "GenerateStringKey": "password"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClickHouseSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Campaign ClickHouse",
+        "GenerateSecretString": {
+          "PasswordLength": 40,
+          "ExcludePunctuation": true,
+          "SecretStringTemplate": "{\"username\":\"dittofeed\"}",
+          "GenerateStringKey": "password"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DittofeedSessionSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Dittofeed SECRET_KEY",
+        "GenerateSecretString": {
+          "PasswordLength": 44,
+          "ExcludePunctuation": true
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DittofeedDashboardPassword": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Dittofeed single-tenant dashboard password (the open-source build has no per-person sign-in)",
+        "GenerateSecretString": {
+          "PasswordLength": 32,
+          "ExcludePunctuation": true
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "LeadSignupLinkKey": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Sign-up confirmation-link key (base64, at least 32 bytes)",
+        "GenerateSecretString": {
+          "PasswordLength": 44,
+          "ExcludePunctuation": true
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "LeadSignupIdKey": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Lead id key, distinct from the link key",
+        "GenerateSecretString": {
+          "PasswordLength": 44,
+          "ExcludePunctuation": true
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "CampaignStatsToken": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Bearer token the Desktop's Campaigns screen reads counts with",
+        "GenerateSecretString": {
+          "PasswordLength": 48,
+          "ExcludePunctuation": true
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DittofeedApiKeysSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "Dittofeed write key and admin key, entered after Dittofeed's first start. Until then the sign-up service refuses to start.",
+        "SecretString": "{\"writeKey\":\"\",\"adminKey\":\"\"}",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DatabaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Campaign Postgres",
+        "SubnetIds": [
+          {
+            "Ref": "PrivateSubnet1"
+          },
+          {
+            "Ref": "PrivateSubnet2"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "Database": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine": "postgres",
+        "EngineVersion": "15.18",
+        "DBInstanceClass": "db.t4g.medium",
+        "AllocatedStorage": "20",
+        "MaxAllocatedStorage": 100,
+        "StorageType": "gp3",
+        "StorageEncrypted": true,
+        "PubliclyAccessible": false,
+        "MultiAZ": false,
+        "DBName": "dittofeed",
+        "MasterUsername": "dittofeed",
+        "MasterUserPassword": {
+          "Fn::Sub": "{{resolve:secretsmanager:${DatabaseSecret}:SecretString:password}}"
+        },
+        "DBSubnetGroupName": {
+          "Ref": "DatabaseSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Ref": "DatabaseSecurityGroup"
+          }
+        ],
+        "BackupRetentionPeriod": {
+          "Ref": "BackupRetentionDays"
+        },
+        "DeletionProtection": true,
+        "CopyTagsToSnapshot": true,
+        "AutoMinorVersionUpgrade": true,
+        "EnableIAMDatabaseAuthentication": false,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot"
+    },
+    "ClickHouseStorage": {
+      "Type": "AWS::EFS::FileSystem",
+      "Properties": {
+        "Encrypted": true,
+        "PerformanceMode": "generalPurpose",
+        "ThroughputMode": "elastic",
+        "BackupPolicy": {
+          "Status": "ENABLED"
+        },
+        "FileSystemTags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClickHouseStorageTarget1": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "ClickHouseStorage"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnet1"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "ClickHouseStorageSecurityGroup"
+          }
+        ]
+      }
+    },
+    "ClickHouseStorageTarget2": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "ClickHouseStorage"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnet2"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "ClickHouseStorageSecurityGroup"
+          }
+        ]
+      }
+    },
+    "ClickHouseAccessPoint": {
+      "Type": "AWS::EFS::AccessPoint",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "ClickHouseStorage"
+        },
+        "PosixUser": {
+          "Uid": "101",
+          "Gid": "101"
+        },
+        "RootDirectory": {
+          "Path": "/clickhouse",
+          "CreationInfo": {
+            "OwnerUid": "101",
+            "OwnerGid": "101",
+            "Permissions": "0750"
+          }
+        },
+        "AccessPointTags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "BackupVault": {
+      "Type": "AWS::Backup::BackupVault",
+      "Properties": {
+        "BackupVaultName": {
+          "Fn::Sub": "alp-campaigns-${AWS::StackName}"
+        },
+        "BackupVaultTags": {
+          "alp:plane": "marketing"
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "BackupPlan": {
+      "Type": "AWS::Backup::BackupPlan",
+      "Properties": {
+        "BackupPlan": {
+          "BackupPlanName": {
+            "Fn::Sub": "alp-campaigns-${AWS::StackName}"
+          },
+          "BackupPlanRule": [
+            {
+              "RuleName": "daily",
+              "TargetBackupVault": {
+                "Ref": "BackupVault"
+              },
+              "ScheduleExpression": "cron(0 7 * * ? *)",
+              "StartWindowMinutes": 60,
+              "CompletionWindowMinutes": 360,
+              "Lifecycle": {
+                "DeleteAfterDays": {
+                  "Ref": "BackupRetentionDays"
+                }
+              }
+            }
+          ]
+        },
+        "BackupPlanTags": {
+          "alp:plane": "marketing"
+        }
+      }
+    },
+    "BackupRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "backup.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+          },
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "BackupSelection": {
+      "Type": "AWS::Backup::BackupSelection",
+      "Properties": {
+        "BackupPlanId": {
+          "Ref": "BackupPlan"
+        },
+        "BackupSelection": {
+          "SelectionName": "campaign-data",
+          "IamRoleArn": {
+            "Fn::GetAtt": [
+              "BackupRole",
+              "Arn"
+            ]
+          },
+          "Resources": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:${Database}"
+            },
+            {
+              "Fn::GetAtt": [
+                "ClickHouseStorage",
+                "Arn"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "MarketingConfigurationSet": {
+      "Type": "AWS::SES::ConfigurationSet",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "alp-marketing-${AWS::StackName}"
+        },
+        "SuppressionOptions": {
+          "SuppressedReasons": [
+            "BOUNCE",
+            "COMPLAINT"
+          ]
+        },
+        "ReputationOptions": {
+          "ReputationMetricsEnabled": true
+        },
+        "SendingOptions": {
+          "SendingEnabled": true
+        }
+      }
+    },
+    "MarketingIdentity": {
+      "Type": "AWS::SES::EmailIdentity",
+      "Properties": {
+        "EmailIdentity": {
+          "Ref": "SendingSubdomain"
+        },
+        "ConfigurationSetAttributes": {
+          "ConfigurationSetName": {
+            "Ref": "MarketingConfigurationSet"
+          }
+        },
+        "DkimSigningAttributes": {
+          "NextSigningKeyLength": "RSA_2048_BIT"
+        },
+        "FeedbackAttributes": {
+          "EmailForwardingEnabled": false
+        }
+      },
+      "Condition": "HasSendingSubdomain"
+    },
+    "MarketingEventsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": {
+          "Fn::Sub": "alp-marketing-ses-events-${AWS::StackName}"
+        },
+        "KmsMasterKeyId": "alias/aws/sns",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "MarketingEventsTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "MarketingEventsTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "SesPublishesThisAccountsMarketingEventsOnly",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ses.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "MarketingEventsTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "MarketingEventsDestination": {
+      "Type": "AWS::SES::ConfigurationSetEventDestination",
+      "Properties": {
+        "ConfigurationSetName": {
+          "Ref": "MarketingConfigurationSet"
+        },
+        "EventDestination": {
+          "Name": "marketing-events",
+          "Enabled": true,
+          "SnsDestination": {
+            "TopicARN": {
+              "Ref": "MarketingEventsTopic"
+            }
+          },
+          "MatchingEventTypes": {
+            "Fn::If": [
+              "TrackingOn",
+              [
+                "send",
+                "delivery",
+                "bounce",
+                "complaint",
+                "reject",
+                "open",
+                "click"
+              ],
+              [
+                "send",
+                "delivery",
+                "bounce",
+                "complaint",
+                "reject"
+              ]
+            ]
+          }
+        }
+      },
+      "DependsOn": "MarketingEventsTopicPolicy"
+    },
+    "DittofeedSesSender": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "send-marketing-only",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail",
+                    "ses:SendRawEmail"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SendingSubdomain}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${MarketingConfigurationSet}"
+                    }
+                  ],
+                  "Condition": {
+                    "StringLike": {
+                      "ses:FromAddress": {
+                        "Fn::Sub": "*@${SendingSubdomain}"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "Condition": "HasSendingSubdomain"
+    },
+    "Cluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterSettings": [
+          {
+            "Name": "containerInsights",
+            "Value": "enabled"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "ServiceNamespace": {
+      "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace",
+      "Properties": {
+        "Name": "campaigns.internal",
+        "Vpc": {
+          "Ref": "Vpc"
+        },
+        "Description": "Campaign network only",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DittofeedLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 30,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "TemporalLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 30,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "ClickHouseLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 30,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SignupLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 30,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SesEventsLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 30,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "TaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "read-campaign-secrets-only",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": [
+                    {
+                      "Ref": "DatabaseSecret"
+                    },
+                    {
+                      "Ref": "ClickHouseSecret"
+                    },
+                    {
+                      "Ref": "DittofeedSessionSecret"
+                    },
+                    {
+                      "Ref": "DittofeedDashboardPassword"
+                    },
+                    {
+                      "Ref": "LeadSignupLinkKey"
+                    },
+                    {
+                      "Ref": "LeadSignupIdKey"
+                    },
+                    {
+                      "Ref": "CampaignStatsToken"
+                    },
+                    {
+                      "Ref": "DittofeedApiKeysSecret"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DittofeedTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SignupTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "send-confirmations-only",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail",
+                    "ses:SendRawEmail"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SendingSubdomain}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${MarketingConfigurationSet}"
+                    }
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "ses:FromAddress": {
+                        "Fn::Sub": "updates@${SendingSubdomain}"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DittofeedTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "alp-campaigns-dittofeed-${AWS::StackName}"
+        },
+        "Cpu": "1024",
+        "Memory": "2048",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "dittofeed",
+            "Image": {
+              "Ref": "DittofeedLiteImage"
+            },
+            "Essential": true,
+            "Command": [
+              "node",
+              "--max-old-space-size=1536",
+              "./packages/lite/dist/scripts/startLite.js",
+              "--workspace-name=Default"
+            ],
+            "PortMappings": [
+              {
+                "ContainerPort": 3000,
+                "Protocol": "tcp"
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "DATABASE_HOST",
+                "Value": {
+                  "Fn::GetAtt": [
+                    "Database",
+                    "Endpoint.Address"
+                  ]
+                }
+              },
+              {
+                "Name": "DATABASE_PORT",
+                "Value": "5432"
+              },
+              {
+                "Name": "DATABASE_USER",
+                "Value": "dittofeed"
+              },
+              {
+                "Name": "CLICKHOUSE_HOST",
+                "Value": "http://clickhouse.campaigns.internal:8123"
+              },
+              {
+                "Name": "CLICKHOUSE_USER",
+                "Value": "dittofeed"
+              },
+              {
+                "Name": "TEMPORAL_ADDRESS",
+                "Value": "temporal.campaigns.internal:7233"
+              },
+              {
+                "Name": "WORKSPACE_NAME",
+                "Value": "Default"
+              },
+              {
+                "Name": "AUTH_MODE",
+                "Value": "single-tenant"
+              },
+              {
+                "Name": "DASHBOARD_URL",
+                "Value": {
+                  "Fn::Sub": "https://${PublicHostName}"
+                }
+              },
+              {
+                "Name": "DASHBOARD_API_BASE",
+                "Value": {
+                  "Fn::Sub": "https://${PublicHostName}"
+                }
+              },
+              {
+                "Name": "BOOTSTRAP",
+                "Value": {
+                  "Ref": "DittofeedBootstrap"
+                }
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "DATABASE_PASSWORD",
+                "ValueFrom": {
+                  "Fn::Sub": "${DatabaseSecret}:password::"
+                }
+              },
+              {
+                "Name": "CLICKHOUSE_PASSWORD",
+                "ValueFrom": {
+                  "Fn::Sub": "${ClickHouseSecret}:password::"
+                }
+              },
+              {
+                "Name": "SECRET_KEY",
+                "ValueFrom": {
+                  "Ref": "DittofeedSessionSecret"
+                }
+              },
+              {
+                "Name": "PASSWORD",
+                "ValueFrom": {
+                  "Ref": "DittofeedDashboardPassword"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "DittofeedLogs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "dittofeed"
+              }
+            },
+            "ReadonlyRootFilesystem": false
+          }
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "DittofeedTaskRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "TemporalTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "alp-campaigns-temporal-${AWS::StackName}"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "temporal",
+            "Image": {
+              "Ref": "TemporalImage"
+            },
+            "Essential": true,
+            "PortMappings": [
+              {
+                "ContainerPort": 7233,
+                "Protocol": "tcp"
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "DB",
+                "Value": "postgresql"
+              },
+              {
+                "Name": "DB_PORT",
+                "Value": "5432"
+              },
+              {
+                "Name": "POSTGRES_USER",
+                "Value": "dittofeed"
+              },
+              {
+                "Name": "POSTGRES_SEEDS",
+                "Value": {
+                  "Fn::GetAtt": [
+                    "Database",
+                    "Endpoint.Address"
+                  ]
+                }
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "POSTGRES_PWD",
+                "ValueFrom": {
+                  "Fn::Sub": "${DatabaseSecret}:password::"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "TemporalLogs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "temporal"
+              }
+            }
+          }
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "ClickHouseTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "alp-campaigns-clickhouse-${AWS::StackName}"
+        },
+        "Cpu": "1024",
+        "Memory": "4096",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "clickhouse",
+            "Image": {
+              "Ref": "ClickHouseImage"
+            },
+            "Essential": true,
+            "PortMappings": [
+              {
+                "ContainerPort": 8123,
+                "Protocol": "tcp"
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "CLICKHOUSE_USER",
+                "Value": "dittofeed"
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "CLICKHOUSE_PASSWORD",
+                "ValueFrom": {
+                  "Fn::Sub": "${ClickHouseSecret}:password::"
+                }
+              }
+            ],
+            "MountPoints": [
+              {
+                "SourceVolume": "clickhouse-data",
+                "ContainerPath": "/var/lib/clickhouse",
+                "ReadOnly": false
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "ClickHouseLogs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "clickhouse"
+              }
+            }
+          }
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "Volumes": [
+          {
+            "Name": "clickhouse-data",
+            "EFSVolumeConfiguration": {
+              "FilesystemId": {
+                "Ref": "ClickHouseStorage"
+              },
+              "TransitEncryption": "ENABLED",
+              "AuthorizationConfig": {
+                "AccessPointId": {
+                  "Ref": "ClickHouseAccessPoint"
+                },
+                "IAM": "DISABLED"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "SignupTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "alp-campaigns-signup-${AWS::StackName}"
+        },
+        "Cpu": "256",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "lead-signup",
+            "Image": {
+              "Ref": "LeadSignupImage"
+            },
+            "Essential": true,
+            "PortMappings": [
+              {
+                "ContainerPort": 8080,
+                "Protocol": "tcp"
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "PORT",
+                "Value": "8080"
+              },
+              {
+                "Name": "LEAD_SIGNUP_PUBLIC_ORIGIN",
+                "Value": {
+                  "Fn::Sub": "https://${PublicHostName}"
+                }
+              },
+              {
+                "Name": "DITTOFEED_INTERNAL_URL",
+                "Value": "http://dittofeed.campaigns.internal:3000"
+              },
+              {
+                "Name": "DITTOFEED_WORKSPACE_ID",
+                "Value": {
+                  "Ref": "DittofeedWorkspaceId"
+                }
+              },
+              {
+                "Name": "LEAD_SES_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LEAD_SES_CONFIGURATION_SET",
+                "Value": {
+                  "Ref": "MarketingConfigurationSet"
+                }
+              },
+              {
+                "Name": "CAMPAIGN_SENDING_SUBDOMAIN",
+                "Value": {
+                  "Ref": "SendingSubdomain"
+                }
+              },
+              {
+                "Name": "CAMPAIGN_FROM_NAME",
+                "Value": {
+                  "Ref": "CampaignFromName"
+                }
+              },
+              {
+                "Name": "CAMPAIGN_MAILING_ADDRESS",
+                "Value": {
+                  "Ref": "CampaignMailingAddress"
+                }
+              },
+              {
+                "Name": "CAMPAIGN_TRACKING",
+                "Value": {
+                  "Ref": "CampaignTracking"
+                }
+              },
+              {
+                "Name": "CAMPAIGN_APPROVED_TEXT_VERSION",
+                "Value": {
+                  "Ref": "CampaignApprovedTextVersion"
+                }
+              },
+              {
+                "Name": "DITTOFEED_GROUP_LONGEVITY_PROGRAM",
+                "Value": {
+                  "Ref": "LongevityProgramGroupId"
+                }
+              },
+              {
+                "Name": "DITTOFEED_GROUP_WEIGHT_LOSS_PROGRAM",
+                "Value": {
+                  "Ref": "WeightLossProgramGroupId"
+                }
+              },
+              {
+                "Name": "DITTOFEED_GROUP_DIABETES_PROGRAM",
+                "Value": {
+                  "Ref": "DiabetesProgramGroupId"
+                }
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "LEAD_SIGNUP_LINK_KEY",
+                "ValueFrom": {
+                  "Ref": "LeadSignupLinkKey"
+                }
+              },
+              {
+                "Name": "LEAD_SIGNUP_ID_KEY",
+                "ValueFrom": {
+                  "Ref": "LeadSignupIdKey"
+                }
+              },
+              {
+                "Name": "LEAD_SIGNUP_STATS_TOKEN",
+                "ValueFrom": {
+                  "Ref": "CampaignStatsToken"
+                }
+              },
+              {
+                "Name": "DITTOFEED_WRITE_KEY",
+                "ValueFrom": {
+                  "Fn::Sub": "${DittofeedApiKeysSecret}:writeKey::"
+                }
+              },
+              {
+                "Name": "DITTOFEED_ADMIN_KEY",
+                "ValueFrom": {
+                  "Fn::Sub": "${DittofeedApiKeysSecret}:adminKey::"
+                }
+              }
+            ],
+            "ReadonlyRootFilesystem": true,
+            "User": "node",
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "SignupLogs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "lead-signup"
+              }
+            }
+          }
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "SignupTaskRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "DittofeedDiscovery": {
+      "Type": "AWS::ServiceDiscovery::Service",
+      "Properties": {
+        "Name": "dittofeed",
+        "NamespaceId": {
+          "Ref": "ServiceNamespace"
+        },
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "Type": "A",
+              "TTL": 10
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        }
+      }
+    },
+    "TemporalDiscovery": {
+      "Type": "AWS::ServiceDiscovery::Service",
+      "Properties": {
+        "Name": "temporal",
+        "NamespaceId": {
+          "Ref": "ServiceNamespace"
+        },
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "Type": "A",
+              "TTL": 10
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        }
+      }
+    },
+    "ClickHouseDiscovery": {
+      "Type": "AWS::ServiceDiscovery::Service",
+      "Properties": {
+        "Name": "clickhouse",
+        "NamespaceId": {
+          "Ref": "ServiceNamespace"
+        },
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "Type": "A",
+              "TTL": 10
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        }
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": [
+          {
+            "Ref": "PublicSubnet1"
+          },
+          {
+            "Ref": "PublicSubnet2"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Ref": "LoadBalancerSecurityGroup"
+          }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "routing.http.drop_invalid_header_fields.enabled",
+            "Value": "true"
+          },
+          {
+            "Key": "deletion_protection.enabled",
+            "Value": "true"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      },
+      "DependsOn": "InternetGatewayAttachment"
+    },
+    "SignupTargets": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Protocol": "HTTP",
+        "Port": 8080,
+        "TargetType": "ip",
+        "HealthCheckPath": "/healthz",
+        "Matcher": {
+          "HttpCode": "200-399"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "DittofeedPublicTargets": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Protocol": "HTTP",
+        "Port": 3000,
+        "TargetType": "ip",
+        "HealthCheckPath": "/api",
+        "Matcher": {
+          "HttpCode": "200-399"
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "HttpsListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "LoadBalancer"
+        },
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "SslPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+        "Certificates": [
+          {
+            "CertificateArn": {
+              "Ref": "PublicCertificateArn"
+            }
+          }
+        ],
+        "DefaultActions": [
+          {
+            "Type": "fixed-response",
+            "FixedResponseConfig": {
+              "StatusCode": "404",
+              "ContentType": "text/plain",
+              "MessageBody": "Not found"
+            }
+          }
+        ]
+      }
+    },
+    "SignupRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "HttpsListener"
+        },
+        "Priority": 10,
+        "Conditions": [
+          {
+            "Field": "path-pattern",
+            "PathPatternConfig": {
+              "Values": [
+                "/signup",
+                "/signup/*",
+                "/confirm"
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "SignupTargets"
+            }
+          }
+        ]
+      }
+    },
+    "UnsubscribePageRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "HttpsListener"
+        },
+        "Priority": 20,
+        "Conditions": [
+          {
+            "Field": "path-pattern",
+            "PathPatternConfig": {
+              "Values": [
+                "/dashboard/public/subscription-management",
+                "/dashboard/public/subscription-management/*",
+                "/dashboard/_next/static/*"
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "DittofeedPublicTargets"
+            }
+          }
+        ]
+      }
+    },
+    "UnsubscribeApiRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "HttpsListener"
+        },
+        "Priority": 30,
+        "Conditions": [
+          {
+            "Field": "path-pattern",
+            "PathPatternConfig": {
+              "Values": [
+                "/api/public/subscription-management/*"
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "DittofeedPublicTargets"
+            }
+          }
+        ]
+      }
+    },
+    "CountsRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "HttpsListener"
+        },
+        "Priority": 40,
+        "Conditions": [
+          {
+            "Field": "path-pattern",
+            "PathPatternConfig": {
+              "Values": [
+                "/internal/counts"
+              ]
+            }
+          },
+          {
+            "Field": "source-ip",
+            "SourceIpConfig": {
+              "Values": [
+                {
+                  "Ref": "CountsReaderCidr"
+                }
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "SignupTargets"
+            }
+          }
+        ]
+      },
+      "Condition": "HasCountsReader"
+    },
+    "ClickHouseService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "TaskDefinition": {
+          "Ref": "ClickHouseTask"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredTaskCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": [
+              {
+                "Ref": "PrivateSubnet1"
+              },
+              {
+                "Ref": "PrivateSubnet2"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "ClickHouseSecurityGroup"
+              }
+            ]
+          }
+        },
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "EnableExecuteCommand": false,
+        "PropagateTags": "SERVICE",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "ClickHouseDiscovery",
+                "Arn"
+              ]
+            }
+          }
+        ]
+      },
+      "DependsOn": [
+        "ClickHouseStorageTarget1",
+        "ClickHouseStorageTarget2"
+      ]
+    },
+    "TemporalService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "TaskDefinition": {
+          "Ref": "TemporalTask"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredTaskCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": [
+              {
+                "Ref": "PrivateSubnet1"
+              },
+              {
+                "Ref": "PrivateSubnet2"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "TemporalSecurityGroup"
+              }
+            ]
+          }
+        },
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "EnableExecuteCommand": false,
+        "PropagateTags": "SERVICE",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "TemporalDiscovery",
+                "Arn"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "DittofeedService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "TaskDefinition": {
+          "Ref": "DittofeedTask"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredTaskCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": [
+              {
+                "Ref": "PrivateSubnet1"
+              },
+              {
+                "Ref": "PrivateSubnet2"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "DittofeedSecurityGroup"
+              }
+            ]
+          }
+        },
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "EnableExecuteCommand": false,
+        "PropagateTags": "SERVICE",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "DittofeedDiscovery",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "LoadBalancers": [
+          {
+            "TargetGroupArn": {
+              "Ref": "DittofeedPublicTargets"
+            },
+            "ContainerName": "dittofeed",
+            "ContainerPort": 3000
+          }
+        ]
+      },
+      "DependsOn": [
+        "UnsubscribePageRule",
+        "UnsubscribeApiRule"
+      ]
+    },
+    "SignupService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "TaskDefinition": {
+          "Ref": "SignupTask"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredTaskCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": [
+              {
+                "Ref": "PrivateSubnet1"
+              },
+              {
+                "Ref": "PrivateSubnet2"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "SignupSecurityGroup"
+              }
+            ]
+          }
+        },
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "EnableExecuteCommand": false,
+        "PropagateTags": "SERVICE",
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ],
+        "LoadBalancers": [
+          {
+            "TargetGroupArn": {
+              "Ref": "SignupTargets"
+            },
+            "ContainerName": "lead-signup",
+            "ContainerPort": 8080
+          }
+        ]
+      },
+      "DependsOn": [
+        "SignupRule"
+      ]
+    },
+    "SesEventsDeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SesEventsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "dead-letters-and-two-secrets-only",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SesEventsDeadLetters",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": [
+                    {
+                      "Ref": "LeadSignupIdKey"
+                    },
+                    {
+                      "Ref": "DittofeedApiKeysSecret"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SesEventsFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "SesEventsRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 30,
+        "MemorySize": 256,
+        "Code": {
+          "S3Bucket": {
+            "Ref": "SesEventsCodeBucket"
+          },
+          "S3Key": {
+            "Ref": "SesEventsCodeKey"
+          }
+        },
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "SesEventsLogs"
+          }
+        },
+        "VpcConfig": {
+          "SubnetIds": [
+            {
+              "Ref": "PrivateSubnet1"
+            },
+            {
+              "Ref": "PrivateSubnet2"
+            }
+          ],
+          "SecurityGroupIds": [
+            {
+              "Ref": "SesEventsSecurityGroup"
+            }
+          ]
+        },
+        "ReservedConcurrentExecutions": 2,
+        "Environment": {
+          "Variables": {
+            "LEAD_SES_EVENTS_TOPIC_ARN": {
+              "Ref": "MarketingEventsTopic"
+            },
+            "DITTOFEED_INTERNAL_URL": "http://dittofeed.campaigns.internal:3000",
+            "DITTOFEED_WORKSPACE_ID": {
+              "Ref": "DittofeedWorkspaceId"
+            },
+            "LEAD_SIGNUP_ID_KEY_SECRET_ARN": {
+              "Ref": "LeadSignupIdKey"
+            },
+            "DITTOFEED_API_KEYS_SECRET_ARN": {
+              "Ref": "DittofeedApiKeysSecret"
+            },
+            "DITTOFEED_GROUP_LONGEVITY_PROGRAM": {
+              "Ref": "LongevityProgramGroupId"
+            },
+            "DITTOFEED_GROUP_WEIGHT_LOSS_PROGRAM": {
+              "Ref": "WeightLossProgramGroupId"
+            },
+            "DITTOFEED_GROUP_DIABETES_PROGRAM": {
+              "Ref": "DiabetesProgramGroupId"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "alp:plane",
+            "Value": "marketing"
+          },
+          {
+            "Key": "alp:data",
+            "Value": "commercial-leads-only"
+          }
+        ]
+      }
+    },
+    "SesEventsInvokeConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "SesEventsFunction"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 2,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "SesEventsDeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "SesEventsPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "SesEventsFunction"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "sns.amazonaws.com",
+        "SourceArn": {
+          "Ref": "MarketingEventsTopic"
+        }
+      }
+    },
+    "SesEventsSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "MarketingEventsTopic"
+        },
+        "Protocol": "lambda",
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "SesEventsFunction",
+            "Arn"
+          ]
+        }
+      },
+      "DependsOn": "SesEventsPermission"
+    }
+  },
+  "Outputs": {
+    "CampaignSignupOrigin": {
+      "Description": "The Desktop's CAMPAIGN_SIGNUP_ORIGIN, once DNS points PublicHostName at the load balancer.",
+      "Value": {
+        "Fn::Sub": "https://${PublicHostName}"
+      }
+    },
+    "LoadBalancerDnsName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "LoadBalancer",
+          "DNSName"
+        ]
+      }
+    },
+    "MarketingConfigurationSetName": {
+      "Value": {
+        "Ref": "MarketingConfigurationSet"
+      }
+    },
+    "MarketingEventsTopicArn": {
+      "Value": {
+        "Ref": "MarketingEventsTopic"
+      }
+    }
+  }
+}

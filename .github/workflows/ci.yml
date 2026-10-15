@@ -192,6 +192,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json
+          cfn-lint infra/lead-campaigns/campaigns-stack.json
           find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
       - name: Native media host identity, restricted SQL and bounded binary routes (fictional transports only)
         run: npx vitest run src/server/programs/program-media-host-authority.test.ts src/server/programs/program-media-host-bootstrap.test.ts src/server/programs/program-media-host-database.test.ts src/server/programs/program-media-image-http.test.ts src/server/programs/program-media-installed-host.test.ts
