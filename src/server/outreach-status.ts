@@ -4,6 +4,7 @@ import { allFunnels, type FunnelDefinition } from '@/funnels';
 import { indexingAllowed, isStagingOrSynthetic, publicSiteOrigin } from '@/lib/publicSite';
 import { CampaignApiError, campaignApiCall, campaignApiOrigin, campaignEngineEnabled, funnelPracticeSlug } from '@/server/campaign-api';
 import { selectProgramOfferLedger, type ProgramOfferLedgerSelection } from '@/server/commerce/program-commerce-runtime';
+import { consultEnquirerEmailConfig } from '@/server/consult/consultEnquirerEmail';
 
 /**
  * The Outreach status screen's rows: one per setting, in the order Brandon switches them on (the same order as
@@ -166,9 +167,12 @@ export function outreachRows(input: { env: Env; funnels: readonly FunnelDefiniti
       (env.CONSULT_ENQUIRER_CONFIGURATION_SET ?? '').trim() !== 'alp-transactional' && 'the configuration set is not alp-transactional',
       !isSet(env.CONSULT_ENQUIRER_CONTACT_LINE) && 'no contact line is set',
     ].filter((m): m is string => typeof m === 'string');
-    add('consult-received-email', missing.length ? 'off' : 'on', missing.length
-      ? `Switched on, but nothing is sent: ${missing.join('; ')}.`
-      : 'Switched on and configured on this server. SES production access is not visible from here.');
+    // The consult route's own reader decides; the names above only say what is missing in words.
+    const accepted = consultEnquirerEmailConfig(env).ok;
+    add('consult-received-email', accepted ? 'on' : 'off', accepted
+      ? 'Switched on and configured on this server. SES production access is not visible from here.'
+      : missing.length ? `Switched on, but nothing is sent: ${missing.join('; ')}.`
+        : 'Switched on, but its sender or contact line is not in a form the email accepts, so nothing is sent.');
   }
   add('consult-booked-email', 'unknown', ELSEWHERE('telehealth service'));
   add('notification-preferences-service', 'unknown', ELSEWHERE('identity service'));
