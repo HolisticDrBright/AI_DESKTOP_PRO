@@ -1,4 +1,4 @@
-import { CAMPAIGN_ENGINE_CONTRACT, CAMPAIGN_PROGRAMS, emailTemplate, workforceRequest, type Broadcast, type CampaignOverview, type CampaignProgram, type EmailSequence, type EmailTemplate,
+import { CAMPAIGN_ENGINE_CONTRACT, CAMPAIGN_PROGRAMS, emailTemplate, workforceRequest, type Broadcast, type CampaignOverview, type CampaignProgram, type EmailSequence, type EmailTemplate, type EngineStatus,
   type PracticeSettings, type RoleGrant, type WorkforceResponse } from './contract';
 import { renderEmail, templateProblems } from './content';
 import { CampaignError, listCounts, loadPractice, roleOf, type ContactBody, type EngineDeps, type PracticeContext } from './practice-context';
@@ -42,6 +42,23 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
         unsubscribed: r.body.unsubscribed ?? 0, opened: tracked ? r.body.opened ?? 0 : null, clicked: tracked ? r.body.clicked ?? 0 : null })),
     };
   }
+  /** Flags and counts for the Outreach status screen: any staff member, no role or entitlement needed, nothing personal. */
+  async function status(ctx: PracticeContext): Promise<EngineStatus> {
+    const [templates, sequences, broadcasts, sesProductionAccess] = await Promise.all([
+      ctx.store.query<EmailTemplate>('template', { limit: 200 }), Promise.all(CAMPAIGN_PROGRAMS.map(p => sequenceOf(ctx, p))),
+      ctx.store.query<Broadcast>('broadcast', { limit: 200 }),
+      deps.ses.productionAccess().then((granted): EngineStatus['sesProductionAccess'] => granted ? 'granted' : 'not_granted', (): EngineStatus['sesProductionAccess'] => 'unknown'),
+    ]);
+    return {
+      action: 'status', contract: CAMPAIGN_ENGINE_CONTRACT,
+      marketing: !!ctx.entitlement?.marketing, tier: ctx.entitlement?.tier ?? null,
+      domain: ctx.domain ? { verifiedForSending: ctx.domain.verifiedForSending, dkim: ctx.domain.dkim, mailFrom: ctx.domain.mailFrom } : null,
+      readiness: ctx.readiness, sesProductionAccess,
+      activeSequences: sequences.filter(s => s.body.status === 'active').map(s => s.body.programKey),
+      scheduledBroadcasts: broadcasts.items.filter(b => b.body.status === 'scheduled' || b.body.status === 'sending').length,
+      approvedTemplates: templates.items.filter(t => isApproved(t.body)).length,
+    };
+  }
   async function sequenceOf(ctx: PracticeContext, program: CampaignProgram): Promise<{ version: number; body: EmailSequence }> {
     const item = await ctx.store.get<EmailSequence>('sequence', program);
     return item ?? { version: 0, body: { programKey: program, version: 0, status: 'draft', steps: [], updatedAt: null } };
@@ -63,6 +80,7 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
       const ctx = await loadPractice(deps, identity.practiceId);
       const role = await roleOf(ctx.store, identity.personId);
       if (request.action === 'overview') return { action: 'overview', ...await overview(ctx, role) };
+      if (request.action === 'status') return status(ctx);
       if (!ctx.entitlement?.marketing) throw new CampaignError('not_entitled');
       if (!role) throw new CampaignError('forbidden', 'marketing_role_required');
       const done = async (): Promise<WorkforceResponse> => ({ action: 'done', refreshed: await overview(await loadPractice(deps, identity.practiceId), await roleOf(ctx.store, identity.personId)) });
