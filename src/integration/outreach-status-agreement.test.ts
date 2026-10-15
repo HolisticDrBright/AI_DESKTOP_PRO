@@ -44,4 +44,14 @@ describe('the Outreach status screen agrees with the readers that send', () => {
     for (const name of ['CAMPAIGN_ENGINE_ENABLED', 'CONSULT_ENQUIRER_EMAILS_ENABLED']) expect(example, name).toMatch(new RegExp(`^${name}=false$`, 'm'));
     for (const name of PATIENT_NOTIFICATION_SWITCH_NAMES) expect(example, name).not.toMatch(new RegExp(`^${name}=true`, 'm'));
   });
+  it('every setting a Desktop-server row names is in .env.example, and each Desktop switch is listed off', () => {
+    const example = readFileSync('.env.example', 'utf8');
+    const desktop = OUTREACH_STEPS.filter(s => s.where.startsWith('Desktop server'))
+      .flatMap(s => [...s.setting.matchAll(/`([A-Z][A-Z0-9_]+)(?:=[^`]*)?`/g)].map(m => m[1]));
+    expect(desktop).toContain('NOTIFICATION_PREFERENCES_ENABLED');
+    // Listed as a value, or as a commented example for a setting that must stay unset by default.
+    for (const name of desktop) expect(example, name).toMatch(new RegExp(`^(# )?${name}=`, 'm'));
+    for (const name of ['CAMPAIGN_ENGINE_ENABLED', 'CONSULT_ENQUIRER_EMAILS_ENABLED', 'NOTIFICATION_PREFERENCES_ENABLED'])
+      expect(example, name).toMatch(new RegExp(`^${name}=false$`, 'm'));
+  });
 });
