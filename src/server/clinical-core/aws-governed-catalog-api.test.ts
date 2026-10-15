@@ -37,6 +37,43 @@ function reader(): AwsGovernedCatalogReader {
 }
 
 describe("AWS governed catalog API", () => {
+  test("versioned production reference uses only the selected current workforce clinic", async () => {
+    const referenceReader = { list: vi.fn(async () => ({
+      contractVersion: "production-catalog-reference/1" as const, audience: "workforce" as const,
+      products: [], nextCursor: null,
+    })) };
+    const request = event("GET /clinical-core/workforce/catalog/reference", "workforce", { limit: "10" });
+    request.requestContext!.authorizer!.jwt!.claims!["custom:person_id"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const response = await createAwsGovernedCatalogApiHandler({ reader: reader(), referenceReader, configuration })(request);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      contractVersion: "production-catalog-reference-api/1", phiAllowed: false,
+      data: { contractVersion: "production-catalog-reference/1", products: [] },
+    });
+    expect(referenceReader.list).toHaveBeenCalledWith({ limit: 10, currentWorkforce: {
+      subject: "33333333-3333-4333-8333-333333333333",
+      selectedOrganizationId: "22222222-2222-4222-8222-222222222222",
+    } });
+    expect(response.headers?.["cache-control"]).toBe("no-store");
+  });
+
+  test("reference refuses missing implementation, consumer access and synthetic runtime", async () => {
+    const missing = await createAwsGovernedCatalogApiHandler({ reader: reader(), configuration })(
+      event("GET /clinical-core/workforce/catalog/reference", "workforce"),
+    );
+    expect(missing.statusCode).toBe(503);
+    const consumer = await createAwsGovernedCatalogApiHandler({ reader: reader(), configuration })(
+      event("GET /clinical-core/workforce/catalog/reference", "consumer"),
+    );
+    expect(consumer.statusCode).toBe(403);
+    const syntheticRequest = event("GET /clinical-core/workforce/catalog/reference", "workforce");
+    syntheticRequest.requestContext!.authorizer!.jwt!.claims!["custom:synthetic_attested"] = "true";
+    const synthetic = await createAwsGovernedCatalogApiHandler({ reader: reader(), configuration: {
+      ...configuration, environment: "synthetic-staging",
+    } })(syntheticRequest);
+    expect(synthetic.statusCode).toBe(404);
+  });
+
   test("serves the authenticated consumer catalog without enabling PHI", async () => {
     const value = reader();
     const response = await createAwsGovernedCatalogApiHandler({ reader: value, configuration })(event(

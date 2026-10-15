@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
+import { createAwsProductionCatalogReferenceReader, parseReferencePage } from "./aws-production-catalog-reference-reader";
+import { createAwsGovernedCatalogApiHandler } from "./aws-governed-catalog-api";
+import { GovernedCatalogReadError } from "./aws-governed-catalog-reader";
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from "./database";
 
 let db: PGlite;
 const clinic = randomUUID();
@@ -81,6 +85,78 @@ beforeAll(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe("blocked production workforce catalog reference projection", () => {
+  it("runs the new HTTP handler through current membership and the real projection", async () => {
+    const database: ClinicalCoreDatabase = { transaction: async (work) => {
+      try {
+        return await db.transaction(async (tx) => {
+          await tx.exec("set local role clinical_core_api");
+          return work({ query: (sql, parameters = []) => tx.query(sql, parameters.map((value) =>
+            value && typeof value === "object" && "kind" in value && value.kind === "uuid"
+              && "value" in value && typeof value.value === "string" ? value.value : value)) });
+        });
+      } catch (error) {
+        if (String(error).includes("workforce_membership_refused")) throw new ClinicalCoreDatabaseRejection("identity_refused");
+        throw error;
+      }
+    } };
+    const handler = createAwsGovernedCatalogApiHandler({ database, configuration: {
+      environment: "production-clinical",
+      workforceIssuer: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Workforce",
+      workforceAudience: "workforceclient1234567890",
+      consumerIssuer: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer",
+      consumerAudience: "consumerclient12345678901",
+    } });
+    const request = {
+      routeKey: "GET /clinical-core/workforce/catalog/reference",
+      headers: { "x-alp-selected-organization-id": clinic },
+      requestContext: { accountId: "173535830222", authorizer: { jwt: { claims: {
+        iss: "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Workforce",
+        aud: "workforceclient1234567890", token_use: "id", sub: subject,
+        email_verified: "true", "custom:synthetic_attested": "false",
+      } } } },
+    };
+    const response = await handler(request);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data.products).toHaveLength(3);
+    expect(response.body).not.toContain("destinationUrl");
+    expect(response.headers?.["cache-control"]).toBe("no-store");
+    const denied = await handler({ ...request, headers: { "x-alp-selected-organization-id": foreignClinic } });
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it("the production reader uses one transaction for membership and the versioned projection", async () => {
+    let transactions = 0;
+    const database: ClinicalCoreDatabase = { transaction: async (work) => {
+      transactions++;
+      return db.transaction(async (tx) => {
+        await tx.exec("set local role clinical_core_api");
+        return work({ query: (sql, parameters = []) => tx.query(sql, parameters.map((value) =>
+          value && typeof value === "object" && "kind" in value && value.kind === "uuid"
+            && "value" in value && typeof value.value === "string" ? value.value : value)) });
+      });
+    } };
+    const reader = createAwsProductionCatalogReferenceReader(database);
+    const result = await reader.list({ limit: 2, currentWorkforce: { subject, selectedOrganizationId: clinic } });
+    expect(transactions).toBe(1);
+    expect(result.products.map((item) => item.productId)).toEqual(products.slice(0, 2));
+    expect(result.nextCursor).toBe(products[1]);
+  });
+
+  it("the reader refuses malformed, oversized or identity-drifting projection replies", async () => {
+    const valid = await page(null, 1);
+    const invalid = [
+      { ...valid, commercial: { offers: [] } },
+      { ...valid, products: [{ ...valid.products[0], labelVersionId: randomUUID(), purchaseUrl: "https://example.invalid" }] },
+      { ...valid, nextCursor: products[2] },
+      { ...valid, products: [{ ...valid.products[0], sourceVerified: "true" }] },
+      "x".repeat(1024 * 1024 + 1),
+    ];
+    for (const value of invalid) {
+      expect(() => parseReferencePage(value, 1)).toThrow(GovernedCatalogReadError);
+    }
+    expect(parseReferencePage(JSON.stringify(valid), 1)).toEqual(valid);
+  });
+
   it("returns exact current versions and source state without commerce or fabricated labels", async () => {
     const result = await page();
     expect(result.contractVersion).toBe("production-catalog-reference/1");

@@ -10,6 +10,7 @@ import {
   type CurrentCatalogWorkforce,
 } from "./aws-governed-catalog-reader";
 import type { ClinicalCoreDatabase } from "./database";
+import { createAwsProductionCatalogReferenceReader, type ProductionCatalogReferenceReader } from "./aws-production-catalog-reference-reader";
 import type { ApiGatewayV2Response, IdentityApiConfiguration } from "./aws-identity-api";
 
 export type CatalogApiEvent = {
@@ -24,13 +25,14 @@ export type CatalogApiEvent = {
 };
 
 type Pool = "workforce" | "consumer";
-type Operation = "products" | "templates";
+type Operation = "products" | "templates" | "reference";
 export type CatalogApiConfiguration = IdentityApiConfiguration & { environment: CatalogEnvironment };
 
 const ROUTES: Readonly<Record<string, { pool: Pool; operation: Operation }>> = {
   "GET /clinical-core/workforce/catalog/products": { pool: "workforce", operation: "products" },
   "GET /clinical-core/consumer/catalog/products": { pool: "consumer", operation: "products" },
   "GET /clinical-core/workforce/catalog/protocol-templates": { pool: "workforce", operation: "templates" },
+  "GET /clinical-core/workforce/catalog/reference": { pool: "workforce", operation: "reference" },
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
@@ -40,10 +42,14 @@ const PRODUCTION_ACCOUNT = "173535830222";
 export function createAwsGovernedCatalogApiHandler(input: {
   database?: ClinicalCoreDatabase;
   reader?: AwsGovernedCatalogReader;
+  referenceReader?: ProductionCatalogReferenceReader;
   configuration: CatalogApiConfiguration;
 }) {
   const reader = input.reader ?? (input.database
     ? createAwsGovernedCatalogReader(input.database, input.configuration.environment)
+    : undefined);
+  const referenceReader = input.referenceReader ?? (input.database
+    ? createAwsProductionCatalogReferenceReader(input.database)
     : undefined);
   if (!reader) throw new Error("catalog_api_reader_required");
   validateConfiguration(input.configuration);
@@ -55,7 +61,12 @@ export function createAwsGovernedCatalogApiHandler(input: {
       const currentWorkforce = authenticate(event, route.pool, input.configuration);
       if (event.body) throw new CatalogApiError("request_invalid");
       const page = parsePage(event.queryStringParameters);
-      const data = route.operation === "products"
+      if (route.operation === "reference" && input.configuration.environment !== "production-clinical") {
+        return response(404, { error: "route_not_found" });
+      }
+      const data = route.operation === "reference"
+        ? await (referenceReader ?? unavailableReference()).list({ ...page, currentWorkforce: currentWorkforce! })
+        : route.operation === "products"
         // A consumer never receives a practitioner-only, injectable, peptide or declared-restricted product.
         ? productionEducationOnlyProjection(
           await reader.listProducts(route.pool === "consumer"
@@ -65,7 +76,7 @@ export function createAwsGovernedCatalogApiHandler(input: {
         )
         : await reader.listProtocolTemplates({ ...page, ...(currentWorkforce ? { currentWorkforce } : {}) });
       return response(200, {
-        contractVersion: "governed-catalog-api/1",
+        contractVersion: route.operation === "reference" ? "production-catalog-reference-api/1" : "governed-catalog-api/1",
         environment: input.configuration.environment,
         dataClassification: "reference_only",
         phiAllowed: false,
@@ -83,6 +94,10 @@ export function createAwsGovernedCatalogApiHandler(input: {
       return response(503, { error: "service_unavailable" });
     }
   };
+}
+
+function unavailableReference(): ProductionCatalogReferenceReader {
+  throw new GovernedCatalogReadError("catalog_unavailable");
 }
 
 function productionEducationOnlyProjection(
