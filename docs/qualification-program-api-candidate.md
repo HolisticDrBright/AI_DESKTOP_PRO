@@ -27,6 +27,10 @@ Read-only member-role checks on October 15 found the Lambda concurrent-execution
 quota at 150, with 132 unreserved. The earlier account-capacity constraint is
 not the reason this particular candidate remains blocked; the runtime/schema
 mismatch below is. No reserved concurrency or stack setting was changed.
+The existing fleet preflight requested 39 reserved executions, credits 14 already
+observed, and needs 25 additional; it reports 107 unreserved afterward, above
+its 100-unit floor (`ready: true`). That conservative preflight does not include
+this unreserved program candidate and is not deployment or hosted acceptance.
 
 **Observed blocker, October 14 Pacific / October 15 UTC:** read-only Data API
 queries of `clinical_core_qualification` returned 112 migration receipts, latest
