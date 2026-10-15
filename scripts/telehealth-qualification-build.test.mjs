@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 test('clean source builds one immutable synthetic candidate and refuses the placeholder target', () => {
   const directory = mkdtempSync(join(tmpdir(), 'telehealth-qualification-build-'));
-  const example = JSON.parse(readFileSync('infra/aws-clinical-core/qualification-target.example.json', 'utf8'));
+  const example = JSON.parse(readFileSync('infra/aws-clinical-core/qualification-target-connections.example.json', 'utf8'));
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const target = {
     ...example, sourceCommit, migrationReleaseHash: 'b'.repeat(64),
@@ -24,7 +24,7 @@ test('clean source builds one immutable synthetic candidate and refuses the plac
   const run = (path, outDir) => spawnSync(process.execPath,
     ['scripts/build-aws-telehealth-qualification.mjs', `--target=${path}`, `--out-dir=${outDir}`],
     { encoding: 'utf8', timeout: 30000 });
-  const invalid = run('infra/aws-clinical-core/qualification-target.example.json', out);
+  const invalid = run('infra/aws-clinical-core/qualification-target-connections.example.json', out);
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /telehealth_qualification_target_invalid/);
 

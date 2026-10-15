@@ -31,6 +31,14 @@ test('pins qualification to the source, API and immutable code version, with pro
   assert.equal(base.Parameters.ClinicalApiId.AllowedValues, undefined, 'the staging template must remain unchanged');
 });
 
+test('accepts the current messaging and connections qualification target schemas without changing their posture', () => {
+  for (const schemaVersion of ['aws-clinical-core-qualification-target/2', 'aws-clinical-core-qualification-target/3']) {
+    const template = telehealthQualificationTemplate(base, { ...target, schemaVersion }, sha);
+    assert.equal(template.Metadata.ClinicalCore.QualificationTarget.accountId, '588966314750');
+    assert.equal(template.Resources.TelehealthFunction.Properties.Environment.Variables.PHI_ALLOWED, 'false');
+  }
+});
+
 test('refuses substituted source, API, account, database, PHI and provider posture', () => {
   for (const mutate of [
     t => { t.sourceCommit = 'c'.repeat(40); }, t => { t.apiId = 'aaaaaaaaaa'; },

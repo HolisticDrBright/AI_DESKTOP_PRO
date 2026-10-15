@@ -7,7 +7,11 @@ const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const fail = () => { throw new Error('telehealth_qualification_target_invalid'); };
 
 export function telehealthQualificationTemplate(base, target, sourceCommit) {
-  if (!SHA40.test(sourceCommit) || target?.schemaVersion !== 'aws-clinical-core-qualification-target/1'
+  if (!SHA40.test(sourceCommit) || ![
+    'aws-clinical-core-qualification-target/1',
+    'aws-clinical-core-qualification-target/2',
+    'aws-clinical-core-qualification-target/3',
+  ].includes(target?.schemaVersion)
     || target.environment !== 'synthetic-staging' || target.dataClassification !== 'synthetic_only'
     || target.containsPhi !== false || target.awsAccountId !== '588966314750'
     || target.awsRegion !== 'us-east-2' || target.databaseName !== 'clinical_core_qualification'

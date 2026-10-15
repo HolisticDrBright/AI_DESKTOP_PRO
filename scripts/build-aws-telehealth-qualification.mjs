@@ -16,6 +16,12 @@ const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf
 const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
   'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim();
 if (dirty) throw new Error('telehealth_qualification_source_dirty');
+// Reuse the same strict target validator as the other qualification runners;
+// the telehealth-specific checks below add source/API pins and closed providers.
+try {
+  execFileSync(process.execPath, ['scripts/check-aws-qualification-target.mjs', resolve(arg('target'))],
+    { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] });
+} catch { throw new Error('telehealth_qualification_target_invalid'); }
 const targetBytes = readFileSync(resolve(arg('target')));
 const target = JSON.parse(targetBytes.toString('utf8'));
 const base = JSON.parse(readFileSync('infra/aws-clinical-core/telehealth-requests-extension.json', 'utf8'));
