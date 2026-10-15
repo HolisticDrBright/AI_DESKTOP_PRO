@@ -3,6 +3,19 @@ test.skip(process.env.E2E_CARE_MESSAGES!=='1','Dedicated synthetic care messagin
 // UI-only fictional HTTP responses. This never certifies hosted AWS delivery.
 const id='10000000-0000-4000-8000-000000000001',connectionId='10000000-0000-4000-8000-000000000002';
 const thread={threadId:id,connectionId,patientRecordId:'10000000-0000-4000-8000-000000000003',sequence:'1',subject:'Fictional lesson question',createdAt:'2026-09-29T10:00:00Z',updatedAt:'2026-09-29T10:00:00Z'};
+test('keeps refresh disabled until its client handler is mounted',async({page})=>{
+ const origin='http://localhost:'+(process.env.E2E_PORT??'3114');
+ await page.context().addCookies([{name:'aidp_at',value:'fictional-ui-only',url:origin},
+  {name:'aidp_exp',value:String(Date.now()+3600000),url:origin}]);
+ await page.route('**/_next/static/**/*.js',async route=>{
+  await new Promise(resolve=>setTimeout(resolve,1500));await route.continue();
+ });
+ await page.goto('/inbox',{waitUntil:'domcontentloaded'});
+ const refresh=page.getByRole('button',{name:'Load / refresh app messages'});
+ await expect(refresh).toBeVisible();
+ await expect(refresh).toBeDisabled();
+ await expect(refresh).toBeEnabled({timeout:30000});
+});
 async function setup(page:Page){
  const origin='http://localhost:'+(process.env.E2E_PORT??'3114');
  await page.context().addCookies([{name:'aidp_at',value:'fictional-ui-only',url:origin},{name:'aidp_exp',value:String(Date.now()+3600000),url:origin}]);

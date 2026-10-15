@@ -1,9 +1,13 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {parseCareMessageResponse,MESSAGE_ACK,type CareMessageRequest,type CareMessageResponse} from '@/contracts/careMessages';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 type List=Extract<CareMessageResponse,{action:'list'}>;type Read=Extract<CareMessageResponse,{action:'read'}>;
+const subscribeHydration=()=>()=>undefined;
+const hydratedOnClient=()=>true;
+const unhydratedOnServer=()=>false;
 export function CareMessagesPanel(){
+ const hydrated=useSyncExternalStore(subscribeHydration,hydratedOnClient,unhydratedOnServer);
  const [list,setList]=useState<List|null>(null),[thread,setThread]=useState<Read|null>(null),[draft,setDraft]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const pending=useRef<CareMessageRequest|null>(null),working=useRef(false),epoch=useRef(0),alive=useRef(true);
@@ -32,7 +36,7 @@ export function CareMessagesPanel(){
  return <section aria-label="Patient app messages" className="mb-5 space-y-3 rounded-xl border bg-card p-5">
   <h2 className="text-lg font-bold">Patient app messages</h2>
   <p className="text-sm">Secure text conversations with linked V2 patients. Synthetic testing only. Not monitored for emergencies. No email, SMS or push notification is sent.</p>
-  <button className={button} disabled={busy||!!pending.current} onClick={()=>{setThread(null);void run({action:'list'});}}>Load / refresh app messages</button>
+  <button className={button} disabled={!hydrated||busy||!!pending.current} onClick={()=>{setThread(null);void run({action:'list'});}}>Load / refresh app messages</button>
   {error?<p role="alert">{error}</p>:null}{notice?<p role="status">{notice}</p>:null}
   {list?.threads.length===0?<p>No app conversations yet.</p>:null}
   {list?.threads.map(item=><button className={button+' block w-full text-left'} key={item.threadId} disabled={busy||!!pending.current}
