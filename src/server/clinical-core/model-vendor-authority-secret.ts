@@ -3,7 +3,9 @@ import { GetSecretValueCommand, PutSecretValueCommand, SecretsManagerClient } fr
 import {
   MODEL_VENDOR_AUTHORITY_FIELD,
   MODEL_VENDOR_AUTHORITY_RECORD,
+  MODEL_VENDOR_COVERED_ORGANIZATION_ID,
   MODEL_VENDOR_RETENTION_MODES,
+  MODEL_VENDOR_SCOPED_AUTHORITY_RECORD,
   parseModelVendorAuthority,
   type ModelVendorAuthority,
   type ModelVendorRetentionMode,
@@ -23,6 +25,7 @@ import {
 const SECRET_ARN = /^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:(\d{12}):secret:[A-Za-z0-9/_+=.@!-]+$/;
 const LEGACY_SECRET_FIELD = "ai-longevity-pro/synthetic-staging/openai";
 const KEY_FIELDS = ["OPENAI_API_KEY", "apiKey", LEGACY_SECRET_FIELD] as const;
+const SHA256 = /^[0-9a-f]{64}$/;
 
 /** Rewrite the secret so it carries this authority beside the key it governs. Server-only; no request path may call it. */
 export function withAuthority(secretString: string, authority: ModelVendorAuthority): string {
@@ -79,6 +82,12 @@ export async function runModelVendorAuthorityOperator(input: {
       retention: observed.authority?.retention ?? "unrecorded",
       agreement: observed.authority?.agreement ?? "unrecorded",
       effectiveAt: observed.authority?.effectiveAt ?? "unrecorded",
+      ...(observed.authority?.record === MODEL_VENDOR_SCOPED_AUTHORITY_RECORD ? {
+        organizationId: observed.authority.organizationId,
+        projectId: observed.authority.projectId,
+        agreementReviewSha256: observed.authority.agreementReviewSha256,
+        retentionReviewSha256: observed.authority.retentionReviewSha256,
+      } : {}),
     };
   }
 
@@ -88,21 +97,39 @@ export async function runModelVendorAuthorityOperator(input: {
     if (environment.CONFIRM_MODEL_VENDOR_AGREEMENT_EXECUTED?.trim() !== "true") throw new Error("activation_boundary_refused");
     const retention = environment.MODEL_VENDOR_RETENTION_MODE?.trim() ?? "";
     if (!(MODEL_VENDOR_RETENTION_MODES as readonly string[]).includes(retention)) throw new Error("activation_boundary_refused");
+    const scopedFields = [environment.MODEL_VENDOR_ORGANIZATION_ID, environment.MODEL_VENDOR_PROJECT_ID,
+      environment.MODEL_VENDOR_AGREEMENT_REVIEW_SHA256, environment.MODEL_VENDOR_RETENTION_REVIEW_SHA256]
+      .map(value => value?.trim() ?? "");
+    const scoped = scopedFields.some(Boolean);
+    if (scoped && (scopedFields.some(value => !value)
+      || environment.CONFIRM_MODEL_VENDOR_SCOPE_REVIEWED?.trim() !== "true"
+      || scopedFields[0] !== MODEL_VENDOR_COVERED_ORGANIZATION_ID
+      || !/^proj-[A-Za-z0-9_-]+$/.test(scopedFields[1])
+      || !SHA256.test(scopedFields[2]) || !SHA256.test(scopedFields[3]))) {
+      throw new Error("activation_boundary_refused");
+    }
     authority = parseModelVendorAuthority({
-      record: MODEL_VENDOR_AUTHORITY_RECORD,
+      record: scoped ? MODEL_VENDOR_SCOPED_AUTHORITY_RECORD : MODEL_VENDOR_AUTHORITY_RECORD,
       state: "active",
       retention: retention as ModelVendorRetentionMode,
       agreement: environment.MODEL_VENDOR_AGREEMENT_REFERENCE?.trim() ?? "",
       effectiveAt: environment.MODEL_VENDOR_EFFECTIVE_AT?.trim() || today,
+      ...(scoped ? { organizationId: scopedFields[0], projectId: scopedFields[1],
+        agreementReviewSha256: scopedFields[2], retentionReviewSha256: scopedFields[3] } : {}),
     });
   } else {
     // Stopping keeps whatever the record already said it rested on, so the report still names the agreement that ended.
     authority = parseModelVendorAuthority({
-      record: MODEL_VENDOR_AUTHORITY_RECORD,
+      record: observed.authority?.record ?? MODEL_VENDOR_AUTHORITY_RECORD,
       state: command === "suspend" ? "suspended" : "terminated",
       retention: observed.authority?.retention ?? "vendor_default",
       agreement: observed.authority?.agreement ?? "unrecorded",
       effectiveAt: today,
+      ...(observed.authority?.record === MODEL_VENDOR_SCOPED_AUTHORITY_RECORD ? {
+        organizationId: observed.authority.organizationId, projectId: observed.authority.projectId,
+        agreementReviewSha256: observed.authority.agreementReviewSha256,
+        retentionReviewSha256: observed.authority.retentionReviewSha256,
+      } : {}),
     });
   }
 
@@ -115,6 +142,11 @@ export async function runModelVendorAuthorityOperator(input: {
     retention: authority.retention,
     agreement: authority.agreement,
     effectiveAt: authority.effectiveAt,
+    ...(authority.record === MODEL_VENDOR_SCOPED_AUTHORITY_RECORD ? {
+      organizationId: authority.organizationId, projectId: authority.projectId,
+      agreementReviewSha256: authority.agreementReviewSha256,
+      retentionReviewSha256: authority.retentionReviewSha256,
+    } : {}),
     previousState: observed.authority?.state ?? "unrecorded",
     versionId: written.VersionId ?? "unreported",
     // Nothing caches the key, so the next call reads this version.

@@ -1,7 +1,7 @@
 if (typeof window !== "undefined") throw new Error("aws-daily-guidance-openai is server-only");
 
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import { parseOpenAISecret } from "./aws-lab-openai";
+import { openAIRequestHeaders, parseOpenAISecretForRequest, type OpenAIRequestCredential } from "./aws-lab-openai";
 import { ModelVendorAuthorityRefusal } from "./model-vendor-authority";
 import {
   DAILY_GUIDANCE_EVIDENCE,
@@ -140,11 +140,11 @@ export async function readDailyGuidanceOpenAIResponse(response: Response): Promi
   }
 }
 
-async function apiKey(secretArn: string): Promise<string> {
+async function apiKey(secretArn: string): Promise<OpenAIRequestCredential> {
   const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }));
   if (typeof response.SecretString !== "string") throw new DailyGuidanceError("provider_unavailable");
   // A withdrawn vendor authority reads as an unavailable provider to the caller; the operator log keeps the reason.
-  try { return parseOpenAISecret(response.SecretString); }
+  try { return parseOpenAISecretForRequest(response.SecretString); }
   catch (error) { if (error instanceof ModelVendorAuthorityRefusal) console.error(error.category); throw new DailyGuidanceError("provider_unavailable"); }
 }
 
@@ -154,7 +154,7 @@ export async function generateDailyGuidanceWithOpenAI(input: { request: DailyGui
   try {
     const response = await fetch(RESPONSES_URL, {
       method: "POST", redirect: "manual", signal: controller.signal,
-      headers: { Authorization: `Bearer ${await apiKey(input.secretArn)}`, "content-type": "application/json", accept: "application/json" },
+      headers: { ...openAIRequestHeaders(await apiKey(input.secretArn)), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(buildDailyGuidanceOpenAIRequest(input.request, input.model)),
     });
     if (response.status >= 300 && response.status < 400) throw new DailyGuidanceError("provider_unavailable");

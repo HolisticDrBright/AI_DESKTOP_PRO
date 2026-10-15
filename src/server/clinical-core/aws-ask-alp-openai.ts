@@ -1,7 +1,7 @@
 if (typeof window !== "undefined") throw new Error("aws-ask-alp-openai is server-only");
 
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import { parseOpenAISecret } from "./aws-lab-openai";
+import { openAIRequestHeaders, parseOpenAISecretForRequest, type OpenAIRequestCredential } from "./aws-lab-openai";
 import { ModelVendorAuthorityRefusal } from "./model-vendor-authority";
 import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {KNOWLEDGE_MODEL_BOUNDARY,verifyPresentedKnowledge,assertKnowledgeCitations} from './reviewed-knowledge';
@@ -94,11 +94,11 @@ export async function readAskAlpOpenAIResponse(response: Response, signal?: Abor
   catch { throw new AskAlpError("provider_unavailable"); }
 }
 
-async function apiKey(secretArn: string, signal: AbortSignal): Promise<string> {
+async function apiKey(secretArn: string, signal: AbortSignal): Promise<OpenAIRequestCredential> {
   const response = await secrets.send(new GetSecretValueCommand({ SecretId: secretArn }), { abortSignal: signal });
   if (typeof response.SecretString !== "string") throw new AskAlpError("provider_unavailable");
   // A withdrawn vendor authority reads as an unavailable provider to the asker; the operator log keeps the reason.
-  try { return parseOpenAISecret(response.SecretString); }
+  try { return parseOpenAISecretForRequest(response.SecretString); }
   catch (error) { if (error instanceof ModelVendorAuthorityRefusal) console.error(error.category); throw new AskAlpError("provider_unavailable"); }
 }
 
@@ -112,7 +112,7 @@ export async function generateAskAlpWithOpenAI(input: { request: AskAlpGeneratio
     const request={...input.request,context:{...input.request.context,reviewedKnowledge}};
     const response = await fetch(RESPONSES_URL, {
       method: "POST", redirect: "manual", signal: controller.signal,
-      headers: { Authorization: `Bearer ${await apiKey(input.secretArn, controller.signal)}`, "content-type": "application/json", accept: "application/json" },
+      headers: { ...openAIRequestHeaders(await apiKey(input.secretArn, controller.signal)), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(buildAskAlpOpenAIRequest(request, input.model)),
     });
     const parsed = await readAskAlpOpenAIResponse(response, controller.signal);

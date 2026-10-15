@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildDraftingRequest, createAwsDraftingProvider, parseDraftingProviderResponse, DRAFTING_BOUNDARY, DRAFTING_PROMPT_SHA256 } from './aws-recording-drafting-openai';
 import type { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { MODEL_VENDOR_COVERED_ORGANIZATION_ID } from './model-vendor-authority';
 
 const request = { model: 'fictional-model-1', promptSha256: DRAFTING_PROMPT_SHA256, noteType: 'soap' as const, jobId: '22222222-2222-4222-8222-222222222222',
   sections: [{ key: 'S', label: 'Subjective' }, { key: 'O', label: 'Objective' }, { key: 'A', label: 'Assessment' }, { key: 'P', label: 'Plan' }],
@@ -75,5 +76,30 @@ describe('OpenAI drafting provider boundary', () => {
     const missing = createAwsDraftingProvider({ secretArn: 'arn:aws:secretsmanager:us-east-2:123456789012:secret:fictional', secrets: { send: vi.fn(async () => ({})) } as unknown as SecretsManagerClient, fetchImpl });
     await expect(missing.draft(request, new AbortController().signal)).rejects.toMatchObject({ code: 'provider_unavailable' });
     expect(calls.filter(c => c.url.includes('openai')).length).toBe(4);
+  });
+  it('refuses a legacy PHI authority and pins a reviewed PHI request to its organization and project', async () => {
+    vi.stubEnv('PHI_ALLOWED', 'true');
+    try {
+      const key = 'sk-fictional-0123456789abcdef0123';
+      const legacy = { record: 'model-vendor-authority/1', state: 'active', retention: 'modified_zero_retention',
+        agreement: 'vendor-baa/2026-09-17', effectiveAt: '2026-09-17' };
+      let authority: Record<string, unknown> = legacy;
+      const send = vi.fn(async () => ({ SecretString: JSON.stringify({ OPENAI_API_KEY: key, authority }) }));
+      const calls: RequestInit[] = [];
+      const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push(init!);
+        return new Response(JSON.stringify(providerResponse()), { status: 200, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch;
+      const provider = createAwsDraftingProvider({ secretArn: 'arn:aws:secretsmanager:us-east-2:123456789012:secret:fictional',
+        secrets: { send } as unknown as SecretsManagerClient, fetchImpl });
+      await expect(provider.draft(request, new AbortController().signal)).rejects.toThrow();
+      expect(calls).toHaveLength(0);
+      authority = { ...legacy, record: 'model-vendor-authority/2', organizationId: MODEL_VENDOR_COVERED_ORGANIZATION_ID,
+        projectId: 'proj-reviewed-fixture', agreementReviewSha256: 'a'.repeat(64), retentionReviewSha256: 'b'.repeat(64) };
+      expect(await provider.draft(request, new AbortController().signal)).toEqual(output);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].headers).toMatchObject({ Authorization: `Bearer ${key}`,
+        'OpenAI-Organization': MODEL_VENDOR_COVERED_ORGANIZATION_ID, 'OpenAI-Project': 'proj-reviewed-fixture' });
+    } finally { vi.unstubAllEnvs(); }
   });
 });

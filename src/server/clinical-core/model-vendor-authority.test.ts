@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { parseOpenAISecret } from "./aws-lab-openai";
+import { openAIRequestHeaders, parseOpenAISecret, parseOpenAISecretForRequest } from "./aws-lab-openai";
 import {
   assertModelCallsPermitted,
   MODEL_VENDOR_AUTHORITY_RECORD,
@@ -20,6 +20,14 @@ const ACTIVE: ModelVendorAuthority = {
   agreement: "vendor-baa/2026-09-17",
   effectiveAt: "2026-09-17",
 };
+const SCOPED = {
+  ...ACTIVE,
+  record: "model-vendor-authority/2",
+  organizationId: "org-Xvot2xLPeJ92rR4SiORJaMkE",
+  projectId: "proj-reviewed-fixture",
+  agreementReviewSha256: "a".repeat(64),
+  retentionReviewSha256: "b".repeat(64),
+} as Extract<ModelVendorAuthority, { record: "model-vendor-authority/2" }>;
 const secretWith = (authority: unknown) => JSON.stringify({ OPENAI_API_KEY: KEY, authority });
 const category = (call: () => unknown): string => {
   try { call(); } catch (error) { return error instanceof ModelVendorAuthorityRefusal ? error.category : `unexpected:${String(error)}`; }
@@ -46,8 +54,17 @@ function keyBypasses(sources: Array<{ file: string; source: string }>): string[]
 }
 
 describe("model vendor authority", () => {
+  it("refuses legacy authority for PHI and requires the covered organization and reviewed project", () => {
+    expect(category(() => assertModelCallsPermitted({ authority: ACTIVE, phiAllowed: true })))
+      .toBe("model_vendor_scope_unconfirmed");
+    expect(parseModelVendorAuthority(SCOPED)).toEqual(SCOPED);
+    expect(() => assertModelCallsPermitted({ authority: SCOPED, phiAllowed: true })).not.toThrow();
+    expect(category(() => assertModelCallsPermitted({ authority: {
+      ...SCOPED, organizationId: "org-other",
+    } as ModelVendorAuthority, phiAllowed: true }))).toBe("model_vendor_scope_unconfirmed");
+  });
   it("permits a call only while the recorded authority is active and in force", () => {
-    expect(() => assertModelCallsPermitted({ authority: ACTIVE, phiAllowed: true, today: "2026-09-22" })).not.toThrow();
+    expect(() => assertModelCallsPermitted({ authority: SCOPED, phiAllowed: true, today: "2026-09-22" })).not.toThrow();
     expect(category(() => assertModelCallsPermitted({ authority: { ...ACTIVE, state: "suspended" }, phiAllowed: true, today: "2026-09-22" })))
       .toBe("model_vendor_authority_withdrawn");
     expect(category(() => assertModelCallsPermitted({ authority: { ...ACTIVE, state: "terminated" }, phiAllowed: false, today: "2026-09-22" })))
@@ -73,13 +90,21 @@ describe("model vendor authority", () => {
     for (const bad of [
       null, "active", { ...ACTIVE, record: "other/1" }, { ...ACTIVE, state: "paused" }, { ...ACTIVE, retention: "zero" },
       { ...ACTIVE, agreement: "" }, { ...ACTIVE, effectiveAt: "17/09/2026" }, { ...ACTIVE, extra: true },
+      { ...SCOPED, projectId: "" }, { ...SCOPED, organizationId: "" },
+      { ...SCOPED, agreementReviewSha256: "unreviewed" }, { ...SCOPED, retentionReviewSha256: "unreviewed" },
+      { ...SCOPED, extra: true },
     ]) expect(category(() => parseModelVendorAuthority(bad))).toBe("model_vendor_authority_malformed");
   });
 });
 
 describe("the key is unobtainable without the gate", () => {
   it("returns the key only when a call may be sent", () => {
-    expect(parseOpenAISecret(secretWith(ACTIVE), true)).toBe(KEY);
+    expect(parseOpenAISecret(secretWith(SCOPED), true)).toBe(KEY);
+    expect(openAIRequestHeaders(parseOpenAISecretForRequest(secretWith(SCOPED), true))).toEqual({
+      Authorization: `Bearer ${KEY}`, "OpenAI-Organization": SCOPED.organizationId,
+      "OpenAI-Project": SCOPED.projectId,
+    });
+    expect(openAIRequestHeaders(parseOpenAISecretForRequest(KEY, false))).toEqual({ Authorization: `Bearer ${KEY}` });
     expect(parseOpenAISecret(KEY, false)).toBe(KEY);
     expect(category(() => parseOpenAISecret(KEY, true))).toBe("model_vendor_authority_missing");
     expect(category(() => parseOpenAISecret(secretWith({ ...ACTIVE, state: "terminated" }), false))).toBe("model_vendor_authority_withdrawn");
@@ -136,6 +161,15 @@ describe("the operator switch", () => {
     expect(category(() => parseOpenAISecret(writes[0], false))).toBe("model_vendor_authority_withdrawn");
   });
 
+  it("preserves a scoped organization's review pointers when suspending authority", async () => {
+    const { secrets, writes } = client(secretWith(SCOPED));
+    const report = await runModelVendorAuthorityOperator({ command: "suspend", environment, secrets: secrets as never, today: "2026-09-22" });
+    expect(report).toMatchObject({ organizationId: SCOPED.organizationId, projectId: SCOPED.projectId,
+      agreementReviewSha256: SCOPED.agreementReviewSha256, retentionReviewSha256: SCOPED.retentionReviewSha256 });
+    expect(parseModelVendorAuthority(JSON.parse(writes[0]).authority)).toMatchObject({ ...SCOPED, state: "suspended", effectiveAt: "2026-09-22" });
+    expect(category(() => parseOpenAISecret(writes[0], true))).toBe("model_vendor_authority_withdrawn");
+  });
+
   it("will not permit again without an executed agreement and a stated retention mode", async () => {
     const { secrets, writes } = client(secretWith({ ...ACTIVE, state: "terminated" }));
     await expect(runModelVendorAuthorityOperator({ command: "activate", environment, secrets: secrets as never, today: "2026-09-22" }))
@@ -145,6 +179,12 @@ describe("the operator switch", () => {
       environment: { ...environment, CONFIRM_MODEL_VENDOR_AGREEMENT_EXECUTED: "true", MODEL_VENDOR_AGREEMENT_REFERENCE: "vendor-baa/2026-09-17" },
       secrets: secrets as never, today: "2026-09-22",
     })).rejects.toThrow("activation_boundary_refused");
+    await expect(runModelVendorAuthorityOperator({
+      command: "activate",
+      environment: { ...environment, CONFIRM_MODEL_VENDOR_AGREEMENT_EXECUTED: "true", MODEL_VENDOR_AGREEMENT_REFERENCE: "vendor-baa/2026-09-17",
+        MODEL_VENDOR_RETENTION_MODE: "modified_zero_retention", MODEL_VENDOR_ORGANIZATION_ID: SCOPED.organizationId },
+      secrets: secrets as never, today: "2026-09-22",
+    })).rejects.toThrow("activation_boundary_refused");
     expect(writes).toEqual([]);
 
     const report = await runModelVendorAuthorityOperator({
@@ -152,12 +192,16 @@ describe("the operator switch", () => {
       environment: {
         ...environment, CONFIRM_MODEL_VENDOR_AGREEMENT_EXECUTED: "true",
         MODEL_VENDOR_AGREEMENT_REFERENCE: "vendor-baa/2026-09-17", MODEL_VENDOR_RETENTION_MODE: "modified_zero_retention",
+        CONFIRM_MODEL_VENDOR_SCOPE_REVIEWED: "true", MODEL_VENDOR_ORGANIZATION_ID: SCOPED.organizationId,
+        MODEL_VENDOR_PROJECT_ID: SCOPED.projectId, MODEL_VENDOR_AGREEMENT_REVIEW_SHA256: SCOPED.agreementReviewSha256,
+        MODEL_VENDOR_RETENTION_REVIEW_SHA256: SCOPED.retentionReviewSha256,
       },
       secrets: secrets as never, today: "2026-09-22",
     });
     expect(report.state).toBe("active");
     expect(report.effectiveAt).toBe("2026-09-22");
     expect(parseOpenAISecret(writes[0], true)).toBe(KEY);
+    expect(report).toMatchObject({ organizationId: SCOPED.organizationId, projectId: SCOPED.projectId });
   });
 
   it("refuses a secret in another account and an unknown command", async () => {

@@ -4,7 +4,7 @@ import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api
 import { buildDirectionalLabContext } from "./aws-lab-directional-context";
 import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {KNOWLEDGE_MODEL_BOUNDARY,assertKnowledgeCitations,type KnowledgeContext} from './reviewed-knowledge';
-import { assertModelCallsPermitted, MODEL_VENDOR_AUTHORITY_FIELD, parseModelVendorAuthority, phiAllowedFromEnvironment } from "./model-vendor-authority";
+import { assertModelCallsPermitted, MODEL_VENDOR_AUTHORITY_FIELD, MODEL_VENDOR_SCOPED_AUTHORITY_RECORD, parseModelVendorAuthority, phiAllowedFromEnvironment } from "./model-vendor-authority";
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -315,11 +315,14 @@ function required(name: string): string {
  * A key is returned only when a call may be sent right now; otherwise this throws a ModelVendorAuthorityRefusal whose
  * category names why. Nothing caches the result, so revoking the authority in the secret stops the next call.
  */
-export function parseOpenAISecret(secretString: string, phiAllowed = phiAllowedFromEnvironment()): string {
+export type OpenAIRequestCredential = { apiKey: string; organizationId: string | null; projectId: string | null };
+
+/** A reviewed PHI scope becomes explicit request headers; an unscoped key can only serve PHI-off testing. */
+export function parseOpenAISecretForRequest(secretString: string, phiAllowed = phiAllowedFromEnvironment()): OpenAIRequestCredential {
   const trimmed = secretString.trim();
   if (trimmed.startsWith("sk-") && trimmed.length >= 24) {
     assertModelCallsPermitted({ authority: null, phiAllowed });
-    return trimmed;
+    return { apiKey: trimmed, organizationId: null, projectId: null };
   }
   let parsed: unknown;
   try {
@@ -337,7 +340,21 @@ export function parseOpenAISecret(secretString: string, phiAllowed = phiAllowedF
   }
   const authority = MODEL_VENDOR_AUTHORITY_FIELD in record ? parseModelVendorAuthority(record[MODEL_VENDOR_AUTHORITY_FIELD]) : null;
   assertModelCallsPermitted({ authority, phiAllowed });
-  return candidate;
+  return { apiKey: candidate,
+    organizationId: authority?.record === MODEL_VENDOR_SCOPED_AUTHORITY_RECORD ? authority.organizationId : null,
+    projectId: authority?.record === MODEL_VENDOR_SCOPED_AUTHORITY_RECORD ? authority.projectId : null };
+}
+
+/** Kept for the historical PHI-off key parser; request paths must use the scoped form above. */
+export function parseOpenAISecret(secretString: string, phiAllowed = phiAllowedFromEnvironment()): string {
+  return parseOpenAISecretForRequest(secretString, phiAllowed).apiKey;
+}
+
+export function openAIRequestHeaders(credential: OpenAIRequestCredential): Record<string, string> {
+  return { Authorization: `Bearer ${credential.apiKey}`,
+    ...(credential.organizationId && credential.projectId ? {
+      "OpenAI-Organization": credential.organizationId, "OpenAI-Project": credential.projectId,
+    } : {}) };
 }
 
 export function buildLabSynthesisRequest(input: {
@@ -523,10 +540,10 @@ export function parseLabSynthesisResponse(input: {
   };
 }
 
-async function resolveApiKey(): Promise<string> {
+async function resolveApiKey(): Promise<OpenAIRequestCredential> {
   const response = await secrets.send(new GetSecretValueCommand({ SecretId: required("LAB_OPENAI_SECRET_ARN") }));
   if (typeof response.SecretString !== "string") throw new Error("openai_secret_malformed");
-  return parseOpenAISecret(response.SecretString);
+  return parseOpenAISecretForRequest(response.SecretString);
 }
 
 export async function synthesizeLabWithOpenAI(input: {
@@ -541,10 +558,10 @@ export async function synthesizeLabWithOpenAI(input: {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const apiKey = await resolveApiKey();
+    const credential = await resolveApiKey();
     const response = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+      headers: { ...openAIRequestHeaders(credential), "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
       redirect: "manual",
       signal: controller.signal,

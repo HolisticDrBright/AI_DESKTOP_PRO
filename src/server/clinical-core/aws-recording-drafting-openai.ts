@@ -1,6 +1,6 @@
 if (typeof window !== 'undefined') throw new Error('aws-recording-drafting-openai is server-only');
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { parseOpenAISecret } from './aws-lab-openai';
+import { openAIRequestHeaders, parseOpenAISecretForRequest, type OpenAIRequestCredential } from './aws-lab-openai';
 import { ModelVendorAuthorityRefusal } from './model-vendor-authority';
 import { RecordingDraftingError, type DraftingProvider } from './recording-drafting';
 
@@ -58,11 +58,11 @@ export function parseDraftingProviderResponse(value: unknown, model: string): un
 export function createAwsDraftingProvider(input: { secretArn: string; secrets?: SecretsManagerClient; fetchImpl?: typeof fetch }): DraftingProvider {
   const secrets = input.secrets ?? new SecretsManagerClient({});
   const fetchImpl = input.fetchImpl ?? fetch;
-  async function apiKey(): Promise<string> {
+  async function apiKey(): Promise<OpenAIRequestCredential> {
     const response = await secrets.send(new GetSecretValueCommand({ SecretId: input.secretArn }));
     if (typeof response.SecretString !== 'string') throw new RecordingDraftingError('provider_unavailable');
     // A withdrawn vendor authority reads as an unavailable provider to the reviewer; the operator log keeps the reason.
-    try { return parseOpenAISecret(response.SecretString); }
+    try { return parseOpenAISecretForRequest(response.SecretString); }
     catch (error) { if (error instanceof ModelVendorAuthorityRefusal) console.error(error.category); throw new RecordingDraftingError('provider_unavailable'); }
   }
   return {
@@ -71,7 +71,7 @@ export function createAwsDraftingProvider(input: { secretArn: string; secrets?: 
       const body = JSON.stringify(buildDraftingRequest(request));
       try {
         const response = await fetchImpl(RESPONSES_URL, { method: 'POST', redirect: 'manual', signal,
-          headers: { Authorization: `Bearer ${await apiKey()}`, 'content-type': 'application/json', accept: 'application/json' }, body });
+          headers: { ...openAIRequestHeaders(await apiKey()), 'content-type': 'application/json', accept: 'application/json' }, body });
         if (response.status >= 300 && response.status < 400) throw new RecordingDraftingError('provider_unavailable');
         const raw = await response.text();
         if (!response.ok || Buffer.byteLength(raw, 'utf8') > MAX_RESPONSE_BYTES
