@@ -4,6 +4,9 @@
 
 - Applied nowhere and registered in no manifest.
 - No Lambda entry point, template or route imports it.
+- The Core entitlement port now has a bounded, Sandbox-only verifier in
+  `src/server/clinical-core/core-subscription-guard.ts`, but no entry point
+  wires it and there is no hosted billing endpoint for it to call yet.
 - Nothing in this work deployed, applied SQL, enabled a row, designated a subject or changed an AWS resource.
 - PHI stays disabled, and production program activation stays off everywhere, including in the qualification database.
 
@@ -139,8 +142,12 @@ What this does **not** prove:
    Then insert the designated fictional subjects from the reviewed synthetic acceptance manifest, at most 16, the same
    list the Lambda's `QUALIFICATION_IDENTITY_SUBJECTS` names.
 4. **Build a Lambda entry point** for `createQualificationProgramHandler`. None exists in source. It needs:
-   - a `verifyConsumerCore` port that answers for the fictional consumers. No qualification Core-entitlement verifier
-     exists in source; without one, every consumer request is refused as `entitlement_refused`;
+   - wire `requireQualificationConsumerCore` as the per-request `verifyConsumerCore` port, with an exact reviewed
+     `QUALIFICATION_BILLING_API_ORIGIN`. It requires a bounded, fresh `Sandbox` answer from the billing service; it
+     never accepts the client-side synthetic bypass. A read-only October 15 inventory found no billing stack and no
+     billing route on either the isolated qualification API (`6zt8e9qz04`) or the shared synthetic API
+     (`wxv734oi12`), so every consumer request must remain refused until a real sandbox billing boundary is installed
+     and reviewed. The source verifier alone is not an entitlement or hosted pass;
    - the function digests from `qualification-program-boundary.json`;
    - the environment listed there.
 5. **Prepare a successor of `qualification-program-api-candidate.json`**, not an edit to it, that points the two routes
