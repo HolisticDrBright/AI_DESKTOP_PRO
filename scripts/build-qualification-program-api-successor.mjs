@@ -30,8 +30,18 @@ candidate.Parameters.QualificationProgramOrganizationId = { Type: 'String',
 candidate.Parameters.QualificationBillingApiOrigin = { Type: 'String',
   AllowedPattern: '^https://[a-z0-9]{10}\\.execute-api\\.us-east-2\\.amazonaws\\.com$' };
 candidate.Parameters.LambdaCodeVersion = { Type: 'String', MinLength: 1, MaxLength: 256 };
+// The log group and the RDS-managed database credential use different KMS keys on the isolated target.
+// Never reuse ClinicalCoreKeyArn as the secret-decrypt grant merely because both are KMS ARNs.
+candidate.Parameters.DatabaseSecretKmsKeyArn = { Type: 'String',
+  AllowedValues: ['arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900'] };
 
 const resources = candidate.Resources;
+const credentialPolicy = resources.IdentityApiRole.Properties.Policies.find(policy => policy.PolicyName === 'ManagedDatabaseCredentialRead');
+if (!credentialPolicy) throw new Error('qualification_program_credential_policy_missing');
+const secretDecrypt = credentialPolicy.PolicyDocument.Statement.find(statement => statement.Action === 'kms:Decrypt');
+if (!secretDecrypt || JSON.stringify(secretDecrypt.Resource) !== JSON.stringify({ Ref: 'ClinicalCoreKeyArn' }))
+  throw new Error('qualification_program_credential_key_parent_changed');
+secretDecrypt.Resource = { Ref: 'DatabaseSecretKmsKeyArn' };
 resources.IdentityApiLogGroup.Properties.LogGroupName = { 'Fn::Sub': '/aws/lambda/${ClinicalApiId}-qualification-bound-programs' };
 resources.IdentityApiFunction.Properties.FunctionName = { 'Fn::Sub': '${ClinicalApiId}-qualification-bound-programs' };
 resources.IdentityApiFunction.Properties.Code.S3ObjectVersion = { Ref: 'LambdaCodeVersion' };

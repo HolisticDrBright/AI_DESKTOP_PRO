@@ -306,6 +306,7 @@ jobs:
         run: |
           npm run test:aws-qualification-program-api
           npm run test:aws-qualification-program-api-successor
+          npm run test:qualification-program-api-preflight
       - name: Build blocked qualification program Lambda from exact clean source (no deployment)
         run: npm run build:aws-qualification-program-lambda
       - name: AWS deployed synthetic acceptance harness gate

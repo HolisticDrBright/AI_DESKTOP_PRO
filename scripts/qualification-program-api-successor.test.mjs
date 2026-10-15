@@ -46,3 +46,18 @@ test('the successor admits only two JWT-protected routes and cannot accidentally
     .flatMap(statement => statement.Action);
   assert.ok(!actions.some(action => action === '*' || action.startsWith('s3:') || action.startsWith('ses:')));
 });
+
+test('database credential decrypt is bound to its own reviewed KMS key, not the log key', () => {
+  const credential = candidate.Resources.IdentityApiRole.Properties.Policies.find(policy =>
+    policy.PolicyName === 'ManagedDatabaseCredentialRead');
+  const decrypt = credential.PolicyDocument.Statement.find(statement => statement.Action === 'kms:Decrypt');
+  assert.deepEqual(decrypt.Resource, { Ref: 'DatabaseSecretKmsKeyArn' });
+  assert.deepEqual(candidate.Parameters.DatabaseSecretKmsKeyArn.AllowedValues,
+    ['arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900']);
+  assert.notDeepEqual(candidate.Parameters.DatabaseSecretKmsKeyArn.AllowedValues,
+    candidate.Parameters.ClinicalCoreKeyArn.AllowedValues);
+  assert.deepEqual(decrypt.Condition, { StringEquals: { 'kms:ViaService': {
+    'Fn::Sub': 'secretsmanager.${AWS::Region}.${AWS::URLSuffix}',
+  } } });
+  assert.deepEqual(candidate.Resources.IdentityApiLogGroup.Properties.KmsKeyId, { Ref: 'ClinicalCoreKeyArn' });
+});
