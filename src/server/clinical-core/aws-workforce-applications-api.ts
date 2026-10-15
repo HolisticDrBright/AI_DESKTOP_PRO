@@ -27,6 +27,8 @@ export type WorkforceApplicant = {
   email: string;
   emailVerified: boolean;
   enabled: boolean;
+  /** From Cognito's current UserMFASettingList, not applicant input or an old token. */
+  mfaMethods: readonly string[];
 };
 
 /** Must read Cognito's current account, not only the possibly stale ID token. */
@@ -95,7 +97,10 @@ export function createWorkforceApplicationsCandidate(input: {
     try { current = await input.currentApplicant(subject); }
     catch { return reply(503, { error: 'identity_unavailable' }); }
     if (!current || current.subject !== subject || !current.enabled
-      || !current.emailVerified || normalizeEmail(current.email) !== tokenEmail) {
+      || !current.emailVerified || normalizeEmail(current.email) !== tokenEmail
+      || !Array.isArray(current.mfaMethods)
+      || !current.mfaMethods.some(method => method === 'SOFTWARE_TOKEN_MFA'
+        || method === 'SMS_MFA' || method === 'EMAIL_OTP')) {
       return reply(403, { error: 'workforce_applicant_refused' });
     }
     try {

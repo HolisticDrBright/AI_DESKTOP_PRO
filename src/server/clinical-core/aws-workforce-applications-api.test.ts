@@ -20,7 +20,7 @@ function event(routeKey: string, body?: Record<string, unknown>, claims: Record<
     } } } } };
 }
 function setup(activation: 'blocked' | 'qualification' = 'qualification') {
-  const currentApplicant = vi.fn(async () => ({ subject,email,emailVerified: true,enabled: true }));
+  const currentApplicant = vi.fn(async () => ({ subject,email,emailVerified: true,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] }));
   const store: WorkforceApplicationStore = {
     submit: vi.fn(async ({ requestId: id }) => id),
     list: vi.fn(async () => [{ id: requestId,status: 'pending' }]),
@@ -108,15 +108,34 @@ describe('blocked workforce applications API candidate', () => {
 
   it('refuses account changes and current-identity outages before any application read', async () => {
     const f = setup();
-    f.currentApplicant.mockResolvedValueOnce({ subject: randomUUID(),email,emailVerified: true,enabled: true });
+    f.currentApplicant.mockResolvedValueOnce({ subject: randomUUID(),email,emailVerified: true,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] });
     expect((await f.handler(event('GET /clinical-core/workforce/applications'))).statusCode).toBe(403);
-    f.currentApplicant.mockResolvedValueOnce({ subject,email: 'changed@example.invalid',emailVerified: true,enabled: true });
+    f.currentApplicant.mockResolvedValueOnce({ subject,email: 'changed@example.invalid',emailVerified: true,enabled: true,mfaMethods: ['SOFTWARE_TOKEN_MFA'] });
     expect((await f.handler(event('GET /clinical-core/workforce/applications'))).statusCode).toBe(403);
     f.currentApplicant.mockRejectedValueOnce(new Error('provider details must not leak'));
     const unavailable = await f.handler(event('GET /clinical-core/workforce/applications'));
     expect(unavailable.statusCode).toBe(503);
     expect(unavailable.body).not.toContain('provider details');
     expect(f.store.list).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account without a currently configured Cognito MFA method before status or submission', async () => {
+    const f = setup();
+    for (const mfaMethods of [[], ['UNRECOGNIZED_MFA']]) {
+      f.currentApplicant.mockResolvedValueOnce({ subject,email,emailVerified: true,enabled: true,mfaMethods });
+      expect((await f.handler(event('GET /clinical-core/workforce/applications'))).statusCode).toBe(403);
+      f.currentApplicant.mockResolvedValueOnce({ subject,email,emailVerified: true,enabled: true,mfaMethods });
+      expect((await f.handler(event('POST /clinical-core/workforce/applications',
+        { requestId,kind: 'join',organizationId: organization }))).statusCode).toBe(403);
+    }
+    expect(f.store.list).not.toHaveBeenCalled();
+    expect(f.store.submit).not.toHaveBeenCalled();
+  });
+
+  it.each(['SOFTWARE_TOKEN_MFA','SMS_MFA','EMAIL_OTP'])('accepts a current Cognito %s MFA setting in qualification', async method => {
+    const f = setup();
+    f.currentApplicant.mockResolvedValueOnce({ subject,email,emailVerified: true,enabled: true,mfaMethods: [method] });
+    expect((await f.handler(event('GET /clinical-core/workforce/applications'))).statusCode).toBe(200);
   });
 
   it('binds status and withdrawal to the authenticated subject', async () => {
