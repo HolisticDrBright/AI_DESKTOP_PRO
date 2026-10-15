@@ -13,6 +13,19 @@ export class ProgramAssignmentError extends Error {
 }
 const CONSUMER_ONLY=new Set(['list','read','accept','complete','check_in','advance','pause','resume','withdraw']);
 const WORKFORCE_ONLY=new Set(['assign','status','release','connections','programs','preview']);
+type ProgramPhases=Extract<ProgramAssignmentResponse,{action:'read'}>['assignment']['phases'];
+/**
+ * Consumer purchase is not released, so a stored purchase destination never leaves on either projection that carries
+ * phases: a consumer's read and a clinic's preview. The published artifact and its digest are unchanged; only the address
+ * is replaced with null on the way out. The production adapter holds the same line behind its database boundary; this
+ * is the adapter the isolated qualification program API serves, so it must not be the one that hands an address out.
+ */
+function withheldDestinations(answer:ProgramAssignmentResponse):ProgramAssignmentResponse{
+ const withheld=(phases:ProgramPhases)=>phases.map(phase=>({...phase,items:phase.items.map(item=>item.product?{...item,product:{...item.product,purchaseUrl:null}}:item)}));
+ if(answer.action==='read')return {...answer,assignment:{...answer.assignment,phases:withheld(answer.assignment.phases)}};
+ if(answer.action==='preview')return {...answer,phases:withheld(answer.phases)};
+ return answer;
+}
 export function createProgramAssignments(database:ClinicalCoreDatabase) {
  return async (context:ClinicalRequestContext,body:unknown):Promise<ProgramAssignmentResponse>=>{
   // Not a production activation path, for the same reason messaging is not.
@@ -28,7 +41,7 @@ export function createProgramAssignments(database:ClinicalCoreDatabase) {
     context.purpose,context.environment,context.dataClassification]);
    const result=await tx.query<{data:unknown}>('select clinical_core.program_assignment_request($1::jsonb) as data',[JSON.stringify(request)]);
    const raw=result.rows[0]?.data;
-   return parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw);
+   return withheldDestinations(parseProgramAssignmentResponse(request,typeof raw==='string'?JSON.parse(raw):raw));
   });}catch(error){
    if(error instanceof ClinicalCoreDatabaseRejection){
     const reason=error.category==='conflict'&&(PROGRAM_REFUSAL_REASONS as readonly string[]).includes(error.reason??'')?error.reason as ProgramRefusalReason:undefined;
