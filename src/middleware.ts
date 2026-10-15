@@ -44,6 +44,11 @@ export const PUBLIC_VISITOR_PAGE = /^\/(?:consult|learn|buy)\/[A-Za-z0-9][A-Za-z
  * consumer. Nothing beneath `/courses` is admitted.
  */
 export const LEARNER_PAGE = /^\/courses\/?$/;
+/**
+ * A practice's campaign sign-up pages: exactly `/join/<practice>/<program>`, `/join/sent`, `/join/confirm` and
+ * `/join/unsubscribe` (optional trailing slash). Each answers not-found while the campaign engine is switched off.
+ */
+export const JOIN_PAGE = /^\/join\/(?:sent|confirm|unsubscribe|[a-z0-9][a-z0-9-]{1,47}\/[a-z0-9][a-z0-9-]{1,79})\/?$/;
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
 const inflight = new Map<string, Promise<Tokens>>();
@@ -85,7 +90,7 @@ export async function middleware(req: NextRequest) {
   // Public visitor pages: a consult link (/consult/<slug>) and a program funnel page
   // (/learn/<slug>). The allow-list is exact: one slug segment, nothing else under either
   // prefix, and the prefixes themselves still require a session.
-  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname) || LEARNER_PAGE.test(pathname);
+  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname) || LEARNER_PAGE.test(pathname) || JOIN_PAGE.test(pathname);
   // The auth endpoints manage cookies themselves — never intercept them.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 

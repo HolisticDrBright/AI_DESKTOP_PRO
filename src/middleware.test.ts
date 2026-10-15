@@ -61,6 +61,19 @@ describe("clinical-only authentication lifecycle", () => {
     }
   });
 
+  test("a stranger reaches a practice's campaign sign-up, confirmation and unsubscribe pages, and only those", async () => {
+    for (const path of ["/join/fictional-clinic/longevity-program", "/join/fictional-clinic/longevity-program/", "/join/sent", "/join/confirm", "/join/unsubscribe/"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+    }
+    for (const path of ["/join", "/join/fictional-clinic", "/join/a/b/c", "/join/Fictional/longevity-program", "/join/x/longevity-program", "/joined/sent", "/join/sent/x", "/join/confirm/x"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname, path).toBe("/login");
+    }
+  });
+
   test("the public allow-list is exact: neighbouring paths still require sign-in", async () => {
     for (const path of ["/consult", "/consultations/x", "/consult-admin/x", "/learn", "/learning/x", "/learn-more/x", "/buy", "/buying/x", "/buy-now/x", "/buy/x/checkout", "/telehealth-requests", "/programs/x", "/funnels/longevity-program/preview"]) {
       const response = await middleware(new NextRequest("https://desktop.example.test" + path));

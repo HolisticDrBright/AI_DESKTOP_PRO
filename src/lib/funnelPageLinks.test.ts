@@ -36,7 +36,7 @@ describe('the "Get updates" address', () => {
     await funnelUpdatesUrl(longevityProgram, { practiceFor }, site);
     expect(practiceFor).toHaveBeenCalledWith('longevity-program');
   });
-  it('has no entitled practice on this branch: the engine supplies the directory', async () => {
+  it('names no practice while the campaign engine is switched off (the default)', async () => {
     for (const funnel of FUNNELS) expect(await funnelUpdatesUrl(funnel, marketingSignupDirectory(), site)).toBeNull();
   });
 });

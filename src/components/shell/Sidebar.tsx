@@ -14,6 +14,7 @@ import {
   Inbox,
   Layers,
   Megaphone,
+  Mail,
   SlidersVertical,
   Sun,
   User,
@@ -62,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "programs", label: "Programs", icon: Layers, href: "/programs" },
       { id: "funnels", label: "Funnels", icon: Megaphone, href: "/funnels" },
+      { id: "campaigns", label: "Campaigns", icon: Mail, href: "/campaigns" },
       { id: "billing", label: "Billing", icon: CreditCard, href: "/billing" },
       { id: "reports", label: "Reports", icon: BarChart3, href: "/reports" },
     ],

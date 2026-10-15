@@ -268,7 +268,8 @@
     "test:release-record": "node --test scripts/build-release-record.test.mjs",
     "check:aws-qualification-target": "node scripts/check-aws-qualification-target.mjs",
     "check:aws-qualification-capacity": "node scripts/check-aws-qualification-capacity.mjs",
-    "test:aws-qualification-capacity": "node --test scripts/check-aws-qualification-capacity.test.mjs"
+    "test:aws-qualification-capacity": "node --test scripts/check-aws-qualification-capacity.test.mjs",
+    "build:campaign-engine": "node scripts/build-campaign-engine.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1",
