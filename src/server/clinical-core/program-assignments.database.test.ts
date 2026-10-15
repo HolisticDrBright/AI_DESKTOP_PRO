@@ -480,3 +480,28 @@ describe('program content is bound to what was published, not to what was asked'
    .rejects.toMatchObject({category:'identity_refused'});
  });
 });
+
+describe('a stored purchase destination never leaves the synthetic program boundary while purchase is unreleased',()=>{
+ // The production adapter withholds destinations on both projections that carry phases (the database boundary, then a
+ // second lock). The synthetic adapter is what the isolated qualification program API serves, so it holds the same line:
+ // the authored artifact and its digest stay as published, and the address is replaced with null on the way out.
+ const DESTINATION='https://fictional-dispensary.example/p/fictional-mineral';
+ const withDestination=()=>({...supplementItem(),product:{...supplementItem().product,purchaseUrl:DESTINATION}});
+ it('a consumer read and a clinic preview carry no destination, though the published content holds one (fails before: both returned it)',async()=>{
+  const version=id(++serial);
+  await publish(phases({extra:[withDestination()]}),version,serial);
+  const stored=await db.query<{content:string}>('select content::text as content from clinical_core.synthetic_desktop_program_versions where id=$1',[version]);
+  expect(stored.rows[0]!.content).toContain(DESTINATION);
+  const preview=await call({action:'preview',programVersionId:version},clinician,org,'workforce');
+  if(preview.action!=='preview')throw Error();
+  expect(preview.phases.flatMap(phase=>phase.items).find(item=>item.id==='supp-1')?.product).toMatchObject({id:'product-fictional-1',purchaseUrl:null});
+  const assigned=await call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce');
+  if(assigned.action!=='assign')throw Error();
+  const read=await readOwn(assigned.enrollmentId);
+  const product=read.assignment.phases.flatMap(phase=>phase.items).find(item=>item.id==='supp-1')?.product;
+  // The step, its product identity and dose are delivered exactly; only the address is withheld.
+  expect(product).toEqual({id:'product-fictional-1',ingredientKeys:['fictional-mineral'],dose:'100 mg',purchaseUrl:null});
+  expect(JSON.stringify(read)).not.toContain('fictional-dispensary');
+  expect(JSON.stringify(preview)).not.toContain('fictional-dispensary');
+ });
+});

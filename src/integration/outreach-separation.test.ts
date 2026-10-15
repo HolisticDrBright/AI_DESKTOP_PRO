@@ -9,7 +9,10 @@ import { dirname, join, relative, resolve } from 'node:path';
  *   points reach, transitively, is named here, and none is a clinical adapter, a notification ledger, consult intake or
  *   a database client; the campaign stack's functions see only CAMPAIGN_* settings and can touch only its own table,
  *   key and secret; no clinical template names any campaign resource;
- * - one practice's lists, emails and results are invisible to another, through the Desktop's own staff route.
+ * - one practice's lists, emails and results are invisible to another, through the Desktop's own staff route;
+ * - the reverse direction: no clinical sender (patient notices, consult emails, the telehealth and identity handlers and
+ *   their routes) reaches a campaign module or names a campaign resource, so marketing consent cannot stand in for
+ *   clinical consent.
  *
  * Fictional practices, people and addresses only.
  */
@@ -150,5 +153,32 @@ describe('one practice\'s lists, emails and results are invisible to another, th
     expect((await ask('fictional-token-x', { action: 'overview' })).status).toBe(401);
     const status = await ask('fictional-token-b', { action: 'status' });
     expect(status.data).toMatchObject({ action: 'status', marketing: true, domain: null, activeSequences: [], approvedTemplates: 0 });
+  });
+});
+
+/* ---------------------------------------------- the reverse direction: clinical senders and the marketing store */
+// Everything that decides or sends a clinical message: the patient-notice switches, policy, ledger and dispatcher, the
+// telehealth and identity handlers that call them, the consult intake and its enquirer emails, and the routes over them.
+const CLINICAL_SENDERS = [
+  ...readdirSync('src/server/notifications').filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts')).map(f => `src/server/notifications/${f}`),
+  ...readdirSync('src/server/consult').filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts')).map(f => `src/server/consult/${f}`),
+  'src/server/clinical-core/aws-telehealth-requests.ts', 'src/server/clinical-core/aws-telehealth-requests-lambda.ts',
+  'src/server/clinical-core/aws-identity-api.ts', 'src/server/clinical-core/aws-identity-lambda.ts',
+  'src/app/api/public/consult/route.ts', 'src/app/api/live/consult-requests/route.ts', 'src/app/api/live/patient-notification-settings/route.ts',
+];
+describe('marketing consent is never clinical consent: no clinical sender reaches the marketing store', () => {
+  const { modules } = reach(CLINICAL_SENDERS);
+  it('reaches no campaign module, marketing sign-up or campaign API, so a list subscription cannot permit, widen or suppress a clinical message', () => {
+    // The notice ledger asks the patient's own notification choices in the clinical database; a confirmed list
+    // subscription lives in the campaign table and is not in any module these senders load.
+    expect(modules.length).toBeGreaterThan(CLINICAL_SENDERS.length);
+    expect(modules.filter(m => /^src\/campaigns\//.test(m) || /^src\/app\/(?:join|campaigns)\//.test(m)
+      || /^src\/app\/api\/(?:public|live)\/campaigns\//.test(m) || /(?:^|\/)(?:marketingSignup|marketingSignupLink|campaign-api)\.tsx?$/.test(m))).toEqual([]);
+  });
+  it('names no campaign table, setting or SES configuration set in any clinical sender', () => {
+    for (const file of modules.filter(m => /^src\/server\/(?:notifications|consult|clinical-core)\//.test(m))) {
+      const text = readFileSync(file, 'utf8');
+      expect(text, file).not.toMatch(/CAMPAIGN_[A-Z_]+|alp-marketing|campaign_subscri|CampaignStore|campaignStore/);
+    }
   });
 });
