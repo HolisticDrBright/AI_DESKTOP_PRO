@@ -25,6 +25,7 @@ export const SEPARATELY_CONFIGURED_SPECS = Object.freeze({
   'aws-recording-consent.spec.ts': 'needs E2E_RECORDING_AWS=1 (CI: "Recording and care messages browser suites")',
   'aws-recording-transcription.spec.ts': 'needs E2E_RECORDING_AWS=1 (CI: "Recording and care messages browser suites")',
   'care-messages.spec.ts': 'needs E2E_CARE_MESSAGES=1 (CI: "Recording and care messages browser suites")',
+  'practitioner-onboarding.spec.ts': 'needs E2E_ONBOARDING=1 (CI: "Recording and care messages browser suites")',
   'clinical-edition.spec.ts': 'needs a DOWN backend, E2E_CLINICAL_DOWN=1 (CI: e2e-clinical-down)',
   'commerce-journey.spec.ts': 'needs COMMERCE_JOURNEY_FIXTURE=1 on top of the fixture (CI: e2e-live-fixture, shard 1)',
   'framework-release-boundary.spec.ts': 'needs a production build without the fixture (CI: framework release boundary)',

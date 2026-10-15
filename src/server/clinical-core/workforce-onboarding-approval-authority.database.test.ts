@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { splitPostgresStatements } from './migrations';
+import { WORKFORCE_APPROVAL_AUTHORITY_CANDIDATE_SHA256, WORKFORCE_APPROVAL_AUTHORITY_ROLLBACK_SHA256 } from './workforce-join-review';
 
 /**
  * Who may decide a practitioner's application, on the assembled 106-migration schema with the onboarding parents and
@@ -127,10 +128,12 @@ beforeAll(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe('the parents (failing-before evidence)', () => {
-  it('names its parents by hash, so a changed parent cannot be reviewed against this successor', () => {
+  it('names its parents by hash, and the adapter pins the candidate and rollback it was reviewed against', () => {
     const header = readFileSync(SUCCESSOR, 'utf8');
     expect(header).toContain(sha(PARENT));
     expect(header).toContain(sha(UNIFORM));
+    expect(sha(SUCCESSOR)).toBe(WORKFORCE_APPROVAL_AUTHORITY_CANDIDATE_SHA256);
+    expect(sha(ROLLBACK)).toBe(WORKFORCE_APPROVAL_AUTHORITY_ROLLBACK_SHA256);
   });
 
   it('a platform operator\'s approval of a new clinic grants clinical access at once, to any operator string', async () => {

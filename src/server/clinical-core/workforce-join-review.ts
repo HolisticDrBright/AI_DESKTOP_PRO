@@ -19,6 +19,10 @@ import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase,
  * check and decides; this layer never decides on the database's behalf, and it never sees or sends a person id, a role
  * or a clinic other than the session's selection.
  */
+/** SHA-256 of the BLOCKED candidate and its rollback; the approval-authority database test holds them to the files, so a
+ * changed candidate cannot be served against a review of another. */
+export const WORKFORCE_APPROVAL_AUTHORITY_CANDIDATE_SHA256 = 'd33f398e3f31ac66b28f88e18c6f7332ce3ce98b9a9b19a28298fe6e42e5815f';
+export const WORKFORCE_APPROVAL_AUTHORITY_ROLLBACK_SHA256 = '28590e2678da6c10b87da85696a75a6792bb44e2774a9aa11cf313454b34f70c';
 /** prosrc SHA-256 of each reviewed function as the candidate defines it; a database test holds them to the file. */
 export const WORKFORCE_JOIN_REVIEW_FUNCTIONS = {
   list: { signature: 'clinical_core.list_workforce_join_requests()', prosrcSha256: '5cf9f785be055b762801464de4f4ead54df0f23e3422e833cfc744aef2bc6527' },
