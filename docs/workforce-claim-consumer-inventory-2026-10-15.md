@@ -1,0 +1,30 @@
+# Workforce claim-consumer inventory — first pass (15 October 2026)
+
+This is a source inventory for the selected one-login, clinic-approved membership design. It is **not** an activation review, a proof that every route rechecks membership, or a reason to enable practitioner self-sign-up in Desktop. Direct Cognito sign-up remains allowed by owner choice, but the Desktop registration release constant is off and a new account must have no patient access.
+
+## Source-checked route families
+
+| Family | Current source observation | Successor work before clinic-approved access |
+| --- | --- | --- |
+| Production Desktop compatibility | `aws-production-clinical-api.ts` takes person/organization from legacy JWT claims by default. Its `database_current` branch and `aws-production-desktop.ts` call `set_current_workforce_context` inside the operation transaction, but the SQL is an unregistered candidate and the branch is not selected in the deployed Lambda. | Register and qualify the preserving SQL, run shadow/backfill and revocation races, then activate the reviewed current-membership branch. Audit the compatibility fallback and `activate_my_memberships` before changing the request-context contract. |
+| Production identity/consent | `aws-identity-api.ts` has a blocked `database_current` branch for one compatibility operation; it explicitly refuses its other workforce routes in that mode. Legacy mode still uses claims. | Migrate every workforce identity/consent route or keep it refused; no fallback to stale claims. |
+| Telehealth appointments and visits | `aws-telehealth-requests.ts` explicitly calls `requireCurrentWorkforceMembership` before five DynamoDB-backed workforce appointment/slot/payment routes. Visit routes use separate visit/record authority and require a per-route review; the five-route guard is not a blanket certificate for all visit methods. | Bind selected clinic and current membership to every workforce visit and provider action, including reads, late writes and revocation races. |
+| Governed catalog | `aws-governed-catalog-api.ts` validates workforce issuer/audience and token person/organization shape, then returns workforce reference pages. `aws-governed-catalog-reader.ts` has no per-request workforce membership check. This is reference-only, not a PHI route, but it can expose workforce-only/restricted catalog information after clinic removal until the token expires. | Add a narrow current-membership reader/authority with the selected-clinic contract and test revoked, disabled and cross-clinic tokens before this route counts for commercial workforce onboarding. Do not solve this by trusting another mutable claim. |
+| Care messaging | `production-care-messaging-api.ts` derives a workforce context from the token; `20261006010000_production_care_messaging.sql` calls `production_care_message_actor`, which checks current identity/person/organization and `has_clinical_role` for workforce requests. | Prove the full send/read/export/revocation matrix against hosted PostgreSQL, including the same-transaction race. This SQL check is not evidence for unrelated route families. |
+| Clinic records, care connections, privacy and recording | Their production API modules accept workforce JWTs and pass contexts to their respective authorities. The direct-claim search alone does not establish current-membership coverage across each operation. | Enumerate every route and SQL function, record the exact currentness check and lock/race behavior, and fail closed for any unverified route in the successor. |
+| Qualification program API and media | The program API remains blocked and fictional qualification-only. The media authority contains designated fictional-subject checks; those are not a production clinic-membership design. | Use the same selected-clinic and current-membership contract before commercial program authoring/assignment routes activate. |
+
+The direct custom-attribute scan also finds consumer-only Ask ALP, daily guidance, owned lab, voice-transcription and consumer account modules, plus fixture/operator code. Those are a **separate consumer trust domain**; they must not be rewritten as workforce routes to shortcut this migration. `aws-governed-catalog-api.ts` and `aws-telehealth-requests.ts` are mixed-pool handlers and must be audited route by route.
+
+## Inventory method and limits
+
+The first pass searched production TypeScript under `src/server` for `custom:person_id`, `custom:organization_id`, `custom:production_bound`, workforce issuer/audience, and current-membership calls, then inspected the handler and relevant SQL excerpts named above. The search is not exhaustive for services that alias claims, pass an already-derived context, or authenticate by IAM. A complete release inventory must additionally enumerate every configured API Gateway route and Lambda integration from the exact deployed templates, compare them with source handlers, and prove the current-membership check **inside each clinical operation**. The first pass must not be used as a sign-off.
+
+## Release-blocking observations
+
+1. The unregistered `workforce-current-membership-context.sql` and the disabled `database_current` branches cannot authorize a new public sign-up today.
+2. The catalog workforce read has no source-visible current-membership check. Its reference-only classification limits the data sensitivity, not the authorization requirement.
+3. The telehealth five-route DynamoDB guard and care-messaging SQL check are positive, narrow source observations. Neither proves that all other workforce routes revoke old-token access.
+4. Hosted two-clinic/two-device selection, account suspension, role demotion, removal, in-flight revocation, database outage and direct Cognito sign-up bypass remain unobserved.
+
+The owner-selected end state and ordered release contract remain in `docs/workforce-membership-authority-decision-2026-10-15.md`. No AWS configuration, SQL registration, PHI switch or self-sign-up flag was changed by this inventory.
