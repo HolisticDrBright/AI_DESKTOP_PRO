@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("clinical-core/aws-governed-catalog-reader is server-only.");
 }
 
-import type { ClinicalCoreDatabase } from "./database";
+import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from "./database";
 import type { CatalogAccessTier, CatalogProductType } from "./aws-governed-catalog";
 import { CONSUMER_SUPPLEMENT_QUARANTINE } from "./catalog-consumer-quarantine";
 
@@ -84,20 +84,24 @@ export type TemplatePage = {
 export interface AwsGovernedCatalogReader {
   /** `consumer` reads only open, unrestricted supplements, less the quarantined non-supplement goods; the workforce
    * (default) reads every approved product. */
-  listProducts(input: { limit: number; cursor?: string; audience?: "workforce" | "consumer" }): Promise<CatalogPage>;
-  listProtocolTemplates(input: { limit: number; cursor?: string }): Promise<TemplatePage>;
+  listProducts(input: { limit: number; cursor?: string; audience?: "workforce" | "consumer"; currentWorkforce?: CurrentCatalogWorkforce }): Promise<CatalogPage>;
+  listProtocolTemplates(input: { limit: number; cursor?: string; currentWorkforce?: CurrentCatalogWorkforce }): Promise<TemplatePage>;
 }
+
+/** Subject and selected clinic from a validated production workforce JWT/request. Never token person or clinic claims. */
+export type CurrentCatalogWorkforce = { subject: string; selectedOrganizationId: string };
 
 export type CatalogEnvironment = "synthetic-staging" | "production-clinical";
 
 export class GovernedCatalogReadError extends Error {
-  constructor(readonly category: "request_invalid" | "catalog_unavailable" | "catalog_response_invalid") {
+  constructor(readonly category: "request_invalid" | "identity_refused" | "catalog_unavailable" | "catalog_response_invalid") {
     super(category);
     this.name = "GovernedCatalogReadError";
   }
 }
 
 const STABLE_ID = /^(prd|tpl)_[a-z0-9][a-z0-9_-]{2,95}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function createAwsGovernedCatalogReader(
   database: ClinicalCoreDatabase,
@@ -109,8 +113,14 @@ export function createAwsGovernedCatalogReader(
   return {
     async listProducts(input) {
       assertPage(input);
+      assertCurrentWorkforce(input.currentWorkforce, environment, input.audience === "consumer");
       try {
         return await database.transaction(async (tx) => {
+          if (input.currentWorkforce && environment === "production-clinical") {
+            await tx.query("select clinical_private.set_current_workforce_context($1,$2,$3)", [
+              input.currentWorkforce.subject, clinicalUuid(input.currentWorkforce.selectedOrganizationId), "clinical_data",
+            ]);
+          }
           await tx.query("select set_config('clinical.catalog.environment', $1, true)", [environment]);
           const rows = await tx.query<ProductRow>(
             `select v.product_stable_id, v.version, v.display_name, v.product_type, v.access_tier,
@@ -209,14 +219,23 @@ export function createAwsGovernedCatalogReader(
         });
       } catch (error) {
         if (error instanceof GovernedCatalogReadError) throw error;
+        if (error instanceof ClinicalCoreDatabaseRejection && error.category === "identity_refused") {
+          throw new GovernedCatalogReadError("identity_refused");
+        }
         throw new GovernedCatalogReadError("catalog_unavailable");
       }
     },
 
     async listProtocolTemplates(input) {
       assertPage(input);
+      assertCurrentWorkforce(input.currentWorkforce, environment, false);
       try {
         return await database.transaction(async (tx) => {
+          if (input.currentWorkforce && environment === "production-clinical") {
+            await tx.query("select clinical_private.set_current_workforce_context($1,$2,$3)", [
+              input.currentWorkforce.subject, clinicalUuid(input.currentWorkforce.selectedOrganizationId), "clinical_data",
+            ]);
+          }
           await tx.query("select set_config('clinical.catalog.environment', $1, true)", [environment]);
           const rows = await tx.query<TemplateRow>(
             `select v.template_stable_id, v.version, v.title, v.summary,
@@ -269,10 +288,23 @@ export function createAwsGovernedCatalogReader(
         });
       } catch (error) {
         if (error instanceof GovernedCatalogReadError) throw error;
+        if (error instanceof ClinicalCoreDatabaseRejection && error.category === "identity_refused") {
+          throw new GovernedCatalogReadError("identity_refused");
+        }
         throw new GovernedCatalogReadError("catalog_unavailable");
       }
     },
   };
+}
+
+function assertCurrentWorkforce(identity: CurrentCatalogWorkforce | undefined, environment: CatalogEnvironment, consumer: boolean) {
+  if (environment !== "production-clinical" || consumer) {
+    if (identity) throw new GovernedCatalogReadError("request_invalid");
+    return;
+  }
+  if (!identity || !UUID.test(identity.subject) || !UUID.test(identity.selectedOrganizationId)) {
+    throw new GovernedCatalogReadError("identity_refused");
+  }
 }
 
 type ProductRow = {

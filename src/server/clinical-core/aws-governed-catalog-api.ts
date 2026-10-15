@@ -7,6 +7,7 @@ import {
   GovernedCatalogReadError,
   type AwsGovernedCatalogReader,
   type CatalogEnvironment,
+  type CurrentCatalogWorkforce,
 } from "./aws-governed-catalog-reader";
 import type { ClinicalCoreDatabase } from "./database";
 import type { ApiGatewayV2Response, IdentityApiConfiguration } from "./aws-identity-api";
@@ -17,6 +18,7 @@ export type CatalogApiEvent = {
   body?: string | null;
   queryStringParameters?: Record<string, string | undefined> | null;
   requestContext?: {
+    accountId?: string;
     authorizer?: { jwt?: { claims?: Record<string, string | number | boolean | undefined> } };
   };
 };
@@ -33,6 +35,7 @@ const ROUTES: Readonly<Record<string, { pool: Pool; operation: Operation }>> = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const CURSOR = /^(prd|tpl)_[a-z0-9][a-z0-9_-]{2,95}$/;
+const PRODUCTION_ACCOUNT = "173535830222";
 
 export function createAwsGovernedCatalogApiHandler(input: {
   database?: ClinicalCoreDatabase;
@@ -49,16 +52,18 @@ export function createAwsGovernedCatalogApiHandler(input: {
     try {
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
-      authenticate(event, route.pool, input.configuration);
+      const currentWorkforce = authenticate(event, route.pool, input.configuration);
       if (event.body) throw new CatalogApiError("request_invalid");
       const page = parsePage(event.queryStringParameters);
       const data = route.operation === "products"
         // A consumer never receives a practitioner-only, injectable, peptide or declared-restricted product.
         ? productionEducationOnlyProjection(
-          await reader.listProducts(route.pool === "consumer" ? { ...page, audience: "consumer" } : page),
+          await reader.listProducts(route.pool === "consumer"
+            ? { ...page, audience: "consumer" }
+            : { ...page, ...(currentWorkforce ? { currentWorkforce } : {}) }),
           route.pool, input.configuration.environment,
         )
-        : await reader.listProtocolTemplates(page);
+        : await reader.listProtocolTemplates({ ...page, ...(currentWorkforce ? { currentWorkforce } : {}) });
       return response(200, {
         contractVersion: "governed-catalog-api/1",
         environment: input.configuration.environment,
@@ -72,7 +77,7 @@ export function createAwsGovernedCatalogApiHandler(input: {
         return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
       }
       if (error instanceof GovernedCatalogReadError) {
-        const status = error.category === "request_invalid" ? 400 : 503;
+        const status = error.category === "request_invalid" ? 400 : error.category === "identity_refused" ? 403 : 503;
         return response(status, { error: error.category });
       }
       return response(503, { error: "service_unavailable" });
@@ -131,11 +136,25 @@ class CatalogApiError extends Error {
   }
 }
 
-function authenticate(event: CatalogApiEvent, pool: Pool, configuration: CatalogApiConfiguration) {
+function authenticate(
+  event: CatalogApiEvent, pool: Pool, configuration: CatalogApiConfiguration,
+): CurrentCatalogWorkforce | undefined {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   if (!claims) throw new CatalogApiError("identity_refused");
   const issuer = pool === "workforce" ? configuration.workforceIssuer : configuration.consumerIssuer;
   const audience = pool === "workforce" ? configuration.workforceAudience : configuration.consumerAudience;
+  if (pool === "workforce" && configuration.environment === "production-clinical") {
+    const selectedHeaders = Object.entries(event.headers ?? {})
+      .filter(([key]) => key.toLowerCase() === "x-alp-selected-organization-id");
+    const selectedOrganizationId = selectedHeaders.length === 1 ? selectedHeaders[0]![1] ?? "" : "";
+    if (event.requestContext?.accountId !== PRODUCTION_ACCOUNT
+      || claim(claims, "iss") !== issuer || claim(claims, "aud") !== audience
+      || claim(claims, "token_use") !== "id" || !UUID.test(claim(claims, "sub"))
+      || claim(claims, "email_verified") !== "true"
+      || claim(claims, "custom:synthetic_attested") === "true"
+      || !UUID.test(selectedOrganizationId)) throw new CatalogApiError("identity_refused");
+    return { subject: claim(claims, "sub"), selectedOrganizationId };
+  }
   if (
     claim(claims, "iss") !== issuer
     || claim(claims, "aud") !== audience
@@ -183,7 +202,8 @@ function response(statusCode: number, payload: Record<string, unknown>): ApiGate
     statusCode,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": statusCode === 200 ? "private, max-age=60" : "no-store",
+      // A workforce read must not outlive clinic membership revocation in a browser cache.
+      "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     },
     body: JSON.stringify(payload),

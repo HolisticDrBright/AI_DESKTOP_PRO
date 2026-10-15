@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
+import { clinicalUuid, ClinicalCoreDatabaseRejection } from "./database";
 import { createAwsGovernedCatalogReader } from "./aws-governed-catalog-reader";
+
+const currentWorkforce = {
+  subject: "33333333-3333-4333-8333-333333333333",
+  selectedOrganizationId: "22222222-2222-4222-8222-222222222222",
+};
 
 function database(responses: Array<Array<Record<string, unknown>>>) {
   const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
@@ -13,6 +19,7 @@ function database(responses: Array<Array<Record<string, unknown>>>) {
           parameters: readonly unknown[] = [],
         ): Promise<ClinicalCoreQueryResult<Row>> {
           calls.push({ sql, parameters });
+          if (sql.includes("set_current_workforce_context")) return { rows: [] };
           if (sql.includes("set_config('clinical.catalog.environment'")) return { rows: [] };
           return { rows: (responses[index++] ?? []) as Row[] };
         },
@@ -51,14 +58,15 @@ describe("AWS governed catalog reader", () => {
         tracking_metadata_json: JSON.stringify({ campaign: "reviewed" }),
       }],
     ]);
-    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProducts({ limit: 50 })).resolves.toEqual({
+    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProducts({ limit: 50, currentWorkforce })).resolves.toEqual({
       products: [expect.objectContaining({ stableId: "prd_reviewed_omega", reviewStatus: "approved" })],
       commercial: { offers: [expect.objectContaining({ stableId: "off_reviewed_omega", reviewStatus: "approved" })] },
     });
-    expect(db.calls[0]!.parameters).toEqual(["production-clinical"]);
-    expect(db.calls[1]!.sql).not.toContain("commercial_reference");
-    expect(db.calls[2]!.sql).toContain("product_label_versions");
-    expect(db.calls[3]!.sql).not.toContain("clinical_payload");
+    expect(db.calls[0]!.parameters).toEqual([currentWorkforce.subject, clinicalUuid(currentWorkforce.selectedOrganizationId), "clinical_data"]);
+    expect(db.calls[1]!.parameters).toEqual(["production-clinical"]);
+    expect(db.calls[2]!.sql).not.toContain("commercial_reference");
+    expect(db.calls[3]!.sql).toContain("product_label_versions");
+    expect(db.calls[4]!.sql).not.toContain("clinical_payload");
     expect(db.calls.every((call) => !call.sql.toLowerCase().includes("supabase"))).toBe(true);
   });
 
@@ -87,7 +95,7 @@ describe("AWS governed catalog reader", () => {
 
   test("never describes a failed backend as an empty catalog", async () => {
     const value: ClinicalCoreDatabase = { async transaction() { throw new Error("provider detail"); } };
-    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProducts({ limit: 50 }))
+    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProducts({ limit: 50, currentWorkforce }))
       .rejects.toMatchObject({ category: "catalog_unavailable" });
   });
 
@@ -103,7 +111,7 @@ describe("AWS governed catalog reader", () => {
       clinical_payload_json: "not-json",
       source_refs_json: "[]",
     }]]);
-    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProducts({ limit: 50 }))
+    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProducts({ limit: 50, currentWorkforce }))
       .rejects.toMatchObject({ category: "catalog_response_invalid" });
   });
 
@@ -124,7 +132,30 @@ describe("AWS governed catalog reader", () => {
         contraindications: [],
       }]),
     }]]);
-    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProtocolTemplates({ limit: 50 }))
+    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProtocolTemplates({ limit: 50, currentWorkforce }))
       .rejects.toMatchObject({ category: "catalog_response_invalid" });
+  });
+
+  test("production workforce reads refuse without current identity before querying the catalog", async () => {
+    const db = database([]);
+    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProducts({ limit: 50 }))
+      .rejects.toMatchObject({ category: "identity_refused" });
+    await expect(createAwsGovernedCatalogReader(db.value, "production-clinical").listProtocolTemplates({ limit: 50 }))
+      .rejects.toMatchObject({ category: "identity_refused" });
+    expect(db.calls).toEqual([]);
+  });
+
+  test("a membership refusal prevents catalog access in the same transaction", async () => {
+    const calls: string[] = [];
+    const value: ClinicalCoreDatabase = { async transaction(work) {
+      return work({ async query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string): Promise<ClinicalCoreQueryResult<Row>> {
+        calls.push(sql);
+        throw new ClinicalCoreDatabaseRejection("identity_refused");
+      } });
+    } };
+    await expect(createAwsGovernedCatalogReader(value, "production-clinical").listProducts({ limit: 50, currentWorkforce }))
+      .rejects.toMatchObject({ category: "identity_refused" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("set_current_workforce_context");
   });
 });

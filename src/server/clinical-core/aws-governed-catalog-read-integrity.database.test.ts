@@ -206,7 +206,23 @@ describe("real catalog SQL, review transitions and API-role RLS (local, not host
     });
     expect((await page()).products.some(p => p.stableId === manifest.products[0]!.stableId)).toBe(false);
     expect((await page(admin)).products.some(p => p.stableId === manifest.products[0]!.stableId)).toBe(false);
-    expect((await page(api, "production-clinical")).products.map(p => p.stableId)).toEqual([manifest.products[0]!.stableId]);
+    // The standalone catalog schema tests reference-release isolation here. The production
+    // reader additionally requires a current workforce membership function, a separate
+    // BLOCKED source candidate that this catalog-only fixture must not fake as active.
+    const productionRows = await api.transaction(async tx => {
+      await tx.query("select set_config('clinical.catalog.environment', 'production-clinical', true)");
+      return (await tx.query<{ stable_id: string }>(
+        "select stable_id from clinical_reference.catalog_products where review_status='approved' and environment='production-clinical'",
+      )).rows;
+    });
+    expect(productionRows.map(row => row.stable_id)).toEqual([manifest.products[0]!.stableId]);
+    await expect(createAwsGovernedCatalogReader(api, "production-clinical").listProducts({
+      limit: 100,
+      currentWorkforce: {
+        subject: "33333333-3333-4333-8333-333333333333",
+        selectedOrganizationId: "22222222-2222-4222-8222-222222222222",
+      },
+    })).rejects.toMatchObject({ category: "catalog_unavailable" });
   });
 
   // This compatibility case boots a second database, applies its full legacy

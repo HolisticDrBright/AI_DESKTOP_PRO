@@ -40,7 +40,9 @@ describe('observing the governed catalog', () => {
     const [firstUrl, firstInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(firstUrl).toBe(ORIGIN + '/clinical-core/workforce/catalog/products?limit=100');
     expect((firstInit.headers as Record<string, string>).authorization).toBe('Bearer fictional-workforce-token');
+    expect((firstInit.headers as Record<string, string>)['x-alp-selected-organization-id']).toBe('clinic-a');
     expect(fetchImpl.mock.calls[1]![0]).toBe(ORIGIN + '/clinical-core/workforce/catalog/products?limit=100&cursor=prd_fictional_magnesium');
+    expect((fetchImpl.mock.calls[1]![1] as RequestInit).headers).toMatchObject({ 'x-alp-selected-organization-id': 'clinic-a' });
     expect(result).toEqual({
       contractVersion: 'program-catalog-observation/1', clinic: 'clinic-a', versionId: VERSION, target: 'synthetic-staging',
       observedAt: '2026-10-11T12:00:00.000Z', query: '', catalogSize: 2, complete: true,

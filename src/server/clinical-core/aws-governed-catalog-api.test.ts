@@ -15,11 +15,13 @@ function event(routeKey: string, pool: "workforce" | "consumer", query?: Record<
   return {
     routeKey,
     queryStringParameters: query,
-    requestContext: { authorizer: { jwt: { claims: {
+    ...(pool === "workforce" ? { headers: { "x-alp-selected-organization-id": "22222222-2222-4222-8222-222222222222" } } : {}),
+    requestContext: { accountId: "173535830222", authorizer: { jwt: { claims: {
       iss: pool === "workforce" ? configuration.workforceIssuer : configuration.consumerIssuer,
       aud: pool === "workforce" ? configuration.workforceAudience : configuration.consumerAudience,
       token_use: "id",
-      sub: `${pool}:synthetic-subject`,
+      sub: pool === "workforce" ? "33333333-3333-4333-8333-333333333333" : "consumer:synthetic-subject",
+      email_verified: "true",
       "custom:person_id": "11111111-1111-4111-8111-111111111111",
       "custom:organization_id": "22222222-2222-4222-8222-222222222222",
       "custom:synthetic_attested": "false",
@@ -136,6 +138,40 @@ describe("AWS governed catalog API", () => {
       "GET /clinical-core/consumer/catalog/protocol-templates", "consumer",
     ));
     expect(consumer.statusCode).toBe(404);
+  });
+
+  test("production workforce catalog binds the current subject and selected clinic, not stale person or clinic claims", async () => {
+    const value = reader();
+    const request = event("GET /clinical-core/workforce/catalog/products", "workforce");
+    request.requestContext!.authorizer!.jwt!.claims!["custom:person_id"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    request.requestContext!.authorizer!.jwt!.claims!["custom:organization_id"] = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const response = await createAwsGovernedCatalogApiHandler({ reader: value, configuration })(request);
+    expect(response.statusCode).toBe(200);
+    expect(response.headers?.["cache-control"]).toBe("no-store");
+    expect(value.listProducts).toHaveBeenCalledWith({
+      limit: 50,
+      currentWorkforce: {
+        subject: "33333333-3333-4333-8333-333333333333",
+        selectedOrganizationId: "22222222-2222-4222-8222-222222222222",
+      },
+    });
+  });
+
+  test("production workforce catalog refuses absent, duplicate, or invalid selected clinic and account drift", async () => {
+    const value = reader();
+    const handler = createAwsGovernedCatalogApiHandler({ reader: value, configuration });
+    const missing = event("GET /clinical-core/workforce/catalog/products", "workforce");
+    delete missing.headers;
+    const duplicate = event("GET /clinical-core/workforce/catalog/products", "workforce");
+    duplicate.headers!["X-ALP-SELECTED-ORGANIZATION-ID"] = "44444444-4444-4444-8444-444444444444";
+    const wrongAccount = event("GET /clinical-core/workforce/catalog/products", "workforce");
+    wrongAccount.requestContext!.accountId = "588966314750";
+    const unverified = event("GET /clinical-core/workforce/catalog/products", "workforce");
+    unverified.requestContext!.authorizer!.jwt!.claims!.email_verified = "false";
+    for (const request of [missing, duplicate, wrongAccount, unverified]) {
+      expect((await handler(request)).statusCode).toBe(403);
+    }
+    expect(value.listProducts).not.toHaveBeenCalled();
   });
 
   test("refuses issuer, audience, or synthetic-attestation drift", async () => {

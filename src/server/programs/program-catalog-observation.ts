@@ -79,7 +79,11 @@ export async function observeProgramCatalog(input: {
       try {
         response = await fetchImpl(url.toString(), {
           method: 'GET', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
-          headers: { authorization: 'Bearer ' + input.token, accept: 'application/json' },
+          headers: {
+            authorization: 'Bearer ' + input.token,
+            accept: 'application/json',
+            'x-alp-selected-organization-id': input.clinic,
+          },
         });
       } catch {
         throw new CatalogObservationError('service_unavailable');
