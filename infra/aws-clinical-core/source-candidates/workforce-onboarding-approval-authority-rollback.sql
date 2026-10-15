@@ -1,6 +1,6 @@
 -- Rollback for the UNREGISTERED, BLOCKED workforce-onboarding-approval-authority candidate. BLOCKED: run only where
 -- that candidate was applied, after its parents. It restores the parents' behaviour exactly: the applicant status read
--- and activate_my_memberships to their parent bodies, EXECUTE on the parent review functions, and removes the four
+-- and activate_my_memberships to their parent bodies, EXECUTE on the parent review functions, and removes the five
 -- reasoned functions and the (empty) activation-hold table.
 --
 -- Preserving: every decision already recorded stays. The reason columns, the revocation ledger and the operator
@@ -25,6 +25,8 @@ drop function clinical_core.review_workforce_join_request_v2(uuid,boolean,text,t
 drop function clinical_private.review_workforce_clinic_proposal_v2(uuid,boolean,text,text);
 revoke all on function clinical_core.revoke_workforce_membership(uuid,text) from clinical_core_api;
 drop function clinical_core.revoke_workforce_membership(uuid,text);
+revoke all on function clinical_private.list_workforce_clinic_proposals(text) from clinical_workforce_operator;
+drop function clinical_private.list_workforce_clinic_proposals(text);
 grant execute on function clinical_core.review_workforce_join_request(uuid,boolean) to clinical_core_api;
 grant execute on function clinical_private.review_workforce_clinic_proposal(uuid,boolean,text) to clinical_workforce_operator;
 

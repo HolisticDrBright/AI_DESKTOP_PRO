@@ -18,6 +18,7 @@ import {
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { DataSourceCard } from "@/components/settings/DataSourceCard";
 import { OrgMembersCard } from "@/components/settings/OrgMembersCard";
+import { JoinRequestsCard } from "@/components/settings/JoinRequestsCard";
 import { PrivacyCard } from "@/components/settings/PrivacyCard";
 
 const GROUPS: {
@@ -116,6 +117,7 @@ export default function SettingsPage() {
         <AppearanceCard />
         <DataSourceCard />
         <OrgMembersCard />
+        <JoinRequestsCard />
         <PrivacyCard />
       </div>
     </section>

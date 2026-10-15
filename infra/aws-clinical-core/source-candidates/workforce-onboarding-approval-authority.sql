@@ -11,7 +11,7 @@
 -- request context from current rows; nothing here depends on that setter's text, only on the context it sets.
 -- Rollback: workforce-onboarding-approval-authority-rollback.sql restores the parents exactly.
 --
--- Preserving. It adds two nullable reason columns, three tables and four functions; it redefines the applicant status
+-- Preserving. It adds two nullable reason columns, three tables and five functions; it redefines the applicant status
 -- read and activate_my_memberships with their parents' behaviour plus the rules below; it withdraws EXECUTE on the two
 -- parent review functions so the reasoned ones are the only doors. No existing row is changed.
 --
@@ -159,10 +159,26 @@ begin
   perform clinical_private.require_organization_admin(clinical_private.organization_id(),false);
   return coalesce((select jsonb_agg(jsonb_build_object(
       'id',r.id,'status',r.status,'createdAt',r.created_at,'decidedAt',r.decided_at,
-      'decisionReason',r.decision_reason) order by r.created_at desc,r.id)
+      'decisionReason',r.decision_reason,'membershipId',r.approved_membership_id) order by r.created_at desc,r.id)
     from (select * from clinical_private.workforce_access_requests
       where kind='join' and requested_organization_id=clinical_private.organization_id()
       order by created_at desc,id limit 50) r),'[]'::jsonb);
+end $$;
+
+-- A registered, active platform operator's queue of clinic proposals: the proposed name and the decision, never the
+-- applicant's subject or email digest.
+create function clinical_private.list_workforce_clinic_proposals(_operator_subject text)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+begin
+  if _operator_subject is null or not exists (select 1 from clinical_private.workforce_platform_operators
+      where operator_subject=_operator_subject and status='active') then
+    raise exception using errcode='42501',message='workforce_operator_refused';
+  end if;
+  return coalesce((select jsonb_agg(jsonb_build_object(
+      'id',r.id,'status',r.status,'createdAt',r.created_at,'decidedAt',r.decided_at,
+      'proposedLabel',r.proposed_organization_label,'decisionReason',r.decision_reason) order by r.created_at desc,r.id)
+    from (select * from clinical_private.workforce_access_requests
+      where kind='create_clinic' order by created_at desc,id limit 50) r),'[]'::jsonb);
 end $$;
 
 create function clinical_core.review_workforce_join_request_v2(
@@ -328,7 +344,10 @@ revoke all on function clinical_private.review_workforce_clinic_proposal_v2(uuid
   from public,clinical_core_api,clinical_workforce_application;
 revoke all on function clinical_core.revoke_workforce_membership(uuid,text)
   from public,clinical_workforce_application,clinical_workforce_operator;
+revoke all on function clinical_private.list_workforce_clinic_proposals(text)
+  from public,clinical_core_api,clinical_workforce_application;
 grant execute on function clinical_core.list_workforce_join_requests() to clinical_core_api;
+grant execute on function clinical_private.list_workforce_clinic_proposals(text) to clinical_workforce_operator;
 grant execute on function clinical_core.revoke_workforce_membership(uuid,text) to clinical_core_api;
 grant execute on function clinical_core.review_workforce_join_request_v2(uuid,boolean,text,text) to clinical_core_api;
 grant execute on function clinical_private.review_workforce_clinic_proposal_v2(uuid,boolean,text,text) to clinical_workforce_operator;

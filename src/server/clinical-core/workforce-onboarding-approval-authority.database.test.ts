@@ -106,6 +106,7 @@ const SIGNATURES = {
   join: 'clinical_core.review_workforce_join_request_v2(uuid,boolean,text,text)',
   proposal: 'clinical_private.review_workforce_clinic_proposal_v2(uuid,boolean,text,text)',
   revoke: 'clinical_core.revoke_workforce_membership(uuid,text)',
+  proposals: 'clinical_private.list_workforce_clinic_proposals(text)',
 };
 const parentDefinitions: Record<string, string | null> = {};
 
@@ -173,6 +174,8 @@ describe('the approval-authority successor', () => {
       const matrix: Array<[string, string, boolean]> = [
         ['clinical_core_api', SIGNATURES.list, true], ['clinical_core_api', SIGNATURES.join, true], ['clinical_core_api', SIGNATURES.revoke, true],
         ['clinical_core_api', SIGNATURES.proposal, false],
+        ['clinical_core_api', SIGNATURES.proposals, false], ['clinical_workforce_application', SIGNATURES.proposals, false],
+        ['public', SIGNATURES.proposals, false], ['clinical_workforce_operator', SIGNATURES.proposals, true],
         ['clinical_workforce_operator', SIGNATURES.proposal, true], ['clinical_workforce_operator', SIGNATURES.join, false],
         ['clinical_workforce_operator', SIGNATURES.list, false], ['clinical_workforce_operator', SIGNATURES.revoke, false],
         ['clinical_workforce_application', SIGNATURES.join, false], ['clinical_workforce_application', SIGNATURES.proposal, false],
@@ -282,7 +285,7 @@ describe('the approval-authority successor', () => {
       const ids = queue.map(entry => entry.id);
       expect(ids).toContain(mine.request);
       expect(ids).not.toContain(theirs.request);
-      for (const entry of queue) expect(Object.keys(entry).sort()).toEqual(['createdAt', 'decidedAt', 'decisionReason', 'id', 'status']);
+      for (const entry of queue) expect(Object.keys(entry).sort()).toEqual(['createdAt', 'decidedAt', 'decisionReason', 'id', 'membershipId', 'status']);
       const text = JSON.stringify(queue);
       expect(text).not.toContain(mine.subject);
       expect(text).not.toContain(digest(mine.email));
@@ -426,6 +429,21 @@ describe('the approval-authority successor', () => {
       expect((await db.query<{ n: number }>('select count(*)::int as n from clinical_core.organizations where organization_label=$1', ['FICTIONAL PROPOSED CLINIC S'])).rows[0]!.n).toBe(1);
     });
 
+    it('the operator\'s queue lists proposals by name and decision, never by applicant, and only for a registered operator', async () => {
+      const subject = randomUUID();
+      const app = await submit(subject, 'create_clinic', 'FICTIONAL PROPOSED CLINIC T');
+      const queue = await asRole('clinical_workforce_operator', async tx =>
+        (await tx.query<{ r: Array<Record<string, unknown>> }>('select clinical_private.list_workforce_clinic_proposals($1) as r', [operator])).rows[0]!.r);
+      expect(queue.find(entry => entry.id === app.request)).toMatchObject({ status: 'pending', proposedLabel: 'FICTIONAL PROPOSED CLINIC T', decisionReason: null });
+      for (const entry of queue) expect(Object.keys(entry).sort()).toEqual(['createdAt', 'decidedAt', 'decisionReason', 'id', 'proposedLabel', 'status']);
+      expect(JSON.stringify(queue)).not.toContain(subject);
+      expect(JSON.stringify(queue)).not.toContain(digest(app.email));
+      for (const who of [randomUUID(), disabled]) {
+        expect(await refusal(asRole('clinical_workforce_operator', tx => tx.query('select clinical_private.list_workforce_clinic_proposals($1)', [who]))))
+          .toEqual({ code: '42501', message: 'workforce_operator_refused' });
+      }
+    });
+
     it('a pending invitation elsewhere still self-activates: the hold is specific to held clinics', async () => {
       const invited = actor(clinicA, 'invited'); await person(invited, null);
       await asAdmin(ownerA, clinicA, tx => tx.query("select clinical_core.add_org_member($1,$2,'practitioner')", [clinicA, invited.email]));
@@ -476,7 +494,7 @@ describe('the approval-authority successor', () => {
       await db.query('delete from clinical_private.workforce_clinic_activation_holds');
       await exec(ROLLBACK);
       for (const signature of [SIGNATURES.activate, SIGNATURES.status, SIGNATURES.parentJoin, SIGNATURES.parentProposal]) expect(await functionDef(signature)).toBe(parentDefinitions[signature]);
-      for (const signature of [SIGNATURES.list, SIGNATURES.join, SIGNATURES.proposal, SIGNATURES.revoke]) expect(await functionDef(signature)).toBeNull();
+      for (const signature of [SIGNATURES.list, SIGNATURES.join, SIGNATURES.proposal, SIGNATURES.revoke, SIGNATURES.proposals]) expect(await functionDef(signature)).toBeNull();
       expect(await canExecute('clinical_core_api', SIGNATURES.parentJoin)).toBe(true);
       expect(await canExecute('clinical_workforce_operator', SIGNATURES.parentProposal)).toBe(true);
       expect((await db.query<{ n: number }>('select count(*)::int as n from clinical_private.workforce_access_requests where decision_reason is not null')).rows[0]!.n).toBe(recorded);
