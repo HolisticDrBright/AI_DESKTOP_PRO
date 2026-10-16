@@ -154,6 +154,8 @@ const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERT
   // Route declarations, AWS-side handlers, operator and acceptance tools, contracts: none is a Desktop session's caller.
   'src/contracts/telehealthRecordInventory.ts': 'not_a_desktop_caller',
   'src/server/clinic-authority-families.ts': 'not_a_desktop_caller',
+  /** The route-authority inventory names upstream routes in its family descriptions; it calls nothing. */
+  'src/server/route-authority-inventory.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/production-pilot-policy.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/aws-governed-catalog-api.ts': 'not_a_desktop_caller',
   'src/server/clinical-core/aws-identity-api.ts': 'not_a_desktop_caller',
