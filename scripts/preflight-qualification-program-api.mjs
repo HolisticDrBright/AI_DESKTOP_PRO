@@ -74,7 +74,7 @@ function aws(...args) {
     { encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
-const databaseSql = `select current_database(),
+export const databaseSql = `select current_database(),
   (select count(*)::int from clinical_core.schema_migrations),
   (select encode(sha256(convert_to(string_agg(version||':'||sha256,E'\\n' order by version),'UTF8')),'hex')
     from clinical_core.schema_migrations),
