@@ -3,6 +3,7 @@ import { AdminDisableUserCommand, AdminUserGlobalSignOutCommand, type CognitoIde
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
+import { IDENTITY_REVOCATION_REASONS, identityRevocationDecisionRequest, identityRevocationRequest, identityRevocationSummary } from '../../contracts/platformOperatorConsole';
 
 /**
  * The emergency revocation of one practitioner's LOGIN (workforce-identity-emergency-revocation/1), for a suspected
@@ -30,7 +31,7 @@ export const WORKFORCE_IDENTITY_EMERGENCY_REVOCATION_SHA256 = '8d059be1483e9ff53
 export const WORKFORCE_IDENTITY_EMERGENCY_REVOCATION_ROLLBACK_SHA256 = 'cf4c40020aeaf746cfa155ad633bf87cbd7b823e360b5bd2cb56fad4d13804a4';
 export const WORKFORCE_IDENTITY_EMERGENCY_REVOCATION_SUCCESSOR_PROSRC_SHA256 = '3ee98d29830ee366a1c670c236cbf018b710eb7dbbc48d3ee090e7d66c36097b';
 
-export const REVOCATION_REASONS = ['suspected_compromise', 'credential_exposed', 'device_lost_or_stolen', 'practitioner_request', 'security_review'] as const;
+export const REVOCATION_REASONS = IDENTITY_REVOCATION_REASONS;
 export const REVOCATION_DECISIONS = ['approve', 'decline', 'confirm', 'dispute'] as const;
 export const PROVIDER_STEPS = ['disable_user', 'global_sign_out'] as const;
 export const PROVIDER_FAILURES = ['not_found', 'throttled', 'unavailable', 'access_denied', 'timeout', 'unknown'] as const;
@@ -41,30 +42,9 @@ const OPERATOR = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const USERNAME = /^[A-Za-z0-9:_-]{8,128}$/;
 const POOL = /^[a-z]{2}-[a-z]+-\d_[A-Za-z0-9]{1,55}$/;
 
-export const revocationRequest = z.object({
-  requestId: z.string().uuid(),
-  identitySubject: z.string().regex(USERNAME),
-  reason: z.enum(REVOCATION_REASONS),
-}).strict();
-export const revocationDecisionRequest = z.object({
-  proposalId: z.string().uuid(),
-  decision: z.enum(REVOCATION_DECISIONS),
-}).strict();
-export const revocationSummary = z.object({
-  proposalId: z.string().uuid(),
-  requestId: z.string().uuid(),
-  reason: z.enum(REVOCATION_REASONS),
-  approvalMode: z.enum(['second_operator_before', 'independent_review_after']),
-  proposedAt: z.string(),
-  state: z.enum(['awaiting_approval', 'declined', 'revoked']),
-  review: z.enum(['awaiting_independent_approval', 'awaiting_independent_review', 'approved', 'declined', 'confirmed', 'disputed']),
-  revocationId: z.string().uuid().nullable(),
-  effect: z.enum(['disabled', 'already_disabled']).nullable(),
-  revokedAt: z.string().nullable(),
-  provider: z.enum(['not_started', 'pending', 'failed', 'complete']),
-  duplicate: z.boolean().optional(),
-  providerUsername: z.string().regex(USERNAME).nullable().optional(),
-}).strict();
+export const revocationRequest = identityRevocationRequest;
+export const revocationDecisionRequest = identityRevocationDecisionRequest;
+export const revocationSummary = identityRevocationSummary;
 export type RevocationSummary = z.infer<typeof revocationSummary>;
 
 export class WorkforceProviderFailure extends Error {

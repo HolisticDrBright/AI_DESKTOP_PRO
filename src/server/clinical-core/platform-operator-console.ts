@@ -5,8 +5,9 @@ import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './data
 import { PlatformOperatorSignInError } from './platform-operator-authenticator';
 import { ClinicProposalReviewError, createClinicProposalReview } from './workforce-clinic-proposal-review';
 import { ClinicBootstrapSuspensionError, createClinicBootstrapSuspension } from './workforce-clinic-bootstrap';
-import { bootstrappedClinic, bootstrappedClinicSuspensionRequest, operatorProposalDecisionRequest, type BootstrappedClinic,
-  type PlatformOperatorRefusal } from '../../contracts/platformOperatorConsole';
+import { WorkforceIdentityRevocationError, type createWorkforceIdentityRevocation } from './workforce-identity-revocation';
+import { bootstrappedClinic, bootstrappedClinicSuspensionRequest, identityRevocationDecisionRequest, identityRevocationRequest,
+  operatorProposalDecisionRequest, type BootstrappedClinic, type PlatformOperatorRefusal } from '../../contracts/platformOperatorConsole';
 
 /**
  * The platform operator's console API (platform-operator-console/1): proposal review, the bootstrapped-clinic list and
@@ -32,7 +33,12 @@ export const PLATFORM_OPERATOR_ROUTES = [
   'POST /clinical-core/platform-operator/clinic-proposals/decision',
   'GET /clinical-core/platform-operator/bootstrapped-clinics',
   'POST /clinical-core/platform-operator/bootstrapped-clinics/suspension',
+  'GET /clinical-core/platform-operator/identity-revocations',
+  'POST /clinical-core/platform-operator/identity-revocations',
+  'POST /clinical-core/platform-operator/identity-revocations/decision',
 ] as const;
+const PROPOSAL_DECISION = 'POST /clinical-core/platform-operator/clinic-proposals/decision';
+const REVOCATIONS = '/clinical-core/platform-operator/identity-revocations';
 const ROUTES = new Set<string>(PLATFORM_OPERATOR_ROUTES);
 const SUBJECT = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const parse = (value: unknown) => { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return null; } };
@@ -65,6 +71,8 @@ const REPLIES: Readonly<Record<string, [number, PlatformOperatorRefusal]>> = {
   not_found: [404, 'not_found'],
   conflict: [409, 'conflict'],
   self_approval_refused: [403, 'operator_self_approval_refused'],
+  independent_operator_required: [403, 'operator_independent_approval_required'],
+  fence_required: [503, 'platform_operator_unavailable'],
   service_unavailable: [503, 'platform_operator_unavailable'],
 };
 function reply(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response {
@@ -81,6 +89,9 @@ export function createPlatformOperatorConsoleApi(input: {
   release?: 'blocked' | 'qualification';
   proposalReviewRelease?: 'blocked' | 'qualification';
   suspensionRelease?: 'blocked' | 'qualification';
+  /** The emergency login revocation (workforce-identity-revocation.ts), with its own release, provider and fence. Absent,
+   * its routes answer not released. */
+  identityRevocation?: Pick<ReturnType<typeof createWorkforceIdentityRevocation>, 'propose' | 'decide' | 'list'>;
 }) {
   const release = input.release ?? PLATFORM_OPERATOR_CONSOLE_RELEASE;
   const listing = createBootstrappedClinicListing(input.database);
@@ -104,9 +115,12 @@ export function createPlatformOperatorConsoleApi(input: {
       } catch { return reply(400, { error: 'request_invalid' }); }
     } else if (event.body) return reply(400, { error: 'request_invalid' });
     // Validate the body before anyone is asked about the operator, so a malformed request reads nothing.
-    const decision = route.endsWith('/decision') ? operatorProposalDecisionRequest.safeParse(body) : null;
+    const decision = route === PROPOSAL_DECISION ? operatorProposalDecisionRequest.safeParse(body) : null;
     const suspension = route.endsWith('/suspension') ? bootstrappedClinicSuspensionRequest.safeParse(body) : null;
-    if ((decision && !decision.success) || (suspension && !suspension.success)) return reply(400, { error: 'request_invalid' });
+    const revocation = route === `POST ${REVOCATIONS}` ? identityRevocationRequest.safeParse(body) : null;
+    const revocationDecision = route === `POST ${REVOCATIONS}/decision` ? identityRevocationDecisionRequest.safeParse(body) : null;
+    if ((decision && !decision.success) || (suspension && !suspension.success) || (revocation && !revocation.success)
+      || (revocationDecision && !revocationDecision.success)) return reply(400, { error: 'request_invalid' });
 
     let operator: string;
     try {
@@ -119,6 +133,13 @@ export function createPlatformOperatorConsoleApi(input: {
     // The services take the subject verified above; they never see the header.
     const verified = async () => operator;
     try {
+      if (route.includes(REVOCATIONS)) {
+        const revocations = input.identityRevocation;
+        if (!revocations) return refuse('not_released');
+        if (route === `GET ${REVOCATIONS}`) return reply(200, { data: { revocations: await revocations.list(operator) } });
+        if (revocation) return reply(200, { data: await revocations.propose(operator, revocation.data) });
+        return reply(200, { data: await revocations.decide(operator, revocationDecision!.data) });
+      }
       if (route === 'GET /clinical-core/platform-operator/bootstrapped-clinics') {
         return reply(200, { data: { clinics: await listing(operator) } });
       }
@@ -133,7 +154,8 @@ export function createPlatformOperatorConsoleApi(input: {
       }
       return reply(200, { data: await review('verified', decision!.data) });
     } catch (error) {
-      if (error instanceof ClinicProposalReviewError || error instanceof ClinicBootstrapSuspensionError || error instanceof BootstrappedClinicListingError) {
+      if (error instanceof ClinicProposalReviewError || error instanceof ClinicBootstrapSuspensionError || error instanceof BootstrappedClinicListingError
+        || error instanceof WorkforceIdentityRevocationError) {
         return refuse(error.code);
       }
       return refuse('service_unavailable');

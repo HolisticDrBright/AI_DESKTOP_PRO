@@ -19,6 +19,8 @@ vi.mock('@/adapters/mode', () => ({ USE_LIVE_API: true }));
 import { GET as listProposals, POST as decideProposal } from '@/app/api/operator/clinic-proposals/route';
 import { GET as listClinics, POST as suspendClinic } from '@/app/api/operator/bootstrapped-clinics/route';
 import { DELETE as signOut, GET as sessionState, POST as signIn } from '@/app/api/operator/session/route';
+import { GET as listRevocations, POST as proposeRevocation } from '@/app/api/operator/identity-revocations/route';
+import { POST as decideRevocation } from '@/app/api/operator/identity-revocations/decision/route';
 import { GET as readNewClinic } from '@/app/api/onboarding/clinic-bootstrap/route';
 
 const OPERATOR_API = 'https://opsconsol1.execute-api.us-east-2.amazonaws.com';
@@ -231,5 +233,45 @@ describe('the operator sign-in', () => {
     expect(setCookies(out).map(line => line.split('=')[0]).sort()).toEqual(['aidp_op', 'aidp_op_mfa', 'aidp_op_mfu']);
     browser.cookies = [...practitioner, { name: 'aidp_op', value: OPERATOR }];
     expect(await (await sessionState()).json()).toEqual({ data: { signedIn: true, mfaPending: false } });
+  });
+});
+
+describe('the emergency login revocation routes', () => {
+  const body = { requestId: randomUUID(), identitySubject: randomUUID(), reason: 'suspected_compromise' };
+  it('ship blocked with the console: nothing is read or sent', async () => {
+    release.value = 'blocked';
+    for (const reply of [await listRevocations(get('/api/operator/identity-revocations')),
+      await proposeRevocation(post('/api/operator/identity-revocations', body)),
+      await decideRevocation(post('/api/operator/identity-revocations/decision', { proposalId: randomUUID(), decision: 'approve' }))]) {
+      expect(reply.status).toBe(503);
+      expect(await reply.json()).toEqual({ error: 'platform_operator_not_released' });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a practitioner session cannot call them, and a cross-site or malformed request is refused before anything is sent', async () => {
+    browser.cookies = [...practitioner];
+    const refused = await proposeRevocation(post('/api/operator/identity-revocations', body));
+    expect([refused.status, await refused.json()]).toEqual([401, { error: 'operator_sign_in_required' }]);
+    browser.cookies = [...practitioner, { name: 'aidp_op', value: OPERATOR }];
+    expect((await proposeRevocation(post('/api/operator/identity-revocations', body, { 'sec-fetch-site': 'cross-site' }))).status).toBe(403);
+    expect((await proposeRevocation(post('/api/operator/identity-revocations', { ...body, organizationId: clinic }))).status).toBe(400);
+    expect((await decideRevocation(post('/api/operator/identity-revocations/decision', { proposalId: randomUUID(), decision: 'restore' }))).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends only the operator token, and passes on only an answer inside the contract', async () => {
+    const summary = { proposalId: randomUUID(), requestId: body.requestId, reason: 'suspected_compromise', approvalMode: 'independent_review_after',
+      proposedAt: '2026-10-16T00:00:00Z', state: 'revoked', review: 'awaiting_independent_review', revocationId: randomUUID(), effect: 'disabled',
+      revokedAt: '2026-10-16T00:00:00Z', provider: 'failed' };
+    upstream = { status: 200, body: { data: { summary, provider: [{ step: 'disable_user', outcome: 'failed', failure: 'throttled' }] } } };
+    const reply = await proposeRevocation(post('/api/operator/identity-revocations', body));
+    expect(reply.status).toBe(200);
+    expect((await reply.json()).data.summary).toMatchObject({ state: 'revoked', provider: 'failed' });
+    const [url, init] = sent()[0]!;
+    expect(url).toBe(`${OPERATOR_API}/clinical-core/platform-operator/identity-revocations`);
+    expect(JSON.stringify(init)).not.toContain(PRACTITIONER);
+    upstream = { status: 200, body: { data: { summary: { ...summary, accessToken: 'eyJleaked' }, provider: [] } } };
+    expect(await (await proposeRevocation(post('/api/operator/identity-revocations', body))).json()).toEqual({ error: 'platform_operator_unavailable' });
   });
 });
