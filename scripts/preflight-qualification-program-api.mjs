@@ -40,7 +40,7 @@ export function evaluateQualificationProgramPreflight(input) {
     || template.Parameters.DatabaseClusterArn?.AllowedValues?.[0] !== f.DatabaseClusterArn
     || template.Parameters.ClinicalCoreKeyArn?.AllowedValues?.[0] !== f.LogsKmsKeyArn) reject('foundation');
   const b = map(billing?.Parameters), bo = map(billing?.Outputs);
-  if (billing?.StackStatus !== 'CREATE_COMPLETE' || b.BillingActivation !== 'blocked'
+  if (!['CREATE_COMPLETE', 'UPDATE_COMPLETE'].includes(billing?.StackStatus) || b.BillingActivation !== 'blocked'
     || b.CommercialReleaseApproval !== 'blocked' || b.EnabledStores !== 'none'
     || b.StoreEnvironment !== 'Sandbox' || b.StoreSecretArn !== '' || b.ReservedConcurrency !== '0'
     || bo.Activation !== 'blocked'
