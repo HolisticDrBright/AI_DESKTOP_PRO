@@ -145,6 +145,7 @@ const CLASSIFIED: Record<string, 'converted' | `refused:${keyof typeof UNCONVERT
   'src/app/api/live/program-assignments/route.ts': 'gated:program_assignments',
   'src/app/api/live/org/join-requests/route.ts': 'gated:workforce_join_review',
   'src/app/api/onboarding/application/route.ts': 'independent:workforce_applications',
+  'src/app/api/onboarding/clinic-bootstrap/route.ts': 'independent:workforce_applications',
   'src/server/clinical-core/ask-alp-workforce-client.ts': 'refused:ask_alp_workforce',
   'src/server/clinical-core/privacy-operations-client.ts': 'refused:privacy_operations',
   'src/server/lab-attestation-upstream.ts': 'refused:lab_attestation',

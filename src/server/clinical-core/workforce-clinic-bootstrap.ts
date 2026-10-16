@@ -1,6 +1,8 @@
 if (typeof window !== 'undefined') throw new Error('workforce-clinic-bootstrap is server-only');
 import { z } from 'zod';
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from './database';
+import { BOOTSTRAP_SUSPENSION_REASONS, clinicBootstrapAnswer, clinicBootstrapState, clinicBootstrapSubmission, type ClinicBootstrapAnswer,
+  type ClinicBootstrapState, type ClinicBootstrapSubmission } from '@/contracts/workforceClinicBootstrap';
 
 /**
  * The distinct door for a practitioner who creates a NEW clinic: on completing sign-up (a confirmed address and an
@@ -24,22 +26,11 @@ export const BOOTSTRAP_ASSURANCE = 'verified_email_and_mfa' as const;
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i).transform(value => value.toLowerCase());
 /** What the browser may send: a request id it generated (for retries) and a name. Never a clinic, person, role or flag. */
-export const clinicBootstrapRequest = z.object({
-  requestId: uuid,
-  clinicLabel: z.string().transform(value => value.trim()).pipe(z.string().min(3).max(120).regex(/^[^\u0000-\u001f\u007f]+$/)),
-}).strict();
-export type ClinicBootstrapRequest = z.infer<typeof clinicBootstrapRequest>;
-const bootstrapAnswer = z.object({
-  requestId: uuid, organizationId: uuid, membershipId: uuid, status: z.enum(['active', 'suspended']),
-  clinicalAccess: z.enum(['available', 'not_available']), duplicate: z.boolean(),
-}).strict();
-const bootstrapState = z.object({
-  requestId: uuid, organizationId: uuid, status: z.enum(['active', 'suspended']),
-  suspensionReason: z.enum(['security_concern', 'identity_not_verified', 'agreement_not_accepted', 'operator_request']).nullable(),
-  clinicalAccess: z.enum(['available', 'not_available']), createdAt: z.string().max(40),
-}).strict();
-export type ClinicBootstrapAnswer = z.infer<typeof bootstrapAnswer>;
-export type ClinicBootstrapState = z.infer<typeof bootstrapState>;
+export const clinicBootstrapRequest = clinicBootstrapSubmission;
+export type ClinicBootstrapRequest = ClinicBootstrapSubmission;
+const bootstrapAnswer = clinicBootstrapAnswer;
+const bootstrapState = clinicBootstrapState;
+export type { ClinicBootstrapAnswer, ClinicBootstrapState };
 
 export type ClinicBootstrapRefusal = 'not_released' | 'assurance_required' | 'request_invalid' | 'conflict' | 'already_bootstrapped'
   | 'proposal_pending' | 'applicant_refused' | 'service_unavailable';
@@ -119,7 +110,7 @@ export function createClinicBootstrapService(deps: { store: ClinicBootstrapStore
   };
 }
 
-export const BOOTSTRAP_SUSPENSION_REASONS = ['security_concern', 'identity_not_verified', 'agreement_not_accepted', 'operator_request'] as const;
+export { BOOTSTRAP_SUSPENSION_REASONS };
 export const clinicBootstrapSuspensionRequest = z.object({ organizationId: uuid, reason: z.enum(BOOTSTRAP_SUSPENSION_REASONS) }).strict();
 const suspensionAnswer = z.object({ organizationId: uuid, status: z.literal('suspended'), reason: z.enum(BOOTSTRAP_SUSPENSION_REASONS), duplicate: z.boolean() }).strict();
 export class ClinicBootstrapSuspensionError extends Error {
