@@ -3,6 +3,7 @@ import { labsLive } from "@/adapters/labs.live";
 import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
+import { CLINIC_MEMBERSHIP_REFUSAL, CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, refusedUnderClinicMembership } from "@/server/clinic-authority-families";
 
 const MAX_BYTES = 15 * 1024 * 1024;
 
@@ -16,6 +17,10 @@ export async function POST(req: NextRequest) {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {
+    // The transitional host decides by the token alone; under clinic-membership sign-in nothing is sent to it.
+    if (refusedUnderClinicMembership("lab_documents")) {
+      throw new AdapterError("unavailable", CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, CLINIC_MEMBERSHIP_REFUSAL);
+    }
     const form = await req.formData().catch(() => null);
     if (!form) throw new AdapterError("invalid", "Expected a file upload.");
 

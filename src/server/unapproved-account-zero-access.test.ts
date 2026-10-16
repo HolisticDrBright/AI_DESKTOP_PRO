@@ -24,6 +24,8 @@ import { POST as privacyOperations } from '@/app/api/live/privacy-operations/rou
 import { POST as telehealthStart } from '@/app/api/live/telehealth/start/route';
 import { POST as scribeAuthority } from '@/app/api/live/scribe/authority/route';
 import { GET as joinRequests } from '@/app/api/live/org/join-requests/route';
+import { POST as labUpload } from '@/app/api/live/labs/upload/route';
+import { GET as labDocument } from '@/app/api/live/labs/document/[documentId]/route';
 
 const ORIGIN = 'https://abcdefghij.execute-api.us-east-2.amazonaws.com';
 const HEADER = 'x-alp-selected-organization-id';
@@ -43,6 +45,14 @@ const ENTRY_POINTS: Array<[string, () => Promise<Response>]> = [
   ['provider entry: telehealth visit start', () => telehealthStart(post('/api/live/telehealth/start', { appointmentId: randomUUID() }))],
   ['provider entry: encounter recording authority', () => scribeAuthority(post('/api/live/scribe/authority', { action: 'status', patientId: randomUUID() }))],
   ['provider entry: join-request review', () => joinRequests(new Request(`http://0.0.0.0:3000/api/live/org/join-requests`, { headers: { host } }))],
+  ['chart: lab PDF upload', () => {
+    const form = new FormData();
+    form.set('patientId', randomUUID());
+    form.set('file', new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'fictional-lab.pdf', { type: 'application/pdf' }));
+    return labUpload(new NextRequest('http://0.0.0.0:3000/api/live/labs/upload', { method: 'POST', headers: { host, origin: `https://${host}`, 'sec-fetch-site': 'same-origin' }, body: form }));
+  }],
+  ['chart: original lab document', () => labDocument(new NextRequest(`http://0.0.0.0:3000/api/live/labs/document/${randomUUID()}`, { headers: { host } }),
+    { params: Promise.resolve({ documentId: randomUUID() }) })],
 ];
 
 let fetchMock: ReturnType<typeof vi.fn>;

@@ -26,6 +26,17 @@ export const UNCONVERTED_CLINIC_FAMILIES = {
 export type UnconvertedClinicFamily = keyof typeof UNCONVERTED_CLINIC_FAMILIES;
 
 /**
+ * Routes served by the transitional host at TRPC_BASE_URL rather than an AWS service. That host decides by the bearer
+ * token alone (its own row-level security); the Desktop sends it no clinic. Under `database_current` it would therefore
+ * act in whatever clinic the token names, so these refuse first, exactly like the unconverted families above. They are
+ * kept apart from that list because they never name a `/clinical-core/workforce/` route.
+ */
+export const TRANSITIONAL_HOST_FAMILIES = {
+  lab_documents: "TRPC_BASE_URL /api/clinical/labs/upload and /api/clinical/labs/document/:id (lab PDF upload and the original-document read)",
+} as const;
+export type TransitionalHostFamily = keyof typeof TRANSITIONAL_HOST_FAMILIES;
+
+/**
  * Converted in source on both sides, and still refused unless the deployment says its service serves them.
  *
  * Each service has a `database_current` path that binds the current membership of the signed-in subject in the one
@@ -69,9 +80,9 @@ export const CLINIC_MEMBERSHIP_REFUSAL_MESSAGE = "This is not available yet unde
  * True when `family` must refuse before any request: the session runs under `database_current`, and the family is
  * unconverted, or gated and not paired with a `database_current` service by this deployment.
  */
-export function refusedUnderClinicMembership(family: UnconvertedClinicFamily | GatedClinicFamily): boolean {
+export function refusedUnderClinicMembership(family: UnconvertedClinicFamily | TransitionalHostFamily | GatedClinicFamily): boolean {
   if (clinicalAuthorityMode() !== "database_current") return false;
   if (Object.hasOwn(CURRENT_MEMBERSHIP_GATED_FAMILIES, family)) return !servedCurrentMembershipFamilies().has(family as GatedClinicFamily);
-  void UNCONVERTED_CLINIC_FAMILIES[family as UnconvertedClinicFamily];
+  void (UNCONVERTED_CLINIC_FAMILIES[family as UnconvertedClinicFamily] ?? TRANSITIONAL_HOST_FAMILIES[family as TransitionalHostFamily]);
   return true;
 }

@@ -72,12 +72,28 @@ const E = {
   fullscriptEmail: "src/app/api/live/fullscript/clinic-authority.test.ts::a member who edits the display email cookie to a colleague's",
   fullscriptOtherAccount: 'src/app/api/live/fullscript/clinic-authority.test.ts::a clinic chosen by another account in the same browser',
   fullscriptCallback: "src/app/api/live/fullscript/clinic-authority.test.ts::in another account's browser, after the membership is removed",
+  scribeDeployed: 'src/server/legacy-backend-routes.test.ts::under %s on a deployment: every entry point refuses before any request',
+  scribeAwsOrigin: 'src/server/legacy-backend-routes.test.ts::with an AWS recording origin configured, even where the local fixture is allowed',
+  labCurrent: 'src/server/legacy-backend-routes.test.ts::under clinic-membership sign-in: refused before the token leaves',
+  labLegacy: 'src/server/legacy-backend-routes.test.ts::under the legacy sign-in: the token goes to the transitional host and no clinic does',
+  catalogSynthetic: 'src/server/clinical-core/governed-catalog-authority.database.test.ts::an already-issued token naming a clinic that is suspended, archived or has no membership row',
+  catalogSuspended: 'src/server/clinical-core/governed-catalog-authority.database.test.ts::a %s clinic: the same already-issued token is refused on the next read',
+  catalogRemoved: 'src/server/clinical-core/governed-catalog-authority.database.test.ts::a removed membership: the same already-issued token is refused on the next read',
+  recordingRemoved: 'src/server/clinical-core/unconverted-families-clinic-status.database.test.ts::encounter recording: a removed membership is refused on the next request',
+  recordingSuspended: 'src/server/clinical-core/unconverted-families-clinic-status.database.test.ts::encounter recording: a %s clinic — ',
+  privacyAssignment: 'src/server/clinical-core/unconverted-families-clinic-status.database.test.ts::privacy operations: decided by the operator assignment, not clinic membership or clinic status',
+  recordingCleanupRemoved: 'src/server/clinical-core/encounter-recording-authority.database.test.ts::refuses a disabled workforce identity and suspended membership even with an assignment',
+  labAttestationRemoved: 'src/server/clinical-core/lab-attestation-review.database.test.ts::refuses a reviewer whose authority was withdrawn after the view loaded',
+  clinicRecordsRemoved: 'src/server/clinical-core/clinic-record-privacy.database.test.ts::leaks no row, text or receipt metadata across patients, clinics, roles or pools',
+  syntheticInviteRemoved: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a removed membership is refused on the next request',
+  syntheticInviteSuspended: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a %s clinic — GAP: the already-selected session still issues one',
+  syntheticPosture: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::posture: answered from the token alone',
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
 const disabled = (...evidence: string[]): Cell => ({ result: 'refused_disabled', evidence });
 const na = (reason: string): Cell => ({ result: 'not_applicable', reason });
-const unverified = (reason: string): Cell => ({ result: 'unverified', reason });
+const unverified = (reason: string, ...evidence: string[]): Cell => ({ result: 'unverified', reason, ...(evidence.length ? { evidence } : {}) });
 const allDisabled = (...evidence: string[]): Row => ({ unapproved_account: disabled(...evidence), suspended_clinic: disabled(...evidence),
   removed_membership: disabled(...evidence), stale_token: disabled(...evidence) });
 const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason) });
@@ -86,6 +102,16 @@ const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims no operation
   + 'clinical-data request into a clinic that is not active, where every legacy request enters (set_request_context), and deliberately leaves '
   + 'consent management (retention, erasure, recording cleanup), identity linking and consumer requests running. Apply it, or require '
   + 'database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
+const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
+  + 'session already in a suspended or archived synthetic clinic still issues patient invitations. The production successor does not reach '
+  + 'this schema. Enforce clinic status there too, or retire the synthetic boundary before any synthetic clinic is suspended. '
+  + 'docs/desktop-onboarding-authority-2026-10-16.md';
+const CATALOG_HOSTS = 'The Desktop reads the synthetic, PHI-disabled catalog host or the production one by runtime, not by authority mode. '
+  + 'The synthetic host (the one deployed; reference rows only, no clinic data) has no clinic or membership table: it admits an already-issued '
+  + 'token until it expires. The production host binds the current membership in the read\'s own transaction (BLOCKED setter) and refuses.';
+const LAB_HOST = 'The transitional host at TRPC_BASE_URL (deployed as DEPLOYED_TRPC_BASE_URL; not in this repository) decides with the bearer '
+  + 'token alone, under its own row-level security; the Desktop sends it no clinic (pinned). Settling this needs that host\'s own suite, or a '
+  + 'hosted probe with an unapproved account, a suspended clinic, a removed member and an already-issued token.';
 const STALE_LEGACY = 'The service takes the clinic from the token, then each SQL operation re-reads membership rows, so a removed member is refused on the next request (removed_membership); the token itself stays usable only until API Gateway refuses its exp.';
 /** Every case under database_current for a family on the current-membership setter, bound in the transaction. */
 const currentRows = (removed: string): Row => ({
@@ -116,8 +142,11 @@ export const ROUTE_FAMILIES = {
   synthetic_identity_boundary: {
     description: 'The synthetic API\'s posture and invitations, claims-based by design',
     upstream: 'aws-identity-api (synthetic) /clinical-core/workforce/{posture,invitations}',
-    legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy), suspended_clinic: unverified('The synthetic-staging database (fictional rows, no PHI) decides by claims; its SQL shares the production role helpers, which read no clinic status, but no test loads the synthetic schema to pin it.'),
-      removed_membership: unverified('The synthetic posture route reads no membership; invitations use has_clinical_role, untested here.'), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+    legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
+      suspended_clinic: { result: 'gap', evidence: [E.syntheticInviteSuspended, E.syntheticPosture], decision: SYNTHETIC_SUSPENDED_DECISION },
+      removed_membership: { result: 'token_lifetime', reason: 'Invitations re-read the membership row and refuse a removed member on the next request; posture is answered from the token alone (no clinic data) until it expires.',
+        evidence: [E.syntheticInviteRemoved, E.syntheticPosture] },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
     database_current: allDisabled(E.unconvertedRefused),
   },
   care_messages: {
@@ -162,27 +191,40 @@ export const ROUTE_FAMILIES = {
     description: 'Encounter recording, calendar connection, patient notification settings, workforce Ask ALP, privacy operations, lab attestation, consult links/requests/records/retention/disputes/outcomes/carts/note templates',
     upstream: 'claims-based workforce services (recording, identity API workforce routes, privacy operations, lab attestation)',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
-      suspended_clinic: unverified('Each service enters through set_request_context with the claimed clinic. The clinic-status successor refuses the ones that use clinical_data and deliberately not the consent_management ones (recording cleanup, retention); neither is pinned family by family.'),
-      removed_membership: unverified('Each service has its own membership check; this inventory does not pin them family by family.'),
+      suspended_clinic: { result: 'gap', evidence: [E.recordingSuspended, E.privacyAssignment], decision: SUSPENDED_DECISION },
+      removed_membership: unverified('Pinned refused on the next request: encounter-recording participants, recording cleanup, lab attestation review, '
+        + 'clinic records. Privacy operations are decided by the operator assignment, not membership (its revocation refuses). Not pinned family by '
+        + 'family: recording capture, drafting and transcription; calendar connection; patient notification settings; workforce Ask ALP; consult '
+        + 'links, requests, retention, disputes, outcomes, protocol carts, note templates and intake.',
+        E.recordingRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved, E.clinicRecordsRemoved, E.privacyAssignment),
       stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
     database_current: allDisabled(E.unconvertedRefused, E.unconvertedConsult),
   },
   governed_catalog: {
     description: 'The governed product catalog read for Program Studio',
     upstream: 'aws-governed-catalog-api /clinical-core/workforce/catalog/*',
-    legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy), suspended_clinic: unverified('The governed product catalog is not clinic data and is read by claims; its SQL (catalog-migrations) is not loaded by these tests.'),
-      removed_membership: unverified('The catalog SQL\'s require_catalog_member reads membership rows inline; no test loads the catalog schema to pin it.'), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
-    database_current: { unapproved_account: refused(E.zeroAccessCurrent), suspended_clinic: unverified('Production catalog SQL is unregistered; it fails closed but is not pinned per case.'),
-      removed_membership: unverified('Production catalog SQL is unregistered; a removed membership is not pinned for the catalog read.'),
-      stale_token: unverified('Production catalog SQL is unregistered; an already-issued token is not pinned for the catalog read.') },
+    legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
+      suspended_clinic: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogSuspended] },
+      removed_membership: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+    database_current: { unapproved_account: refused(E.zeroAccessCurrent),
+      suspended_clinic: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogSuspended] },
+      removed_membership: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] },
+      stale_token: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] } },
   },
-  legacy_backend: {
-    description: 'Routes still served by the transitional tRPC backend or its fixture: lab upload and document read, scribe chunk/consent/recording/transcript',
-    upstream: 'TRPC_BASE_URL (not an AWS clinical API in this repository; fixture-only for the scribe routes)',
-    legacy_claims: { unapproved_account: refused(E.envClinic), suspended_clinic: unverified('The legacy host is outside this repository.'),
-      removed_membership: unverified('The legacy host is outside this repository.'), stale_token: unverified('The legacy host is outside this repository.') },
-    database_current: { unapproved_account: refused(E.envClinic), suspended_clinic: unverified('The legacy host is outside this repository.'),
-      removed_membership: unverified('The legacy host is outside this repository.'), stale_token: unverified('The legacy host is outside this repository.') },
+  transitional_scribe: {
+    description: 'The transitional scribe routes (chunk, consent, recording, transcript): a local contract-fixture harness only, refused on '
+      + 'every deployment and whenever an AWS recording origin is configured, before any request',
+    upstream: 'TRPC_BASE_URL, reached only by the loopback contract fixture',
+    legacy_claims: allDisabled(E.scribeDeployed, E.scribeAwsOrigin),
+    database_current: allDisabled(E.scribeDeployed, E.scribeAwsOrigin),
+  },
+  transitional_lab_documents: {
+    description: 'Lab PDF upload and the original lab-document read, still served by the transitional host',
+    upstream: 'TRPC_BASE_URL /api/clinical/labs/upload and /api/clinical/labs/document/:id (not an AWS clinical API; not in this repository)',
+    legacy_claims: { unapproved_account: unverified(LAB_HOST, E.labLegacy), suspended_clinic: unverified(LAB_HOST, E.labLegacy),
+      removed_membership: unverified(LAB_HOST, E.labLegacy), stale_token: unverified(LAB_HOST, E.labLegacy) },
+    database_current: allDisabled(E.labCurrent, E.zeroAccessCurrent),
   },
   fullscript_connection: {
     description: 'The practitioner\'s Fullscript connection in one clinic (OAuth start/callback, status, action, disconnect). Each '
@@ -250,8 +292,8 @@ export const ROUTE_FAMILY_EXACT: Readonly<Record<string, RouteFamily>> = {
   'live/commerce/offers': 'compatibility_rpc', 'live/programs/offer': 'compatibility_rpc', 'live/programs/catalog': 'governed_catalog',
   'live/clinical-core/posture': 'synthetic_identity_boundary', 'live/sync/synthetic-invite': 'synthetic_identity_boundary',
   'live/care-messages': 'care_messages', 'live/program-assignments': 'program_assignments', 'live/org/join-requests': 'workforce_join_review',
-  'live/labs/upload': 'legacy_backend', 'live/labs/document/[documentId]': 'legacy_backend',
-  'live/scribe/chunk': 'legacy_backend', 'live/scribe/consent': 'legacy_backend', 'live/scribe/recording': 'legacy_backend', 'live/scribe/transcript': 'legacy_backend',
+  'live/labs/upload': 'transitional_lab_documents', 'live/labs/document/[documentId]': 'transitional_lab_documents',
+  'live/scribe/chunk': 'transitional_scribe', 'live/scribe/consent': 'transitional_scribe', 'live/scribe/recording': 'transitional_scribe', 'live/scribe/transcript': 'transitional_scribe',
   'live/campaigns': 'campaigns', 'my-courses': 'learner',
   'live/telehealth-payments': 'telehealth_calendar', 'live/telehealth-requests': 'telehealth_calendar', 'live/telehealth-slots': 'telehealth_calendar',
 };

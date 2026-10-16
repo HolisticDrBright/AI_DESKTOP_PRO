@@ -4,6 +4,7 @@ import { AdapterError } from "@/adapters/errors";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { getRequestSession } from "@/server/session";
 import { liveGuard } from "../../../route-helpers";
+import { CLINIC_MEMBERSHIP_REFUSAL_MESSAGE, refusedUnderClinicMembership } from "@/server/clinic-authority-families";
 
 const UUID_RE = /^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
@@ -19,6 +20,11 @@ export async function GET(
 ) {
   const blocked = liveGuard();
   if (blocked) return blocked;
+
+  // The transitional host decides by the token alone; under clinic-membership sign-in nothing is sent to it.
+  if (refusedUnderClinicMembership("lab_documents")) {
+    return NextResponse.json({ error: { code: "unavailable", message: CLINIC_MEMBERSHIP_REFUSAL_MESSAGE } }, { status: 503 });
+  }
 
   const { documentId } = await ctx.params;
   if (!UUID_RE.test(documentId)) {
