@@ -1,7 +1,5 @@
 # Major source return (16 October)
 
-_Draft in progress: WP6, WP7, verification and risks are filled in by the final commit on this branch._
-
 **Scope:** source engineering only, with fictional data. Nothing was deployed or applied. No credential, store product
 or paid build was created, PHI stayed off, and nothing was merged to `main`. Neither product is commercial-ready or
 PHI-ready. Every SQL candidate here is BLOCKED.
@@ -10,8 +8,8 @@ PHI-ready. Every SQL candidate here is BLOCKED.
 
 | Repository | Branch | Base | Final head | Exact-head CI |
 | --- | --- | --- | --- | --- |
-| Desktop | `claude/desktop-major-source-20261016` | `3c863b7b` (CI 38951421034, success) | _see §Verification_ | _see §Verification_ |
-| V2 | `claude/v2-existing-data-journeys-20261016` | `ac621a1c720db16b37e7245b3e3e63f39992a811` | _see §WP6_ | _see §WP6_ |
+| Desktop | `claude/desktop-major-source-20261016` | `3c863b7b` (CI 38951421034, success) | the commit that carries this document; its exact-head CI is given in the hand-back message, since a document cannot name its own commit | every earlier push passed (§Verification) |
+| V2 | `claude/v2-existing-data-journeys-20261016` | `ac621a1c720db16b37e7245b3e3e63f39992a811` | `a7139981b4977fa719db32fda28d256e1b1b22bb` | [38968313123](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/38968313123) **success**, attempt 1 |
 
 **Codex's Fullscript branch.**
 
@@ -174,7 +172,80 @@ The record is `docs/evidence/2026-10-16-live-lens-page-not-found.json`. **The ob
 
 ## Verification
 
-_See below._
+### Desktop local gates
+
+The gates ran at `816038b5`. The code tree is identical through the final head; only documents changed after it.
+
+| Gate | Result |
+| --- | --- |
+| `tsc --noEmit` | exit 0 |
+| `npm run lint` | exit 0. 1 warning: the unused import in `scripts/build-qualification-program-api.mjs`, already present at the base and recorded there. |
+| `npm run test:unit` | **655 files passed; 10,142 tests passed, 11 skipped** (the same 11 skips as before) |
+| `test:aws-care-messaging-restricted-credential` | exit 0 |
+| `build:clinical` | **The first attempt failed:** the build worker ran out of heap at about 2 GB during the type and lint step, because the gates were started with `NODE_OPTIONS` unset. **Re-run with the session's `--max-old-space-size=8192`: exit 0.** CI runs its own build. |
+| `check:clinical-bundle`, on that full build | PASS: 351 client chunks, no synthetic identity, no demo-only copy, none of the 21 server-only markers |
+
+### Candidate validators
+
+Native two-session PostgreSQL 16 runs at clean commits:
+
+- consent decision: 5 scenarios, 19 checks;
+- synthetic invitation: 5 scenarios, 17 checks.
+
+PGlite suites, each including its candidate's guards, apply-once, drift refusal and rollback:
+
+- custody: 49/49;
+- synthetic invitation: 16/16;
+- legacy status successor: unchanged, passing;
+- the sender-coverage test, extended to both new scripts: 2/2.
+
+### Browser battery
+
+The browser battery was **not run as a gate**, because no live spec covers the changed surfaces (the Fullscript
+routes and panel, the inventory, the SQL candidates and the documents). The lens spec was run 6 times cold for WP7
+(debugging only): 54/54 passed. No browser skip changed.
+
+### Desktop CI
+
+Every push passed on attempt 1. There were no cancellations and no re-runs.
+
+| Run | Head | What it carried |
+| --- | --- | --- |
+| [38960948251](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38960948251) | `02e8c703` | WP5 and WP2 |
+| [38961315003](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38961315003) | `1901f3c6` | WP1 |
+| [38962382038](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38962382038) | `b56e3bb0` | the Codex merge |
+| [38964223495](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38964223495) | `40491c16` | WP4 |
+| [38965013938](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38965013938) | `42d67cb3` | WP3 |
+| [38966396201](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38966396201) | `60fd7390` | the draft documents |
+| [38968548220](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38968548220) | `30aba434` | the WP6 and WP7 documents |
+
+### V2
+
+| Gate | Result |
+| --- | --- |
+| Full suite | 348 files passed, 1 skipped; 3,914 tests passed, 1 skipped |
+| `tsc --noEmit` | clean |
+| ESLint on the changed files | clean |
+| Exact-head CI | 38968313123 **success** at `a713998` |
+
+### Status per work package
+
+The status columns mean:
+
+- **implemented:** the source change or design document exists;
+- **local:** tests in this container;
+- **CI:** exact-head GitHub Actions;
+- **hosted, device, human:** the target environment, a physical device, and people's decisions.
+
+| WP | Implemented | Local | CI | Hosted | Device | Human |
+| --- | --- | --- | --- | --- | --- | --- |
+| WP1 | design and tests | yes | yes | no | n/a | **D1 to D5 pending** |
+| WP2 | BLOCKED candidate | yes (PGlite and native) | yes | no (Aurora) | n/a | D2 and D3 pending |
+| WP3 | tests and inventory | yes | yes | lab-host probe pending | n/a | — |
+| WP4 | source | yes | yes | no (DynamoDB, sandbox, Cognito) | n/a | — |
+| WP5 | BLOCKED candidate | yes (PGlite and native) | yes | no | n/a | enforce or retire the synthetic boundary |
+| WP6 | V2 source | yes | yes (V2) | 1 question | **not run** | G2 wording |
+| WP7 | investigation | not reproduced | n/a | n/a | n/a | — |
 
 ## Unresolved risks
 
