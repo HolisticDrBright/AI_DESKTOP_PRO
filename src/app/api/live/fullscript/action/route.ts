@@ -1,5 +1,6 @@
 import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
+import { currentFullscriptSession } from "@/server/fullscript/clinic-authority";
 import { connectedFullscriptClient } from "@/server/fullscript/runtime";
 import { liveGuard, runLive } from "../../route-helpers";
 
@@ -7,9 +8,10 @@ export async function POST(request: Request) {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {
+    const session = await currentFullscriptSession(await getRequestSession());
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || typeof body.action !== "string") throw new AdapterError("invalid", "Invalid Fullscript request.");
-    const { client, connection } = await connectedFullscriptClient(await getRequestSession());
+    const { client, connection } = await connectedFullscriptClient(session);
     if (body.action === "search_products" && typeof body.query === "string") return client.searchProducts(body.query);
     if (body.action === "search_labs" && typeof body.query === "string") return client.searchLabs(body.query);
     if (body.action === "lab_order" && typeof body.id === "string") return client.retrieveLabOrder(body.id);

@@ -25,8 +25,12 @@ export function FullscriptIntegrationPanel() {
   const load = useCallback(async () => {
     setError(null);
     const response = await fetch("/api/live/fullscript/status", { cache: "no-store" });
-    const payload = await response.json().catch(() => null) as { data?: Posture } | null;
-    if (!response.ok || !payload?.data) throw new Error("Fullscript posture is unavailable.");
+    const payload = await response.json().catch(() => null) as { data?: Posture; error?: { message?: unknown } } | null;
+    // A refusal (this account, this clinic) and an outage are not "not configured": show the server's own clinician-safe
+    // message, which names no clinic, and claim nothing about the connection.
+    if (!response.ok || !payload?.data) {
+      throw new Error(typeof payload?.error?.message === "string" ? payload.error.message : "Fullscript posture is unavailable.");
+    }
     setPosture(payload.data);
   }, []);
   useEffect(() => { void load().catch((e) => setError(e instanceof Error ? e.message : "Fullscript is unavailable.")); }, [load]);
@@ -58,7 +62,7 @@ export function FullscriptIntegrationPanel() {
       <div className="flex flex-wrap items-center gap-2">
         <CardTitle className="mb-0"><ShieldCheck size={14} aria-hidden /> Fullscript</CardTitle>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${posture?.connected ? "bg-positive-tint text-positive-deep" : "bg-slate-tint text-slate-badge"}`}>
-          {posture?.connected ? "Connected" : posture?.configured ? "Ready to connect" : "Not configured"}
+          {posture?.connected ? "Connected" : posture?.configured ? "Ready to connect" : posture ? "Not configured" : error ? "Unavailable" : "Checking…"}
         </span>
         {posture?.environment ? <span className="text-[11px] text-subtle">{posture.environment === "sandbox_us" ? "US sandbox" : "US production"}</span> : null}
       </div>

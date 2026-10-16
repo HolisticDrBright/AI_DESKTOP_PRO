@@ -62,6 +62,13 @@ const E = {
   mediaExpired: 'src/server/programs/program-media-installed-host.test.ts::passes no token for an expired session',
   legacySignIn: 'src/app/api/auth/first-clinic-selection.test.ts::signs in through list_my_organizations as before',
   campaignIndependent: 'src/server/clinic-authority-families.test.ts::the campaign API still answers under clinic-membership sign-in',
+  fullscriptCurrent: 'src/app/api/live/fullscript/clinic-authority.test.ts::a current member reaches each Fullscript operation, after the clinic is re-read',
+  fullscriptRemoved: 'src/app/api/live/fullscript/clinic-authority.test.ts::a removed membership or a suspended clinic, absent from the account',
+  fullscriptOutage: 'src/app/api/live/fullscript/clinic-authority.test.ts::a clinic read that fails refuses as unavailable',
+  fullscriptNoClinic: 'src/app/api/live/fullscript/clinic-authority.test.ts::an account with no clinic (an unapproved sign-up) or an expired session',
+  fullscriptEmail: "src/app/api/live/fullscript/clinic-authority.test.ts::a member who edits the display email cookie to a colleague's",
+  fullscriptOtherAccount: 'src/app/api/live/fullscript/clinic-authority.test.ts::a clinic chosen by another account in the same browser',
+  fullscriptCallback: "src/app/api/live/fullscript/clinic-authority.test.ts::in another account's browser, after the membership is removed",
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
@@ -171,13 +178,16 @@ export const ROUTE_FAMILIES = {
       removed_membership: unverified('The legacy host is outside this repository.'), stale_token: unverified('The legacy host is outside this repository.') },
   },
   fullscript_connection: {
-    description: 'The practice\'s Fullscript connection (OAuth start/callback, status, action, disconnect)',
-    upstream: 'Fullscript API and the DynamoDB token store, keyed by the session\'s clinic cookie',
-    legacy_claims: { unapproved_account: unverified('Keyed by the aidp_org cookie, which sign-in clears for an account with no clinic; not pinned by a route test.'),
-      suspended_clinic: unverified('No clinic-status read on this path.'), removed_membership: unverified('No membership read on this path: the cookie names the clinic until sign-out.'),
-      stale_token: unverified('Not pinned.') },
-    database_current: { unapproved_account: unverified('As under legacy.'), suspended_clinic: unverified('As under legacy.'),
-      removed_membership: unverified('As under legacy.'), stale_token: unverified('As under legacy.') },
+    description: 'The practitioner\'s Fullscript connection in one clinic (OAuth start/callback, status, action, disconnect). Each '
+      + 'request re-reads the account\'s current clinics before the connection is touched, the practitioner is the ID token\'s '
+      + 'email (not the display cookie), and the callback completes only in the session that started it',
+    upstream: 'Fullscript API and the DynamoDB token store; the clinic list (list_my_organizations or subject-only discovery) as the authority read',
+    legacy_claims: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptEmail),
+      suspended_clinic: refused(E.fullscriptRemoved, E.legacySuspendedGap), removed_membership: refused(E.fullscriptRemoved, E.fullscriptCallback),
+      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage) },
+    database_current: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptOtherAccount),
+      suspended_clinic: refused(E.fullscriptRemoved, E.signInSuspended), removed_membership: refused(E.fullscriptRemoved, E.fullscriptCallback),
+      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage) },
   },
   campaigns: {
     description: 'The campaign engine (marketing; never clinical data)',

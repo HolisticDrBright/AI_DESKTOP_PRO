@@ -64,6 +64,6 @@ describe('every cell is backed by source, or says it is not', () => {
     expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic']);
     const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
       .map(result => [result, named(result as Cell['result']).length]));
-    expect(counts).toEqual({ refused: 49, refused_disabled: 36, gap: 1, token_lifetime: 12, not_applicable: 20, unverified: 26 });
+    expect(counts).toEqual({ refused: 57, refused_disabled: 36, gap: 1, token_lifetime: 12, not_applicable: 20, unverified: 18 });
   });
 });
