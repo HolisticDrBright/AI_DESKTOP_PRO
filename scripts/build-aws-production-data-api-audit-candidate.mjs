@@ -16,15 +16,8 @@ export function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-export function buildDataApiAuditCandidate(productionFoundation) {
-  if (sha256(productionFoundation) !== reviewedParentSha256) {
-    throw new Error("Production foundation differs from the reviewed audit parent");
-  }
-
-  const candidate = structuredClone(productionFoundation);
-  const trail = candidate.Resources.AuditTrail.Properties;
-  delete trail.EventSelectors;
-  trail.AdvancedEventSelectors = [
+export function dataApiAdvancedSelectors() {
+  return [
     {
       Name: "All management events",
       FieldSelectors: [{ Field: "eventCategory", Equals: ["Management"] }],
@@ -46,6 +39,17 @@ export function buildDataApiAuditCandidate(productionFoundation) {
       ],
     },
   ];
+}
+
+export function buildDataApiAuditCandidate(productionFoundation) {
+  if (sha256(productionFoundation) !== reviewedParentSha256) {
+    throw new Error("Production foundation differs from the reviewed audit parent");
+  }
+
+  const candidate = structuredClone(productionFoundation);
+  const trail = candidate.Resources.AuditTrail.Properties;
+  delete trail.EventSelectors;
+  trail.AdvancedEventSelectors = dataApiAdvancedSelectors();
   return candidate;
 }
 
