@@ -31,7 +31,8 @@ PHI-ready.**
 | 3 | `e946aa0a` | The remaining cells settled path by path. Lab documents refuse under clinic-membership sign-in |
 | 5 | `14cc2e46` | Docs, native evidence files, the inventory decision-text correction |
 | 5 | `a8e79ca7` | The native qualification harnesses wait for psql's errors as well as its stdout marker (§3, last row) |
-| 5 | this document's final commit | Gate results, the superseding native evidence at `a8e79ca7`, the browser battery |
+| 5 | `ed253b38` | Gate results, the harness race, native evidence at `a8e79ca7` superseding the racy records |
+| 5 | this document's final commit | The browser battery and stub-reset results |
 
 ## 3. Failing-before and passing-after
 
@@ -92,7 +93,13 @@ deterministically. The records are `docs/evidence/2026-10-16-*-native-a8e79ca7.j
 | restricted and restricted-current builds + `cfn-lint` 1.57.2 | pass; `deploymentPerformed: false`, PHI off, blocked, qualification disabled |
 | `test:native-psql-session` | 2/2 (at `a8e79ca7`) |
 | native two-session harnesses | five of five, at `a8e79ca7` (above) |
-| browser order battery, forward and reverse | in the chat hand-back |
+| browser order battery (`npm run test:e2e:order`), at `a8e79ca7` | **PASS**: the same 328 tests passed in both orders, 0 failed or did not run, 121 skipped by declaration (each with its reason, not counted). One `next dev` per order with the contract fixture; 0 worker restarts; max heap 2710 MiB; longest event-loop delay 8271 ms. Every `live-lens.spec.ts` test passed with no retry, test 222 included (`docs/evidence/2026-10-16-order-battery-a8e79ca7.json`) |
+| `npm run check:stub-reset` | PASS: 142 mutable bindings, 70 snapshotted, 68 reassigned, 14 declared immutable |
+
+The battery's latency canary recorded one `/api/live/lens/evaluation` probe at 23.4 s, early in the forward order. That
+was the canary's own request, not the add-to-note test's. It shows reads of that length still happen on this runner,
+which is the condition the repaired ordering no longer depends on. It is an observation, not a measurement of the
+repair.
 
 ## 4. The 26 route-authority cells
 

@@ -1,0 +1,1928 @@
+{
+  "contract": "e2e-order-summary/3",
+  "runtime": {
+    "server": "next dev (one per order, the whole app compiled first)",
+    "contractFixture": true,
+    "stub": "http://127.0.0.1:3999",
+    "heapMiB": "8192"
+  },
+  "battery": [
+    "aws-recording-capture.spec.ts",
+    "aws-recording-cleanup-execution.spec.ts",
+    "aws-recording-cleanup-review.spec.ts",
+    "aws-recording-consent.spec.ts",
+    "aws-recording-transcription.spec.ts",
+    "care-messages.spec.ts",
+    "clinical-edition.spec.ts",
+    "commerce-journey.spec.ts",
+    "framework-release-boundary.spec.ts",
+    "live-a2-curation-tools.spec.ts",
+    "live-auth-transitions.spec.ts",
+    "live-billing.spec.ts",
+    "live-capture-resume.spec.ts",
+    "live-catalog-templates.spec.ts",
+    "live-clinic-records-ui.spec.ts",
+    "live-copilot-provider-readiness.spec.ts",
+    "live-curated-import.spec.ts",
+    "live-curation-workspace.spec.ts",
+    "live-encounter-opening.spec.ts",
+    "live-frontdesk-protocol.spec.ts",
+    "live-funnel-page.spec.ts",
+    "live-inbox.spec.ts",
+    "live-knowledge-import.spec.ts",
+    "live-lab-attestation.spec.ts",
+    "live-lens.spec.ts",
+    "live-login-readiness.spec.ts",
+    "live-nutrition.spec.ts",
+    "live-overview-reasoning.spec.ts",
+    "live-patient-relationships.spec.ts",
+    "live-plans.spec.ts",
+    "live-privacy-operations-ui.spec.ts",
+    "live-program-commerce.spec.ts",
+    "live-programs.spec.ts",
+    "live-scribe.spec.ts",
+    "live-specimen-context.spec.ts",
+    "live-sync-worker.spec.ts",
+    "live-sync.spec.ts",
+    "live-tasks.spec.ts",
+    "live-telehealth.spec.ts",
+    "new-clinic-onboarding.spec.ts",
+    "practitioner-onboarding.spec.ts",
+    "zoom-sdk-bootstrap.spec.ts"
+  ],
+  "separatelyConfigured": [
+    {
+      "spec": "aws-recording-capture.spec.ts",
+      "reason": "needs E2E_RECORDING_AWS=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "aws-recording-cleanup-execution.spec.ts",
+      "reason": "needs E2E_RECORDING_AWS=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "aws-recording-cleanup-review.spec.ts",
+      "reason": "needs E2E_RECORDING_AWS=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "aws-recording-consent.spec.ts",
+      "reason": "needs E2E_RECORDING_AWS=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "aws-recording-transcription.spec.ts",
+      "reason": "needs E2E_RECORDING_AWS=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "care-messages.spec.ts",
+      "reason": "needs E2E_CARE_MESSAGES=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "clinical-edition.spec.ts",
+      "reason": "needs a DOWN backend, E2E_CLINICAL_DOWN=1 (CI: e2e-clinical-down)"
+    },
+    {
+      "spec": "commerce-journey.spec.ts",
+      "reason": "needs COMMERCE_JOURNEY_FIXTURE=1 on top of the fixture (CI: e2e-live-fixture, shard 1)"
+    },
+    {
+      "spec": "framework-release-boundary.spec.ts",
+      "reason": "needs a production build without the fixture (CI: framework release boundary)"
+    },
+    {
+      "spec": "new-clinic-onboarding.spec.ts",
+      "reason": "needs E2E_ONBOARDING=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "practitioner-onboarding.spec.ts",
+      "reason": "needs E2E_ONBOARDING=1 (CI: \"Recording and care messages browser suites\")"
+    },
+    {
+      "spec": "zoom-sdk-bootstrap.spec.ts",
+      "reason": "needs E2E_ZOOM_SDK=1 and the real pinned CDN (CI: e2e-live-fixture, shard 1)"
+    }
+  ],
+  "order": {
+    "forward": [
+      "aws-recording-capture.spec.ts",
+      "aws-recording-cleanup-execution.spec.ts",
+      "aws-recording-cleanup-review.spec.ts",
+      "aws-recording-consent.spec.ts",
+      "aws-recording-transcription.spec.ts",
+      "care-messages.spec.ts",
+      "clinical-edition.spec.ts",
+      "commerce-journey.spec.ts",
+      "framework-release-boundary.spec.ts",
+      "live-a2-curation-tools.spec.ts",
+      "live-auth-transitions.spec.ts",
+      "live-billing.spec.ts",
+      "live-capture-resume.spec.ts",
+      "live-catalog-templates.spec.ts",
+      "live-clinic-records-ui.spec.ts",
+      "live-copilot-provider-readiness.spec.ts",
+      "live-curated-import.spec.ts",
+      "live-curation-workspace.spec.ts",
+      "live-encounter-opening.spec.ts",
+      "live-frontdesk-protocol.spec.ts",
+      "live-funnel-page.spec.ts",
+      "live-inbox.spec.ts",
+      "live-knowledge-import.spec.ts",
+      "live-lab-attestation.spec.ts",
+      "live-lens.spec.ts",
+      "live-login-readiness.spec.ts",
+      "live-nutrition.spec.ts",
+      "live-overview-reasoning.spec.ts",
+      "live-patient-relationships.spec.ts",
+      "live-plans.spec.ts",
+      "live-privacy-operations-ui.spec.ts",
+      "live-program-commerce.spec.ts",
+      "live-programs.spec.ts",
+      "live-scribe.spec.ts",
+      "live-specimen-context.spec.ts",
+      "live-sync-worker.spec.ts",
+      "live-sync.spec.ts",
+      "live-tasks.spec.ts",
+      "live-telehealth.spec.ts",
+      "new-clinic-onboarding.spec.ts",
+      "practitioner-onboarding.spec.ts",
+      "zoom-sdk-bootstrap.spec.ts"
+    ],
+    "reverse": [
+      "zoom-sdk-bootstrap.spec.ts",
+      "practitioner-onboarding.spec.ts",
+      "new-clinic-onboarding.spec.ts",
+      "live-telehealth.spec.ts",
+      "live-tasks.spec.ts",
+      "live-sync.spec.ts",
+      "live-sync-worker.spec.ts",
+      "live-specimen-context.spec.ts",
+      "live-scribe.spec.ts",
+      "live-programs.spec.ts",
+      "live-program-commerce.spec.ts",
+      "live-privacy-operations-ui.spec.ts",
+      "live-plans.spec.ts",
+      "live-patient-relationships.spec.ts",
+      "live-overview-reasoning.spec.ts",
+      "live-nutrition.spec.ts",
+      "live-login-readiness.spec.ts",
+      "live-lens.spec.ts",
+      "live-lab-attestation.spec.ts",
+      "live-knowledge-import.spec.ts",
+      "live-inbox.spec.ts",
+      "live-funnel-page.spec.ts",
+      "live-frontdesk-protocol.spec.ts",
+      "live-encounter-opening.spec.ts",
+      "live-curation-workspace.spec.ts",
+      "live-curated-import.spec.ts",
+      "live-copilot-provider-readiness.spec.ts",
+      "live-clinic-records-ui.spec.ts",
+      "live-catalog-templates.spec.ts",
+      "live-capture-resume.spec.ts",
+      "live-billing.spec.ts",
+      "live-auth-transitions.spec.ts",
+      "live-a2-curation-tools.spec.ts",
+      "framework-release-boundary.spec.ts",
+      "commerce-journey.spec.ts",
+      "clinical-edition.spec.ts",
+      "care-messages.spec.ts",
+      "aws-recording-transcription.spec.ts",
+      "aws-recording-consent.spec.ts",
+      "aws-recording-cleanup-review.spec.ts",
+      "aws-recording-cleanup-execution.spec.ts",
+      "aws-recording-capture.spec.ts"
+    ]
+  },
+  "forward": {
+    "passed": [
+      "live-a2-curation-tools.spec.ts:111 › A.2-03 · add exact identity + required facts and verify",
+      "live-a2-curation-tools.spec.ts:130 › A.2-04 · verified label refuses in-place edits (RPC returns immutable message)",
+      "live-a2-curation-tools.spec.ts:159 › A.2-05 · supersede creates a new draft and preserves the verified original",
+      "live-a2-curation-tools.spec.ts:199 › A.2-06 · list_product_label_versions surfaces both versions for comparison",
+      "live-a2-curation-tools.spec.ts:212 › A.2-07 · create a knowledge-reference draft",
+      "live-a2-curation-tools.spec.ts:227 › A.2-08 · a graded reference cannot be approved without a citation",
+      "live-a2-curation-tools.spec.ts:244 › A.2-09 · a real citation plus a stated reason approves the reference",
+      "live-a2-curation-tools.spec.ts:263 › A.2-10 · restricted knowledge reference still requires the 5-outcome governed review",
+      "live-a2-curation-tools.spec.ts:289 › A.2-11 · commercial matching drives the real RPC — exact match required + append-only revoke",
+      "live-a2-curation-tools.spec.ts:368 › A.2-12 · commercial changes never alter clinical ranking snapshot",
+      "live-a2-curation-tools.spec.ts:395 › A.2-13 · warning dispositions are append-only; warning stays on the record",
+      "live-a2-curation-tools.spec.ts:418 › A.2-14 · warning disposition requires a permitted disposition and a reason",
+      "live-a2-curation-tools.spec.ts:441 › A.2-15 · bulk assign reviewer is audited and bounded",
+      "live-a2-curation-tools.spec.ts:463 › A.2-16 · bulk clinical approval / verification is never offered and refused server-side",
+      "live-a2-curation-tools.spec.ts:494 › A.2-17 · cross-tenant refused on labels / references / warnings",
+      "live-a2-curation-tools.spec.ts:524 › A.2-18 · reload preserves every completed action",
+      "live-a2-curation-tools.spec.ts:545 › A.2-19 · backend-down produces honest unavailable, no fixture leakage",
+      "live-a2-curation-tools.spec.ts:560 › A.2-21 · Commercial Matching UI drives the real attach + revoke",
+      "live-a2-curation-tools.spec.ts:617 › A.2-22 · backend-down on labels + commercial + warnings never renders mocks",
+      "live-a2-curation-tools.spec.ts:632 › A.2-20 · every new control has an accessible name",
+      "live-a2-curation-tools.spec.ts:69 › A.2-01 · create a product-label draft",
+      "live-a2-curation-tools.spec.ts:80 › A.2-02 · required identity facts block verification",
+      "live-auth-transitions.spec.ts:22 › backslash return target cannot navigate to another origin",
+      "live-auth-transitions.spec.ts:39 › a failed logout does not claim success; retry clears the session",
+      "live-auth-transitions.spec.ts:7 › successful sign-in performs a document navigation to the requested local screen",
+      "live-billing.spec.ts:103 › 2: checkout from an appointment opens a draft with the booked service",
+      "live-billing.spec.ts:133 › 2b: a second checkout for the same appointment is refused",
+      "live-billing.spec.ts:147 › 3: the client never prices tax — the server returns it on save",
+      "live-billing.spec.ts:166 › 4: a discount without a reason is refused, with one it is accepted",
+      "live-billing.spec.ts:177 › 5: finalizing assigns a number and reserves tracked stock",
+      "live-billing.spec.ts:188 › 6: a finalized invoice is no longer editable",
+      "live-billing.spec.ts:195 › 7: a partial cash payment moves the invoice to partly paid",
+      "live-billing.spec.ts:203 › 8: full settlement marks it paid and commits the sale exactly once",
+      "live-billing.spec.ts:216 › 9: a refund returns money and never restocks",
+      "live-billing.spec.ts:229 › 10: an explicit resalable return is the only thing that restocks",
+      "live-billing.spec.ts:239 › 11: a damaged return is recorded without adding sellable stock",
+      "live-billing.spec.ts:252 › 12: patient credit is granted with a reason and applied",
+      "live-billing.spec.ts:276 › 13: a card payment reaches pending only — the UI never claims it is paid",
+      "live-billing.spec.ts:317 › 14: a second in-flight card payment is refused",
+      "live-billing.spec.ts:323 › 15: only the processor webhook settles the card payment",
+      "live-billing.spec.ts:346 › 16: a replayed webhook duplicates and a mismatched amount is refused — both recorded",
+      "live-billing.spec.ts:377 › 17: voiding an unpaid invoice releases its reservations",
+      "live-billing.spec.ts:409 › 18: overselling is refused and reserves nothing",
+      "live-billing.spec.ts:426 › 19: crossing the reorder threshold opens ONE low-stock review task",
+      "live-billing.spec.ts:450 › 20: no fixture identity, no PHI in logs, no off-origin requests",
+      "live-billing.spec.ts:92 › 1: the billing workspace shows real persisted figures",
+      "live-capture-resume.spec.ts:115 › cancelled resume ignores a late successful response and preserves the paused recorder",
+      "live-capture-resume.spec.ts:140 › revocation cancels a pending chunk and fences delayed recorder events and upload replies",
+      "live-capture-resume.spec.ts:191 › a completed recorder cannot inject delayed audio into a subsequent recording",
+      "live-capture-resume.spec.ts:49 › background heartbeat cannot unpause capture and failed fresh authorization cannot resume it",
+      "live-capture-resume.spec.ts:78 › ended microphone can reconnect only after authorization while preserving one playable recording",
+      "live-catalog-templates.spec.ts:105 › 4. verification is not asserted until someone records what they checked",
+      "live-catalog-templates.spec.ts:131 › 5. commercial data is a separate region, and never a clinical field",
+      "live-catalog-templates.spec.ts:159 › 6. the list view is told a count, never a commercial URL",
+      "live-catalog-templates.spec.ts:170 › 7. an empty template library is honest about being empty",
+      "live-catalog-templates.spec.ts:178 › 8. an unsourced dose blocks publication and names the item",
+      "live-catalog-templates.spec.ts:234 › 9. naming the source unblocks publication, and the record is auditable",
+      "live-catalog-templates.spec.ts:281 › 9b. the patient preview shows a recorded dose and omits an absent one",
+      "live-catalog-templates.spec.ts:300 › 10. keyboard reaches the catalog tab and the tabpanel is labelled",
+      "live-catalog-templates.spec.ts:315 › 11. no PHI and no off-origin requests from either surface",
+      "live-catalog-templates.spec.ts:336 › 12. every interactive control on both surfaces has an accessible name",
+      "live-catalog-templates.spec.ts:371 › 13. loading, error and success are announced, not just coloured",
+      "live-catalog-templates.spec.ts:63 › 1. an empty catalog says it is empty and shows no sample products",
+      "live-catalog-templates.spec.ts:75 › 2. an empty review queue says nothing is waiting, not a fabricated task",
+      "live-catalog-templates.spec.ts:84 › 3. a field the label did not carry reads Unknown, never None or blank",
+      "live-clinic-records-ui.spec.ts:16 › a copy request is reviewed, cannot be prepared without a release, then is prepared under a fictional release with the same decision id on retry",
+      "live-clinic-records-ui.spec.ts:59 › a correction is accepted only as an append-only addendum with written words; lost authorization removes the patient text",
+      "live-copilot-provider-readiness.spec.ts:226 › default disabled posture › PROOF 1 — the default posture makes no provider or secret request",
+      "live-copilot-provider-readiness.spec.ts:239 › default disabled posture › PROOF 2 — disabled mode says 'Not configured' honestly",
+      "live-copilot-provider-readiness.spec.ts:253 › default disabled posture › PROOF 9 — configured and transacted are separate, both negative here",
+      "live-copilot-provider-readiness.spec.ts:259 › default disabled posture › PROOF 1b — a run under the disabled posture drafts nothing",
+      "live-copilot-provider-readiness.spec.ts:270 › default disabled posture › PROOF 19 — no secret, ARN, auth header, or prompt reaches the browser",
+      "live-copilot-provider-readiness.spec.ts:275 › default disabled posture › PROOF 20 — zero external requests across the whole disabled flow",
+      "live-curated-import.spec.ts:113 › 1. a macro-enabled workbook is refused, and the reason names the macro",
+      "live-curated-import.spec.ts:126 › 2. a workbook carrying an XXE payload is refused before any value is read",
+      "live-curated-import.spec.ts:139 › 3. a file whose bytes are not an Office document is refused by CONTENT, not by name",
+      "live-curated-import.spec.ts:155 › 4. a formula is never evaluated; its cached value is read and the uncalculated one is reported",
+      "live-curated-import.spec.ts:168 › 5. a document's field codes are discarded and the instruction is never shown",
+      "live-curated-import.spec.ts:190 › 6. a good workbook parses, names the rows it skipped, and stages only after an attestation",
+      "live-curated-import.spec.ts:214 › 7. the staged batch reports its restricted row and what the source left unknown",
+      "live-curated-import.spec.ts:231 › 8. committing applies the rows as non-approved drafts and says so",
+      "live-curated-import.spec.ts:240 › 9. an imported product is not offered by the protocol product picker",
+      "live-curated-import.spec.ts:263 › 10. the restricted-review panel names every restricted product and WHY it is restricted",
+      "live-curated-import.spec.ts:297 › 11. an incomplete product cannot be marked reviewed — the RPC refuses with the reason",
+      "live-curated-import.spec.ts:337 › 12. clearing a restriction needs a stated reason and is NOT approval",
+      "live-curated-import.spec.ts:382 › 13. completing a complete product's review makes it selectable and separates approval",
+      "live-curated-import.spec.ts:428 › 14. a near-identical second file is AMBIGUOUS, blocks the commit, and names its candidates",
+      "live-curated-import.spec.ts:454 › 15. resolving an ambiguity requires a decision and a reason, and then the commit proceeds",
+      "live-curated-import.spec.ts:476 › 16. every imported record carries its file, sheet, row and verbatim source values",
+      "live-curated-import.spec.ts:490 › 17. a backend that cannot be reached is a FAILURE, never an empty inventory",
+      "live-curated-import.spec.ts:509 › 18. a declared file that could not be read survives as a record, with its reason",
+      "live-curated-import.spec.ts:528 › 19. a declared name that is a path is refused",
+      "live-curated-import.spec.ts:539 › 20. nothing in the import surface leaks a secret, a key, or a private path",
+      "live-curation-workspace.spec.ts:118 › A.1 · the Restricted-Review tab records a five-outcome decision on a product; restrictions preserved",
+      "live-curation-workspace.spec.ts:153 › A.1 · the Restricted-Review tab labels preview candidates, catalog products, and knowledge references distinctly",
+      "live-curation-workspace.spec.ts:179 › A.1 · recording an outcome on a preview candidate does NOT commit or publish",
+      "live-curation-workspace.spec.ts:209 › A.1 · the Restricted-Review category filters slice each subject-type slice",
+      "live-curation-workspace.spec.ts:221 › Conflicts (1) · side-by-side field diff shows existing vs incoming fields",
+      "live-curation-workspace.spec.ts:242 › Conflicts (2) · each of keep_existing / take_incoming / skip is offered as a governed answer",
+      "live-curation-workspace.spec.ts:261 › Conflicts (3) · a decision requires a stated reason",
+      "live-curation-workspace.spec.ts:272 › Conflicts (4) · restricted flags on either row are preserved on every outcome",
+      "live-curation-workspace.spec.ts:319 › Conflicts (5) · a resolution survives a page reload",
+      "live-curation-workspace.spec.ts:342 › Conflicts (6) · the decision writes an audit record with actor, timestamp, decision, and reason",
+      "live-curation-workspace.spec.ts:392 › Conflicts (7) · the batch cannot commit while unresolved conflicts remain",
+      "live-curation-workspace.spec.ts:401 › Conflicts (8) · a cross-tenant conflict resolution attempt is refused, no content leaks",
+      "live-curation-workspace.spec.ts:433 › A.1 · the deferred sections have shipped in A.2 (labels + references + commercial editors visible)",
+      "live-curation-workspace.spec.ts:450 › A.1 · the /settings/knowledge Import-review tab redirects to /settings/imports",
+      "live-curation-workspace.spec.ts:97 › A.1 · the Overview tab surfaces the workflow pointer and composite counts",
+      "live-encounter-opening.spec.ts:33 › cancelled browser navigation retains a direct link without creating another encounter",
+      "live-encounter-opening.spec.ts:53 › an uncertain creation offers timeline reconciliation, not an automatic retry",
+      "live-encounter-opening.spec.ts:8 › creation opens the encounter document without relying on client navigation or another POST",
+      "live-frontdesk-protocol.spec.ts:116 › 5: the completed status survives a reload — it is persisted, not local",
+      "live-frontdesk-protocol.spec.ts:123 › 3: a replayed transition is reported as already applied, not applied twice",
+      "live-frontdesk-protocol.spec.ts:157 › 4: a stale version is refused as a conflict rather than overwriting",
+      "live-frontdesk-protocol.spec.ts:170 › 7: Today shows real appointment statuses and names what is not configured",
+      "live-frontdesk-protocol.spec.ts:196 › 8: a patient with no protocol shows an honest empty state",
+      "live-frontdesk-protocol.spec.ts:205 › 9+10+11: a draft persists with exact product identity and honest interaction state",
+      "live-frontdesk-protocol.spec.ts:275 › 12: approve and activate are separate, confirmed steps",
+      "live-frontdesk-protocol.spec.ts:303 › 13: an active version is immutable — a correction creates a new version",
+      "live-frontdesk-protocol.spec.ts:333 › 14: a draft saves as an org template, and no demo fixture identity appears",
+      "live-frontdesk-protocol.spec.ts:67 › 1+2+6: the drawer offers only the transitions the database would accept",
+      "live-funnel-page.spec.ts:14 › a signed-out visitor reaches the funnel route and the consult page without being sent to sign in",
+      "live-funnel-page.spec.ts:37 › neighbouring paths are not funnel pages in the running app: the prefix alone and look-alike prefixes answer not-found",
+      "live-inbox.spec.ts:124 › 2b: a delayed older list response cannot replace the current status filter",
+      "live-inbox.spec.ts:152 › 3: deterministic urgent invariant — visible without any AI, never a diagnosis",
+      "live-inbox.spec.ts:168 › 4: opening a thread records read state; badge and counts survive reload",
+      "live-inbox.spec.ts:181 › 5: the reply draft autosaves with server confirmation and survives reload",
+      "live-inbox.spec.ts:191 › 6: a concurrent draft edit is a CONFLICT with recovery — never a silent overwrite",
+      "live-inbox.spec.ts:210 › 7: Send fails closed — verbatim refusal, draft kept, nothing marked sent",
+      "live-inbox.spec.ts:226 › 8: delivery evidence is honest — a FAILED outbound shows failed with a safe reason",
+      "live-inbox.spec.ts:237 › 9: priority and queue changes persist with append-only history",
+      "live-inbox.spec.ts:249 › 10: the status machine — resolve, then a lawful reopen",
+      "live-inbox.spec.ts:258 › 11: snoozing requires a wake time; a snoozed thread can be woken",
+      "live-inbox.spec.ts:269 › 12: a follow-up date persists and feeds the due count",
+      "live-inbox.spec.ts:277 › 13: create task produces a REAL review-queue item, idempotently",
+      "live-inbox.spec.ts:289 › 14: add-to-note lands in an UNSIGNED draft on a real encounter, idempotently",
+      "live-inbox.spec.ts:305 › 15: the AI copilot fails closed — not configured, no fixture analysis",
+      "live-inbox.spec.ts:313 › 16: an AI suggestion acts ONLY when a human accepts it — via the guarded workflow",
+      "live-inbox.spec.ts:327 › 17: dismissing an AI draft-response applies nothing",
+      "live-inbox.spec.ts:339 › 18: patient message content is untrusted — an injection renders as text, nothing acts",
+      "live-inbox.spec.ts:351 › 19: do-not-contact refuses sending and round-trips",
+      "live-inbox.spec.ts:365 › 20: patient tab + Today integration; a revoked membership refuses without leaking",
+      "live-inbox.spec.ts:80 › 1: persisted threads + persisted counts, urgent first, nothing synthetic",
+      "live-inbox.spec.ts:97 › 2: search and filters narrow the queue",
+      "live-knowledge-import.spec.ts:112 › 1. preview is refused when the no-PHI attestation is missing (RPC-level)",
+      "live-knowledge-import.spec.ts:126 › 2. a preview classifies every row and writes nothing",
+      "live-knowledge-import.spec.ts:145 › 3. a graded row citing no reference blocks the commit (validation errors on the item)",
+      "live-knowledge-import.spec.ts:175 › 4. a duplicate identity is a conflict that needs a written reason",
+      "live-knowledge-import.spec.ts:208 › 5. commit applies rows as NON-APPROVED drafts and says so",
+      "live-knowledge-import.spec.ts:220 › 6. re-importing the same file is idempotent, not a second import",
+      "live-knowledge-import.spec.ts:227 › 7. a row that has not moved is reported unchanged, not re-added",
+      "live-knowledge-import.spec.ts:250 › 8. a removal is reported and explicitly never performed",
+      "live-knowledge-import.spec.ts:284 › 9. an invalid item shape is refused with a reason, not a silent no-op",
+      "live-knowledge-import.spec.ts:295 › 10. the workspace names the do-not-upload-raw-source-file rule",
+      "live-lab-attestation.spec.ts:115 › another reviewer attested after this view loaded: the submission is refused as stale and nothing is claimed for it",
+      "live-lab-attestation.spec.ts:128 › a lost reply is retried as the same request and answered from its own record, never recorded twice",
+      "live-lab-attestation.spec.ts:154 › a legacy lab-result/1 reading shows its stored status only as the app's assessment and offers no attestation",
+      "live-lab-attestation.spec.ts:165 › changing the selected reading drops an answer for the previous one: nothing crosses readings or patients",
+      "live-lab-attestation.spec.ts:59 › disabled by default: an explicit open says attestation is not enabled and the reading stays unverified",
+      "live-lab-attestation.spec.ts:71 › the reading as stored beside the recorded report: a wrong file or a wrong field cannot be sent, and verified appears only after the readback",
+      "live-lens.spec.ts:118 › a prior evaluation cannot confirm a newly saved evaluation",
+      "live-lens.spec.ts:165 › steps 1–4: deterministic run over transcript+labs+chart; core identical across paradigms; framing-only changes; provenance inspectable",
+      "live-lens.spec.ts:222 › steps 5–7, 9–10: lifecycle, versioned answers preserving originals, explicit add-to-note, dismiss with feedback, signed notes untouched",
+      "live-lens.spec.ts:308 › step 8: a transcript correction (source change) marks the evaluation STALE — retained, never recomputed silently",
+      "live-lens.spec.ts:336 › step 11: cross-tenant access fails — an encounter from another organization never renders",
+      "live-lens.spec.ts:342 › steps 12–14: fixture AI is explicit (never silent production), injection blocks with a reviewable failure, urgent safety outranks every lens",
+      "live-lens.spec.ts:391 › honest state: completion is claimed only after the evaluation reads back, and a failed readback never claims it",
+      "live-lens.spec.ts:65 › a lost evaluation reply ends the running state without claiming completion",
+      "live-lens.spec.ts:88 › a saved evaluation is not announced as displayed when its readback fails",
+      "live-login-readiness.spec.ts:41 › JavaScript-disabled sign-in stays noninteractive with an explicit explanation",
+      "live-login-readiness.spec.ts:7 › sign-in cannot accept input or submit until its client handler is ready",
+      "live-nutrition.spec.ts:106 › 4: no starter template is presented as evidence-based",
+      "live-nutrition.spec.ts:115 › 5: a template states what it does not know before it can be used",
+      "live-nutrition.spec.ts:128 › 6: re-installing an unchanged library mints no second version",
+      "live-nutrition.spec.ts:145 › 7: a patient with no plan says so rather than inventing one",
+      "live-nutrition.spec.ts:152 › 8: adherence with nothing reported shows missing days, not zero",
+      "live-nutrition.spec.ts:160 › 9: a plan started from a template carries a snapshot of it",
+      "live-nutrition.spec.ts:177 › 10: approval is refused before the safety review has been run",
+      "live-nutrition.spec.ts:207 › 11: the safety review raises the recorded allergy the plan collides with",
+      "live-nutrition.spec.ts:238 › 12: approval is still refused while a blocking flag is unresolved",
+      "live-nutrition.spec.ts:244 › 13: acknowledging a blocking flag is not the same as deciding about it",
+      "live-nutrition.spec.ts:278 › 14: an override with no reason is refused",
+      "live-nutrition.spec.ts:300 › 15: a documented override clears the gate and is recorded on the flag",
+      "live-nutrition.spec.ts:315 › 16: activating makes exactly one plan live for the patient",
+      "live-nutrition.spec.ts:332 › 17: revising creates a new draft and leaves the approved version untouched",
+      "live-nutrition.spec.ts:371 › 18: an approved version cannot be edited, only revised",
+      "live-nutrition.spec.ts:407 › 19: a check-in requires a source, and blank adherence stays not reported",
+      "live-nutrition.spec.ts:427 › 20: a reported day counts as covered and the rest stay missing",
+      "live-nutrition.spec.ts:443 › 21: a check-in can be marked for follow-up",
+      "live-nutrition.spec.ts:451 › 22: a non-clinical role cannot author or approve a nutrition plan",
+      "live-nutrition.spec.ts:464 › 23: the copilot draft is labelled, unsaved, and raises rather than hides a conflict",
+      "live-nutrition.spec.ts:492 › 24: nothing in the nutrition surface leaks a secret, a licence key, or fixture identity",
+      "live-nutrition.spec.ts:74 › 1: the template library starts empty and says so honestly",
+      "live-nutrition.spec.ts:81 › 2: the food database reports configured and transacted as separate facts",
+      "live-nutrition.spec.ts:92 › 3: installing the starter library publishes eight review-gated patterns",
+      "live-overview-reasoning.spec.ts:110 › accepting a hypothesis persists, audits, and touches no note",
+      "live-overview-reasoning.spec.ts:144 › request-data records an actionable request",
+      "live-overview-reasoning.spec.ts:158 › a patient outside the caller's access shows an honest refusal, never data",
+      "live-overview-reasoning.spec.ts:44 › overview renders verified data with honest ungoverned metrics",
+      "live-overview-reasoning.spec.ts:76 › reasoning workspace: snapshot meta, stale state, split evidence, inference labeling",
+      "live-patient-relationships.spec.ts:17 › creates a scope-limited family approval request and persists its pending state",
+      "live-patient-relationships.spec.ts:42 › revocation requires a reason and remains visible after reload",
+      "live-plans.spec.ts:104 › 2: create a membership and version it",
+      "live-plans.spec.ts:124 › 3 + 6: purchasing drafts an invoice; credits appear only once it is paid, exactly once",
+      "live-plans.spec.ts:167 › 4: an authorized complimentary package is granted, labelled, and recorded",
+      "live-plans.spec.ts:183 › 5: an unauthorized complimentary assignment is refused",
+      "live-plans.spec.ts:226 › 7: reserve and consume a visit credit",
+      "live-plans.spec.ts:258 › 8: a permitted cancellation returns the credit",
+      "live-plans.spec.ts:285 › 9: a concurrent second reservation for the same appointment is refused",
+      "live-plans.spec.ts:317 › 10: an expired credit cannot be used",
+      "live-plans.spec.ts:347 › 11: manual restoration needs a reason and appends to the ledger",
+      "live-plans.spec.ts:366 › 12: Stripe is disabled and the UI says so without implying it works",
+      "live-plans.spec.ts:393 › 18: a failed subscription payment creates a real work-queue task",
+      "live-plans.spec.ts:424 › 19: pause, resume, and cancel-at-period-end",
+      "live-plans.spec.ts:453 › 20: a refund revokes unspent credit only and never duplicates a restore",
+      "live-plans.spec.ts:494 › 21 + 22: reconciliation shows unavailable settlement, and a mismatch resolves with a reason",
+      "live-plans.spec.ts:534 › 24: a role without permission is refused by the server, not just hidden",
+      "live-plans.spec.ts:555 › 26 + 27 + 28: no fixture identity, no secrets or card data in logs, no clinical side effects",
+      "live-plans.spec.ts:593 › reports: every chart carries a text equivalent and estimates are labelled",
+      "live-plans.spec.ts:75 › 1: create a package and draft + publish a version",
+      "live-privacy-operations-ui.spec.ts:100 › personal purge requires the exact preview and confirmation, retaining the command after an uncertain response",
+      "live-privacy-operations-ui.spec.ts:12 › retained inventory retries the same checkpoint, resumes saved progress and never claims erasure",
+      "live-privacy-operations-ui.spec.ts:137 › a stale deletion preview is discarded, and held deletion requests offer no purge action",
+      "live-privacy-operations-ui.spec.ts:47 › privacy UI distinguishes sign-in refusal from an empty queue",
+      "live-privacy-operations-ui.spec.ts:58 › reviews exact fictional fields and requires confirmation before verified resolution",
+      "live-privacy-operations-ui.spec.ts:88 › held requests remain readable but cannot be resolved",
+      "live-program-commerce.spec.ts:28 › 1: the Studio shows the offer editor and the purchases panel in their honest first states",
+      "live-program-commerce.spec.ts:50 › 2: the staff preview shows both choices, the buy choice unavailable for its reason, readable at a phone width",
+      "live-program-commerce.spec.ts:67 › 3: the public purchase page, the return page and the checkout route refuse a draft funnel",
+      "live-program-commerce.spec.ts:89 › 4: the webhook answers 503 while the Stripe boundary is unconfigured and records nothing",
+      "live-program-commerce.spec.ts:99 › 5: the commercial status read answers under its own key for a program with nothing sold",
+      "live-programs.spec.ts:144 › 4: a concurrent edit is a conflict with recovery, never a silent overwrite",
+      "live-programs.spec.ts:191 › 5+6+7: submit → gated approve (NOT publish) → confirmed publish with zero side effects → locked",
+      "live-programs.spec.ts:231 › 8+9: revise preserves the published original; a published version becomes a detached, approved template",
+      "live-programs.spec.ts:267 › 10+11: enrollment pins the published version, survives a newer publish, and progress round-trips to the chart",
+      "live-programs.spec.ts:320 › 12: Stripe and the Program Builder AI are honestly not configured",
+      "live-programs.spec.ts:349 › 13: archiving a template never cascades into programs created from it",
+      "live-programs.spec.ts:360 › 14: a revoked membership refuses the library without leaking program data",
+      "live-programs.spec.ts:65 › 1: an empty library is honest — no synthetic programs",
+      "live-programs.spec.ts:76 › 2+3: blank draft, curriculum with every block family, server-confirmed autosave",
+      "live-scribe.spec.ts:121 › cancelled preparation closes the microphone and permits only a status check before manual retry",
+      "live-scribe.spec.ts:143 › milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit",
+      "live-scribe.spec.ts:281 › microphone denial is a clear, recoverable failure",
+      "live-scribe.spec.ts:293 › consent withdrawn mid-recording stops capture immediately (active revocation)",
+      "live-scribe.spec.ts:310 › a late participant join pauses capture until they are identified and consent",
+      "live-scribe.spec.ts:331 › network interruption buffers locally and recovers without losing the recording",
+      "live-scribe.spec.ts:331 › stalled upload buffers locally and recovers without losing the recording",
+      "live-scribe.spec.ts:366 › microphone loss mid-recording pauses with an unmistakable status",
+      "live-scribe.spec.ts:392 › refresh mid-recording recovers the interrupted capture from the server",
+      "live-scribe.spec.ts:412 › a second tab cannot start a competing capture for the same encounter",
+      "live-scribe.spec.ts:92 › uncertain recording start stops the microphone and recovers without replaying begin",
+      "live-specimen-context.spec.ts:105 › changing the selected result cancels old context and requires another explicit load",
+      "live-specimen-context.spec.ts:59 › explicit load sends the exact selection and renders unverified facts without defaults",
+      "live-specimen-context.spec.ts:79 › an access refusal is not an empty record and refresh removes previously displayed context",
+      "live-specimen-context.spec.ts:92 › empty result and invalid or mismatched context stay distinct",
+      "live-sync-worker.spec.ts:146 › 1: fixture posture is loudly labeled; /api/health never depends on the worker",
+      "live-sync-worker.spec.ts:167 › 2: linking a patient for worker-driven delivery",
+      "live-sync-worker.spec.ts:188 › 3: queued means queued until the REAL worker runs; success delivers with fixture evidence",
+      "live-sync-worker.spec.ts:211 › 4: PHI-free worker-cycle telemetry and circuit state in Integrations",
+      "live-sync-worker.spec.ts:219 › 5: re-queueing the same version answers honestly; an empty cycle claims nothing",
+      "live-sync-worker.spec.ts:236 › 6: a retryable failure backs off with the safe error; discard requires a reason",
+      "live-sync-worker.spec.ts:275 › 7: an explicit re-share after discard mints a NEW envelope generation",
+      "live-sync-worker.spec.ts:291 › 8: consent revoked before delivery cancels durably; re-granting never silently resends",
+      "live-sync-worker.spec.ts:318 › 9: an explicit re-share after re-grant delivers; duplicate provider evidence dedupes",
+      "live-sync-worker.spec.ts:338 › 10: a transient failure is retried with a reason and then succeeds",
+      "live-sync-worker.spec.ts:363 › 11: a permanent rejection produces exactly ONE dead letter and is never auto-retried",
+      "live-sync-worker.spec.ts:389 › 12: a contract violation dead-letters (never retried) after a reasoned ops retry",
+      "live-sync-worker.spec.ts:410 › 13: the callback boundary verifies signatures BEFORE parsing; replay/oversize/content-type refused",
+      "live-sync-worker.spec.ts:495 › 14: signed inbound data arrives for review — never written to the chart",
+      "live-sync-worker.spec.ts:514 › 15: the fixture refuses every deployed environment with no override",
+      "live-sync-worker.spec.ts:530 › 16: an unapproved provider (Phase 6B) is refused by the entry point",
+      "live-sync-worker.spec.ts:536 › 17: SYNC_PROVIDER=none idles cleanly; the web app stays healthy",
+      "live-sync-worker.spec.ts:547 › 18: a down backend fails the worker without fabricating any UI state",
+      "live-sync-worker.spec.ts:560 › 19: worker RPCs are service-role only — client credentials are refused",
+      "live-sync-worker.spec.ts:571 › 20: honest fixture labels everywhere; no PHI in logs; no off-origin requests",
+      "live-sync.spec.ts:110 › 3: token expiry, supersession, and unknown-token refusal via the test provider",
+      "live-sync.spec.ts:143 › 4: verification binds the external subject; the token is single-use",
+      "live-sync.spec.ts:158 › 5: independent data scopes; research consent fully separate",
+      "live-sync.spec.ts:170 › 6: queueing FAILS CLOSED without a provider, then queues once registered",
+      "live-sync.spec.ts:190 › 7: no delivery claim without acknowledgment — queued means queued",
+      "live-sync.spec.ts:199 › 8: acknowledgment persists across reload; duplicate callbacks dedupe",
+      "live-sync.spec.ts:227 › 9: adherence ingests idempotently",
+      "live-sync.spec.ts:253 › 10: inbound data displays with full provenance, as untrusted plain text",
+      "live-sync.spec.ts:263 › 10b: governed lab import requires separate consent, dedupes, and stages clinician review",
+      "live-sync.spec.ts:328 › 11: revoking ONE scope stops only that scope",
+      "live-sync.spec.ts:343 › 13: retry and dead-letter handling with reasoned manual retry",
+      "live-sync.spec.ts:379 › 14: a version conflict resolves without overwriting originals; corrections are overlays",
+      "live-sync.spec.ts:416 › 15: real review-queue work from failed and inbound events",
+      "live-sync.spec.ts:438 › 17: the AI summary is honestly not configured",
+      "live-sync.spec.ts:445 › 16: cross-tenant access is rejected without leaking data",
+      "live-sync.spec.ts:466 › 12: pause holds both directions; revocation blocks everything; re-linking needs a new invitation",
+      "live-sync.spec.ts:493 › 18: no mock identity or fixture-demo content anywhere on the sync surfaces",
+      "live-sync.spec.ts:505 › 19: keyboard and screen-reader behavior",
+      "live-sync.spec.ts:520 › 20: no PHI in console logs and no off-origin requests",
+      "live-sync.spec.ts:76 › 1: honest unlinked + not-configured state",
+      "live-sync.spec.ts:92 › 2: a scoped invitation with a ONE-TIME code and honest no-delivery copy",
+      "live-tasks.spec.ts:123 › live labs workspace loads markers and a review persists across reload",
+      "live-tasks.spec.ts:171 › uploading a lab PDF extracts markers and queues a low-confidence review",
+      "live-tasks.spec.ts:197 › live calendar shows real appointments and check-in persists with audit",
+      "live-tasks.spec.ts:218 › booking, rescheduling, and no-show persist to the live week",
+      "live-tasks.spec.ts:278 › expired access token refreshes globally with rotation (P0 auth lifecycle)",
+      "live-tasks.spec.ts:296 › revoked refresh token clears the session instead of looping",
+      "live-tasks.spec.ts:31 › root enters the real workspace: directory → patient → labs (no mock patient)",
+      "live-tasks.spec.ts:311 › login honors a same-origin next= return path",
+      "live-tasks.spec.ts:322 › password reset: enumeration-safe request + recovery-token completion",
+      "live-tasks.spec.ts:357 › practitioner sign-in and sign-out work via httpOnly cookie session",
+      "live-tasks.spec.ts:388 › org members: roster, account linking, honest guards, confirmed removal (admin-gated)",
+      "live-tasks.spec.ts:444 › org substitution: a forged organization id is refused and the session org is unchanged",
+      "live-tasks.spec.ts:475 › a signed-in user with no active memberships gets honest states, never tenant data",
+      "live-tasks.spec.ts:502 › multi-org: auto-select, validated switch clears org data, tabs agree, mid-session revocation is honest",
+      "live-tasks.spec.ts:54 › live queue loads and shows the live boundary copy",
+      "live-tasks.spec.ts:547 › EMR: appointment → encounter → autosaved draft → recovery → sign → locked → addendum → timeline → audit",
+      "live-tasks.spec.ts:63 › resolve persists across reload and lands in the live audit log",
+      "live-tasks.spec.ts:654 › EMR conflict recovery saves local edits against the selected server version",
+      "live-tasks.spec.ts:745 › EMR lost save response settles from receipt and authoritative note",
+      "live-tasks.spec.ts:787 › EMR uncertain save never reports success, retries blindly, or signs",
+      "live-tasks.spec.ts:830 › EMR save deadline ends an unanswered request without calling it failed",
+      "live-tasks.spec.ts:868 › EMR explicit retry reuses the same first-create request ID",
+      "live-tasks.spec.ts:90 › registered audit events use database-owned wording and reject invented content",
+      "live-tasks.spec.ts:913 › no console errors in the live flow",
+      "live-telehealth.spec.ts:101 › recording consent unlocks the visit; ending it stores quick notes and opens the note",
+      "live-telehealth.spec.ts:146 › a refused signature removes opened clinical text and does not retain unsaved edits on retry",
+      "live-telehealth.spec.ts:170 › the imported unreviewed AI Companion note is frozen by one confirmed signature",
+      "live-telehealth.spec.ts:207 › authorization loss during a failed transfer's recovery read removes the opened signed note",
+      "live-telehealth.spec.ts:231 › placing the signed note in the chart creates one unsigned draft, links it, reaches the timeline, and a lost completion is reconciled without a second note",
+      "live-telehealth.spec.ts:298 › a late admitted start after navigation never loads an SDK or reconnects the departed screen",
+      "live-telehealth.spec.ts:60 › day view lists the real telehealth appointment and names the consent state honestly",
+      "live-telehealth.spec.ts:77 › the server refuses to start a visit without a signed consent"
+    ],
+    "failed": [],
+    "skipped": [
+      {
+        "id": "aws-recording-capture.spec.ts:105 › stops before consent withdrawal and preserves the capture across workspace reload",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:113 › workforce invalidation clears local capture and cannot auto-resume",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:121 › uncertain binary request retains exact bytes and retries explicitly without restarting the microphone",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:138 › cancels a pending start, stops permission tracks and never auto-constructs a recorder after late success",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:155 › offline interrupt stops tracks; leaving the encounter disposes the capture owner",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:80 › requires successful readiness and explicit acknowledgment before any microphone request",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:87 › records actual generated chunks, pauses, resumes one container and finishes all receipts",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:19 › requires history and explicit confirmation and renders a bounded result without an erasure claim",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:34 › lost response never automatically retries and an explicit retry preserves the exact request identifier",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:45 › failed or foreign history does not enable the confirmation",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:50 › rejects a substituted receipt and preserves the same retry identifier",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:56 › does not offer a new pass when reviewed history shows an active lease",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:64 › missing browser request-ID capability does not leave the form stuck or send a request",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on alp-workforce-session-change and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on offline and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on pagehide and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on visibilitychange and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:85 › bounds a nonsettling submission and expires the whole selection without silently starting another",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:92 › reload restores no local clinical metadata and submits no automatic pass",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:98 › the real execution proxy refuses fixture identity without a cookie",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:17 › Settings links to read-only queue and history with honest unknown outcomes",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:34 › paginates without retaining prior pages or asserting complete erasure",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:43 › error and forbidden responses do not become empty queues or expose upstream details",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:51 › refuses mismatched history and unsupported deletion claims",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on alp-workforce-session-change",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on offline",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on pagehide",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on visibilitychange",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:67 › session invalidation refuses a late response even when fetch ignores cancellation",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:76 › expires snapshots and independently bounds a never-settling request",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:84 › real proxy refuses fixture identity without a workforce cookie",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:105 › representative capacity and missing jurisdiction releases never become implied consent",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:116 › unavailable or fresh-auth-required service never renders a fictional empty workspace",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:127 › the real Desktop proxy refuses a browser without a workforce cookie, despite local chart fixtures",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:145 › reconciles a pending object with exact retry after a lost response, without sending audio or credentials",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:183 › rediscovers a recording, pauses and explicitly finishes it without microphone, processing or deletion",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:221 › uncertain recovery retries the exact command and blocks closing an unresolved upload",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:247 › wrong-session recovery response is refused and real capture proxy cannot use fixture auth",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:39 › reviews exact document, independently grants and withdraws consent without capturing",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:82 › uncertain participant creation retries the original command instead of issuing a duplicate",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:119 › a terminally failed job offers a new request with a fresh command, and the failed job is not merged into the new one",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:135 › opened transcript text leaves the page when a refresh is refused for authorization, and raw refusal detail is never rendered",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:159 › a proposed note is requested from the stored transcript, opened for review, and inserted only into an explicitly opened unsigned note with provenance",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:191 › drafting refuses without a transcript and drops an opened proposal on authorization loss",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:206 › the real Desktop proxies refuse a browser without a workforce cookie for transcription and drafting",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:84 › walks request, advance, open and correction as explicit steps; the correction textarea shows the opened version and the new version replaces the text on screen",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "care-messages.spec.ts:103 › names each clinic refusal for program assignments, never as an unpublished version or an empty list",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:44 › reads the app thread and retries an interrupted reply without changing its key or content",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:54 › removes opened messages and drafts on revoked authorization",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:6 › keeps refresh disabled until its client handler is mounted",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:63 › clears conversation text on a cross-tab session change",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:69 › real proxy refuses missing session and cross-origin mutation",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:83 › names each clinic refusal for messages and clears what was open",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:95 › a reply refused because the clinic changed says to check before sending again",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "clinical-edition.spec.ts:103 › the governed copilot stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:128 › a patient chart with a down backend refuses rather than inventing a record",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:142 › the review queue and calendar stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:155 › the today brief and protocol screen stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:181 › the programs workspace stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:197 › the inbox stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:215 › the patient-sync surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:245 › the billing, checkout, and catalog surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:289 › the plans, reconciliation, and reporting surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:346 › the product catalog and template surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:376 › settings reports the clinical edition and its real configuration state",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:73 › no demo banner exists in the clinical edition",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:81 › a down backend yields an honest state, never synthetic patients",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "commerce-journey.spec.ts:104 › 2: a delayed payment is processing, then succeeds once; duplicate and refused events change nothing",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:137 › 3: the code arrives once; a verified account claims it; another account cannot; one enrollment, the exact course",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:159 › 4: a lesson completed on one device is seen on a second; a retry converges; a device that is behind is refused with the saved record; relaunch resumes",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:179 › 5: a policy hold closes the course and refuses progress until the operator releases it",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:187 › 6: a second purchase: reversed events converge; an expired code is refused; the operator's replacement works and the old code does not",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:218 › 7: outages are said as outages; a later course version refuses new purchases while what was bought is kept; the consult choice stays",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:241 › 8: My courses: no learner, no course; the learner reads the exact course, completes a lesson with a receipt; a tab that is behind shows the saved record; signing out elsewhere clears the open lesson; another learner sees none of it",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:82 › 1: the funnel offers both choices; the buy page shows the fixture's terms; checkout leaves for the processor's page",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:11 › built sign-in hydrates without external traffic or client exceptions",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:32 › program-assignments refuses a missing identity with an uncached response",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:32 › protocol-carts refuses a missing identity with an uncached response",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:43 › program-assignments refuses foreign origins before identity or provider access",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:43 › protocol-carts refuses foreign origins before identity or provider access",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:53 › recording surfaces retain the no-tracker and no-framing policy",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:65 › signed-out chart navigation reaches sign-in instead of a server error",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:77 › an expired chart session without refresh returns to sign-in and drops its cookies",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:291 › skip: live state machine (default job) › PROOF 3 — an org with no provider reads Not configured, not 'unavailable'",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:303 › skip: live state machine (default job) › PROOF 6 — live mode with no approved provider refuses the run",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:313 › skip: live state machine (default job) › PROOF 7 — configured but no organizational approval refuses",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:336 › skip: live state machine (default job) › PROOF 8 — every sign-off but no BAA record still refuses",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:363 › skip: live state machine (default job) › PROOF 9 — configured and transacted are displayed as separate facts",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:375 › skip: live state machine (default job) › PROOFS 10 + 11 — a successful deterministic response stays a DRAFT with governed citations",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:403 › skip: live state machine (default job) › PROOF 12 — a hallucinated citation fails the run closed",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:421 › skip: live state machine (default job) › PROOF 13 — safety items are pinned and identical across every lens",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:438 › skip: live state machine (default job) › PROOF 14 — accepting a draft causes no clinical side effect",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:460 › skip: live state machine (default job) › PROOF 16 — retrying does not duplicate a run or a disposition",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:483 › skip: live state machine (default job) › PROOF 17 — a stale input snapshot cannot silently finalize",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:502 › skip: live state machine (default job) › PROOF 15 — a failed run reports a category, never raw provider text",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:529 › skip: live state machine (default job) › PROOF 19 — no secret, ARN, auth header, prompt, or PHI in the browser",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:536 › skip: live state machine (default job) › PROOF 20 — zero external requests across the whole live state machine",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:562 › skip: deployed fixture refusal (other jobs) › PROOF 4 — fixture mode is refused under a deployed-runtime marker",
+        "reason": "covered by the e2e-copilot-fixture-refusal CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:583 › skip: deployed fixture refusal (other jobs) › PROOF 5 — no environment flag overrides the deployed refusal",
+        "reason": "covered by the e2e-copilot-fixture-refusal CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:618 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 4b — approved_for_synthetic produces nothing in a deployed runtime",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:656 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 4c — the adversarial synthetic identity is equally unreachable",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:673 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 19 — no secret, ARN, auth header, or prompt reaches the browser",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:101 › the two doors on /apply › a created clinic that is suspended, or not yet in this session, is never shown as ready",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:131 › choosing a clinic after sign-in › several clinics: nothing is chosen for the practitioner; the choice is sent and the return path kept",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:149 › choosing a clinic after sign-in › a failed read is not \"no clinic\"; no clinic leads to the two doors",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:164 › the platform operator console › shipped: not released, and no form to sign in, review or suspend",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:172 › the platform operator console › a separate sign-in, held approval, and suspension with a closed reason, recorded and never reinstated",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:216 › the platform operator console › a failed list is not an empty one, and a refused operator is sent back to sign in",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:227 › the shipped routes refuse: the new-clinic door and every operator route are not released",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:31 › the two doors on /apply › shipped: creating a clinic is not open here, the held proposal is offered, and only fictional names are invited",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:47 › the two doors on /apply › creates a clinic by keyboard; a lost reply is resent as the same request and never makes a second clinic",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:76 › the two doors on /apply › names each refusal, and a retry after an account switch is a conflict that starts a fresh attempt",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:105 › the clinic's queue says unavailable when no review service runs, never \"no requests\"",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:113 › an admin approves by the applicant's address and declines with a reason, by keyboard",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:145 › real routes refuse a missing session and a cross-origin write",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:30 › with no applicant service, says applications are not open instead of showing no application",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:39 › a failed read is never \"no application\", and an account problem is the account's own next step",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:51 › proposes a clinic by keyboard while creating one is not open, and a lost reply is resent as the same request",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:75 › a pending join shows its reference and withdraws only after confirmation",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:90 › an approval is clinical access only when this Desktop and this session say so too",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "zoom-sdk-bootstrap.spec.ts:42 › the pinned SDK and its vendor scripts load, register, and initialize a client under the visit route's headers",
+        "reason": "set E2E_LIVE=1 E2E_ZOOM_SDK=1 with egress to source.zoom.us"
+      }
+    ],
+    "errors": [],
+    "exitOk": true,
+    "limitExceeded": false
+  },
+  "reverse": {
+    "passed": [
+      "live-a2-curation-tools.spec.ts:111 › A.2-03 · add exact identity + required facts and verify",
+      "live-a2-curation-tools.spec.ts:130 › A.2-04 · verified label refuses in-place edits (RPC returns immutable message)",
+      "live-a2-curation-tools.spec.ts:159 › A.2-05 · supersede creates a new draft and preserves the verified original",
+      "live-a2-curation-tools.spec.ts:199 › A.2-06 · list_product_label_versions surfaces both versions for comparison",
+      "live-a2-curation-tools.spec.ts:212 › A.2-07 · create a knowledge-reference draft",
+      "live-a2-curation-tools.spec.ts:227 › A.2-08 · a graded reference cannot be approved without a citation",
+      "live-a2-curation-tools.spec.ts:244 › A.2-09 · a real citation plus a stated reason approves the reference",
+      "live-a2-curation-tools.spec.ts:263 › A.2-10 · restricted knowledge reference still requires the 5-outcome governed review",
+      "live-a2-curation-tools.spec.ts:289 › A.2-11 · commercial matching drives the real RPC — exact match required + append-only revoke",
+      "live-a2-curation-tools.spec.ts:368 › A.2-12 · commercial changes never alter clinical ranking snapshot",
+      "live-a2-curation-tools.spec.ts:395 › A.2-13 · warning dispositions are append-only; warning stays on the record",
+      "live-a2-curation-tools.spec.ts:418 › A.2-14 · warning disposition requires a permitted disposition and a reason",
+      "live-a2-curation-tools.spec.ts:441 › A.2-15 · bulk assign reviewer is audited and bounded",
+      "live-a2-curation-tools.spec.ts:463 › A.2-16 · bulk clinical approval / verification is never offered and refused server-side",
+      "live-a2-curation-tools.spec.ts:494 › A.2-17 · cross-tenant refused on labels / references / warnings",
+      "live-a2-curation-tools.spec.ts:524 › A.2-18 · reload preserves every completed action",
+      "live-a2-curation-tools.spec.ts:545 › A.2-19 · backend-down produces honest unavailable, no fixture leakage",
+      "live-a2-curation-tools.spec.ts:560 › A.2-21 · Commercial Matching UI drives the real attach + revoke",
+      "live-a2-curation-tools.spec.ts:617 › A.2-22 · backend-down on labels + commercial + warnings never renders mocks",
+      "live-a2-curation-tools.spec.ts:632 › A.2-20 · every new control has an accessible name",
+      "live-a2-curation-tools.spec.ts:69 › A.2-01 · create a product-label draft",
+      "live-a2-curation-tools.spec.ts:80 › A.2-02 · required identity facts block verification",
+      "live-auth-transitions.spec.ts:22 › backslash return target cannot navigate to another origin",
+      "live-auth-transitions.spec.ts:39 › a failed logout does not claim success; retry clears the session",
+      "live-auth-transitions.spec.ts:7 › successful sign-in performs a document navigation to the requested local screen",
+      "live-billing.spec.ts:103 › 2: checkout from an appointment opens a draft with the booked service",
+      "live-billing.spec.ts:133 › 2b: a second checkout for the same appointment is refused",
+      "live-billing.spec.ts:147 › 3: the client never prices tax — the server returns it on save",
+      "live-billing.spec.ts:166 › 4: a discount without a reason is refused, with one it is accepted",
+      "live-billing.spec.ts:177 › 5: finalizing assigns a number and reserves tracked stock",
+      "live-billing.spec.ts:188 › 6: a finalized invoice is no longer editable",
+      "live-billing.spec.ts:195 › 7: a partial cash payment moves the invoice to partly paid",
+      "live-billing.spec.ts:203 › 8: full settlement marks it paid and commits the sale exactly once",
+      "live-billing.spec.ts:216 › 9: a refund returns money and never restocks",
+      "live-billing.spec.ts:229 › 10: an explicit resalable return is the only thing that restocks",
+      "live-billing.spec.ts:239 › 11: a damaged return is recorded without adding sellable stock",
+      "live-billing.spec.ts:252 › 12: patient credit is granted with a reason and applied",
+      "live-billing.spec.ts:276 › 13: a card payment reaches pending only — the UI never claims it is paid",
+      "live-billing.spec.ts:317 › 14: a second in-flight card payment is refused",
+      "live-billing.spec.ts:323 › 15: only the processor webhook settles the card payment",
+      "live-billing.spec.ts:346 › 16: a replayed webhook duplicates and a mismatched amount is refused — both recorded",
+      "live-billing.spec.ts:377 › 17: voiding an unpaid invoice releases its reservations",
+      "live-billing.spec.ts:409 › 18: overselling is refused and reserves nothing",
+      "live-billing.spec.ts:426 › 19: crossing the reorder threshold opens ONE low-stock review task",
+      "live-billing.spec.ts:450 › 20: no fixture identity, no PHI in logs, no off-origin requests",
+      "live-billing.spec.ts:92 › 1: the billing workspace shows real persisted figures",
+      "live-capture-resume.spec.ts:115 › cancelled resume ignores a late successful response and preserves the paused recorder",
+      "live-capture-resume.spec.ts:140 › revocation cancels a pending chunk and fences delayed recorder events and upload replies",
+      "live-capture-resume.spec.ts:191 › a completed recorder cannot inject delayed audio into a subsequent recording",
+      "live-capture-resume.spec.ts:49 › background heartbeat cannot unpause capture and failed fresh authorization cannot resume it",
+      "live-capture-resume.spec.ts:78 › ended microphone can reconnect only after authorization while preserving one playable recording",
+      "live-catalog-templates.spec.ts:105 › 4. verification is not asserted until someone records what they checked",
+      "live-catalog-templates.spec.ts:131 › 5. commercial data is a separate region, and never a clinical field",
+      "live-catalog-templates.spec.ts:159 › 6. the list view is told a count, never a commercial URL",
+      "live-catalog-templates.spec.ts:170 › 7. an empty template library is honest about being empty",
+      "live-catalog-templates.spec.ts:178 › 8. an unsourced dose blocks publication and names the item",
+      "live-catalog-templates.spec.ts:234 › 9. naming the source unblocks publication, and the record is auditable",
+      "live-catalog-templates.spec.ts:281 › 9b. the patient preview shows a recorded dose and omits an absent one",
+      "live-catalog-templates.spec.ts:300 › 10. keyboard reaches the catalog tab and the tabpanel is labelled",
+      "live-catalog-templates.spec.ts:315 › 11. no PHI and no off-origin requests from either surface",
+      "live-catalog-templates.spec.ts:336 › 12. every interactive control on both surfaces has an accessible name",
+      "live-catalog-templates.spec.ts:371 › 13. loading, error and success are announced, not just coloured",
+      "live-catalog-templates.spec.ts:63 › 1. an empty catalog says it is empty and shows no sample products",
+      "live-catalog-templates.spec.ts:75 › 2. an empty review queue says nothing is waiting, not a fabricated task",
+      "live-catalog-templates.spec.ts:84 › 3. a field the label did not carry reads Unknown, never None or blank",
+      "live-clinic-records-ui.spec.ts:16 › a copy request is reviewed, cannot be prepared without a release, then is prepared under a fictional release with the same decision id on retry",
+      "live-clinic-records-ui.spec.ts:59 › a correction is accepted only as an append-only addendum with written words; lost authorization removes the patient text",
+      "live-copilot-provider-readiness.spec.ts:226 › default disabled posture › PROOF 1 — the default posture makes no provider or secret request",
+      "live-copilot-provider-readiness.spec.ts:239 › default disabled posture › PROOF 2 — disabled mode says 'Not configured' honestly",
+      "live-copilot-provider-readiness.spec.ts:253 › default disabled posture › PROOF 9 — configured and transacted are separate, both negative here",
+      "live-copilot-provider-readiness.spec.ts:259 › default disabled posture › PROOF 1b — a run under the disabled posture drafts nothing",
+      "live-copilot-provider-readiness.spec.ts:270 › default disabled posture › PROOF 19 — no secret, ARN, auth header, or prompt reaches the browser",
+      "live-copilot-provider-readiness.spec.ts:275 › default disabled posture › PROOF 20 — zero external requests across the whole disabled flow",
+      "live-curated-import.spec.ts:113 › 1. a macro-enabled workbook is refused, and the reason names the macro",
+      "live-curated-import.spec.ts:126 › 2. a workbook carrying an XXE payload is refused before any value is read",
+      "live-curated-import.spec.ts:139 › 3. a file whose bytes are not an Office document is refused by CONTENT, not by name",
+      "live-curated-import.spec.ts:155 › 4. a formula is never evaluated; its cached value is read and the uncalculated one is reported",
+      "live-curated-import.spec.ts:168 › 5. a document's field codes are discarded and the instruction is never shown",
+      "live-curated-import.spec.ts:190 › 6. a good workbook parses, names the rows it skipped, and stages only after an attestation",
+      "live-curated-import.spec.ts:214 › 7. the staged batch reports its restricted row and what the source left unknown",
+      "live-curated-import.spec.ts:231 › 8. committing applies the rows as non-approved drafts and says so",
+      "live-curated-import.spec.ts:240 › 9. an imported product is not offered by the protocol product picker",
+      "live-curated-import.spec.ts:263 › 10. the restricted-review panel names every restricted product and WHY it is restricted",
+      "live-curated-import.spec.ts:297 › 11. an incomplete product cannot be marked reviewed — the RPC refuses with the reason",
+      "live-curated-import.spec.ts:337 › 12. clearing a restriction needs a stated reason and is NOT approval",
+      "live-curated-import.spec.ts:382 › 13. completing a complete product's review makes it selectable and separates approval",
+      "live-curated-import.spec.ts:428 › 14. a near-identical second file is AMBIGUOUS, blocks the commit, and names its candidates",
+      "live-curated-import.spec.ts:454 › 15. resolving an ambiguity requires a decision and a reason, and then the commit proceeds",
+      "live-curated-import.spec.ts:476 › 16. every imported record carries its file, sheet, row and verbatim source values",
+      "live-curated-import.spec.ts:490 › 17. a backend that cannot be reached is a FAILURE, never an empty inventory",
+      "live-curated-import.spec.ts:509 › 18. a declared file that could not be read survives as a record, with its reason",
+      "live-curated-import.spec.ts:528 › 19. a declared name that is a path is refused",
+      "live-curated-import.spec.ts:539 › 20. nothing in the import surface leaks a secret, a key, or a private path",
+      "live-curation-workspace.spec.ts:118 › A.1 · the Restricted-Review tab records a five-outcome decision on a product; restrictions preserved",
+      "live-curation-workspace.spec.ts:153 › A.1 · the Restricted-Review tab labels preview candidates, catalog products, and knowledge references distinctly",
+      "live-curation-workspace.spec.ts:179 › A.1 · recording an outcome on a preview candidate does NOT commit or publish",
+      "live-curation-workspace.spec.ts:209 › A.1 · the Restricted-Review category filters slice each subject-type slice",
+      "live-curation-workspace.spec.ts:221 › Conflicts (1) · side-by-side field diff shows existing vs incoming fields",
+      "live-curation-workspace.spec.ts:242 › Conflicts (2) · each of keep_existing / take_incoming / skip is offered as a governed answer",
+      "live-curation-workspace.spec.ts:261 › Conflicts (3) · a decision requires a stated reason",
+      "live-curation-workspace.spec.ts:272 › Conflicts (4) · restricted flags on either row are preserved on every outcome",
+      "live-curation-workspace.spec.ts:319 › Conflicts (5) · a resolution survives a page reload",
+      "live-curation-workspace.spec.ts:342 › Conflicts (6) · the decision writes an audit record with actor, timestamp, decision, and reason",
+      "live-curation-workspace.spec.ts:392 › Conflicts (7) · the batch cannot commit while unresolved conflicts remain",
+      "live-curation-workspace.spec.ts:401 › Conflicts (8) · a cross-tenant conflict resolution attempt is refused, no content leaks",
+      "live-curation-workspace.spec.ts:433 › A.1 · the deferred sections have shipped in A.2 (labels + references + commercial editors visible)",
+      "live-curation-workspace.spec.ts:450 › A.1 · the /settings/knowledge Import-review tab redirects to /settings/imports",
+      "live-curation-workspace.spec.ts:97 › A.1 · the Overview tab surfaces the workflow pointer and composite counts",
+      "live-encounter-opening.spec.ts:33 › cancelled browser navigation retains a direct link without creating another encounter",
+      "live-encounter-opening.spec.ts:53 › an uncertain creation offers timeline reconciliation, not an automatic retry",
+      "live-encounter-opening.spec.ts:8 › creation opens the encounter document without relying on client navigation or another POST",
+      "live-frontdesk-protocol.spec.ts:116 › 5: the completed status survives a reload — it is persisted, not local",
+      "live-frontdesk-protocol.spec.ts:123 › 3: a replayed transition is reported as already applied, not applied twice",
+      "live-frontdesk-protocol.spec.ts:157 › 4: a stale version is refused as a conflict rather than overwriting",
+      "live-frontdesk-protocol.spec.ts:170 › 7: Today shows real appointment statuses and names what is not configured",
+      "live-frontdesk-protocol.spec.ts:196 › 8: a patient with no protocol shows an honest empty state",
+      "live-frontdesk-protocol.spec.ts:205 › 9+10+11: a draft persists with exact product identity and honest interaction state",
+      "live-frontdesk-protocol.spec.ts:275 › 12: approve and activate are separate, confirmed steps",
+      "live-frontdesk-protocol.spec.ts:303 › 13: an active version is immutable — a correction creates a new version",
+      "live-frontdesk-protocol.spec.ts:333 › 14: a draft saves as an org template, and no demo fixture identity appears",
+      "live-frontdesk-protocol.spec.ts:67 › 1+2+6: the drawer offers only the transitions the database would accept",
+      "live-funnel-page.spec.ts:14 › a signed-out visitor reaches the funnel route and the consult page without being sent to sign in",
+      "live-funnel-page.spec.ts:37 › neighbouring paths are not funnel pages in the running app: the prefix alone and look-alike prefixes answer not-found",
+      "live-inbox.spec.ts:124 › 2b: a delayed older list response cannot replace the current status filter",
+      "live-inbox.spec.ts:152 › 3: deterministic urgent invariant — visible without any AI, never a diagnosis",
+      "live-inbox.spec.ts:168 › 4: opening a thread records read state; badge and counts survive reload",
+      "live-inbox.spec.ts:181 › 5: the reply draft autosaves with server confirmation and survives reload",
+      "live-inbox.spec.ts:191 › 6: a concurrent draft edit is a CONFLICT with recovery — never a silent overwrite",
+      "live-inbox.spec.ts:210 › 7: Send fails closed — verbatim refusal, draft kept, nothing marked sent",
+      "live-inbox.spec.ts:226 › 8: delivery evidence is honest — a FAILED outbound shows failed with a safe reason",
+      "live-inbox.spec.ts:237 › 9: priority and queue changes persist with append-only history",
+      "live-inbox.spec.ts:249 › 10: the status machine — resolve, then a lawful reopen",
+      "live-inbox.spec.ts:258 › 11: snoozing requires a wake time; a snoozed thread can be woken",
+      "live-inbox.spec.ts:269 › 12: a follow-up date persists and feeds the due count",
+      "live-inbox.spec.ts:277 › 13: create task produces a REAL review-queue item, idempotently",
+      "live-inbox.spec.ts:289 › 14: add-to-note lands in an UNSIGNED draft on a real encounter, idempotently",
+      "live-inbox.spec.ts:305 › 15: the AI copilot fails closed — not configured, no fixture analysis",
+      "live-inbox.spec.ts:313 › 16: an AI suggestion acts ONLY when a human accepts it — via the guarded workflow",
+      "live-inbox.spec.ts:327 › 17: dismissing an AI draft-response applies nothing",
+      "live-inbox.spec.ts:339 › 18: patient message content is untrusted — an injection renders as text, nothing acts",
+      "live-inbox.spec.ts:351 › 19: do-not-contact refuses sending and round-trips",
+      "live-inbox.spec.ts:365 › 20: patient tab + Today integration; a revoked membership refuses without leaking",
+      "live-inbox.spec.ts:80 › 1: persisted threads + persisted counts, urgent first, nothing synthetic",
+      "live-inbox.spec.ts:97 › 2: search and filters narrow the queue",
+      "live-knowledge-import.spec.ts:112 › 1. preview is refused when the no-PHI attestation is missing (RPC-level)",
+      "live-knowledge-import.spec.ts:126 › 2. a preview classifies every row and writes nothing",
+      "live-knowledge-import.spec.ts:145 › 3. a graded row citing no reference blocks the commit (validation errors on the item)",
+      "live-knowledge-import.spec.ts:175 › 4. a duplicate identity is a conflict that needs a written reason",
+      "live-knowledge-import.spec.ts:208 › 5. commit applies rows as NON-APPROVED drafts and says so",
+      "live-knowledge-import.spec.ts:220 › 6. re-importing the same file is idempotent, not a second import",
+      "live-knowledge-import.spec.ts:227 › 7. a row that has not moved is reported unchanged, not re-added",
+      "live-knowledge-import.spec.ts:250 › 8. a removal is reported and explicitly never performed",
+      "live-knowledge-import.spec.ts:284 › 9. an invalid item shape is refused with a reason, not a silent no-op",
+      "live-knowledge-import.spec.ts:295 › 10. the workspace names the do-not-upload-raw-source-file rule",
+      "live-lab-attestation.spec.ts:115 › another reviewer attested after this view loaded: the submission is refused as stale and nothing is claimed for it",
+      "live-lab-attestation.spec.ts:128 › a lost reply is retried as the same request and answered from its own record, never recorded twice",
+      "live-lab-attestation.spec.ts:154 › a legacy lab-result/1 reading shows its stored status only as the app's assessment and offers no attestation",
+      "live-lab-attestation.spec.ts:165 › changing the selected reading drops an answer for the previous one: nothing crosses readings or patients",
+      "live-lab-attestation.spec.ts:59 › disabled by default: an explicit open says attestation is not enabled and the reading stays unverified",
+      "live-lab-attestation.spec.ts:71 › the reading as stored beside the recorded report: a wrong file or a wrong field cannot be sent, and verified appears only after the readback",
+      "live-lens.spec.ts:118 › a prior evaluation cannot confirm a newly saved evaluation",
+      "live-lens.spec.ts:165 › steps 1–4: deterministic run over transcript+labs+chart; core identical across paradigms; framing-only changes; provenance inspectable",
+      "live-lens.spec.ts:222 › steps 5–7, 9–10: lifecycle, versioned answers preserving originals, explicit add-to-note, dismiss with feedback, signed notes untouched",
+      "live-lens.spec.ts:308 › step 8: a transcript correction (source change) marks the evaluation STALE — retained, never recomputed silently",
+      "live-lens.spec.ts:336 › step 11: cross-tenant access fails — an encounter from another organization never renders",
+      "live-lens.spec.ts:342 › steps 12–14: fixture AI is explicit (never silent production), injection blocks with a reviewable failure, urgent safety outranks every lens",
+      "live-lens.spec.ts:391 › honest state: completion is claimed only after the evaluation reads back, and a failed readback never claims it",
+      "live-lens.spec.ts:65 › a lost evaluation reply ends the running state without claiming completion",
+      "live-lens.spec.ts:88 › a saved evaluation is not announced as displayed when its readback fails",
+      "live-login-readiness.spec.ts:41 › JavaScript-disabled sign-in stays noninteractive with an explicit explanation",
+      "live-login-readiness.spec.ts:7 › sign-in cannot accept input or submit until its client handler is ready",
+      "live-nutrition.spec.ts:106 › 4: no starter template is presented as evidence-based",
+      "live-nutrition.spec.ts:115 › 5: a template states what it does not know before it can be used",
+      "live-nutrition.spec.ts:128 › 6: re-installing an unchanged library mints no second version",
+      "live-nutrition.spec.ts:145 › 7: a patient with no plan says so rather than inventing one",
+      "live-nutrition.spec.ts:152 › 8: adherence with nothing reported shows missing days, not zero",
+      "live-nutrition.spec.ts:160 › 9: a plan started from a template carries a snapshot of it",
+      "live-nutrition.spec.ts:177 › 10: approval is refused before the safety review has been run",
+      "live-nutrition.spec.ts:207 › 11: the safety review raises the recorded allergy the plan collides with",
+      "live-nutrition.spec.ts:238 › 12: approval is still refused while a blocking flag is unresolved",
+      "live-nutrition.spec.ts:244 › 13: acknowledging a blocking flag is not the same as deciding about it",
+      "live-nutrition.spec.ts:278 › 14: an override with no reason is refused",
+      "live-nutrition.spec.ts:300 › 15: a documented override clears the gate and is recorded on the flag",
+      "live-nutrition.spec.ts:315 › 16: activating makes exactly one plan live for the patient",
+      "live-nutrition.spec.ts:332 › 17: revising creates a new draft and leaves the approved version untouched",
+      "live-nutrition.spec.ts:371 › 18: an approved version cannot be edited, only revised",
+      "live-nutrition.spec.ts:407 › 19: a check-in requires a source, and blank adherence stays not reported",
+      "live-nutrition.spec.ts:427 › 20: a reported day counts as covered and the rest stay missing",
+      "live-nutrition.spec.ts:443 › 21: a check-in can be marked for follow-up",
+      "live-nutrition.spec.ts:451 › 22: a non-clinical role cannot author or approve a nutrition plan",
+      "live-nutrition.spec.ts:464 › 23: the copilot draft is labelled, unsaved, and raises rather than hides a conflict",
+      "live-nutrition.spec.ts:492 › 24: nothing in the nutrition surface leaks a secret, a licence key, or fixture identity",
+      "live-nutrition.spec.ts:74 › 1: the template library starts empty and says so honestly",
+      "live-nutrition.spec.ts:81 › 2: the food database reports configured and transacted as separate facts",
+      "live-nutrition.spec.ts:92 › 3: installing the starter library publishes eight review-gated patterns",
+      "live-overview-reasoning.spec.ts:110 › accepting a hypothesis persists, audits, and touches no note",
+      "live-overview-reasoning.spec.ts:144 › request-data records an actionable request",
+      "live-overview-reasoning.spec.ts:158 › a patient outside the caller's access shows an honest refusal, never data",
+      "live-overview-reasoning.spec.ts:44 › overview renders verified data with honest ungoverned metrics",
+      "live-overview-reasoning.spec.ts:76 › reasoning workspace: snapshot meta, stale state, split evidence, inference labeling",
+      "live-patient-relationships.spec.ts:17 › creates a scope-limited family approval request and persists its pending state",
+      "live-patient-relationships.spec.ts:42 › revocation requires a reason and remains visible after reload",
+      "live-plans.spec.ts:104 › 2: create a membership and version it",
+      "live-plans.spec.ts:124 › 3 + 6: purchasing drafts an invoice; credits appear only once it is paid, exactly once",
+      "live-plans.spec.ts:167 › 4: an authorized complimentary package is granted, labelled, and recorded",
+      "live-plans.spec.ts:183 › 5: an unauthorized complimentary assignment is refused",
+      "live-plans.spec.ts:226 › 7: reserve and consume a visit credit",
+      "live-plans.spec.ts:258 › 8: a permitted cancellation returns the credit",
+      "live-plans.spec.ts:285 › 9: a concurrent second reservation for the same appointment is refused",
+      "live-plans.spec.ts:317 › 10: an expired credit cannot be used",
+      "live-plans.spec.ts:347 › 11: manual restoration needs a reason and appends to the ledger",
+      "live-plans.spec.ts:366 › 12: Stripe is disabled and the UI says so without implying it works",
+      "live-plans.spec.ts:393 › 18: a failed subscription payment creates a real work-queue task",
+      "live-plans.spec.ts:424 › 19: pause, resume, and cancel-at-period-end",
+      "live-plans.spec.ts:453 › 20: a refund revokes unspent credit only and never duplicates a restore",
+      "live-plans.spec.ts:494 › 21 + 22: reconciliation shows unavailable settlement, and a mismatch resolves with a reason",
+      "live-plans.spec.ts:534 › 24: a role without permission is refused by the server, not just hidden",
+      "live-plans.spec.ts:555 › 26 + 27 + 28: no fixture identity, no secrets or card data in logs, no clinical side effects",
+      "live-plans.spec.ts:593 › reports: every chart carries a text equivalent and estimates are labelled",
+      "live-plans.spec.ts:75 › 1: create a package and draft + publish a version",
+      "live-privacy-operations-ui.spec.ts:100 › personal purge requires the exact preview and confirmation, retaining the command after an uncertain response",
+      "live-privacy-operations-ui.spec.ts:12 › retained inventory retries the same checkpoint, resumes saved progress and never claims erasure",
+      "live-privacy-operations-ui.spec.ts:137 › a stale deletion preview is discarded, and held deletion requests offer no purge action",
+      "live-privacy-operations-ui.spec.ts:47 › privacy UI distinguishes sign-in refusal from an empty queue",
+      "live-privacy-operations-ui.spec.ts:58 › reviews exact fictional fields and requires confirmation before verified resolution",
+      "live-privacy-operations-ui.spec.ts:88 › held requests remain readable but cannot be resolved",
+      "live-program-commerce.spec.ts:28 › 1: the Studio shows the offer editor and the purchases panel in their honest first states",
+      "live-program-commerce.spec.ts:50 › 2: the staff preview shows both choices, the buy choice unavailable for its reason, readable at a phone width",
+      "live-program-commerce.spec.ts:67 › 3: the public purchase page, the return page and the checkout route refuse a draft funnel",
+      "live-program-commerce.spec.ts:89 › 4: the webhook answers 503 while the Stripe boundary is unconfigured and records nothing",
+      "live-program-commerce.spec.ts:99 › 5: the commercial status read answers under its own key for a program with nothing sold",
+      "live-programs.spec.ts:144 › 4: a concurrent edit is a conflict with recovery, never a silent overwrite",
+      "live-programs.spec.ts:191 › 5+6+7: submit → gated approve (NOT publish) → confirmed publish with zero side effects → locked",
+      "live-programs.spec.ts:231 › 8+9: revise preserves the published original; a published version becomes a detached, approved template",
+      "live-programs.spec.ts:267 › 10+11: enrollment pins the published version, survives a newer publish, and progress round-trips to the chart",
+      "live-programs.spec.ts:320 › 12: Stripe and the Program Builder AI are honestly not configured",
+      "live-programs.spec.ts:349 › 13: archiving a template never cascades into programs created from it",
+      "live-programs.spec.ts:360 › 14: a revoked membership refuses the library without leaking program data",
+      "live-programs.spec.ts:65 › 1: an empty library is honest — no synthetic programs",
+      "live-programs.spec.ts:76 › 2+3: blank draft, curriculum with every block family, server-confirmed autosave",
+      "live-scribe.spec.ts:121 › cancelled preparation closes the microphone and permits only a status check before manual retry",
+      "live-scribe.spec.ts:143 › milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit",
+      "live-scribe.spec.ts:281 › microphone denial is a clear, recoverable failure",
+      "live-scribe.spec.ts:293 › consent withdrawn mid-recording stops capture immediately (active revocation)",
+      "live-scribe.spec.ts:310 › a late participant join pauses capture until they are identified and consent",
+      "live-scribe.spec.ts:331 › network interruption buffers locally and recovers without losing the recording",
+      "live-scribe.spec.ts:331 › stalled upload buffers locally and recovers without losing the recording",
+      "live-scribe.spec.ts:366 › microphone loss mid-recording pauses with an unmistakable status",
+      "live-scribe.spec.ts:392 › refresh mid-recording recovers the interrupted capture from the server",
+      "live-scribe.spec.ts:412 › a second tab cannot start a competing capture for the same encounter",
+      "live-scribe.spec.ts:92 › uncertain recording start stops the microphone and recovers without replaying begin",
+      "live-specimen-context.spec.ts:105 › changing the selected result cancels old context and requires another explicit load",
+      "live-specimen-context.spec.ts:59 › explicit load sends the exact selection and renders unverified facts without defaults",
+      "live-specimen-context.spec.ts:79 › an access refusal is not an empty record and refresh removes previously displayed context",
+      "live-specimen-context.spec.ts:92 › empty result and invalid or mismatched context stay distinct",
+      "live-sync-worker.spec.ts:146 › 1: fixture posture is loudly labeled; /api/health never depends on the worker",
+      "live-sync-worker.spec.ts:167 › 2: linking a patient for worker-driven delivery",
+      "live-sync-worker.spec.ts:188 › 3: queued means queued until the REAL worker runs; success delivers with fixture evidence",
+      "live-sync-worker.spec.ts:211 › 4: PHI-free worker-cycle telemetry and circuit state in Integrations",
+      "live-sync-worker.spec.ts:219 › 5: re-queueing the same version answers honestly; an empty cycle claims nothing",
+      "live-sync-worker.spec.ts:236 › 6: a retryable failure backs off with the safe error; discard requires a reason",
+      "live-sync-worker.spec.ts:275 › 7: an explicit re-share after discard mints a NEW envelope generation",
+      "live-sync-worker.spec.ts:291 › 8: consent revoked before delivery cancels durably; re-granting never silently resends",
+      "live-sync-worker.spec.ts:318 › 9: an explicit re-share after re-grant delivers; duplicate provider evidence dedupes",
+      "live-sync-worker.spec.ts:338 › 10: a transient failure is retried with a reason and then succeeds",
+      "live-sync-worker.spec.ts:363 › 11: a permanent rejection produces exactly ONE dead letter and is never auto-retried",
+      "live-sync-worker.spec.ts:389 › 12: a contract violation dead-letters (never retried) after a reasoned ops retry",
+      "live-sync-worker.spec.ts:410 › 13: the callback boundary verifies signatures BEFORE parsing; replay/oversize/content-type refused",
+      "live-sync-worker.spec.ts:495 › 14: signed inbound data arrives for review — never written to the chart",
+      "live-sync-worker.spec.ts:514 › 15: the fixture refuses every deployed environment with no override",
+      "live-sync-worker.spec.ts:530 › 16: an unapproved provider (Phase 6B) is refused by the entry point",
+      "live-sync-worker.spec.ts:536 › 17: SYNC_PROVIDER=none idles cleanly; the web app stays healthy",
+      "live-sync-worker.spec.ts:547 › 18: a down backend fails the worker without fabricating any UI state",
+      "live-sync-worker.spec.ts:560 › 19: worker RPCs are service-role only — client credentials are refused",
+      "live-sync-worker.spec.ts:571 › 20: honest fixture labels everywhere; no PHI in logs; no off-origin requests",
+      "live-sync.spec.ts:110 › 3: token expiry, supersession, and unknown-token refusal via the test provider",
+      "live-sync.spec.ts:143 › 4: verification binds the external subject; the token is single-use",
+      "live-sync.spec.ts:158 › 5: independent data scopes; research consent fully separate",
+      "live-sync.spec.ts:170 › 6: queueing FAILS CLOSED without a provider, then queues once registered",
+      "live-sync.spec.ts:190 › 7: no delivery claim without acknowledgment — queued means queued",
+      "live-sync.spec.ts:199 › 8: acknowledgment persists across reload; duplicate callbacks dedupe",
+      "live-sync.spec.ts:227 › 9: adherence ingests idempotently",
+      "live-sync.spec.ts:253 › 10: inbound data displays with full provenance, as untrusted plain text",
+      "live-sync.spec.ts:263 › 10b: governed lab import requires separate consent, dedupes, and stages clinician review",
+      "live-sync.spec.ts:328 › 11: revoking ONE scope stops only that scope",
+      "live-sync.spec.ts:343 › 13: retry and dead-letter handling with reasoned manual retry",
+      "live-sync.spec.ts:379 › 14: a version conflict resolves without overwriting originals; corrections are overlays",
+      "live-sync.spec.ts:416 › 15: real review-queue work from failed and inbound events",
+      "live-sync.spec.ts:438 › 17: the AI summary is honestly not configured",
+      "live-sync.spec.ts:445 › 16: cross-tenant access is rejected without leaking data",
+      "live-sync.spec.ts:466 › 12: pause holds both directions; revocation blocks everything; re-linking needs a new invitation",
+      "live-sync.spec.ts:493 › 18: no mock identity or fixture-demo content anywhere on the sync surfaces",
+      "live-sync.spec.ts:505 › 19: keyboard and screen-reader behavior",
+      "live-sync.spec.ts:520 › 20: no PHI in console logs and no off-origin requests",
+      "live-sync.spec.ts:76 › 1: honest unlinked + not-configured state",
+      "live-sync.spec.ts:92 › 2: a scoped invitation with a ONE-TIME code and honest no-delivery copy",
+      "live-tasks.spec.ts:123 › live labs workspace loads markers and a review persists across reload",
+      "live-tasks.spec.ts:171 › uploading a lab PDF extracts markers and queues a low-confidence review",
+      "live-tasks.spec.ts:197 › live calendar shows real appointments and check-in persists with audit",
+      "live-tasks.spec.ts:218 › booking, rescheduling, and no-show persist to the live week",
+      "live-tasks.spec.ts:278 › expired access token refreshes globally with rotation (P0 auth lifecycle)",
+      "live-tasks.spec.ts:296 › revoked refresh token clears the session instead of looping",
+      "live-tasks.spec.ts:31 › root enters the real workspace: directory → patient → labs (no mock patient)",
+      "live-tasks.spec.ts:311 › login honors a same-origin next= return path",
+      "live-tasks.spec.ts:322 › password reset: enumeration-safe request + recovery-token completion",
+      "live-tasks.spec.ts:357 › practitioner sign-in and sign-out work via httpOnly cookie session",
+      "live-tasks.spec.ts:388 › org members: roster, account linking, honest guards, confirmed removal (admin-gated)",
+      "live-tasks.spec.ts:444 › org substitution: a forged organization id is refused and the session org is unchanged",
+      "live-tasks.spec.ts:475 › a signed-in user with no active memberships gets honest states, never tenant data",
+      "live-tasks.spec.ts:502 › multi-org: auto-select, validated switch clears org data, tabs agree, mid-session revocation is honest",
+      "live-tasks.spec.ts:54 › live queue loads and shows the live boundary copy",
+      "live-tasks.spec.ts:547 › EMR: appointment → encounter → autosaved draft → recovery → sign → locked → addendum → timeline → audit",
+      "live-tasks.spec.ts:63 › resolve persists across reload and lands in the live audit log",
+      "live-tasks.spec.ts:654 › EMR conflict recovery saves local edits against the selected server version",
+      "live-tasks.spec.ts:745 › EMR lost save response settles from receipt and authoritative note",
+      "live-tasks.spec.ts:787 › EMR uncertain save never reports success, retries blindly, or signs",
+      "live-tasks.spec.ts:830 › EMR save deadline ends an unanswered request without calling it failed",
+      "live-tasks.spec.ts:868 › EMR explicit retry reuses the same first-create request ID",
+      "live-tasks.spec.ts:90 › registered audit events use database-owned wording and reject invented content",
+      "live-tasks.spec.ts:913 › no console errors in the live flow",
+      "live-telehealth.spec.ts:101 › recording consent unlocks the visit; ending it stores quick notes and opens the note",
+      "live-telehealth.spec.ts:146 › a refused signature removes opened clinical text and does not retain unsaved edits on retry",
+      "live-telehealth.spec.ts:170 › the imported unreviewed AI Companion note is frozen by one confirmed signature",
+      "live-telehealth.spec.ts:207 › authorization loss during a failed transfer's recovery read removes the opened signed note",
+      "live-telehealth.spec.ts:231 › placing the signed note in the chart creates one unsigned draft, links it, reaches the timeline, and a lost completion is reconciled without a second note",
+      "live-telehealth.spec.ts:298 › a late admitted start after navigation never loads an SDK or reconnects the departed screen",
+      "live-telehealth.spec.ts:60 › day view lists the real telehealth appointment and names the consent state honestly",
+      "live-telehealth.spec.ts:77 › the server refuses to start a visit without a signed consent"
+    ],
+    "failed": [],
+    "skipped": [
+      {
+        "id": "aws-recording-capture.spec.ts:105 › stops before consent withdrawal and preserves the capture across workspace reload",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:113 › workforce invalidation clears local capture and cannot auto-resume",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:121 › uncertain binary request retains exact bytes and retries explicitly without restarting the microphone",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:138 › cancels a pending start, stops permission tracks and never auto-constructs a recorder after late success",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:155 › offline interrupt stops tracks; leaving the encounter disposes the capture owner",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:80 › requires successful readiness and explicit acknowledgment before any microphone request",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-capture.spec.ts:87 › records actual generated chunks, pauses, resumes one container and finishes all receipts",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:19 › requires history and explicit confirmation and renders a bounded result without an erasure claim",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:34 › lost response never automatically retries and an explicit retry preserves the exact request identifier",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:45 › failed or foreign history does not enable the confirmation",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:50 › rejects a substituted receipt and preserves the same retry identifier",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:56 › does not offer a new pass when reviewed history shows an active lease",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:64 › missing browser request-ID capability does not leave the form stuck or send a request",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on alp-workforce-session-change and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on offline and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on pagehide and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:72 › clears execution state on visibilitychange and ignores a late acknowledgment",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:85 › bounds a nonsettling submission and expires the whole selection without silently starting another",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:92 › reload restores no local clinical metadata and submits no automatic pass",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-execution.spec.ts:98 › the real execution proxy refuses fixture identity without a cookie",
+        "reason": "Isolated fictional recording harness only."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:17 › Settings links to read-only queue and history with honest unknown outcomes",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:34 › paginates without retaining prior pages or asserting complete erasure",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:43 › error and forbidden responses do not become empty queues or expose upstream details",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:51 › refuses mismatched history and unsupported deletion claims",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on alp-workforce-session-change",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on offline",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on pagehide",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:59 › clears sensitive review on visibilitychange",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:67 › session invalidation refuses a late response even when fetch ignores cancellation",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:76 › expires snapshots and independently bounds a never-settling request",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-cleanup-review.spec.ts:84 › real proxy refuses fixture identity without a workforce cookie",
+        "reason": "Uses the isolated AWS recording presentation harness."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:105 › representative capacity and missing jurisdiction releases never become implied consent",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:116 › unavailable or fresh-auth-required service never renders a fictional empty workspace",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:127 › the real Desktop proxy refuses a browser without a workforce cookie, despite local chart fixtures",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:145 › reconciles a pending object with exact retry after a lost response, without sending audio or credentials",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:183 › rediscovers a recording, pauses and explicitly finishes it without microphone, processing or deletion",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:221 › uncertain recovery retries the exact command and blocks closing an unresolved upload",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:247 › wrong-session recovery response is refused and real capture proxy cannot use fixture auth",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:39 › reviews exact document, independently grants and withdraws consent without capturing",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-consent.spec.ts:82 › uncertain participant creation retries the original command instead of issuing a duplicate",
+        "reason": "Run with the dedicated AWS consent presentation configuration."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:119 › a terminally failed job offers a new request with a fresh command, and the failed job is not merged into the new one",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:135 › opened transcript text leaves the page when a refresh is refused for authorization, and raw refusal detail is never rendered",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:159 › a proposed note is requested from the stored transcript, opened for review, and inserted only into an explicitly opened unsigned note with provenance",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:191 › drafting refuses without a transcript and drops an opened proposal on authorization loss",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:206 › the real Desktop proxies refuse a browser without a workforce cookie for transcription and drafting",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "aws-recording-transcription.spec.ts:84 › walks request, advance, open and correction as explicit steps; the correction textarea shows the opened version and the new version replaces the text on screen",
+        "reason": "Dedicated AWS recording presentation configuration required."
+      },
+      {
+        "id": "care-messages.spec.ts:103 › names each clinic refusal for program assignments, never as an unpublished version or an empty list",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:44 › reads the app thread and retries an interrupted reply without changing its key or content",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:54 › removes opened messages and drafts on revoked authorization",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:6 › keeps refresh disabled until its client handler is mounted",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:63 › clears conversation text on a cross-tab session change",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:69 › real proxy refuses missing session and cross-origin mutation",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:83 › names each clinic refusal for messages and clears what was open",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "care-messages.spec.ts:95 › a reply refused because the clinic changed says to check before sending again",
+        "reason": "Dedicated synthetic care messaging UI run required."
+      },
+      {
+        "id": "clinical-edition.spec.ts:103 › the governed copilot stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:128 › a patient chart with a down backend refuses rather than inventing a record",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:142 › the review queue and calendar stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:155 › the today brief and protocol screen stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:181 › the programs workspace stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:197 › the inbox stays honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:215 › the patient-sync surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:245 › the billing, checkout, and catalog surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:289 › the plans, reconciliation, and reporting surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:346 › the product catalog and template surfaces stay honest with a down backend",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:376 › settings reports the clinical edition and its real configuration state",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:73 › no demo banner exists in the clinical edition",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "clinical-edition.spec.ts:81 › a down backend yields an honest state, never synthetic patients",
+        "reason": "clinical backend-down suite: set E2E_CLINICAL_DOWN=1 with a clinical build and no backend"
+      },
+      {
+        "id": "commerce-journey.spec.ts:104 › 2: a delayed payment is processing, then succeeds once; duplicate and refused events change nothing",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:137 › 3: the code arrives once; a verified account claims it; another account cannot; one enrollment, the exact course",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:159 › 4: a lesson completed on one device is seen on a second; a retry converges; a device that is behind is refused with the saved record; relaunch resumes",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:179 › 5: a policy hold closes the course and refuses progress until the operator releases it",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:187 › 6: a second purchase: reversed events converge; an expired code is refused; the operator's replacement works and the old code does not",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:218 › 7: outages are said as outages; a later course version refuses new purchases while what was bought is kept; the consult choice stays",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:241 › 8: My courses: no learner, no course; the learner reads the exact course, completes a lesson with a receipt; a tab that is behind shows the saved record; signing out elsewhere clears the open lesson; another learner sees none of it",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "commerce-journey.spec.ts:82 › 1: the funnel offers both choices; the buy page shows the fixture's terms; checkout leaves for the processor's page",
+        "reason": "journey fixture: set E2E_LIVE=1 and COMMERCE_JOURNEY_FIXTURE=1 with the contract fixture"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:11 › built sign-in hydrates without external traffic or client exceptions",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:32 › program-assignments refuses a missing identity with an uncached response",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:32 › protocol-carts refuses a missing identity with an uncached response",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:43 › program-assignments refuses foreign origins before identity or provider access",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:43 › protocol-carts refuses foreign origins before identity or provider access",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:53 › recording surfaces retain the no-tracker and no-framing policy",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:65 › signed-out chart navigation reaches sign-in instead of a server error",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "framework-release-boundary.spec.ts:77 › an expired chart session without refresh returns to sign-in and drops its cookies",
+        "reason": "production-server boundary runs in the dedicated built-runtime CI step"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:291 › skip: live state machine (default job) › PROOF 3 — an org with no provider reads Not configured, not 'unavailable'",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:303 › skip: live state machine (default job) › PROOF 6 — live mode with no approved provider refuses the run",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:313 › skip: live state machine (default job) › PROOF 7 — configured but no organizational approval refuses",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:336 › skip: live state machine (default job) › PROOF 8 — every sign-off but no BAA record still refuses",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:363 › skip: live state machine (default job) › PROOF 9 — configured and transacted are displayed as separate facts",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:375 › skip: live state machine (default job) › PROOFS 10 + 11 — a successful deterministic response stays a DRAFT with governed citations",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:403 › skip: live state machine (default job) › PROOF 12 — a hallucinated citation fails the run closed",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:421 › skip: live state machine (default job) › PROOF 13 — safety items are pinned and identical across every lens",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:438 › skip: live state machine (default job) › PROOF 14 — accepting a draft causes no clinical side effect",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:460 › skip: live state machine (default job) › PROOF 16 — retrying does not duplicate a run or a disposition",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:483 › skip: live state machine (default job) › PROOF 17 — a stale input snapshot cannot silently finalize",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:502 › skip: live state machine (default job) › PROOF 15 — a failed run reports a category, never raw provider text",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:529 › skip: live state machine (default job) › PROOF 19 — no secret, ARN, auth header, prompt, or PHI in the browser",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:536 › skip: live state machine (default job) › PROOF 20 — zero external requests across the whole live state machine",
+        "reason": "covered by the e2e-copilot-readiness CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:562 › skip: deployed fixture refusal (other jobs) › PROOF 4 — fixture mode is refused under a deployed-runtime marker",
+        "reason": "covered by the e2e-copilot-fixture-refusal CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:583 › skip: deployed fixture refusal (other jobs) › PROOF 5 — no environment flag overrides the deployed refusal",
+        "reason": "covered by the e2e-copilot-fixture-refusal CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:618 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 4b — approved_for_synthetic produces nothing in a deployed runtime",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:656 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 4c — the adversarial synthetic identity is equally unreachable",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "live-copilot-provider-readiness.spec.ts:673 › skip: deployed governed-synthetic refusal (other jobs) › PROOF 19 — no secret, ARN, auth header, or prompt reaches the browser",
+        "reason": "covered by the e2e-copilot-deployed-live CI job"
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:101 › the two doors on /apply › a created clinic that is suspended, or not yet in this session, is never shown as ready",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:131 › choosing a clinic after sign-in › several clinics: nothing is chosen for the practitioner; the choice is sent and the return path kept",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:149 › choosing a clinic after sign-in › a failed read is not \"no clinic\"; no clinic leads to the two doors",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:164 › the platform operator console › shipped: not released, and no form to sign in, review or suspend",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:172 › the platform operator console › a separate sign-in, held approval, and suspension with a closed reason, recorded and never reinstated",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:216 › the platform operator console › a failed list is not an empty one, and a refused operator is sent back to sign in",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:227 › the shipped routes refuse: the new-clinic door and every operator route are not released",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:31 › the two doors on /apply › shipped: creating a clinic is not open here, the held proposal is offered, and only fictional names are invited",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:47 › the two doors on /apply › creates a clinic by keyboard; a lost reply is resent as the same request and never makes a second clinic",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "new-clinic-onboarding.spec.ts:76 › the two doors on /apply › names each refusal, and a retry after an account switch is a conflict that starts a fresh attempt",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:105 › the clinic's queue says unavailable when no review service runs, never \"no requests\"",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:113 › an admin approves by the applicant's address and declines with a reason, by keyboard",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:145 › real routes refuse a missing session and a cross-origin write",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:30 › with no applicant service, says applications are not open instead of showing no application",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:39 › a failed read is never \"no application\", and an account problem is the account's own next step",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:51 › proposes a clinic by keyboard while creating one is not open, and a lost reply is resent as the same request",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:75 › a pending join shows its reference and withdraws only after confirmation",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "practitioner-onboarding.spec.ts:90 › an approval is clinical access only when this Desktop and this session say so too",
+        "reason": "Dedicated practitioner onboarding UI run required."
+      },
+      {
+        "id": "zoom-sdk-bootstrap.spec.ts:42 › the pinned SDK and its vendor scripts load, register, and initialize a client under the visit route's headers",
+        "reason": "set E2E_LIVE=1 E2E_ZOOM_SDK=1 with egress to source.zoom.us"
+      }
+    ],
+    "errors": [],
+    "exitOk": true,
+    "limitExceeded": false
+  },
+  "verdict": {
+    "ok": true,
+    "problems": [],
+    "forwardOnly": [],
+    "reverseOnly": []
+  },
+  "memory": {
+    "samples": 1185,
+    "maxHeapUsedMiB": 2710,
+    "maxRssMiB": 6118,
+    "maxHeapAfterMajorGcMiB": 2710,
+    "maxEventLoopDelayMs": 8271,
+    "workerRestarts": 0
+  },
+  "precompile": {
+    "forward-order": {
+      "entries": 319,
+      "ms": 236607,
+      "slowestMs": 61836,
+      "compilations": 14,
+      "statuses": {
+        "200": 57,
+        "303": 2,
+        "307": 4,
+        "400": 17,
+        "401": 6,
+        "403": 2,
+        "404": 12,
+        "405": 213,
+        "503": 6
+      }
+    },
+    "reverse-order": {
+      "entries": 319,
+      "ms": 201351,
+      "slowestMs": 40243,
+      "compilations": 14,
+      "statuses": {
+        "200": 57,
+        "303": 2,
+        "307": 4,
+        "400": 17,
+        "401": 6,
+        "403": 2,
+        "404": 12,
+        "405": 213,
+        "503": 6
+      }
+    }
+  },
+  "canary": {
+    "requests": 486,
+    "failures": 0,
+    "slowest": [
+      {
+        "at": "2026-10-16T18:12:00.796Z",
+        "order": "forward order",
+        "path": "/api/live/lens/evaluation",
+        "status": 200,
+        "ms": 23387
+      },
+      {
+        "at": "2026-10-16T18:11:49.609Z",
+        "order": "forward order",
+        "path": "/login",
+        "status": 200,
+        "ms": 5920
+      },
+      {
+        "at": "2026-10-16T18:11:55.529Z",
+        "order": "forward order",
+        "path": "/api/health",
+        "status": 200,
+        "ms": 5267
+      },
+      {
+        "at": "2026-10-16T18:40:15.614Z",
+        "order": "reverse order",
+        "path": "/login",
+        "status": 200,
+        "ms": 1583
+      },
+      {
+        "at": "2026-10-16T18:41:04.078Z",
+        "order": "reverse order",
+        "path": "/login",
+        "status": 200,
+        "ms": 1467
+      }
+    ]
+  }
+}
