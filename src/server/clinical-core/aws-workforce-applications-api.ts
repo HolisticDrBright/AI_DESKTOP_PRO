@@ -7,6 +7,8 @@ import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api
 import type { ClinicalCoreDatabase } from './database';
 import { normalizeApplicationRows } from '../../contracts/workforceApplication';
 import { abuseKey, INACTIVE_ABUSE_BOUNDARY, type AbuseSurface, type PublicAbuseBoundary } from '../public-abuse-boundary';
+import { ClinicBootstrapError, createClinicBootstrapService, WORKFORCE_CLINIC_BOOTSTRAP_RELEASE, type ClinicBootstrapRefusal,
+  type ClinicBootstrapStore } from './workforce-clinic-bootstrap';
 
 /** Source-only candidate: no Lambda entrypoint or deployed API imports it. */
 export const WORKFORCE_APPLICATION_API_RELEASE = 'blocked' as const;
@@ -22,7 +24,21 @@ const ROUTES = new Set([
   'GET /clinical-core/workforce/applications',
   'POST /clinical-core/workforce/applications',
   'POST /clinical-core/workforce/applications/withdraw',
+  // The new-clinic door (workforce-clinic-bootstrap.ts): its own release, refused before anything is read while blocked.
+  'GET /clinical-core/workforce/clinic-bootstrap',
+  'POST /clinical-core/workforce/clinic-bootstrap',
 ]);
+const BOOTSTRAP_ROUTES = new Set(['GET /clinical-core/workforce/clinic-bootstrap', 'POST /clinical-core/workforce/clinic-bootstrap']);
+const BOOTSTRAP_REPLIES: Readonly<Record<ClinicBootstrapRefusal, [number, string]>> = {
+  not_released: [503, 'workforce_clinic_bootstrap_not_released'],
+  assurance_required: [403, 'workforce_applicant_mfa_required'],
+  request_invalid: [400, 'request_invalid'],
+  conflict: [409, 'workforce_clinic_bootstrap_conflict'],
+  already_bootstrapped: [409, 'workforce_clinic_bootstrap_exists'],
+  proposal_pending: [409, 'workforce_application_already_pending'],
+  applicant_refused: [403, 'workforce_applicant_refused'],
+  service_unavailable: [503, 'workforce_application_unavailable'],
+};
 
 export type WorkforceApplicant = {
   subject: string;
@@ -73,7 +89,11 @@ export function createWorkforceApplicationsCandidate(input: {
   store: WorkforceApplicationStore;
   /** The shared abuse boundary (src/server/public-abuse-boundary.ts). Inactive unless a reviewed service is supplied. */
   abuse?: PublicAbuseBoundary;
+  /** The new-clinic bootstrap: absent, or blocked, refuses its routes before any account or row is read. */
+  clinicBootstrap?: { release?: 'blocked' | 'qualification'; store: ClinicBootstrapStore };
 }) {
+  const bootstrapRelease = input.clinicBootstrap?.release ?? WORKFORCE_CLINIC_BOOTSTRAP_RELEASE;
+  const bootstrap = input.clinicBootstrap ? createClinicBootstrapService({ store: input.clinicBootstrap.store, release: bootstrapRelease }) : null;
   const abuse = input.abuse ?? INACTIVE_ABUSE_BOUNDARY;
   const config = input.configuration;
   if (config.phiAllowed !== false || config.accountId !== ACCOUNT
@@ -86,6 +106,8 @@ export function createWorkforceApplicationsCandidate(input: {
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (config.activation !== 'qualification') return reply(503, { error: 'workforce_application_not_released' });
     if (!ROUTES.has(event.routeKey ?? '')) return reply(404, { error: 'route_not_found' });
+    const bootstrapRoute = BOOTSTRAP_ROUTES.has(event.routeKey ?? '');
+    if (bootstrapRoute && (!bootstrap || bootstrapRelease !== 'qualification')) return reply(503, { error: 'workforce_clinic_bootstrap_not_released' });
     const claims = event.requestContext?.authorizer?.jwt?.claims;
     const claim = (name: string) => typeof claims?.[name] === 'string' ? claims[name] as string : '';
     const subject = claim('sub');
@@ -98,7 +120,8 @@ export function createWorkforceApplicationsCandidate(input: {
       || claim('custom:person_id') || claim('custom:organization_id')) {
       return reply(403, { error: 'workforce_applicant_refused' });
     }
-    const surface: AbuseSurface = event.routeKey === 'GET /clinical-core/workforce/applications' ? 'workforce_application_status'
+    const surface: AbuseSurface = event.routeKey === 'GET /clinical-core/workforce/applications'
+      || event.routeKey === 'GET /clinical-core/workforce/clinic-bootstrap' ? 'workforce_application_status'
       : event.routeKey === 'POST /clinical-core/workforce/applications/withdraw' ? 'workforce_application_withdraw' : 'workforce_application_submit';
     const sourceIp = (event.requestContext as { http?: { sourceIp?: unknown } } | undefined)?.http?.sourceIp;
     const admitted = await abuse.decide(surface, { subject: abuseKey('subject', subject),
@@ -118,6 +141,22 @@ export function createWorkforceApplicationsCandidate(input: {
     if (!current.mfaMethods.some(method => method === 'SOFTWARE_TOKEN_MFA'
         || method === 'SMS_MFA' || method === 'EMAIL_OTP')) {
       return reply(403, { error: 'workforce_applicant_mfa_required' });
+    }
+    if (bootstrapRoute) {
+      // The subject and address come from the token and the current account read above; the body names neither.
+      const applicant = { subject, emailSha256: sha256(tokenEmail), emailVerified: current.emailVerified, mfaActive: true };
+      try {
+        if (event.routeKey === 'GET /clinical-core/workforce/clinic-bootstrap') {
+          if (event.body || Object.keys(event.queryStringParameters ?? {}).length) return invalid();
+          return reply(200, { data: await bootstrap!.state(applicant) });
+        }
+        const answer = await bootstrap!.bootstrap(applicant, parseBody(event));
+        return reply(answer.duplicate ? 200 : 201, { data: answer });
+      } catch (error) {
+        if (error instanceof InvalidBody) return invalid();
+        const [status, code] = BOOTSTRAP_REPLIES[error instanceof ClinicBootstrapError ? error.code : 'service_unavailable'];
+        return reply(status, { error: code });
+      }
     }
     try {
       if (event.routeKey === 'GET /clinical-core/workforce/applications') {
