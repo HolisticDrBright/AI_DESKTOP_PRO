@@ -49,7 +49,8 @@ describe('every Desktop API route has exactly one authority family', () => {
 describe('every cell is backed by source, or says it is not', () => {
   it.each(cells.map(c => [`${c.family} / ${c.mode} / ${c.kase}`, c.cell] as const))('%s', (_name, cell) => {
     if (cell.result === 'refused' || cell.result === 'refused_disabled' || cell.result === 'gap') expect(cell.evidence.length).toBeGreaterThan(0);
-    else expect(cell.reason.length).toBeGreaterThan(10);
+    else if ('reason' in cell) expect(cell.reason.length).toBeGreaterThan(10);
+    else throw new Error(`${cell.result} needs a reason`);
     if (cell.result === 'gap') expect(cell.decision).toMatch(/docs\/desktop-onboarding-authority-2026-10-16\.md/);
     for (const evidence of ('evidence' in cell ? cell.evidence ?? [] : [])) {
       const [file, title] = evidence.split('::');
