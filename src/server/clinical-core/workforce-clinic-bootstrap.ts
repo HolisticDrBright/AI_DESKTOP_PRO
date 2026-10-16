@@ -17,7 +17,7 @@ import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase 
  * neither implemented in a live system nor reachable.
  */
 export const WORKFORCE_CLINIC_BOOTSTRAP_RELEASE: 'blocked' | 'qualification' = 'blocked';
-export const WORKFORCE_CLINIC_BOOTSTRAP_CANDIDATE_SHA256 = '9d02c85e8b62232b8df71d5c68d1dfa1f0db7fd1f52b0cae52e4ee704a9c13c5';
+export const WORKFORCE_CLINIC_BOOTSTRAP_CANDIDATE_SHA256 = '82efb74c41fe8da9934538332398101cfb25e73006d59fa306746f637f1d8eb1';
 export const WORKFORCE_CLINIC_BOOTSTRAP_ROLLBACK_SHA256 = 'd0702843c5019f96687aa037a6cceb0c8a3b73886f822e4d2b93e91540499d6d';
 /** The only assurance the service may attest, after reading the account itself. */
 export const BOOTSTRAP_ASSURANCE = 'verified_email_and_mfa' as const;

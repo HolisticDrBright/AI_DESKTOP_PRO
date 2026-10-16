@@ -104,7 +104,7 @@ create function clinical_private.bootstrap_workforce_clinic(
   _request_id uuid,_subject text,_email_sha256 text,_clinic_label text,_assurance text
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare _existing clinical_private.workforce_clinic_bootstraps%rowtype;
-  _label text; _person uuid; _organization uuid; _membership uuid;
+  _label text; _person uuid; _organization uuid; _membership uuid; _constraint text;
 begin
   _label:=btrim(_clinic_label);
   if _request_id is null or _subject is null or _subject !~
@@ -145,7 +145,17 @@ begin
       where d.email_sha256=_email_sha256 and lower(d.identity_subject)<>lower(_subject)) then
     raise exception using errcode='42501',message='workforce_binding_conflict';
   end if;
-  _person:=clinical_private.bind_approved_workforce_subject(_subject,_email_sha256);
+  -- Two accounts with one address may race past the check above under their own subject locks; the directory's unique
+  -- address index then decides, and the account that loses is refused by name, never with the index's own error.
+  begin
+    _person:=clinical_private.bind_approved_workforce_subject(_subject,_email_sha256);
+  exception when unique_violation then
+    get stacked diagnostics _constraint = constraint_name;
+    if _constraint = 'workforce_identity_directory_email_sha256_key' then
+      raise exception using errcode='42501',message='workforce_binding_conflict';
+    end if;
+    raise;
+  end;
   insert into clinical_core.organizations(organization_label) values (_label) returning id into _organization;
   insert into clinical_core.organization_memberships(organization_id,person_id,role,status)
     values (_organization,_person,'owner','active') returning id into _membership;
