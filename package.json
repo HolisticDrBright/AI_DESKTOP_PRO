@@ -38,6 +38,7 @@
     "qualify:clinic-native-source": "node scripts/qualify-clinic-native-source.mjs",
     "qualify:workforce-current-authority-native": "node scripts/qualify-workforce-current-authority-native.mjs",
     "qualify:clinic-status-native": "node scripts/qualify-clinic-status-native.mjs",
+    "qualify:synthetic-invitation-native": "node scripts/qualify-synthetic-invitation-native.mjs",
     "qualify:care-messaging-current-native": "node scripts/qualify-care-messaging-current-native.mjs",
     "qualify:workforce-onboarding-native": "node scripts/qualify-workforce-onboarding-native.mjs",
     "build:clinic-preserving-transition": "node scripts/build-clinic-preserving-transition.mjs",

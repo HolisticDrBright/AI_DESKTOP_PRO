@@ -88,6 +88,9 @@ const E = {
   syntheticInviteRemoved: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a removed membership is refused on the next request',
   syntheticInviteSuspended: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a %s clinic — GAP: the already-selected session still issues one',
   syntheticPosture: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::posture: answered from the token alone',
+  syntheticSuccessorIssue: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::clinic, already-issued practitioner session: ${withSuccessor ? \'refused, nothing written\'',
+  syntheticSuccessorClaim: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::an invitation issued before the suspension, claimed after it',
+  syntheticSuccessorRace: 'scripts/qualify-synthetic-invitation-native.mjs::issue-waiting-on-a-pending-suspension-is-refused',
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
@@ -103,9 +106,11 @@ const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims no operation
   + 'and deliberately leaves workforce consent management (retention, erasure, recording cleanup, privacy operations) and every consumer '
   + 'request running. Apply it, or require database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
 const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
-  + 'session already in a suspended or archived synthetic clinic still issues patient invitations. The production successor does not reach '
-  + 'this schema. Enforce clinic status there too, or retire the synthetic boundary before any synthetic clinic is suspended. '
-  + 'docs/desktop-onboarding-authority-2026-10-16.md';
+  + 'session already in a suspended or archived synthetic clinic still issues patient invitations, and one issued before the suspension is '
+  + 'still claimed into a verified connection. The production successor does not reach this schema. The separate BLOCKED successor '
+  + 'synthetic-invitation-clinic-status.sql refuses both the issue and the claim unless the clinic is active, holding the clinic row so a '
+  + 'suspension and either call serialize; a connection verified earlier is left as it is. Apply it, or retire the synthetic boundary before '
+  + 'any synthetic clinic is suspended. docs/desktop-onboarding-authority-2026-10-16.md, docs/suspended-clinic-custody-2026-10-16.md';
 const CATALOG_HOSTS = 'The Desktop reads the synthetic, PHI-disabled catalog host or the production one by runtime, not by authority mode. '
   + 'The synthetic host (the one deployed; reference rows only, no clinic data) has no clinic or membership table: it admits an already-issued '
   + 'token until it expires. The production host binds the current membership in the read\'s own transaction (BLOCKED setter) and refuses.';
@@ -143,7 +148,8 @@ export const ROUTE_FAMILIES = {
     description: 'The synthetic API\'s posture and invitations, claims-based by design',
     upstream: 'aws-identity-api (synthetic) /clinical-core/workforce/{posture,invitations}',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
-      suspended_clinic: { result: 'gap', evidence: [E.syntheticInviteSuspended, E.syntheticPosture], decision: SYNTHETIC_SUSPENDED_DECISION },
+      suspended_clinic: { result: 'gap', decision: SYNTHETIC_SUSPENDED_DECISION,
+        evidence: [E.syntheticInviteSuspended, E.syntheticPosture, E.syntheticSuccessorIssue, E.syntheticSuccessorClaim, E.syntheticSuccessorRace] },
       removed_membership: { result: 'token_lifetime', reason: 'Invitations re-read the membership row and refuse a removed member on the next request; posture is answered from the token alone (no clinic data) until it expires.',
         evidence: [E.syntheticInviteRemoved, E.syntheticPosture] },
       stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
