@@ -240,6 +240,8 @@
     "test:care-erasure-recovery-source": "node --test scripts/build-care-erasure-recovery-source.test.mjs",
     "build:aws-care-consent-copy": "node scripts/build-care-consent-copy-operator.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",
+    "build:aws-care-messaging-restricted-credential": "node scripts/build-aws-care-messaging.mjs --release=112 --credential=restricted",
+    "test:aws-care-messaging-restricted-credential": "node --test scripts/care-messaging-restricted-credential.test.mjs",
     "build:aws-care-connections": "node scripts/build-aws-care-connections.mjs",
     "inspect:aws-care-messaging-qualification": "node scripts/inspect-care-messaging-qualification.mjs",
     "inspect:aws-care-connections-qualification": "node scripts/inspect-care-connections-qualification.mjs",

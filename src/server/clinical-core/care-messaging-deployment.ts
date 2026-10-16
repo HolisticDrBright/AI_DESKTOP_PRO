@@ -3,7 +3,9 @@ import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api
 import type { ClinicalCoreDatabase } from './database';
 import { createProductionCareMessagingApi } from './production-care-messaging-api';
 import { createCurrentMembershipCareMessaging, createProductionCareMessaging, createProductionCareMessageExport, ProductionCareMessageError } from './production-care-messaging';
-import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
+import { CARE_MESSAGING_QUALIFICATION_ROLE, careMessagingQualificationConfiguration, createRdsDataClinicalCoreDatabase,
+  createRdsDataQualificationCareMessagingDatabase, type RdsDataConfiguration } from './rds-data-database';
+import type { ClinicalCoreTransaction } from './database';
 import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
 
@@ -122,13 +124,14 @@ export function createInventoryCareMessagingHandler(e: Environment, build: Inven
 }
 function createHandler(environment: Environment, supplied: CareMessagingBuild | InventoryCareMessagingBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase, now: (() => number) | undefined,
-  inventory: boolean): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  inventory: boolean, bind: (database: ClinicalCoreDatabase, build: Pick<CareMessagingBuild, 'functions'>) => ClinicalCoreDatabase = bindCareMessagingDatabase,
+): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
   try {
     const e = { ...environment }, build = structuredClone(supplied);
     build.functions = validateFunctions(build.functions);
     const { activation, qualification } = binding(e, build, inventory);
     let database: ClinicalCoreDatabase | undefined;
-    const getDatabase = () => database ??= bindCareMessagingDatabase(databaseFactory({
+    const getDatabase = () => database ??= bind(databaseFactory({
       clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN ?? '', secretArn: e.CLINICAL_DATABASE_SECRET_ARN ?? '',
       databaseName: e.CLINICAL_DATABASE_NAME ?? '', region: e.AWS_REGION,
     }), build);
@@ -144,7 +147,119 @@ function createHandler(environment: Environment, supplied: CareMessagingBuild | 
     currentMessaging: () => createCurrentMembershipCareMessaging(getDatabase()),
     exporter: () => createProductionCareMessageExport(getDatabase()), now });
   } catch {
-    return async () => ({ statusCode: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff' }, body: JSON.stringify({ error: 'service_unavailable' }) });
+    return serviceUnavailable;
   }
+}
+const serviceUnavailable = async (): Promise<ApiGatewayV2Response> => ({ statusCode: 503, headers: { 'content-type': 'application/json',
+  'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }, body: JSON.stringify({ error: 'service_unavailable' }) });
+
+/**
+ * BLOCKED restricted-credential successor, qualification 112 only
+ * (infra/aws-clinical-core/source-candidates/care-messaging-qualification-login.sql).
+ *
+ * The same messaging service, signed in with its own secret instead of the cluster-master one, running as a NOLOGIN
+ * role that can execute four proxies and nothing else. Each proxy calls one of the functions the service already uses,
+ * as the owner that function already runs as, so consent, recipient, connection, idempotency and row-level-security
+ * checks are unchanged. The configuration is refused before any database client exists unless it names that dedicated
+ * secret, the qualification database, the 112 release, PHI off and activation blocked. `database_current` is refused:
+ * its setter has no reviewed proxy yet.
+ */
+export const CARE_MESSAGING_QUALIFICATION_CREDENTIAL = 'restricted_qualification';
+export const CARE_MESSAGING_QUALIFICATION_SCHEMA = 'clinical_care_messaging_qualification';
+/** Exact prosrc hashes of the four proxies; the candidate test fails if a reviewed body or this binding drifts. */
+export const CARE_MESSAGING_QUALIFICATION_PROXIES = [
+  { name: 'set_request_context', target: 'clinical_private.set_request_context', bodySha256: '23cb89c1a12f2b2fce4bb13be7e9d34f9759990b1a0afee5470fc22855668215' },
+  { name: 'request', target: 'clinical_core.production_care_message_request', bodySha256: '99467cbdf1a891c2770e1a5c543762496fe5935f993de78e53338d625b1f2840' },
+  { name: 'resolve', target: 'clinical_core.production_care_message_resolve', bodySha256: 'db7803d4d147edc25b7be38aee803d31f4f56269387f312edfd4fa5a54122330' },
+  { name: 'export', target: 'clinical_core.production_care_message_export', bodySha256: '16ae0d63d1383312ef9ed99442e34ff5fe2e7e69cd4c2f5a7822fc8772f675c0' },
+] as const;
+/** Every statement the messaging service sends under this credential, and the proxy statement it becomes. */
+export const CARE_MESSAGING_QUALIFICATION_STATEMENTS: ReadonlyMap<string, string> = new Map([
+  ['select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', `select ${CARE_MESSAGING_QUALIFICATION_SCHEMA}.set_request_context($1,$2,$3,$4,$5,$6,$7)`],
+  ['select clinical_core.production_care_message_request($1::jsonb) as data', `select ${CARE_MESSAGING_QUALIFICATION_SCHEMA}.request($1::jsonb) as data`],
+  ['select clinical_core.production_care_message_resolve($1::jsonb) as data', `select ${CARE_MESSAGING_QUALIFICATION_SCHEMA}.resolve($1::jsonb) as data`],
+  ['select clinical_core.production_care_message_export($1::jsonb) as data', `select ${CARE_MESSAGING_QUALIFICATION_SCHEMA}.export($1::jsonb) as data`],
+]);
+
+/** Metadata only, as the restricted role, on every transaction before business SQL. Names are joined, never cast to
+ * regclass: the role has no USAGE on the clinical schemas, and must not need it to check them. */
+const restrictedContract = `with expected as (
+      select * from jsonb_to_recordset($1::jsonb) as e(schema text,name text,sha256 text,callable boolean)
+    ), targets as (
+      select count(*)=7 and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
+        and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.sha256
+        and not has_function_privilege(current_user,p.oid,'EXECUTE')
+        and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+          where a.grantee=0 and a.privilege_type='EXECUTE')) valid
+      from expected e join pg_namespace n on n.nspname=e.schema join pg_proc p on p.pronamespace=n.oid and p.proname=e.name
+    ), proxies as (
+      select count(*)=4 and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
+        and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=x.sha256
+        and has_function_privilege(current_user,p.oid,'EXECUTE')
+        and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+          where a.grantee=0 and a.privilege_type='EXECUTE')) valid
+      from jsonb_to_recordset($3::jsonb) as x(name text,sha256 text)
+      join pg_namespace n on n.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}' join pg_proc p on p.pronamespace=n.oid and p.proname=x.name
+    ), proxy_count as (
+      select count(*)=4 valid from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}'
+    ), tables as (
+      select count(*)=4 and bool_and(c.relrowsecurity and c.relforcerowsecurity
+        and not has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE')
+        and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+          where a.grantee=0 and a.privilege_type in ('SELECT','INSERT','UPDATE','DELETE'))) valid
+      from pg_class c join pg_namespace n on n.oid=c.relnamespace
+        where n.nspname||'.'||c.relname in (select jsonb_array_elements_text($2::jsonb))
+    ), expected_triggers(schema_name,table_name,trigger_name,function_name,event_mask) as (values
+      ('clinical_core','care_message_receipts','care_message_receipts_immutable','block_update_delete',27),
+      ('clinical_core','care_message_cancellations','care_message_cancellations_immutable','block_update_delete',27),
+      ('clinical_core','care_message_thread_links','care_message_thread_links_immutable','block_update_delete',27),
+      ('clinical_audit','care_message_access_events','care_message_access_events_immutable','block_update_delete',27),
+      ('clinical_core','care_message_receipts','care_message_receipt_admission','production_care_message_admission',7),
+      ('clinical_core','messages','stored_care_messages_immutable','production_care_message_immutable',27)
+    ), triggers as (
+      select count(*)=6 and bool_and(not t.tgisinternal and t.tgenabled='O' and t.tgtype=e.event_mask
+        and fn.nspname='clinical_private' and p.proname=e.function_name and p.pronargs=0) valid
+      from expected_triggers e join pg_namespace tn on tn.nspname=e.schema_name
+      join pg_class c on c.relnamespace=tn.oid and c.relname=e.table_name
+      join pg_trigger t on t.tgrelid=c.oid and t.tgname=e.trigger_name
+      join pg_proc p on p.oid=t.tgfoid join pg_namespace fn on fn.oid=p.pronamespace
+    ), reach as (
+      select not exists(select 1 from pg_namespace n where n.nspname in ('clinical_core','clinical_private','clinical_audit')
+          and has_schema_privilege(current_user,n.oid,'USAGE'))
+        and not exists(select 1 from pg_auth_members m join pg_roles r on r.oid=m.member where r.rolname=current_user)
+        and (select count(*) from pg_auth_members m join pg_roles r on r.oid=m.member where r.rolname=session_user)=1 valid
+    ) select current_user='${CARE_MESSAGING_QUALIFICATION_ROLE}' and session_user<>current_user
+        and f.valid and x.valid and k.valid and t.valid and g.valid and r.valid as valid
+      from targets f cross join proxies x cross join proxy_count k cross join tables t cross join triggers g cross join reach r`;
+
+export function bindRestrictedCareMessagingDatabase(database: ClinicalCoreDatabase, build: Pick<CareMessagingBuild, 'functions'>): ClinicalCoreDatabase {
+  const functions = validateFunctions(build.functions);
+  const proxies = CARE_MESSAGING_QUALIFICATION_PROXIES.map(({ name, bodySha256 }) => ({ name, sha256: bodySha256 }));
+  return { transaction: work => database.transaction(async tx => {
+    const checked = await tx.query<{ valid: boolean }>(restrictedContract, [JSON.stringify(functions), JSON.stringify(tables), JSON.stringify(proxies)]);
+    if (checked.rows[0]?.valid !== true) throw new ProductionCareMessageError('service_unavailable');
+    // Only the service's own statements, each rewritten to its proxy. Anything else is refused before it is sent.
+    const proxied: ClinicalCoreTransaction = { query: async (sql, parameters) => {
+      const statement = CARE_MESSAGING_QUALIFICATION_STATEMENTS.get(sql);
+      if (statement === undefined) throw new ProductionCareMessageError('service_unavailable');
+      return tx.query(statement, parameters);
+    } };
+    return work(proxied);
+  }) };
+}
+
+/** Deployment identity for the restricted successor, checked before any database client is constructed. */
+export function restrictedCareMessagingConfiguration(e: Environment, build: CareMessagingBuild): boolean {
+  return e.CARE_MESSAGING_DATABASE_CREDENTIAL === CARE_MESSAGING_QUALIFICATION_CREDENTIAL
+    && build.migrationCount === 112 && build.migrationReleaseSha256 === qualificationRelease112
+    && e.PHI_ALLOWED === 'false' && e.CARE_MESSAGING_ACTIVATION === 'blocked' && e.DEPLOYMENT_ACCOUNT_ID === '588966314750'
+    && [undefined, '', 'legacy_claims'].includes(e.CARE_MESSAGING_WORKFORCE_AUTHORITY)
+    && careMessagingQualificationConfiguration({ clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN, secretArn: e.CLINICAL_DATABASE_SECRET_ARN,
+      databaseName: e.CLINICAL_DATABASE_NAME, region: e.AWS_REGION });
+}
+export function createRestrictedCareMessagingHandler(e: Environment, build: CareMessagingBuild,
+  databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataQualificationCareMessagingDatabase,
+  now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
+  if (!restrictedCareMessagingConfiguration({ ...e }, build)) return serviceUnavailable;
+  return createHandler(e, build, databaseFactory, now, false, bindRestrictedCareMessagingDatabase);
 }

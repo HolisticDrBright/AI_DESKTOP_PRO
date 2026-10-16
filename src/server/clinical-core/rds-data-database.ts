@@ -59,6 +59,28 @@ export function createRdsDataQualificationProgramDatabase(
   return createRdsDataDatabase(configuration, client, 'clinical_program_qualification_api');
 }
 
+/** The dedicated care-messaging qualification credential (BLOCKED candidate,
+ * infra/aws-clinical-core/source-candidates/care-messaging-qualification-login.sql).
+ * Its login reaches four proxies through one NOLOGIN role and is never a member
+ * of clinical_core_api. The RDS-managed cluster-master secret (`rds!cluster-`)
+ * and any other secret are refused here, before a client exists. */
+export const CARE_MESSAGING_QUALIFICATION_SECRET_PREFIX =
+  'arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-care-messaging-api-db-';
+export const CARE_MESSAGING_QUALIFICATION_ROLE = 'clinical_care_messaging_qualification_api';
+export function createRdsDataQualificationCareMessagingDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  if (!careMessagingQualificationConfiguration(configuration)) throw new RdsDataDatabaseError('configuration_invalid');
+  return createRdsDataDatabase(configuration, client, CARE_MESSAGING_QUALIFICATION_ROLE);
+}
+export function careMessagingQualificationConfiguration(configuration: Partial<RdsDataConfiguration>): boolean {
+  return configuration.databaseName === 'clinical_core_qualification' && configuration.region === 'us-east-2'
+    && /^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$/.test(configuration.clusterArn ?? '')
+    && /^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-care-messaging-api-db-[A-Za-z0-9-]+$/.test(configuration.secretArn ?? '')
+    && !(configuration.secretArn ?? '').includes('rds!');
+}
+
 /** The catalog endpoint is read-only and has a 29-second Lambda deadline. The
  * synthetic database may need longer than the general policy's three delays
  * to resume from zero ACUs. Only BeginTransaction is retried. */
@@ -109,7 +131,7 @@ export function createRdsDataAdministrativeDatabase(
 function createRdsDataDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient,
-  assumeRole?: "clinical_core_api" | "clinical_program_qualification_api" | "fullscript_draft_worker" | "program_media_worker",
+  assumeRole?: "clinical_core_api" | "clinical_program_qualification_api" | "clinical_care_messaging_qualification_api" | "fullscript_draft_worker" | "program_media_worker",
   resumePolicy: "general" | "catalog_read" = "general",
 ): ClinicalCoreDatabase {
   assertConfiguration(configuration);

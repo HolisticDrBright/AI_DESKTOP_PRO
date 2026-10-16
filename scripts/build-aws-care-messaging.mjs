@@ -7,12 +7,15 @@ import { resolve } from 'node:path';
 import { careMessagingZip } from './care-messaging-zip.mjs';
 import { qualificationConditions, qualificationEnvironment, qualificationParameters, qualificationRules } from './qualification-execution-template.mjs';
 const args = process.argv.slice(2);
-if (args.length > 2 || args.some(arg => !/^--out-dir=.+$/.test(arg) && arg !== '--release=112')
+if (args.length > 3 || args.some(arg => !/^--out-dir=.+$/.test(arg) && arg !== '--release=112' && arg !== '--credential=restricted')
   || args.filter(arg => arg.startsWith('--out-dir=')).length > 1
-  || args.filter(arg => arg === '--release=112').length > 1) throw new Error('care_message_build_argument_invalid');
+  || args.filter(arg => arg === '--release=112').length > 1 || args.filter(arg => arg === '--credential=restricted').length > 1
+  || args.includes('--credential=restricted') && !args.includes('--release=112')) throw new Error('care_message_build_argument_invalid');
 const qualification112 = args.includes('--release=112');
+// BLOCKED successor: the same artifact signed in with its own NOLOGIN proxy credential, never the cluster-master secret.
+const restricted = args.includes('--credential=restricted');
 const outArg = args.find(arg => arg.startsWith('--out-dir='));
-const out = outArg ? resolve(outArg.slice(10)) : qualification112
+const out = outArg ? resolve(outArg.slice(10)) : restricted ? 'dist/aws-clinical-core/care-messaging-qualification-112-restricted' : qualification112
   ? 'dist/aws-clinical-core/care-messaging-qualification-112' : 'dist/aws-clinical-core/care-messaging';
 const sha = value => createHash('sha256').update(value).digest('hex');
 const artifact = JSON.parse(execFileSync(process.execPath, [qualification112
@@ -34,7 +37,7 @@ const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf
 const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
   'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim();
 mkdirSync(out, { recursive: true });
-await build({ entryPoints: ['src/server/clinical-core/care-messaging-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
+await build({ entryPoints: [restricted ? 'src/server/clinical-core/care-messaging-restricted-lambda.ts' : 'src/server/clinical-core/care-messaging-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
   platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none',
   define: { __CARE_MESSAGING_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount, migrationReleaseSha256, functions }) } });
 const ref = name => ({ Ref: name }), sub = value => ({ 'Fn::Sub': value });
@@ -139,12 +142,29 @@ for (const [name, pool, path] of [['ConsumerMessages', 'Consumer', 'consumer/mes
   template.Resources[`Invoke${name}`] = { Type: 'AWS::Lambda::Permission', Properties: { FunctionName: ref('Function'), Action: 'lambda:InvokeFunction',
     Principal: 'apigateway.amazonaws.com', SourceAccount: ref('AWS::AccountId'), SourceArn: sub(`arn:\${AWS::Partition}:execute-api:\${AWS::Region}:\${AWS::AccountId}:\${ApiId}/*/POST/clinical-core/${path}`) } };
 }
+const sqlCandidate = restricted ? ['login', 'login-rollback'].map(kind => {
+  const path = `infra/aws-clinical-core/source-candidates/care-messaging-qualification-${kind}.sql`;
+  return { path, sha256: sha(readFileSync(path, 'utf8').replaceAll('\r\n', '\n')) };
+}) : null;
+if (restricted) {
+  template.Description = 'BLOCKED restricted-credential care messaging on approved fictional 112 schema; dedicated NOLOGIN proxy role, never the cluster-master secret; qualification-only, blocked/logs-only by default; no reviews seeded';
+  template.Metadata = { ClinicalCore: { ContractVersion: 'care-messaging-restricted-credential/1', Activation: 'blocked', PhiAllowed: false,
+    CredentialBoundary: 'BLOCKED: dedicated secret for a NOLOGIN, NOINHERIT login that can SET ROLE only to clinical_care_messaging_qualification_api, which executes four proxies and nothing else; no cluster-master secret and no clinical_core_api membership',
+    DeploymentGate: 'BLOCKED: requires the CONNECT isolation, the reviewed login candidate, separate secret provisioning, an exact role and secret audit and hosted refusal tests before any change set',
+    SqlCandidateSha256: sqlCandidate[0].sha256, SqlRollbackSha256: sqlCandidate[1].sha256 } };
+  template.Parameters.DatabaseClusterArn.AllowedPattern = '^arn:aws:rds:us-east-2:588966314750:cluster:[A-Za-z0-9-]{1,63}$';
+  template.Parameters.DatabaseSecretArn.AllowedPattern = '^arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-care-messaging-api-db-[A-Za-z0-9-]+$';
+  template.Parameters.DatabaseName = { Type: 'String', AllowedValues: ['clinical_core_qualification'] };
+  template.Resources.Function.Properties.Environment.Variables.CARE_MESSAGING_DATABASE_CREDENTIAL = 'restricted_qualification';
+}
 writeFileSync(`${out}/template.json`, JSON.stringify(template, null, 2) + '\n');
 const zip=careMessagingZip(readFileSync(`${out}/index.js`));
 writeFileSync(`${out}/deployment.zip`,zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'care-messaging-deployment/1', sourceCommit, sourceClean,
   migrationCount, migrationReleaseSha256, qualificationOnly: qualification112, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
   deploymentZipSha256:sha(zip), deploymentZipBytes:zip.length,
+  ...(restricted ? { credential: 'restricted_qualification', sqlCandidate } : {}),
   functions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled' }, deploymentPerformed: false,
   remaining: ['independent reviews', 'hosted target/operator binding and acceptance', 'clinic lifecycle/amendments', 'V2 production wiring', 'device acceptance'] }, null, 2) + '\n');
-console.log('Built care messaging deployment candidate: artifact-pinned, blocked/logs-only by default. No AWS access or activation.');
+console.log(restricted ? 'Built BLOCKED restricted-credential care messaging candidate: no login, secret, grant, stack or upload was created.'
+  : 'Built care messaging deployment candidate: artifact-pinned, blocked/logs-only by default. No AWS access or activation.');
