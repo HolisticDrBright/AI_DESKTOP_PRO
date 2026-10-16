@@ -55,7 +55,7 @@ export function credentialStatements(sql, splitPostgresStatements) {
   return interior;
 }
 
-const snapshotSql = `select current_database() as database,
+export const snapshotSql = `select current_database() as database,
  (select count(*)::int from clinical_core.schema_migrations) as migration_count,
  (select encode(sha256(convert_to(string_agg(version||':'||sha256,E'\\n' order by version),'UTF8')),'hex')
    from clinical_core.schema_migrations) as release_sha256,

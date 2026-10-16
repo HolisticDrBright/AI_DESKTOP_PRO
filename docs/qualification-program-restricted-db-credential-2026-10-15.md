@@ -45,12 +45,22 @@ production or PHI approval. A separate exact review must inventory clients,
 RDS internal access, connection restart behavior and rollback before any
 synthetic execution; this broad change cannot be inferred from the earlier
 inactive-role approval.
+
 The strict cross-database audit would still report two residual PUBLIC-readable
 relations in the synthetic chat database after a CONNECT-only repair. Those
 object grants are unreachable by the dedicated credential while sibling
 CONNECT is denied, but this candidate does not remove them or make the entire
 strict audit pass. The local candidate test is wired into CI; a passing CI run
 does not substitute for a hosted rehearsal or grant/client review.
+
+`scripts/qualification-connect-isolation-preflight.mjs` is a separate
+read-only inventory, not a grant operator. On a clean exact source checkout it
+pins both candidate digests, the assumed-member AWS account, blocked
+foundation/Lambda posture, installed NOLOGIN roles and fictional fixture,
+the four default-ACL databases, all login roles and a point-in-time session
+summary. Its result always says `clientInventoryComplete:false` and
+`eligibleForAwsGrantChange:false`; no session snapshot can approve the
+four-database change. Five credential-free preflight tests are CI-gated.
 
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated
