@@ -7,8 +7,10 @@ import {createCredentialBoundFullscriptDraftProvider,observeFullscriptDraftInsta
 import {FullscriptApiClient,readFullscriptConfiguration} from './client';
 import type {StoredFullscriptConnection} from './token-store';
 
+// A fictional, unsigned ID token: the saved connection is keyed by its subject (the account), not its email.
+const FICTIONAL_ID_TOKEN=[{alg:'RS256',kid:'fictional'},{sub:'b1234567-1234-4123-8123-123456789012',email:'fictional@example.test',token_use:'id'}].map(p=>Buffer.from(JSON.stringify(p)).toString('base64url')).join('.')+'.fictional-signature';
 const session:RequestSession={signedIn:true,email:'fictional@example.test',orgId:'a1234567-1234-4123-8123-123456789012',
-  expired:false,expiresAt:null,token:'fictional-identity-token'};
+  expired:false,expiresAt:null,token:FICTIONAL_ID_TOKEN};
 const fixture=():StoredFullscriptConnection=>({...fullscriptActor(session),environment:'sandbox_us',
   accessToken:'fictional-access-token-abcdefghijklmnopqrstuvwxyz',refreshToken:'fictional-refresh-token-abcdefghijklmnopqrstuvwxyz',
   expiresAt:new Date(Date.now()+3600_000).toISOString(),connectedAt:'2026-10-09T10:00:00.000Z',
