@@ -36,7 +36,8 @@ The generated JSON is local and ignored by Git.
   **not** prove CloudFormation would report only an in-place Trail update or
   that data events would arrive at the intended destination.
 - Before any AWS write, rerun the exact hash check, review additional event
-  volume, cost, retention and read access, then inspect a CloudFormation
+  volume, cost, retention and read access, preserve each current stack
+  parameter with `UsePreviousValue`, then inspect a CloudFormation
   change set for **no Cognito or other unrelated modification/replacement**.
   A change set and its execution require separate explicit approval.
 - After an approved execution, use only fictional calls to verify RDS Data API
