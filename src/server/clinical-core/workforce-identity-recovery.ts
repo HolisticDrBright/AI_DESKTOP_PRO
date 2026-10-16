@@ -8,7 +8,7 @@ import type { AdminGetUserCommandOutput } from '@aws-sdk/client-cognito-identity
  * nothing until the table owner records the release decisions below. Brandon approved the principle only; none of
  * these is decided, and nothing here chooses one.
  */
-export const WORKFORCE_IDENTITY_RECOVERY_RELEASE: 'blocked' = 'blocked';
+export const WORKFORCE_IDENTITY_RECOVERY_RELEASE: 'blocked' | 'qualification' = 'blocked';
 export const WORKFORCE_IDENTITY_RECOVERY_SHA256 = '30cadec0250283229a005176f08175eb0f7bd3fd79979be6b55196ba2bc86fa8';
 export const WORKFORCE_IDENTITY_RECOVERY_ROLLBACK_SHA256 = '5d73c082cc3b11e1ad044bced9434893b983f7505d99fa35035fe794b26571b9';
 export const WORKFORCE_IDENTITY_RECOVERY_RELEASE_DECISIONS = [
