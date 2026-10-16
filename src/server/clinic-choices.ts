@@ -38,3 +38,28 @@ export async function signInClinic(token: string): Promise<string | null> {
   const { clinics } = await clinicChoices(token);
   return clinics.length === 1 ? clinics[0]!.organizationId : null;
 }
+
+/**
+ * Where sign-in leaves the practitioner, under `database_current` only (the legacy default reports no step and keeps
+ * its first-membership selection):
+ * - `selected`: exactly one active clinic, selected;
+ * - `choose`: several active clinics, none selected — the practitioner chooses explicitly;
+ * - `onboard`: no active clinic (pending memberships are not access), so onboarding is next;
+ * - `unknown`: the clinics could not be read, so nothing is selected and nothing is claimed about them.
+ * A suspended clinic is not in discovery, so it is never selected or offered.
+ */
+export type ClinicStep = "selected" | "choose" | "onboard" | "unknown";
+export type SignInClinicChoice = { organizationId: string | null; step: ClinicStep | null };
+
+export async function signInClinicChoice(token: string): Promise<SignInClinicChoice> {
+  if (clinicalAuthorityMode() !== "database_current") return { organizationId: await signInClinic(token), step: null };
+  let clinics: OrgMembership[];
+  try { clinics = (await clinicChoices(token)).clinics.filter((clinic) => clinic.organizationId); } catch { return { organizationId: null, step: "unknown" }; }
+  if (clinics.length === 1) return { organizationId: clinics[0]!.organizationId, step: "selected" };
+  return { organizationId: null, step: clinics.length === 0 ? "onboard" : "choose" };
+}
+
+/** The step to report when the sign-in read itself failed before a choice was made. */
+export function failedSignInClinicChoice(): SignInClinicChoice {
+  return { organizationId: null, step: clinicalAuthorityMode() === "database_current" ? "unknown" : null };
+}

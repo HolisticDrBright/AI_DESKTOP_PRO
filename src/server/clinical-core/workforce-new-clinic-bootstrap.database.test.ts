@@ -24,6 +24,7 @@ const FILES = [
 ];
 const BOOTSTRAP = 'infra/aws-clinical-core/source-candidates/workforce-new-clinic-bootstrap.sql';
 const ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-new-clinic-bootstrap-rollback.sql';
+const DISCOVERY = 'infra/aws-clinical-core/source-candidates/workforce-membership-discovery.sql';
 const digest = (email: string) => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
 const sha = (file: string) => createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
 const ASSURED = 'verified_email_and_mfa';
@@ -277,6 +278,33 @@ describe('the new-clinic bootstrap candidate', () => {
       expect(await refusal(suspend(both.subject, result.organizationId, 'operator_request'))).toMatchObject({ message: 'workforce_self_approval_refused' });
       expect(await refusal(suspend(operator, clinicA, 'operator_request'))).toMatchObject({ message: 'workforce_clinic_bootstrap_not_found' });
       expect(await admitted(ownerA.subject, clinicA)).toBe(true);
+    });
+
+    describe('with the subject-only clinic discovery a first choice reads (coverage)', () => {
+      beforeAll(async () => { await exec(DISCOVERY); }, 60_000);
+      const discovered = (subject: string) => asRole('clinical_core_api', tx =>
+        json(tx, 'select clinical_private.discover_current_workforce_memberships($1) as r', [subject]));
+
+      it('a new clinic is the owner\'s one choice; once suspended it is neither a choice nor pending, for owner and staff alike', async () => {
+        const founder = applicant('discovered');
+        const result = await bootstrap(founder, 'FICTIONAL DISCOVERED CLINIC');
+        const clinic = result.organizationId as string;
+        const staff = actor(clinic, 'staff.discovered');
+        await person(staff, 'staff');
+        expect(await discovered(founder.subject)).toEqual({ clinics: [{ organizationId: clinic, name: 'FICTIONAL DISCOVERED CLINIC', role: 'owner' }], pending: [] });
+        expect((await discovered(staff.subject)).clinics).toEqual([{ organizationId: clinic, name: 'FICTIONAL DISCOVERED CLINIC', role: 'staff' }]);
+        // Two people may use one name; each discovers only their own clinic.
+        const namesake = applicant('namesake');
+        const other = await bootstrap(namesake, 'FICTIONAL DISCOVERED CLINIC');
+        expect(other.organizationId).not.toBe(clinic);
+        expect((await discovered(namesake.subject)).clinics).toEqual([{ organizationId: other.organizationId, name: 'FICTIONAL DISCOVERED CLINIC', role: 'owner' }]);
+        await suspend(operator, clinic, 'identity_not_verified');
+        expect(await discovered(founder.subject)).toEqual({ clinics: [], pending: [] });
+        expect(await discovered(staff.subject)).toEqual({ clinics: [], pending: [] });
+        expect((await discovered(namesake.subject)).clinics).toHaveLength(1);
+        // A member of clinic A who never created a clinic keeps exactly clinic A.
+        expect(((await discovered(ownerA.subject)).clinics as Array<{ organizationId: string }>).map(row => row.organizationId)).toEqual([clinicA]);
+      });
     });
 
     it('switched off again, it refuses new clinics but leaves the clinics it already created as they are', async () => {

@@ -9,7 +9,7 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
-import { signInClinic } from "@/server/clinic-choices";
+import { failedSignInClinicChoice, signInClinicChoice } from "@/server/clinic-choices";
 
 const MAX_BODY = 1024;
 
@@ -59,21 +59,24 @@ export async function POST(req: NextRequest) {
       challenge: challenge as "SOFTWARE_TOKEN_MFA" | "MFA_SETUP",
     });
 
-    let orgId: string | null = null;
+    // Under database_current: the new account's own discovered clinics, only a single one is selected, and the
+    // reply says where the practitioner goes next (choose, onboard, or unknown when the clinics could not be read).
+    // The selection is always rewritten for this account, so a previous account's clinic is never carried over.
+    let choice = failedSignInClinicChoice();
     try {
       await organizationsLive.claim(tokens.accessToken).catch(() => undefined);
-      orgId = await signInClinic(tokens.accessToken);
+      choice = await signInClinicChoice(tokens.accessToken);
     } catch {
-      orgId = null;
+      choice = failedSignInClinicChoice();
     }
 
-    const res = NextResponse.json({ data: { signedIn: true, email: tokens.email } });
+    const res = NextResponse.json({ data: { signedIn: true, email: tokens.email, ...(choice.step ? { clinicStep: choice.step } : {}) } });
     const twelveHours = 60 * 60 * 12;
     res.cookies.set(AUTH_COOKIES.access, tokens.accessToken, cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.refresh, tokens.refreshToken, cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(twelveHours));
-    writeSelectedClinic(res, orgId, tokens.accessToken, twelveHours);
+    writeSelectedClinic(res, choice.organizationId, tokens.accessToken, twelveHours);
     for (const name of [
       AUTH_COOKIES.mfaSession,
       AUTH_COOKIES.mfaUsername,
