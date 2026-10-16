@@ -158,7 +158,7 @@ async function canonicalSplitter() {
 
 async function main() {
   const [mode, approvalDigest] = process.argv.slice(2);
-  check(['inspect', 'rehearse', 'apply'].includes(mode), 'command');
+  check(['inspect', 'inspect-installed', 'rehearse', 'apply'].includes(mode), 'command');
   check(mode === 'apply' ? approvalDigest === SQL_SHA256 : approvalDigest === undefined, 'approval_argument');
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
   check(/^[a-f0-9]{40}$/.test(sourceCommit)
@@ -190,12 +190,17 @@ async function main() {
   };
   const snapshot = async transactionId => (await query(snapshotSql, transactionId))[0];
   const before = await snapshot();
-  assertSnapshot(before, false);
+  const installedInspection = mode === 'inspect-installed';
+  assertSnapshot(before, installedInspection);
+  if (installedInspection) assertPrivileges((await query(privilegeSql))[0]);
   const custody = before.custody_sha256;
   const result = { contract: 'qualification-program-credential-operator/1', mode, accountId: ACCOUNT,
     region: REGION, database: DATABASE, sourceCommit, sqlSha256: SQL_SHA256,
     statementCount: statements.length, phiAllowed: false, productionActivation: 'blocked', committed: false };
-  if (mode === 'inspect') { console.log(JSON.stringify(result)); return; }
+  if (mode === 'inspect' || installedInspection) {
+    console.log(JSON.stringify({ ...result, installed: installedInspection }));
+    return;
+  }
   const transactionId = (await client.send(new BeginTransactionCommand(common))).transactionId;
   check(typeof transactionId === 'string' && transactionId.length > 0, 'transaction_missing');
   let commitAttempted = false;

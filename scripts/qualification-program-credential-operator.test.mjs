@@ -74,6 +74,11 @@ test('qualification snapshot and privilege checks refuse drift rather than accep
   assert.throws(() => assertSnapshot({ ...before, fixture_count: 0 }, false), /fixture_or_activation/);
   assert.throws(() => assertSnapshot({ ...before, custody_sha256: 'b'.repeat(64) }, false, 'a'.repeat(64)),
     /fixture_or_activation/);
+  const installed = { ...before, role_count: 2, schema_count: 1 };
+  assert.doesNotThrow(() => assertSnapshot(installed, true));
+  assert.throws(() => assertSnapshot({ ...installed, role_count: 1 }, true), /candidate_state/);
+  assert.throws(() => assertSnapshot({ ...installed, assignment_count: 2 }, true), /fixture_or_activation/);
+  assert.throws(() => assertSnapshot(installed, false), /candidate_state/);
   const privileges = { proxy_count: 2, safe_role_count: 2, membership_count: 1,
     total_memberships: 1, intact_proxy_count: 2, public_proxy_execute_count: 0,
     core_usage: false, private_usage: false, proxy_usage: true,

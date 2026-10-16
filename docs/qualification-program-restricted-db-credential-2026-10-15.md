@@ -2,6 +2,15 @@
 
 ## October 16 fixture-preserving operator update
 
+After the approved inactive-role apply, the operator also has a read-only
+`inspect-installed` mode. Unlike pre-apply `inspect`, it requires the two
+NOLOGIN roles, isolated schema and both exact proxy bodies/ACLs to be present,
+while still checking the 112-migration ledger, the one fictional program and
+assignment, their custody digest shape, and PHI/production holds. It never
+opens a transaction or mutates the database. A missing role, changed proxy,
+extra assignment or enabled production flag refuses. Pre-apply `inspect`
+retains its zero-role precondition; `rehearse` and `apply` are unchanged.
+
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated
 qualification database, that precondition correctly refused execution. The
