@@ -20,6 +20,14 @@ vi.mock("@/server/fullscript/token-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/server/fullscript/token-store")>()),
   createAwsFullscriptTokenStore: () => store,
 }));
+const generation = vi.hoisted(() => ({ value: { protocol: "fullscript-generation/1" as const, subjectFence: 3, clinicFence: 5 },
+  supersede: vi.fn(async () => "moved" as const) }));
+vi.mock("@/server/fullscript/membership-generation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/fullscript/membership-generation")>()),
+  // The fence read and the outbox, faked at their boundary: the current generation, and a recorded supersede.
+  createAwsFullscriptGenerationReader: () => ({ current: async () => generation.value }),
+  createAwsFullscriptRevocationOutbox: () => ({ supersede: generation.supersede, pending: vi.fn(async () => []), settle: vi.fn() }),
+}));
 vi.mock("@/server/fullscript/connection-admission", () => ({
   createAwsFullscriptConnectionAdmission: () => ({ observe: vi.fn(), install: vi.fn() }),
 }));
@@ -57,7 +65,7 @@ const ACCESS_A = "fictional-access-token-of-subject-a-abcdefghij";
 const connection = (actorKey: string, accessToken = ACCESS_A, expiresIn = 3_600_000) => ({ actorKey, organizationId: clinic,
   environment: "sandbox_us", accessToken, refreshToken: "fictional-refresh-token-abcdefghijklmnopqrstuvwxyz",
   expiresAt: new Date(Date.now() + expiresIn).toISOString(), connectedAt: new Date(Date.now() - 3_600_000).toISOString(),
-  resourceOwner: { id: "fictional-practitioner-a-id", type: "Practitioner" }, scope: ["catalog:read"] });
+  resourceOwner: { id: "fictional-practitioner-a-id", type: "Practitioner" }, scope: ["catalog:read"], membershipGeneration: generation.value });
 const rowKey = (organizationId: string, actorKey: string) => `${organizationId}|${actorKey}`;
 const saveFor = (actorKey: string, value = connection(actorKey)) => rows.set(rowKey(clinic, actorKey), value);
 

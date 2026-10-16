@@ -8,6 +8,10 @@ import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 const mocks=vi.hoisted(()=>({get:vi.fn(),put:vi.fn(),replace:vi.fn(),remove:vi.fn(),refresh:vi.fn(),configuration:vi.fn(),revoke:vi.fn()}));
 vi.mock('./token-store',async importOriginal=>({...await importOriginal<typeof import('./token-store')>(),
   createAwsFullscriptTokenStore:()=>({get:mocks.get,put:mocks.put,replace:mocks.replace,delete:mocks.remove})}));
+const generation=vi.hoisted(()=>({value:{protocol:'fullscript-generation/1' as const,subjectFence:3,clinicFence:5},supersede:vi.fn(async()=>'moved' as const)}));
+vi.mock('./membership-generation',async importOriginal=>({...await importOriginal<typeof import('./membership-generation')>(),
+  createAwsFullscriptGenerationReader:()=>({current:async()=>generation.value}),
+  createAwsFullscriptRevocationOutbox:()=>({supersede:generation.supersede,pending:vi.fn(async()=>[]),settle:vi.fn()})}));
 vi.mock('./client',async importOriginal=>({...await importOriginal<typeof import('./client')>(),
   readFullscriptConfiguration:mocks.configuration,refreshFullscriptToken:mocks.refresh,revokeFullscriptToken:mocks.revoke}));
 // A fictional, unsigned ID token: the saved connection is keyed by its subject (the account), not its email.
@@ -18,7 +22,7 @@ let config:ReturnType<typeof readFullscriptConfiguration>;
 const fixture=():StoredFullscriptConnection=>({...fullscriptActor(session),environment:'sandbox_us',
   accessToken:'fictional-access-token-abcdefghijklmnopqrstuvwxyz',refreshToken:'fictional-refresh-token-abcdefghijklmnopqrstuvwxyz',
   expiresAt:new Date(Date.now()+30_000).toISOString(),connectedAt:new Date(Date.now()-3600_000).toISOString(),
-  resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:['clinic:read','clinic:write']});
+  resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:['clinic:read','clinic:write'],membershipGeneration:generation.value});
 const refreshed=(connection:StoredFullscriptConnection):FullscriptToken=>({accessToken:'fictional-rotated-token-abcdefghijklmnopqrstuvwxyz',
   refreshToken:'fictional-rotated-refresh-abcdefghijklmnopqrstuvwxyz',expiresAt:new Date(Date.now()+3600_000).toISOString(),
   resourceOwner:{...connection.resourceOwner},scope:[...connection.scope].reverse()});

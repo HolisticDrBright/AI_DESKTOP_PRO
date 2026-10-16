@@ -11,6 +11,7 @@ import {
 import type { RequestSession } from "@/server/session";
 import { FullscriptUnavailableError } from "./client";
 import { parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
+import { generationFromFences } from "./membership-generation";
 
 type Send = (command: GetCommand | TransactWriteCommand) => Promise<unknown>;
 type Admission = {
@@ -73,12 +74,14 @@ export function createAwsFullscriptConnectionAdmission(
         { actorKey: admission.actorKey, organizationId: admission.organizationId });
       if (parsed.organizationId !== admission.organizationId || parsed.actorKey !== admission.actorKey
         || admission.fences.length !== 2) throw new FullscriptUnavailableError();
+      // The generation this installation is admitted under: exactly the fence versions the transaction below holds.
+      const stored = { ...parsed, membershipGeneration: generationFromFences(admission.fences) };
       try {
         await send(new TransactWriteCommand({ TransactItems: [
           ...admission.fences.map((fence) => membershipFenceCondition(fenceTable, fence)),
           { Put: { TableName: tokenTable,
             Item: { pk: `ORG#${parsed.organizationId}`, sk: `FULLSCRIPT#${parsed.actorKey}`,
-              payload: JSON.stringify(parsed) },
+              payload: JSON.stringify(stored) },
             ConditionExpression: admission.previousPayload === null ? "attribute_not_exists(pk)" : "payload = :previous",
             ...(admission.previousPayload === null ? {} : { ExpressionAttributeValues: { ":previous": admission.previousPayload } }),
           } },

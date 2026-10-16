@@ -17,6 +17,14 @@ vi.mock("@/server/fullscript/token-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/server/fullscript/token-store")>()),
   createAwsFullscriptTokenStore: () => store,
 }));
+const generation = vi.hoisted(() => ({ value: { protocol: "fullscript-generation/1" as const, subjectFence: 3, clinicFence: 5 },
+  supersede: vi.fn(async () => "moved" as const) }));
+vi.mock("@/server/fullscript/membership-generation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/fullscript/membership-generation")>()),
+  // The fence read and the outbox, faked at their boundary: the current generation, and a recorded supersede.
+  createAwsFullscriptGenerationReader: () => ({ current: async () => generation.value }),
+  createAwsFullscriptRevocationOutbox: () => ({ supersede: generation.supersede, pending: vi.fn(async () => []), settle: vi.fn() }),
+}));
 const admissionStore = vi.hoisted(() => ({ observe: vi.fn(), install: vi.fn() }));
 vi.mock("@/server/fullscript/connection-admission", () => ({
   createAwsFullscriptConnectionAdmission: () => admissionStore,
@@ -74,7 +82,7 @@ const sessionFor = (sub: string, clinic: string): RequestSession => ({ signedIn:
 const saved = (clinic: string) => ({ ...fullscriptActor(sessionFor(subA, clinic)), environment: "sandbox_us",
   accessToken: "fictional-access-token-abcdefghijklmnopqrstuvwxyz", refreshToken: "fictional-refresh-token-abcdefghijklmnopqrstuvwxyz",
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(), connectedAt: new Date(Date.now() - 3_600_000).toISOString(),
-  resourceOwner: { id: "fictional-practitioner-id", type: "Practitioner" }, scope: ["catalog:read"] });
+  resourceOwner: { id: "fictional-practitioner-id", type: "Practitioner" }, scope: ["catalog:read"], membershipGeneration: generation.value });
 const json = async (response: Response) => (await response.json()) as { data?: Record<string, unknown>; error?: { code: string; message: string } };
 const post = (body: unknown) => new Request("https://desktop.example.test/api/live/fullscript/action", {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

@@ -17,6 +17,10 @@ import {DynamoDBClient} from '@aws-sdk/client-dynamodb';
 import {fullscriptActor} from './runtime';
 import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 import type {StoredFullscriptConnection} from './token-store';
+// The fence read is faked at its boundary: no fence item exists for this fictional subject or clinic (generation 0/0).
+vi.mock('./membership-generation',async importOriginal=>({...await importOriginal<typeof import('./membership-generation')>(),
+  createAwsFullscriptGenerationReader:()=>({current:async()=>({protocol:'fullscript-generation/1' as const,subjectFence:0,clinicFence:0})}),
+  createAwsFullscriptRevocationOutbox:()=>({supersede:async()=>'moved' as const,pending:async()=>[],settle:async()=>undefined})}));
 
 // Actual immutable 106 prefix + unreleased candidates, real API/worker roles.
 // All reviews here are FICTIONAL fixtures, not deployment approvals. PGlite
@@ -430,7 +434,8 @@ const FICTIONAL_ID_TOKEN=[{alg:'RS256',kid:'fictional'},{sub:'b1234567-1234-4123
    oauthRedirectUri:'https://fictional.example.test/api/live/fullscript/oauth/callback',
    accessToken:'fictional-access-token-abcdefghijklmnopqrstuvwxyz',refreshToken:'fictional-refresh-token-abcdefghijklmnopqrstuvwxyz',
    connectedAt:'2026-10-09T10:00:00.000Z',expiresAt:new Date(Date.now()+3600_000).toISOString(),
-   resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:[...FULLSCRIPT_DRAFT_SCOPES]};
+   resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:[...FULLSCRIPT_DRAFT_SCOPES],
+   membershipGeneration:{protocol:'fullscript-generation/1',subjectFence:0,clinicFence:0}};
   vi.spyOn(DynamoDBClient.prototype,'send').mockImplementation(async()=>({Item:{payload:{S:JSON.stringify(saved)}}}) as never);
   let withdraw=false;
   const fetcher=vi.fn(async(url:string|URL|Request,init?:RequestInit)=>{

@@ -282,7 +282,8 @@ export const ROUTE_FAMILIES = {
   fullscript_connection: {
     description: 'The practitioner\'s Fullscript connection in one clinic (OAuth start/callback, status, action, disconnect). Each '
       + 'request re-reads the account\'s current clinics before the connection is touched and again before a provider answer is '
-      + 'returned, the connection is keyed by the ID token\'s subject (an older email-keyed row is never claimed), lab checkout is '
+      + 'returned, the connection is keyed by the ID token\'s subject (an older email-keyed row is never claimed) and bound to the '
+      + 'membership generation it was installed under (a removed and re-added member reconnects), lab checkout is '
       + 'held, and the callback completes only in the session that started it',
     upstream: 'Fullscript API and the DynamoDB token store; the clinic list (list_my_organizations or subject-only discovery) as the authority read',
     legacy_claims: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptEmail),
