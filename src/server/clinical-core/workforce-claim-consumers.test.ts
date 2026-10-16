@@ -69,7 +69,10 @@ function sources(directory: string): string[] {
 
 describe('legacy workforce claim readers', () => {
   it('classifies every server source that reads custom:person_id or custom:organization_id', () => {
-    const readers = sources('src/server').filter(path => /custom:(person_id|organization_id)/.test(readFileSync(path, 'utf8'))).sort();
+    const readers = sources('src/server')
+      .filter(path => /custom:(person_id|organization_id)/.test(readFileSync(path, 'utf8')))
+      .map(path => path.replaceAll('\\', '/'))
+      .sort();
     expect(readers).toEqual(Object.keys(CLASSIFIED).sort());
   });
 
