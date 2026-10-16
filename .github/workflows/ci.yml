@@ -172,6 +172,10 @@ jobs:
           npx vitest run src/server/clinical-core/inventory-qualification-identity-template.test.ts src/server/clinical-core/inventory-qualification-identity-configuration-command.test.ts
           npx vitest run src/server/clinical-core/inventory-qualification-fixtures.test.ts
           npm run build:inventory-qualification-identities
+      - name: Keep platform operator identity isolated and blocked (no AWS calls)
+        run: |
+          npm run test:platform-operator-identity
+          npm run build:platform-operator-identity
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1
@@ -192,6 +196,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json
           cfn-lint dist/aws-clinical-core/inventory-qualification-identities/template.json
+          cfn-lint dist/aws-clinical-core/platform-operator-identity/template.json
           find dist/aws-clinical-core/inventory-qualification-fleet -mindepth 2 -maxdepth 2 -name template.json -exec cfn-lint {} +
       - name: Native media host identity, restricted SQL and bounded binary routes (fictional transports only)
         run: npx vitest run src/server/programs/program-media-host-authority.test.ts src/server/programs/program-media-host-bootstrap.test.ts src/server/programs/program-media-host-database.test.ts src/server/programs/program-media-image-http.test.ts src/server/programs/program-media-installed-host.test.ts
