@@ -14,8 +14,18 @@
     "FullscriptClientSecretArn": { "Type": "String", "Default": "", "AllowedPattern": "^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
     "FullscriptOauthStateSecretArn": { "Type": "String", "Default": "", "AllowedPattern": "^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
     "FullscriptTokenTableName": { "Type": "String", "Default": "disabled", "AllowedPattern": "^[A-Za-z0-9_.-]{3,255}$" },
+    "FullscriptMembershipFenceTableName": { "Type": "String", "Default": "disabled", "AllowedPattern": "^[A-Za-z0-9_.-]{3,255}$" },
     "FullscriptRedirectUri": { "Type": "String", "Default": "https://disabled.invalid/api/live/fullscript/oauth/callback", "AllowedPattern": "^https://[^?#]+/api/live/fullscript/oauth/callback$" },
     "DeployService": { "Type": "String", "Default": "false", "AllowedValues": ["true", "false"] }
+  },
+  "Rules": {
+    "FullscriptConnectionRequiresMembershipFence": {
+      "RuleCondition": { "Fn::Equals": [{ "Ref": "FullscriptEnabled" }, "true"] },
+      "Assertions": [{
+        "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "FullscriptMembershipFenceTableName" }, "disabled"] }] },
+        "AssertDescription": "Fullscript requires a reviewed membership-fence table and database guard."
+      }]
+    }
   },
   "Conditions": {
     "ShouldDeployService": { "Fn::Equals": [{ "Ref": "DeployService" }, "true"] },
@@ -138,6 +148,11 @@
                 "Effect": "Allow",
                 "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
                 "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${FullscriptTokenTableName}" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"],
+                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${FullscriptMembershipFenceTableName}" }
               }
             ]
           }
@@ -193,6 +208,7 @@
                 { "Name": "FULLSCRIPT_OAUTH_AUTHORIZE_URL", "Value": { "Fn::If": ["FullscriptConfigured", "https://api-us-snd.fullscript.io/api/oauth/authorize", "disabled"] } },
                 { "Name": "FULLSCRIPT_REDIRECT_URI", "Value": { "Ref": "FullscriptRedirectUri" } },
                 { "Name": "FULLSCRIPT_TOKEN_TABLE", "Value": { "Ref": "FullscriptTokenTableName" } },
+                { "Name": "FULLSCRIPT_MEMBERSHIP_FENCE_TABLE", "Value": { "Ref": "FullscriptMembershipFenceTableName" } },
                 { "Name": "FULLSCRIPT_LAB_ORDERING_ENABLED", "Value": "false" },
                 { "Name": "FULLSCRIPT_PRODUCTION_APPROVED", "Value": "false" },
                 { "Name": "PHI_ALLOWED", "Value": "false" }

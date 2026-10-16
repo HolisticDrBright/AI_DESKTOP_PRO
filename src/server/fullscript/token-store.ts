@@ -60,7 +60,6 @@ export function parseStoredFullscriptConnection(value: unknown, expected?: {
 
 export interface FullscriptTokenStore {
   get(actorKey: string, organizationId: string): Promise<StoredFullscriptConnection | null>;
-  put(connection: StoredFullscriptConnection): Promise<void>;
   replace(previous: StoredFullscriptConnection, replacement: StoredFullscriptConnection): Promise<boolean>;
   delete(previous: StoredFullscriptConnection): Promise<boolean>;
   consumeNonce(nonce: string, expiresAt: number): Promise<boolean>;
@@ -83,13 +82,6 @@ export function createAwsFullscriptTokenStore(env: NodeJS.ProcessEnv = process.e
         if (typeof result.Item.payload?.S !== "string") throw new FullscriptUnavailableError();
         return parseStoredFullscriptConnection(JSON.parse(result.Item.payload.S), {actorKey, organizationId});
       } catch { throw new FullscriptUnavailableError(); }
-    },
-    async put(connection) {
-      const parsed = parseStoredFullscriptConnection(connection);
-      await client.send(new PutItemCommand({
-        TableName: tableName,
-        Item: { ...key(parsed.actorKey, parsed.organizationId), payload: { S: JSON.stringify(parsed) } },
-      }));
     },
     async replace(previous, replacement) {
       const before = parseStoredFullscriptConnection(previous);

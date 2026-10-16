@@ -108,16 +108,19 @@ export function createFullscriptAuthorization(input: {
   configuration: FullscriptConfiguration;
   actorKey: string;
   organizationId: string;
+  subject: string;
   nonce: string;
   now?: number;
 }): { url: string; state: string } {
   if (!/^[a-f0-9]{64}$/.test(input.actorKey)
     || !/^[0-9a-f-]{36}$/i.test(input.organizationId)
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.subject)
     || !/^[A-Za-z0-9_-]{24,128}$/.test(input.nonce)) throw new FullscriptUnavailableError();
   const payload = Buffer.from(JSON.stringify({
-    v: 1,
+    v: 2,
     actor: input.actorKey,
     org: input.organizationId,
+    sub: input.subject,
     nonce: input.nonce,
     exp: Math.floor((input.now ?? Date.now()) / 1000) + 600,
   })).toString("base64url");
@@ -135,7 +138,7 @@ export function verifyFullscriptState(
   state: string,
   secret: string,
   now = Date.now(),
-): { actorKey: string; organizationId: string; nonce: string } {
+): { actorKey: string; organizationId: string; subject: string; nonce: string } {
   const [payload, signature, extra] = state.split(".");
   if (!payload || !signature || extra) throw new FullscriptUnavailableError("OAuth state was refused.");
   const expected = createHmac("sha256", secret).update(payload).digest();
@@ -149,13 +152,14 @@ export function verifyFullscriptState(
     throw new FullscriptUnavailableError("OAuth state was refused.");
   }
   const value = parsed as Record<string, unknown>;
-  if (value.v !== 1 || typeof value.actor !== "string" || !/^[a-f0-9]{64}$/.test(value.actor)
+  if (value.v !== 2 || typeof value.actor !== "string" || !/^[a-f0-9]{64}$/.test(value.actor)
     || typeof value.org !== "string" || !/^[0-9a-f-]{36}$/i.test(value.org)
+    || typeof value.sub !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.sub)
     || typeof value.nonce !== "string" || !/^[A-Za-z0-9_-]{24,128}$/.test(value.nonce)
     || typeof value.exp !== "number" || value.exp < Math.floor(now / 1000)) {
     throw new FullscriptUnavailableError("OAuth state expired or was malformed.");
   }
-  return { actorKey: value.actor, organizationId: value.org, nonce: value.nonce };
+  return { actorKey: value.actor, organizationId: value.org, subject: value.sub, nonce: value.nonce };
 }
 
 export async function exchangeFullscriptAuthorizationCode(input: {
