@@ -6,7 +6,7 @@ import {
 } from './build-aws-synthetic-data-api-audit-review.mjs';
 import {
   buildSyntheticAuditRetentionReview, reviewedRetentionParentSha256,
-  reviewedRetentionCandidateSha256,
+  reviewedRetentionCandidateSha256, syntheticCloudTrailPrefix,
 } from './build-aws-synthetic-audit-retention-review.mjs';
 
 const source = JSON.parse(readFileSync('infra/aws-clinical-core/template.json', 'utf8'));
@@ -19,9 +19,14 @@ test('retention proposal pins the audit successor and changes only the audit buc
   const originalBucket = parent.Resources.AuditBucket;
   assert.deepEqual({ ...candidate.Resources, AuditBucket: originalBucket }, parent.Resources);
   const rules = candidate.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules;
-  assert.equal(rules[0].ExpirationInDays, 364);
-  assert.deepEqual(rules[0].NoncurrentVersionExpiration, { NoncurrentDays: 1 });
-  assert.deepEqual(rules[1], { Id: 'RemoveExpiredAuditDeleteMarkers', Status: 'Enabled',
+  assert.deepEqual(rules[0], parent.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules[0]);
+  assert.deepEqual(rules[1], {
+    Id: 'ExpireSyntheticCloudTrailVersions', Status: 'Enabled',
+    Prefix: syntheticCloudTrailPrefix, ExpirationInDays: 364,
+    NoncurrentVersionExpiration: { NoncurrentDays: 1 },
+  });
+  assert.deepEqual(rules[2], { Id: 'RemoveExpiredAuditDeleteMarkers', Status: 'Enabled',
+    Prefix: syntheticCloudTrailPrefix,
     ExpiredObjectDeleteMarker: true });
   assert.equal(source.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules[0].ExpirationInDays, 365);
   const changedFromLive = Object.keys(candidate.Resources).filter(name =>
@@ -46,6 +51,6 @@ test('unreviewed parent, versioning and lifecycle changes refuse', () => {
 
 test('a caller cannot replace the pinned candidate hash', () => {
   const candidate = buildSyntheticAuditRetentionReview(parent);
-  candidate.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules[0].ExpirationInDays = 365;
+  candidate.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules[1].ExpirationInDays = 365;
   assert.notEqual(digestTemplate(candidate), reviewedRetentionCandidateSha256);
 });

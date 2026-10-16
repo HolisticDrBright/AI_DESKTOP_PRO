@@ -12,7 +12,8 @@ const outputPath = resolve(root, 'dist/aws-clinical-core/synthetic-audit-retenti
 // This is a proposal layered on the exact, unexecuted Data API audit candidate.
 // It is not a replacement for retention/security approval or a deletion receipt.
 export const reviewedRetentionParentSha256 = reviewedCandidateSha256;
-export const reviewedRetentionCandidateSha256 = '0a2a460280c5324226660250ccd9ff4cb951e8c3b18558c7e5e6dd6c16b2d124';
+export const reviewedRetentionCandidateSha256 = 'f91a8b3ea4b0c81fb7b4ff39483e18e7e8c76c87b0ca2b6e7fddabbe29126ef0';
+export const syntheticCloudTrailPrefix = 'AWSLogs/588966314750/';
 
 export function buildSyntheticAuditRetentionReview(parent,
   expectedSha256 = reviewedRetentionParentSha256) {
@@ -33,12 +34,19 @@ export function buildSyntheticAuditRetentionReview(parent,
   }
   const candidate = structuredClone(parent);
   const nextRules = candidate.Resources.AuditBucket.Properties.LifecycleConfiguration.Rules;
-  // For an unreplaced CloudTrail file, current expiration at day 364 makes the
-  // version noncurrent; one more day makes permanent deletion eligible near day 365.
-  nextRules[0].ExpirationInDays = 364;
-  nextRules[0].NoncurrentVersionExpiration = { NoncurrentDays: 1 };
+  // Preserve the bucket-wide 365-day rule. The additional, overlapping rule
+  // changes retention only for this synthetic account's CloudTrail log path.
+  // For an unreplaced log, day-364 expiration makes it noncurrent; one more
+  // noncurrent day makes permanent deletion eligible near day 365.
+  nextRules.push({
+    Id: 'ExpireSyntheticCloudTrailVersions', Status: 'Enabled',
+    Prefix: syntheticCloudTrailPrefix,
+    ExpirationInDays: 364,
+    NoncurrentVersionExpiration: { NoncurrentDays: 1 },
+  });
   nextRules.push({
     Id: 'RemoveExpiredAuditDeleteMarkers', Status: 'Enabled',
+    Prefix: syntheticCloudTrailPrefix,
     ExpiredObjectDeleteMarker: true,
   });
   if (expectedSha256 === reviewedRetentionParentSha256 &&
