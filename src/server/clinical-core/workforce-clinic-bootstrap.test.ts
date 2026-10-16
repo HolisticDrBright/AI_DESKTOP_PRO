@@ -87,6 +87,20 @@ describe('the new-clinic bootstrap route', () => {
     expect(f.bootstrapStore.bootstrap).not.toHaveBeenCalled();
   });
 
+  it('MFA removed after the clinic was created: the next status read and a retry are refused by name, reading no row', async () => {
+    const f = setup({ bootstrap: 'qualification' });
+    expect((await f.handler(event(ROUTE, { requestId, clinicLabel: 'FICTIONAL CLINIC' }))).statusCode).toBe(201);
+    // The account's factor is removed in the identity provider; the service reads the current account every time.
+    f.currentApplicant.mockImplementation(async subject => ({ subject, email: emailA, emailVerified: true, enabled: true, mfaMethods: [] }));
+    for (const reply of [await f.handler(event('GET /clinical-core/workforce/clinic-bootstrap')),
+      await f.handler(event(ROUTE, { requestId, clinicLabel: 'FICTIONAL CLINIC' }))]) {
+      expect(reply.statusCode).toBe(403);
+      expect(body(reply)).toEqual({ error: 'workforce_applicant_mfa_required' });
+    }
+    expect(f.bootstrapStore.bootstrap).toHaveBeenCalledTimes(1);
+    expect(f.bootstrapStore.state).not.toHaveBeenCalled();
+  });
+
   it('a lost-reply retry is answered 200 with the same clinic', async () => {
     const f = setup({ bootstrap: 'qualification' });
     vi.mocked(f.bootstrapStore.bootstrap).mockResolvedValueOnce({ requestId, organizationId: organization, membershipId: membership,

@@ -15,6 +15,8 @@
  *      (workforce_binding_conflict), never with an unnamed unique-index error; one clinic exists for that address;
  *   G. one account's held clinic proposal and its bootstrap at once: the bootstrap waits on the account's lock, then is
  *      refused by name (workforce_request_pending).
+ *   H. two operators suspend the same clinic at once (two console tabs or two operators): the second waits on the clinic,
+ *      then answers the first's suspension as a duplicate; exactly one suspension is recorded, under the first's reason.
  *
  * It never connects to an existing database, reads no database URL or credential, and writes nothing outside its own
  * temporary directory, which it removes. Usage:
@@ -252,7 +254,27 @@ try {
     await b.send('rollback;');
     check(s, clinicsOf(who) === 0, 'no clinic was created for the account');
   });
-  report.passed = report.scenarios.length === 7 && report.scenarios.every((entry) => entry.checks.length > 0 && entry.checks.every((c) => c.passed));
+  // H. Two operators suspend the same clinic at once.
+  await scenario('two-operators-suspend-at-once', async (s, a, b, _nameA, nameB) => {
+    const who = applicant('two.operators'); const clinic = created(who, 'FICTIONAL TWO OPERATORS').organizationId;
+    const second = randomUUID();
+    psql(`insert into clinical_private.workforce_platform_operators(operator_subject,status) values('${second}','active')`);
+    const suspend = (subject, reason) => `begin; set local role clinical_workforce_operator;
+      select (clinical_private.suspend_bootstrapped_workforce_clinic('${clinic}','${subject}','${reason}'))::text;`;
+    const first = parsed((await a.send(suspend(operator, 'security_concern'))).output);
+    check(s, first?.status === 'suspended' && first?.duplicate === false, 'operator A suspends, uncommitted');
+    const pending = b.send(suspend(second, 'operator_request'));
+    check(s, await waitingOnLock(nameB), 'operator B waits on the clinic');
+    await a.send('commit;');
+    const answer = parsed((await pending).output);
+    check(s, answer?.duplicate === true && answer?.reason === 'security_concern', 'operator B is answered with the first suspension, as a duplicate');
+    await b.send('commit;');
+    check(s, Number(psql(`select count(*) from clinical_private.workforce_clinic_bootstrap_events e join clinical_private.workforce_clinic_bootstraps b using (request_id)
+      where b.organization_id='${clinic}' and e.action='suspended'`)) === 1, 'exactly one suspension is recorded');
+    check(s, psql(`select e.operator_subject||'|'||e.reason_code from clinical_private.workforce_clinic_bootstrap_events e join clinical_private.workforce_clinic_bootstraps b using (request_id)
+      where b.organization_id='${clinic}' and e.action='suspended'`) === `${operator}|security_concern`, 'the record names the first operator and reason');
+  });
+  report.passed = report.scenarios.length === 8 && report.scenarios.every((entry) => entry.checks.length > 0 && entry.checks.every((c) => c.passed));
 } catch (error) {
   const log = join(directory, 'server.log');
   if (existsSync(log)) process.stderr.write(readFileSync(log, 'utf8').slice(-2000));
