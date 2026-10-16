@@ -402,3 +402,27 @@ describe('processing consent withdrawal retention (migration 92)',()=>{
     expect(JSON.stringify(status)).not.toMatch(/bucket|token|transcript text/);
   });
 });
+
+describe('the recording families under legacy claims: a removed membership is refused on the next request',()=>{
+  // Encounter recording capture, transcription and drafting are unconverted families (route-authority-inventory.ts).
+  // The token still names the clinic; the membership row is what each operation re-reads. The capture token issued
+  // while the member was active does not outlive the removal.
+  const suspend=(status:'suspended'|'active')=>db.query('update clinical_core.organization_memberships set status=$3 where organization_id=$1 and person_id=$2',[org,actor,status]);
+  it('capture (segment with an already-issued capture token, state, readiness), the transcript list and the proposed-note list',async()=>{
+    const open=await finished({finish:false}),done=await finished();
+    const reserve=()=>call('select clinical_private.reserve_recording_segment($1,$2,$3,$4,$5,$6) as result',[open.c.recordingId,open.c.sessionId,open.c.captureToken,1,'b'.repeat(64),3]);
+    const transcripts=()=>call('select clinical_private.list_recording_transcripts($1) as result',[done.c.recordingId]);
+    const notes=()=>call('select clinical_private.list_recording_proposed_notes($1) as result',[done.c.recordingId]);
+    const state=()=>call('select clinical_private.get_recording_recovery_state($1) as result',[open.c.recordingId]);
+    const release=await captureRelease();
+    const readiness=()=>call('select clinical_private.get_recording_capture_readiness($1,$2) as result',[done.e,release]);
+    for(const work of [transcripts,notes,state,readiness])await expect(work()).resolves.toBeDefined();
+    await suspend('suspended');
+    try{
+      for(const [name,work] of [['capture segment',reserve],['capture state',state],['capture readiness',readiness],
+        ['transcripts',transcripts],['proposed notes',notes]] as const)
+        await expect(work(),name).rejects.toThrow('clinical_role_required');
+    }finally{await suspend('active');}
+    await expect(reserve()).resolves.toMatchObject({segmentId:expect.any(String)});
+  });
+});

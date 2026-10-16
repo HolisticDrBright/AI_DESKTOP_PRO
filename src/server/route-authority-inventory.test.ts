@@ -64,10 +64,9 @@ describe('every cell is backed by source, or says it is not', () => {
     expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic', 'synthetic_identity_boundary/legacy_claims/suspended_clinic',
       'telehealth_visits/legacy_claims/suspended_clinic', 'unconverted_claims_families/legacy_claims/suspended_clinic']);
     expect(named('unverified')).toEqual(['transitional_lab_documents/legacy_claims/removed_membership', 'transitional_lab_documents/legacy_claims/stale_token',
-      'transitional_lab_documents/legacy_claims/suspended_clinic', 'transitional_lab_documents/legacy_claims/unapproved_account',
-      'unconverted_claims_families/legacy_claims/removed_membership']);
+      'transitional_lab_documents/legacy_claims/suspended_clinic', 'transitional_lab_documents/legacy_claims/unapproved_account']);
     const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
       .map(result => [result, named(result as Cell['result']).length]));
-    expect(counts).toEqual({ refused: 57, refused_disabled: 48, gap: 4, token_lifetime: 18, not_applicable: 20, unverified: 5 });
+    expect(counts).toEqual({ refused: 58, refused_disabled: 48, gap: 4, token_lifetime: 18, not_applicable: 20, unverified: 4 });
   });
 });

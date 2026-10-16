@@ -85,6 +85,10 @@ const E = {
   privacyAssignment: 'src/server/clinical-core/unconverted-families-clinic-status.database.test.ts::privacy operations: decided by the operator assignment, not clinic membership or clinic status',
   recordingCleanupRemoved: 'src/server/clinical-core/encounter-recording-authority.database.test.ts::refuses a disabled workforce identity and suspended membership even with an assignment',
   labAttestationRemoved: 'src/server/clinical-core/lab-attestation-review.database.test.ts::refuses a reviewer whose authority was withdrawn after the view loaded',
+  recordingCaptureRemoved: 'src/server/clinical-core/recording-transcription.database.test.ts::capture (segment with an already-issued capture token, state, readiness), the transcript list and the proposed-note list',
+  syntheticFamiliesRemoved: 'src/server/clinical-core/unconverted-families-removed-membership.database.test.ts::unconverted synthetic families: a removed membership is refused on the next request',
+  calendarBusyRemoved: 'src/server/clinical-core/unconverted-families-removed-membership.database.test.ts::calendar busy sync: the membership is checked before the request is read',
+  notificationSettingsRemoved: 'src/server/notifications/patient-notifications.database.test.ts::a member whose membership is removed is refused on the next read',
   clinicRecordsRemoved: 'src/server/clinical-core/clinic-record-privacy.database.test.ts::leaks no row, text or receipt metadata across patients, clinics, roles or pools',
   syntheticInviteRemoved: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a removed membership is refused on the next request',
   syntheticInviteSuspended: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a %s clinic — GAP: the already-selected session still issues one',
@@ -120,8 +124,11 @@ const CATALOG_HOSTS = 'The Desktop reads the synthetic, PHI-disabled catalog hos
   + 'The synthetic host (the one deployed; reference rows only, no clinic data) has no clinic or membership table: it admits an already-issued '
   + 'token until it expires. The production host binds the current membership in the read\'s own transaction (BLOCKED setter) and refuses.';
 const LAB_HOST = 'The transitional host at TRPC_BASE_URL (deployed as DEPLOYED_TRPC_BASE_URL; not in this repository) decides with the bearer '
-  + 'token alone, under its own row-level security; the Desktop sends it no clinic (pinned). Settling this needs that host\'s own suite, or a '
-  + 'hosted probe with an unapproved account, a suspended clinic, a removed member and an already-issued token.';
+  + 'token alone, under its own row-level security; the Desktop sends it no clinic (pinned). Its last known source (V2 expo/backend/labs/'
+  + 'upload-route.ts, Supabase RLS under the caller\'s JWT) was deleted from V2 at b2850a2 on 22 July and is on no current branch, and the '
+  + 'deployed build is unknown, so no source test can stand for it. Settling this needs the hosted four-persona probe in '
+  + 'docs/route-authority-unverified-2026-10-16.md: an unapproved account, a member of a suspended clinic, a removed member and an '
+  + 'already-issued token, each against upload and document read, expecting 401/403 and no row or object written or returned.';
 const STALE_LEGACY = 'The service takes the clinic from the token, then each SQL operation re-reads membership rows, so a removed member is refused on the next request (removed_membership); the token itself stays usable only until API Gateway refuses its exp.';
 /** Every case under database_current for a family on the current-membership setter, bound in the transaction. */
 const currentRows = (removed: string): Row => ({
@@ -203,11 +210,10 @@ export const ROUTE_FAMILIES = {
     upstream: 'claims-based workforce services (recording, identity API workforce routes, privacy operations, lab attestation)',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
       suspended_clinic: { result: 'gap', evidence: [E.recordingSuspended, E.privacyAssignment], decision: SUSPENDED_DECISION },
-      removed_membership: unverified('Pinned refused on the next request: encounter-recording participants, recording cleanup, lab attestation review, '
-        + 'clinic records. Privacy operations are decided by the operator assignment, not membership (its revocation refuses). Not pinned family by '
-        + 'family: recording capture, drafting and transcription; calendar connection; patient notification settings; workforce Ask ALP; consult '
-        + 'links, requests, retention, disputes, outcomes, protocol carts, note templates and intake.',
-        E.recordingRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved, E.clinicRecordsRemoved, E.privacyAssignment),
+      // Every route of the family, path by path: each operation re-reads the membership row (privacy operations, the
+      // operator assignment) on the next request, so a token that still names the clinic reaches nothing.
+      removed_membership: refused(E.recordingRemoved, E.recordingCaptureRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved,
+        E.clinicRecordsRemoved, E.privacyAssignment, E.syntheticFamiliesRemoved, E.calendarBusyRemoved, E.notificationSettingsRemoved),
       stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
     database_current: allDisabled(E.unconvertedRefused, E.unconvertedConsult),
   },

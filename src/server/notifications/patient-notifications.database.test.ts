@@ -243,6 +243,15 @@ describe("the clinic's read-only view of a patient's choices", () => {
     expect(await refusal('clinical_core_api', as.staff, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [calConn])).toMatch(/notification_identity_refused/);
     expect(await refusal('clinical_core_api', as.staff, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [otherConn])).toMatch(/notification_identity_refused/);
   });
+  it('a member whose membership is removed is refused on the next read, though the token still names the clinic', async () => {
+    await expect(view(as.staff, avaConn)).resolves.toMatchObject({ connectionId: avaConn });
+    await fixture("update clinical_core.organization_memberships set status='suspended' where organization_id=$1 and person_id=$2", [org, staff]);
+    try {
+      expect(await refusal('clinical_core_api', as.staff, 'clinical_core.clinic_patient_notification_settings($1::uuid)', [avaConn])).toMatch(/notification_identity_refused/);
+    } finally {
+      await fixture("update clinical_core.organization_memberships set status='active' where organization_id=$1 and person_id=$2", [org, staff]);
+    }
+  });
   it('gives the clinic no way to change a choice: every setter is the patient\'s own, and staff calling one is refused', async () => {
     const callable = (await db.query<{ f: string }>(`select p.proname f from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='clinical_core' and has_function_privilege('clinical_core_api', p.oid, 'execute') and p.proname like any(array['%notification%','%text_consent%','%patient_notice%'])
