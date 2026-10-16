@@ -56,6 +56,15 @@ test('only the exact blocked synthetic target passes the read-only preflight', (
     changeSetReady: false, reason: 'requires_reviewed_subjects_and_separate_deployment_review',
   });
 });
+test('an updated but still blocked billing stack is an eligible preflight input', () => {
+  const observed = fixture();
+  observed.billing.StackStatus = 'UPDATE_COMPLETE';
+  assert.equal(evaluateQualificationProgramPreflight(observed).billing, 'blocked');
+  for (const status of ['UPDATE_IN_PROGRESS', 'UPDATE_ROLLBACK_COMPLETE', 'DELETE_COMPLETE']) {
+    observed.billing.StackStatus = status;
+    assert.throws(() => evaluateQualificationProgramPreflight(observed), /qualification_program_preflight_refused:billing/);
+  }
+});
 test('refuses an account, source, billing, route, authorizer, or database drift', () => {
   const changes = [
     x => { x.caller.Account = '173535830222'; },
