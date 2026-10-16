@@ -4,6 +4,7 @@ import {
   allowedChanges,
   buildLiveDataApiAuditCandidate,
   digestTemplate,
+  physicalAuditDeliveryHealthy,
   physicalAuditSelectorsMatch,
   reviewedLiveParentSha256,
 } from "./build-aws-production-data-api-audit-live-candidate.mjs";
@@ -97,4 +98,11 @@ test("physical selector drift is refused even when the original template is unch
     ...observed,
     EventSelectors: [{ ...observed.EventSelectors[0], ExcludeManagementEventSources: ["kms.amazonaws.com"] }],
   }, "fictional-documents"), false);
+});
+
+test("a stopped trail or delivery error is refused before building a candidate", () => {
+  assert.equal(physicalAuditDeliveryHealthy({ IsLogging: true }), true);
+  assert.equal(physicalAuditDeliveryHealthy({ IsLogging: false }), false);
+  assert.equal(physicalAuditDeliveryHealthy({ IsLogging: true, LatestDeliveryError: "denied" }), false);
+  assert.equal(physicalAuditDeliveryHealthy({ IsLogging: true, LatestCloudWatchLogsDeliveryError: "denied" }), false);
 });

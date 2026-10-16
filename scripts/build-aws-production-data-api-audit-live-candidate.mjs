@@ -87,6 +87,12 @@ export function physicalAuditSelectorsMatch(result, documentBucketName) {
     data.Values[0] === `arn:aws:s3:::${documentBucketName}/`;
 }
 
+export function physicalAuditDeliveryHealthy(status) {
+  return status?.IsLogging === true &&
+    !status.LatestDeliveryError &&
+    !status.LatestCloudWatchLogsDeliveryError;
+}
+
 export function readExactLiveParent(profile) {
   if (!/^[A-Za-z0-9_-]+$/.test(profile)) throw new Error("An explicit AWS profile is required");
   const account = awsJson(profile, ["sts", "get-caller-identity"]).Account;
@@ -113,6 +119,12 @@ export function readExactLiveParent(profile) {
   ]);
   if (!physicalAuditSelectorsMatch(selectors, bucket.PhysicalResourceId)) {
     throw new Error("Physical audit trail no longer has the reviewed selector posture");
+  }
+  const trailStatus = awsJson(profile, [
+    "cloudtrail", "get-trail-status", "--name", trail.PhysicalResourceId,
+  ]);
+  if (!physicalAuditDeliveryHealthy(trailStatus)) {
+    throw new Error("Physical audit trail is stopped or reports a delivery error");
   }
   const response = awsJson(profile, [
     "cloudformation", "get-template", "--stack-name", productionStack, "--template-stage", "Original",

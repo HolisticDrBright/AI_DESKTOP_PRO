@@ -14,8 +14,9 @@ earlier source-parent audit candidate could carry those unrelated identity
 template changes. The exact-live builder instead reads the live original
 template from account `173535830222`, region `us-east-2`, pins its complete
 canonical SHA-256, and modifies only the `AuditTrail` resource. It refuses a
-changed template, account, stack, selector shape, unstable stack or physical
-CloudTrail selector drift outside CloudFormation.
+changed template, account, stack, selector shape, unstable stack, physical
+CloudTrail selector drift outside CloudFormation, a stopped trail or a current
+delivery error.
 
 At the read-only observation, the parent SHA-256 was
 `940aa70ca239a0d1403d0adabfbdd8f87bbebf3aab975607d1cde70c491f290d`.
@@ -30,10 +31,10 @@ The generated JSON is local and ignored by Git.
 
 ## Evidence and required review
 
-- The production-foundation and new live-parent tests passed; five new cases
-  cover digest stability, exact delta, parent mutation, selector shape and
-  physical-selector-drift refusals. `cfn-lint` passed on the locally generated
-  JSON.
+- The production-foundation and new live-parent tests passed; six new cases
+  cover digest stability, exact delta, parent mutation, selector shape,
+  physical-selector drift and delivery-health refusals. `cfn-lint` passed on
+  the locally generated JSON.
 - These are source checks and a read-only live-template observation. They do
   **not** prove CloudFormation would report only an in-place Trail update or
   that data events would arrive at the intended destination.
