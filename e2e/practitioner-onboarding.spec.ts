@@ -33,7 +33,7 @@ test('with no applicant service, says applications are not open instead of showi
  await expect(page.getByTestId('applicant-state')).toHaveText("Applications aren't open in this app yet.");
  await expect(page.getByTestId('applicant-steps')).toContainText('Unknown');
  await expect(page.getByTestId('applicant-submit')).toHaveCount(0);
- await expect(page.getByText("You haven't asked to join a clinic.")).toHaveCount(0);
+ await expect(page.getByText("You haven't created or joined a clinic yet.")).toHaveCount(0);
 });
 
 test('a failed read is never "no application", and an account problem is the account\'s own next step',async({page})=>{
@@ -41,27 +41,29 @@ test('a failed read is never "no application", and an account problem is the acc
  await application(page,{get:[{status:500,json:{error:'workforce_application_unavailable'}},{status:403,json:{error:'workforce_applicant_mfa_required'}}]});
  await page.goto('/apply');
  await expect(page.getByTestId('applicant-state')).toHaveText("We couldn't check your application.");
- await expect(page.getByText("You haven't asked to join a clinic.")).toHaveCount(0);
+ await expect(page.getByText("You haven't created or joined a clinic yet.")).toHaveCount(0);
  await page.getByRole('button',{name:'Check again'}).click();
  await expect(page.getByTestId('applicant-state')).toHaveText("Multi-factor authentication isn't set up.");
  await expect(page.getByTestId('applicant-steps')).toContainText('Not set up');
  await expect(page.getByRole('button',{name:'Send request'})).toHaveCount(0);
 });
 
-test('proposes a clinic by keyboard, and a lost reply is resent as the same request',async({page})=>{
+test('proposes a clinic by keyboard while creating one is not open, and a lost reply is resent as the same request',async({page})=>{
  await signIn(page);
  const posts=await application(page,{get:[answered([]),answered([]),answered([entry('pending',{kind:'create_clinic',organizationId:null})])],
   post:['abort',{status:202,json:{data:{requestId,status:'pending'}}}]});
  await page.goto('/apply');
- await expect(page.getByTestId('applicant-state')).toHaveText("You haven't asked to join a clinic.");
- const proposal=page.getByRole('radio',{name:'Propose a new clinic'});
- await page.getByRole('radio',{name:'Join a clinic that gave me a clinic code'}).focus();
- await page.keyboard.press('ArrowDown');
- await expect(proposal).toBeChecked();
+ await expect(page.getByTestId('applicant-state')).toHaveText("You haven't created or joined a clinic yet.");
+ const create=page.getByRole('radio',{name:'Create a new clinic'});
+ await page.getByRole('radio',{name:'Request to join an existing clinic'}).check();
+ await page.getByRole('radio',{name:'Request to join an existing clinic'}).focus();
+ await page.keyboard.press('ArrowUp');
+ await expect(create).toBeChecked();
+ await expect(page.getByTestId('create-not-offered')).toContainText("Creating a clinic directly isn't open in this app yet.");
  await page.getByLabel('Proposed clinic name').fill('Fictional Proposed Clinic');
  await page.keyboard.press('Enter');
  await expect(page.getByTestId('applicant-journey').getByRole('alert')).toContainText('No answer arrived');
- await page.getByRole('button',{name:'Send request'}).press('Enter');
+ await page.getByRole('button',{name:'Send proposal'}).press('Enter');
  await expect(page.getByTestId('applicant-state')).toHaveText('Your new-clinic proposal is waiting for review.');
  await expect(page.getByTestId('applicant-state')).toBeFocused();
  expect(posts).toHaveLength(2);
