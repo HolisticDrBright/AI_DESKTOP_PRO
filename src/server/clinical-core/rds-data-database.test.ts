@@ -229,6 +229,14 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["owner_role_required", "identity_refused"],
     ["last_owner_protected", "conflict"],
     ["workforce_operator_refused", "identity_refused"],
+    ["workforce_clinic_bootstrap_not_released", "operation_refused"],
+    ["workforce_bootstrap_assurance_required", "identity_refused"],
+    ["workforce_bootstrap_invalid", "request_invalid"],
+    ["workforce_bootstrap_conflict", "conflict"],
+    ["workforce_clinic_bootstrap_exists", "conflict"],
+    ["workforce_request_pending", "conflict"],
+    ["workforce_bootstrap_suspension_invalid", "request_invalid"],
+    ["workforce_clinic_bootstrap_not_found", "operation_refused"],
   ])("names onboarding SQL refusal %s as %s without leaking database detail", (sqlName, category) => {
     const rejection = classifyDatabaseRejection({ name: "DatabaseErrorException", message: `ERROR: ${sqlName}: applicant 11111111-1111-4111-8111-111111111111 select * from clinical_private.workforce_access_requests` });
     expect(rejection).toMatchObject({ category, reason: sqlName });
@@ -239,6 +247,7 @@ describe("Aurora RDS Data API transaction adapter", () => {
     expect(classifyDatabaseRejection({ name: "DatabaseErrorException", message: "ERROR: syntax_error near user text workforce_review_invalid" })).toBeUndefined();
     expect(classifyDatabaseRejection({ name: "Error", message: "ERROR: workforce_review_invalid" })).toBeUndefined();
     expect(classifyDatabaseRejection({ name: "DatabaseErrorException", message: "ERROR: workforce_review_invalid_extra" })).toBeUndefined();
+    expect(classifyDatabaseRejection({ name: "DatabaseErrorException", message: "ERROR: workforce_bootstrap_invalid_extra" })).toBeUndefined();
   });
 
   test("the production transaction adapter returns only the decided onboarding refusal and rolls back", async () => {

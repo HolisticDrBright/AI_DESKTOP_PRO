@@ -306,6 +306,14 @@ const ONBOARDING_REJECTION_CATEGORY: Readonly<Record<string, ClinicalCoreDatabas
   owner_role_required: "identity_refused",
   last_owner_protected: "conflict",
   workforce_operator_refused: "identity_refused",
+  workforce_clinic_bootstrap_not_released: "operation_refused",
+  workforce_bootstrap_assurance_required: "identity_refused",
+  workforce_bootstrap_invalid: "request_invalid",
+  workforce_bootstrap_conflict: "conflict",
+  workforce_clinic_bootstrap_exists: "conflict",
+  workforce_request_pending: "conflict",
+  workforce_bootstrap_suspension_invalid: "request_invalid",
+  workforce_clinic_bootstrap_not_found: "operation_refused",
 };
 const ONBOARDING_REJECTION_TOKEN = new RegExp(`(?:^|\\bERROR:\\s*)(${Object.keys(ONBOARDING_REJECTION_CATEGORY).join("|")})\\b`);
 
