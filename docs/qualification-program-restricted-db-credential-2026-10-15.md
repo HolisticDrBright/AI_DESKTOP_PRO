@@ -22,6 +22,30 @@ clients and requires an exact grant/client inventory, preserving migration,
 rollback and separate approval. The audit never reads relation contents and
 does not enable the credential.
 
+Two further **BLOCKED, unapplied** source candidates sketch the exact
+four-database grant repair and its guarded rollback:
+`source-candidates/qualification-database-connect-isolation.sql` (LF SHA-256
+`28e0d4bd1dc30f0abb6732ec44250f480844662a440e8461091735c8d53621f8`)
+and `source-candidates/qualification-database-connect-isolation-rollback.sql`
+(LF SHA-256 `7b055449b45e1cf29aa04831235ef284e2de30276a729722a7ffab2ff9cb2341`).
+The apply candidate refuses changed database inventory, non-default ACLs,
+missing known clients or activated program roles. It removes `PUBLIC CONNECT`
+from the four application databases, grants it explicitly to the two observed
+login roles and to the program credential role only on the qualification
+database, and verifies sibling refusal before commit. The rollback refuses
+an activated credential and restores **effective** `PUBLIC CONNECT`; PostgreSQL
+may keep explicit ACL array entries rather than the original NULL/default
+representation. Four local tests (one digest pin and three embedded-database
+cases) prove the intended grant matrix,
+wrong-database and changed-ACL refusal, late-failure rollback and refusal to
+roll back after LOGIN activation. They do **not** prove that AWS/RDS internal
+users, current sessions, future clients or all sibling schemas are unaffected.
+No hosted rehearsal or grant change has occurred. The candidates are not a
+production or PHI approval. A separate exact review must inventory clients,
+RDS internal access, connection restart behavior and rollback before any
+synthetic execution; this broad change cannot be inferred from the earlier
+inactive-role approval.
+
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated
 qualification database, that precondition correctly refused execution. The
