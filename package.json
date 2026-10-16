@@ -260,6 +260,8 @@
     "test:inventory-qualification-identities": "node --test scripts/inventory-qualification-identities.test.mjs",
     "build:platform-operator-identity": "node scripts/build-aws-platform-operator-identity.mjs",
     "test:platform-operator-identity": "node --test scripts/platform-operator-identity.test.mjs",
+    "build:platform-operator-reader-policy": "node scripts/build-aws-platform-operator-reader-policy.mjs",
+    "test:platform-operator-reader-policy": "node --test scripts/platform-operator-reader-policy.test.mjs",
     "build:aws-model-vendor-authority-operator": "node scripts/build-aws-model-vendor-authority-operator.mjs",
     "build:aws-covered-entity-deletion-operator": "node scripts/build-aws-covered-entity-deletion-operator.mjs",
     "build:aws-qualification-parameters": "node scripts/build-aws-qualification-parameters.mjs",
