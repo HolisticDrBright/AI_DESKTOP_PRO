@@ -6,6 +6,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { splitPostgresStatements } from './migrations';
 import { WORKFORCE_CLINIC_BOOTSTRAP_CANDIDATE_SHA256, WORKFORCE_CLINIC_BOOTSTRAP_ROLLBACK_SHA256 } from './workforce-clinic-bootstrap';
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from './database';
+import { BOOTSTRAP_OPERATOR_LISTING_CANDIDATE_SHA256, BOOTSTRAP_OPERATOR_LISTING_ROLLBACK_SHA256, createPlatformOperatorConsoleApi } from './platform-operator-console';
 
 /**
  * The distinct new-clinic door, on the assembled 106-migration schema with the onboarding parents, the
@@ -25,6 +27,9 @@ const FILES = [
 const BOOTSTRAP = 'infra/aws-clinical-core/source-candidates/workforce-new-clinic-bootstrap.sql';
 const ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-new-clinic-bootstrap-rollback.sql';
 const DISCOVERY = 'infra/aws-clinical-core/source-candidates/workforce-membership-discovery.sql';
+const LISTING = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-listing.sql';
+const LISTING_ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-listing-rollback.sql';
+const LIST_SIGNATURE = 'clinical_private.list_bootstrapped_workforce_clinics(text)';
 const digest = (email: string) => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
 const sha = (file: string) => createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
 const ASSURED = 'verified_email_and_mfa';
@@ -304,6 +309,120 @@ describe('the new-clinic bootstrap candidate', () => {
         expect((await discovered(namesake.subject)).clinics).toHaveLength(1);
         // A member of clinic A who never created a clinic keeps exactly clinic A.
         expect(((await discovered(ownerA.subject)).clinics as Array<{ organizationId: string }>).map(row => row.organizationId)).toEqual([clinicA]);
+      });
+    });
+
+    describe('the operator listing candidate and the console API over it (coverage of the blocked operator path)', () => {
+      beforeAll(async () => { await exec(LISTING); }, 60_000);
+      const listed = (operatorSubject: string) => asRole('clinical_workforce_operator', async tx =>
+        (await tx.query<{ r: unknown }>('select clinical_private.list_bootstrapped_workforce_clinics($1) as r', [operatorSubject])).rows[0]!.r as Array<Record<string, unknown>>);
+      /** The operator connection, as the console's services see it: role-scoped, with the candidate's refusal names classified
+       * the way docs/new-clinic-onboarding-closure-2026-10-16.md asks the production data client to classify them. */
+      let opened = 0;
+      const operatorDatabase: ClinicalCoreDatabase = { transaction: work => db.transaction(async raw => {
+        opened += 1;
+        await raw.exec('set local role clinical_workforce_operator');
+        const tx: ClinicalCoreTransaction = { query: async (sql, parameters = []) => {
+          try {
+            const values = parameters.map(value => value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'uuid' ? (value as { value: string }).value : value);
+            return await raw.query(sql, values as unknown[]) as never;
+          } catch (error) {
+            const name = String((error as { message?: unknown }).message ?? '');
+            if (/^workforce_[a-z_]+$/.test(name)) throw new ClinicalCoreDatabaseRejection('operation_refused', name);
+            throw error;
+          }
+        } };
+        return work(tx);
+      }) };
+      const TOKEN = 'Bearer fictional.operator.token';
+      const consoleApi = createPlatformOperatorConsoleApi({ database: operatorDatabase, release: 'qualification', proposalReviewRelease: 'qualification',
+        suspensionRelease: 'qualification', verifiedOperatorSubject: async header => { if (header !== TOKEN) throw new Error('not an operator token'); return operator; } });
+      const call = async (routeKey: string, body?: unknown, authorization = TOKEN) => {
+        const answer = await consoleApi({ routeKey, headers: { authorization }, body: body === undefined ? undefined : JSON.stringify(body) });
+        return { status: answer.statusCode, body: JSON.parse(answer.body) as { data?: Record<string, unknown>; error?: string } };
+      };
+
+      it('names its parent by hash, and the console pins the candidate and rollback it was reviewed against', () => {
+        expect(readFileSync(LISTING, 'utf8')).toContain(WORKFORCE_CLINIC_BOOTSTRAP_CANDIDATE_SHA256);
+        expect(sha(LISTING)).toBe(BOOTSTRAP_OPERATOR_LISTING_CANDIDATE_SHA256);
+        expect(sha(LISTING_ROLLBACK)).toBe(BOOTSTRAP_OPERATOR_LISTING_ROLLBACK_SHA256);
+      });
+
+      it('only the operator role may call it, and only an active registered operator gets an answer', async () => {
+        expect(await canExecute('clinical_workforce_operator', LIST_SIGNATURE)).toBe(true);
+        for (const role of ['clinical_core_api', 'clinical_workforce_application']) expect(await canExecute(role, LIST_SIGNATURE)).toBe(false);
+        expect(await refusal(listed(randomUUID()))).toMatchObject({ message: 'workforce_operator_refused' });
+        const retired = randomUUID();
+        await db.query("insert into clinical_private.workforce_platform_operators(operator_subject,status) values($1,'disabled')", [retired]);
+        expect(await refusal(listed(retired))).toMatchObject({ message: 'workforce_operator_refused' });
+        // A clinic owner is not an operator, whatever they created.
+        expect(await refusal(listed(ownerA.subject))).toMatchObject({ message: 'workforce_operator_refused' });
+      });
+
+      it('lists each clinic with every recorded decision and its reason, the decider only as a fingerprint, and never the owner', async () => {
+        const founder = applicant('audited');
+        const result = await bootstrap(founder, 'FICTIONAL AUDITED CLINIC');
+        const clinic = result.organizationId as string;
+        await suspend(operator, clinic, 'agreement_not_accepted');
+        const second = randomUUID();
+        await db.query("insert into clinical_private.workforce_platform_operators(operator_subject,status) values($1,'active')", [second]);
+        const mine = (await listed(operator)).find(row => row.organizationId === clinic)!;
+        const theirs = (await listed(second)).find(row => row.organizationId === clinic)!;
+        expect(mine).toMatchObject({ clinicLabel: 'FICTIONAL AUDITED CLINIC', status: 'suspended', suspensionReason: 'agreement_not_accepted' });
+        const events = mine.events as Array<Record<string, unknown>>;
+        expect(events.map(event => [event.action, event.reason, event.byCaller])).toEqual([['bootstrapped', null, false], ['suspended', 'agreement_not_accepted', true]]);
+        expect(events[0]!.operator).toBeNull();
+        expect(events[1]!.operator).toMatch(/^[0-9a-f]{16}$/);
+        // Another operator sees the same fingerprint, not "you".
+        expect((theirs.events as Array<Record<string, unknown>>)[1]).toMatchObject({ operator: events[1]!.operator, byCaller: false });
+        const text = JSON.stringify(await listed(second));
+        for (const secret of [founder.subject, digest(founder.email), founder.email, operator, result.membershipId as string]) expect(text).not.toContain(secret);
+      });
+
+      it('the console lists, suspends and reviews only through the verified operator, and records each decision', async () => {
+        const founder = applicant('console');
+        const clinic = (await bootstrap(founder, 'FICTIONAL CONSOLE CLINIC')).organizationId as string;
+        let answer = await call('GET /clinical-core/platform-operator/bootstrapped-clinics');
+        expect(answer.status).toBe(200);
+        expect((answer.body.data!.clinics as Array<{ organizationId: string; status: string }>).find(row => row.organizationId === clinic)).toMatchObject({ status: 'active' });
+        expect(await admitted(founder.subject, clinic)).toBe(true);
+        answer = await call('POST /clinical-core/platform-operator/bootstrapped-clinics/suspension', { organizationId: clinic, reason: 'security_concern' });
+        expect(answer).toEqual({ status: 200, body: { data: { organizationId: clinic, status: 'suspended', reason: 'security_concern', duplicate: false } } });
+        expect(await admitted(founder.subject, clinic)).toBe(false);
+        // A replay records nothing new, and there is no route that reinstates.
+        expect((await call('POST /clinical-core/platform-operator/bootstrapped-clinics/suspension', { organizationId: clinic, reason: 'security_concern' })).body.data).toMatchObject({ duplicate: true });
+        expect(await count("select count(*) as n from clinical_private.workforce_clinic_bootstrap_events e join clinical_private.workforce_clinic_bootstraps b using (request_id) where b.organization_id=$1", [clinic])).toBe(2);
+        expect((await call('POST /clinical-core/platform-operator/bootstrapped-clinics/reinstate', { organizationId: clinic })).status).toBe(404);
+        // A proposal approved through the console is held: a clinic, and nobody's patient access.
+        const proposer = applicant('console.proposer');
+        const request = randomUUID();
+        await asRole('clinical_workforce_application', tx => tx.query('select clinical_private.submit_workforce_access_request($1,$2,$3,$4,$5,$6)',
+          [request, proposer.subject, digest(proposer.email), 'create_clinic', null, 'FICTIONAL CONSOLE PROPOSAL']));
+        expect(((await call('GET /clinical-core/platform-operator/clinic-proposals')).body.data!.proposals as Array<{ id: string }>).some(row => row.id === request)).toBe(true);
+        const approved = await call('POST /clinical-core/platform-operator/clinic-proposals/decision', { action: 'approve', requestId: request });
+        expect(approved.body.data).toMatchObject({ action: 'approve', requestId: request, status: 'approved', activation: 'held' });
+        expect(await admitted(proposer.subject, approved.body.data!.organizationId)).toBe(false);
+      });
+
+      it('a token the operator sign-in refuses, a selection or a malformed body opens no transaction', async () => {
+        opened = 0;
+        const clinic = (await bootstrap(applicant('untouched'), 'FICTIONAL UNTOUCHED CLINIC')).organizationId as string;
+        expect(await call('POST /clinical-core/platform-operator/bootstrapped-clinics/suspension', { organizationId: clinic, reason: 'security_concern' }, 'Bearer practitioner.id.token'))
+          .toEqual({ status: 403, body: { error: 'platform_operator_refused' } });
+        expect((await consoleApi({ routeKey: 'GET /clinical-core/platform-operator/bootstrapped-clinics', headers: { authorization: TOKEN, 'X-Alp-Selected-Organization-Id': clinic } })).statusCode).toBe(400);
+        for (const body of [{ organizationId: clinic, reason: 'because' }, { organizationId: clinic, reason: 'security_concern', operatorSubject: operator }, { organizationId: 'clinic-a', reason: 'security_concern' }]) {
+          expect((await call('POST /clinical-core/platform-operator/bootstrapped-clinics/suspension', body)).status).toBe(400);
+        }
+        expect((await call('GET /clinical-core/platform-operator/bootstrapped-clinics', undefined, '')).body).toEqual({ error: 'operator_sign_in_required' });
+        expect(opened).toBe(0);
+      });
+
+      it('its rollback removes only the read; every clinic, suspension and event stays', async () => {
+        const before = [await count('select count(*) as n from clinical_private.workforce_clinic_bootstraps'), await count('select count(*) as n from clinical_private.workforce_clinic_bootstrap_events')];
+        await exec(LISTING_ROLLBACK);
+        expect(await canExecute('clinical_workforce_operator', LIST_SIGNATURE)).toBeNull();
+        expect([await count('select count(*) as n from clinical_private.workforce_clinic_bootstraps'), await count('select count(*) as n from clinical_private.workforce_clinic_bootstrap_events')]).toEqual(before);
+        expect((await call('GET /clinical-core/platform-operator/bootstrapped-clinics')).body).toEqual({ error: 'platform_operator_unavailable' });
       });
     });
 

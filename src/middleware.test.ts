@@ -61,6 +61,20 @@ describe("clinical-only authentication lifecycle", () => {
     }
   });
 
+  test("a platform operator without a practitioner session reaches the operator console page itself, and only that path", async () => {
+    for (const path of ["/operator", "/operator/"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+    }
+    for (const path of ["/operator/x", "/operators", "/operator-admin", "/operatorx", "/operator/clinics/1"]) {
+      const response = await middleware(new NextRequest("https://desktop.example.test" + path));
+      expect(response.status, path).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname, path).toBe("/login");
+    }
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
   test("a stranger reaches a practice's campaign sign-up, confirmation and unsubscribe pages, and only those", async () => {
     for (const path of ["/join/fictional-clinic/longevity-program", "/join/fictional-clinic/longevity-program/", "/join/sent", "/join/confirm", "/join/unsubscribe/"]) {
       const response = await middleware(new NextRequest("https://desktop.example.test" + path));

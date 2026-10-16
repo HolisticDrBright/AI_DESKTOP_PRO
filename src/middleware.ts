@@ -49,6 +49,12 @@ export const LEARNER_PAGE = /^\/courses\/?$/;
  * `/join/unsubscribe` (optional trailing slash). Each answers not-found while the campaign engine is switched off.
  */
 export const JOIN_PAGE = /^\/join\/(?:sent|confirm|unsubscribe|[a-z0-9][a-z0-9-]{1,47}\/[a-z0-9][a-z0-9-]{1,79})\/?$/;
+/**
+ * Exactly `/operator` (optional trailing slash): the platform operator console. An operator signs in separately from
+ * any practitioner, so the workforce redirect does not apply; the page renders nothing private and reads only through
+ * `/api/operator/*`, which require the operator's own session and are blocked in this build. Nothing beneath it.
+ */
+export const OPERATOR_PAGE = /^\/operator\/?$/;
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
 const inflight = new Map<string, Promise<Tokens>>();
@@ -90,7 +96,7 @@ export async function middleware(req: NextRequest) {
   // Public visitor pages: a consult link (/consult/<slug>) and a program funnel page
   // (/learn/<slug>). The allow-list is exact: one slug segment, nothing else under either
   // prefix, and the prefixes themselves still require a session.
-  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname) || LEARNER_PAGE.test(pathname) || JOIN_PAGE.test(pathname);
+  const isLogin = pathname === "/login" || pathname === "/reset" || PUBLIC_VISITOR_PAGE.test(pathname) || LEARNER_PAGE.test(pathname) || JOIN_PAGE.test(pathname) || OPERATOR_PAGE.test(pathname);
   // The auth endpoints manage cookies themselves — never intercept them.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 
