@@ -4,6 +4,7 @@ import {
   allowedChanges,
   buildLiveDataApiAuditCandidate,
   digestTemplate,
+  physicalAuditSelectorsMatch,
   reviewedLiveParentSha256,
 } from "./build-aws-production-data-api-audit-live-candidate.mjs";
 import { changedTemplatePaths } from "./check-aws-production-data-api-audit-live-parent.mjs";
@@ -74,4 +75,26 @@ test("a missing cluster or document bucket is refused", () => {
   parent.Resources.ClinicalDatabaseCluster = { Type: "AWS::RDS::DBCluster", Properties: {} };
   delete parent.Resources.ClinicalDocumentsBucket;
   assert.throws(() => buildLiveDataApiAuditCandidate(parent, digestTemplate(parent)), /management-and-documents posture/);
+});
+
+test("physical selector drift is refused even when the original template is unchanged", () => {
+  const observed = {
+    EventSelectors: [{
+      IncludeManagementEvents: true,
+      ReadWriteType: "All",
+      ExcludeManagementEventSources: [],
+      DataResources: [{
+        Type: "AWS::S3::Object",
+        Values: ["arn:aws:s3:::fictional-documents/"],
+      }],
+    }],
+    AdvancedEventSelectors: null,
+  };
+  assert.equal(physicalAuditSelectorsMatch(observed, "fictional-documents"), true);
+  assert.equal(physicalAuditSelectorsMatch({ ...observed, AdvancedEventSelectors: [{}] }, "fictional-documents"), false);
+  assert.equal(physicalAuditSelectorsMatch(observed, "another-bucket"), false);
+  assert.equal(physicalAuditSelectorsMatch({
+    ...observed,
+    EventSelectors: [{ ...observed.EventSelectors[0], ExcludeManagementEventSources: ["kms.amazonaws.com"] }],
+  }, "fictional-documents"), false);
 });

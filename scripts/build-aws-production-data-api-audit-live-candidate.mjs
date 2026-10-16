@@ -72,6 +72,21 @@ function awsJson(profile, args) {
   ], { encoding: "utf8", timeout: 15000, maxBuffer: 10 * 1024 * 1024 }));
 }
 
+export function physicalAuditSelectorsMatch(result, documentBucketName) {
+  if (!documentBucketName ||
+      (result?.AdvancedEventSelectors?.length ?? 0) !== 0 ||
+      result?.EventSelectors?.length !== 1) return false;
+  const selector = result.EventSelectors[0];
+  const data = selector.DataResources?.[0];
+  return selector.IncludeManagementEvents === true &&
+    selector.ReadWriteType === "All" &&
+    (selector.ExcludeManagementEventSources?.length ?? 0) === 0 &&
+    selector.DataResources?.length === 1 &&
+    data?.Type === "AWS::S3::Object" &&
+    data.Values?.length === 1 &&
+    data.Values[0] === `arn:aws:s3:::${documentBucketName}/`;
+}
+
 export function readExactLiveParent(profile) {
   if (!/^[A-Za-z0-9_-]+$/.test(profile)) throw new Error("An explicit AWS profile is required");
   const account = awsJson(profile, ["sts", "get-caller-identity"]).Account;
@@ -80,6 +95,24 @@ export function readExactLiveParent(profile) {
   if (stack?.StackName !== productionStack ||
       !["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(stack.StackStatus)) {
     throw new Error("Production clinical foundation is not stable");
+  }
+  const trail = awsJson(profile, [
+    "cloudformation", "describe-stack-resource", "--stack-name", productionStack,
+    "--logical-resource-id", "AuditTrail",
+  ]).StackResourceDetail;
+  const bucket = awsJson(profile, [
+    "cloudformation", "describe-stack-resource", "--stack-name", productionStack,
+    "--logical-resource-id", "ClinicalDocumentsBucket",
+  ]).StackResourceDetail;
+  if (trail?.LogicalResourceId !== "AuditTrail" || !trail.PhysicalResourceId ||
+      bucket?.LogicalResourceId !== "ClinicalDocumentsBucket" || !bucket.PhysicalResourceId) {
+    throw new Error("Production audit resource binding was unavailable");
+  }
+  const selectors = awsJson(profile, [
+    "cloudtrail", "get-event-selectors", "--trail-name", trail.PhysicalResourceId,
+  ]);
+  if (!physicalAuditSelectorsMatch(selectors, bucket.PhysicalResourceId)) {
+    throw new Error("Physical audit trail no longer has the reviewed selector posture");
   }
   const response = awsJson(profile, [
     "cloudformation", "get-template", "--stack-name", productionStack, "--template-stage", "Original",

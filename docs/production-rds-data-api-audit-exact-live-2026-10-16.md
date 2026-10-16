@@ -14,7 +14,8 @@ earlier source-parent audit candidate could carry those unrelated identity
 template changes. The exact-live builder instead reads the live original
 template from account `173535830222`, region `us-east-2`, pins its complete
 canonical SHA-256, and modifies only the `AuditTrail` resource. It refuses a
-changed template, account, stack, selector shape or unstable stack.
+changed template, account, stack, selector shape, unstable stack or physical
+CloudTrail selector drift outside CloudFormation.
 
 At the read-only observation, the parent SHA-256 was
 `940aa70ca239a0d1403d0adabfbdd8f87bbebf3aab975607d1cde70c491f290d`.
@@ -29,9 +30,10 @@ The generated JSON is local and ignored by Git.
 
 ## Evidence and required review
 
-- The production-foundation and new live-parent tests passed; four new cases
-  cover digest stability, exact delta, parent mutation and selector/refusal
-  shapes. `cfn-lint` passed on the locally generated JSON.
+- The production-foundation and new live-parent tests passed; five new cases
+  cover digest stability, exact delta, parent mutation, selector shape and
+  physical-selector-drift refusals. `cfn-lint` passed on the locally generated
+  JSON.
 - These are source checks and a read-only live-template observation. They do
   **not** prove CloudFormation would report only an in-place Trail update or
   that data events would arrive at the intended destination.
@@ -43,6 +45,10 @@ The generated JSON is local and ignored by Git.
 - After an approved execution, use only fictional calls to verify RDS Data API
   caller/cluster/time events, SQL/database/schema redaction, continued
   management and S3 object events, delivery health and cost.
+- The [AWS Data API event example](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/logging-using-cloudtrail-data-api.html)
+  still includes caller, source IP, cluster/resource ARN and secret ARN even
+  though SQL/database/schema are redacted. Review access to those metadata
+  fields before sending them to the existing seven-year locked destination.
 
 For a local rebuild from the exact live stack, run
 `npm run build:aws-production-data-api-audit-live-candidate -- --profile <profile>`.
