@@ -17,6 +17,10 @@ vi.mock("@/server/fullscript/token-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/server/fullscript/token-store")>()),
   createAwsFullscriptTokenStore: () => store,
 }));
+const admissionStore = vi.hoisted(() => ({ observe: vi.fn(), install: vi.fn() }));
+vi.mock("@/server/fullscript/connection-admission", () => ({
+  createAwsFullscriptConnectionAdmission: () => admissionStore,
+}));
 const provider = vi.hoisted(() => ({ constructed: vi.fn(), searchProducts: vi.fn(), revoke: vi.fn(), exchange: vi.fn() }));
 vi.mock("@/server/fullscript/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/server/fullscript/client")>();
@@ -113,6 +117,11 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", fetchMock);
   for (const spy of [...Object.values(store), ...Object.values(provider)]) spy.mockReset();
+  for (const spy of Object.values(admissionStore)) spy.mockReset();
+  admissionStore.observe.mockResolvedValue({ fictionalAdmission: true });
+  admissionStore.install.mockImplementation(async () => {
+    if (!Array.isArray(current[subA]) || !current[subA].includes(clinicA)) throw new Error("membership_changed");
+  });
   store.get.mockImplementation(async (_actor: string, clinic: string) => saved(clinic));
   store.delete.mockResolvedValue(true);
   store.consumeNonce.mockResolvedValue(true);
@@ -222,7 +231,7 @@ describe("the Fullscript authorization callback completes only for the account a
     return new NextRequest(url);
   };
   const startedBy = (sub: string, clinic: string) => createFullscriptAuthorization({ configuration: readFullscriptConfiguration(),
-    ...fullscriptActor(sessionFor(sub, clinic)), nonce: randomUUID().replaceAll("-", "") }).state;
+    ...fullscriptActor(sessionFor(sub, clinic)), subject: sub, nonce: randomUUID().replaceAll("-", "") }).state;
   const outcome = (response: Response) => new URL(response.headers.get("location")!).searchParams.get("fullscript");
 
   it("in the browser of the account that started it, still a member, the installation is saved", async () => {
@@ -231,8 +240,9 @@ describe("the Fullscript authorization callback completes only for the account a
     signedIn(subA, clinicA);
     const response = await callback(returned(startedBy(subA, clinicA)));
     expect(outcome(response)).toBe("connected");
-    expect(store.put).toHaveBeenCalledOnce();
-    expect(store.put.mock.calls[0]![0]).toMatchObject(fullscriptActor(sessionFor(subA, clinicA)));
+    expect(admissionStore.install).toHaveBeenCalledOnce();
+    expect(admissionStore.install.mock.calls[0]![0]).toMatchObject(fullscriptActor(sessionFor(subA, clinicA)));
+    expect(store.put).not.toHaveBeenCalled();
   });
 
   it("in another account's browser, after the membership is removed, with an edited email cookie or with no session, nothing is exchanged or saved", async () => {
@@ -250,6 +260,42 @@ describe("the Fullscript authorization callback completes only for the account a
     }
     expect(store.consumeNonce).not.toHaveBeenCalled();
     expect(provider.exchange).not.toHaveBeenCalled();
+    expect(admissionStore.install).not.toHaveBeenCalled();
     expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it("does not install a provider token when membership is revoked during code exchange", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    current[subA] = [clinicA];
+    signedIn(subA, clinicA);
+    const state = startedBy(subA, clinicA);
+    provider.exchange.mockImplementation(async () => {
+      // The initial clinic read succeeded. The clinic removes this member while
+      // the external provider is answering, before the token-store write.
+      current[subA] = [];
+      return {
+        accessToken: "fictional-new-access-token-abcdefghijklmnopqrstuvwxyz",
+        refreshToken: "fictional-new-refresh-token-abcdefghijklmnopqrstuvwxyz",
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        resourceOwner: { id: "fictional-practitioner-id", type: "Practitioner" },
+        scope: ["catalog:read"],
+      };
+    });
+
+    expect(outcome(await callback(returned(state)))).toBe("connection_failed");
+    expect(admissionStore.install).toHaveBeenCalledOnce();
+    expect(provider.revoke).toHaveBeenCalledOnce();
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it("refuses another account with the same address and clinic as the OAuth starter", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    current[subA] = [clinicA];
+    const state = startedBy(subA, clinicA);
+    current[subB] = [clinicA];
+    signedIn(subB, clinicA); // Same email claim and clinic, but a different Cognito subject.
+    expect(outcome(await callback(returned(state)))).toBe("connection_failed");
+    expect(provider.exchange).not.toHaveBeenCalled();
+    expect(admissionStore.install).not.toHaveBeenCalled();
   });
 });

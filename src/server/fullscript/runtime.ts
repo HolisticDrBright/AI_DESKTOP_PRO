@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("Fullscript runtime is server-only.");
 
 import { createHash, randomBytes } from "node:crypto";
+import { tokenSubject } from "@/adapters/selected-clinic.server";
 import type { RequestSession } from "@/server/session";
 import {
   createFullscriptAuthorization,
@@ -12,6 +13,7 @@ import {
   type FullscriptToken,
 } from "./client";
 import { createAwsFullscriptTokenStore, parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
+import { createAwsFullscriptConnectionAdmission } from "./connection-admission";
 import { FULLSCRIPT_DRAFT_SCOPES } from './draft-scopes';
 
 export function fullscriptActor(session: RequestSession): { actorKey: string; organizationId: string } {
@@ -60,11 +62,15 @@ export async function fullscriptPosture(session: RequestSession) {
 
 export function beginFullscriptAuthorization(session: RequestSession) {
   const configuration = readFullscriptConfiguration();
-  if (!createAwsFullscriptTokenStore()) throw new FullscriptUnavailableError("Fullscript token storage is not configured.");
+  if (!createAwsFullscriptTokenStore() || !createAwsFullscriptConnectionAdmission())
+    throw new FullscriptUnavailableError("Fullscript connection is not configured.");
   const actor = fullscriptActor(session);
+  const subject = tokenSubject(session.token);
+  if (!subject) throw new FullscriptUnavailableError();
   return createFullscriptAuthorization({
     configuration,
     ...actor,
+    subject,
     nonce: randomBytes(24).toString("base64url"),
   });
 }

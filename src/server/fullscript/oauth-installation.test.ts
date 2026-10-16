@@ -7,31 +7,40 @@ vi.mock('next/headers',()=>({cookies:async()=>({get:(name:string)=>jar.cookies.f
   getAll:(name?:string)=>name?jar.cookies.filter(cookie=>cookie.name===name):jar.cookies}),headers:async()=>new Headers()}));
 import {NextRequest} from 'next/server';
 import {DynamoDBClient,PutItemCommand} from '@aws-sdk/client-dynamodb';
+const admissionStore=vi.hoisted(()=>({observe:vi.fn(),install:vi.fn()}));
+vi.mock('@/server/fullscript/connection-admission',()=>({createAwsFullscriptConnectionAdmission:()=>admissionStore}));
 import {GET} from '../../app/api/live/fullscript/oauth/callback/route';
 import {createFullscriptAuthorization,readFullscriptConfiguration} from './client';
 import {parseStoredFullscriptConnection,type StoredFullscriptConnection} from './token-store';
 import {fullscriptActor} from './runtime';
 
 const ORIGIN='https://abcdefghij.execute-api.us-east-2.amazonaws.com';
-const clinic='a1234567-1234-4123-8123-123456789012',email='fictional.practitioner@example.test';
-const idToken=['{"alg":"RS256","kid":"fictional"}',JSON.stringify({sub:'b1234567-1234-4123-8123-123456789012',email,token_use:'id'})]
+const clinic='a1234567-1234-4123-8123-123456789012',subject='b1234567-1234-4123-8123-123456789012',email='fictional.practitioner@example.test';
+const idToken=['{"alg":"RS256","kid":"fictional"}',JSON.stringify({sub:subject,email,token_use:'id'})]
   .map(part=>Buffer.from(part).toString('base64url')).join('.')+'.fictional-signature';
 const actor=fullscriptActor({signedIn:true,email,orgId:clinic,token:idToken,expired:false,expiresAt:null});
 const tokenExchanges=()=>(fetcher.mock.calls as Array<[string,RequestInit]>).filter(([url])=>!url.startsWith(ORIGIN));
-let connections:StoredFullscriptConnection[],fetcher:ReturnType<typeof vi.fn>;
+let connections:StoredFullscriptConnection[],fetcher:ReturnType<typeof vi.fn>,rejectNonceOnce:boolean;
 beforeEach(()=>{
-  vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-09T10:00:00.000Z'));connections=[];
+  vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-09T10:00:00.000Z'));connections=[];rejectNonceOnce=false;
   vi.stubEnv('FULLSCRIPT_ENVIRONMENT','sandbox_us');vi.stubEnv('FULLSCRIPT_CLIENT_ID','fictional-client-id-abcdefghijklmnopqrstuvwxyz');
   vi.stubEnv('FULLSCRIPT_CLIENT_SECRET','fictional-client-secret-abcdefghijklmnopqrstuvwxyz');
   vi.stubEnv('FULLSCRIPT_REDIRECT_URI','https://fictional.example.test/api/live/fullscript/oauth/callback');
   vi.stubEnv('FULLSCRIPT_OAUTH_STATE_SECRET','fictional-state-secret-longer-than-32-characters');
-  vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','fictional-token-table');vi.stubEnv('AWS_REGION','us-east-2');
+  vi.stubEnv('FULLSCRIPT_TOKEN_TABLE','fictional-token-table');
+  vi.stubEnv('AWS_REGION','us-east-2');
   vi.stubEnv('CLINICAL_AWS_WORKFORCE_API_ORIGIN',ORIGIN);
   jar.cookies=[{name:'aidp_at',value:idToken},{name:'aidp_exp',value:String(Date.now()+3_600_000)},{name:'aidp_em',value:email},
     {name:'aidp_org',value:clinic}];
+  admissionStore.observe.mockReset().mockResolvedValue({fictionalAdmission:true});
+  admissionStore.install.mockReset().mockImplementation(async(connection:StoredFullscriptConnection)=>{
+    connections.push(parseStoredFullscriptConnection(connection,actor));
+  });
   vi.spyOn(DynamoDBClient.prototype,'send').mockImplementation(async command=>{
-    if(command instanceof PutItemCommand&&command.input.Item?.payload?.S)
-      connections.push(parseStoredFullscriptConnection(JSON.parse(command.input.Item.payload.S),actor));
+    if(command instanceof PutItemCommand&&rejectNonceOnce){
+      rejectNonceOnce=false;
+      throw Object.assign(new Error('fictional replay'),{name:'ConditionalCheckFailedException'});
+    }
     return {} as never;
   });
   fetcher=vi.fn(async(url:string)=>url.startsWith(ORIGIN)
@@ -43,7 +52,7 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();jar.cookies=[];});
 const request=(nonce:string)=>{
-  const {state}=createFullscriptAuthorization({configuration:readFullscriptConfiguration(),...actor,nonce});
+  const {state}=createFullscriptAuthorization({configuration:readFullscriptConfiguration(),...actor,subject,nonce});
   const url=new URL('https://fictional.example.test/api/live/fullscript/oauth/callback');
   url.searchParams.set('state',state);url.searchParams.set('code','fictional-authorization-code-abcdefghijklmnopqrstuvwxyz');
   return new NextRequest(url);
@@ -66,7 +75,7 @@ describe('OAuth callback persists a new independent installation identity',()=>{
   });
   it('does not save an installation or exchange credentials when nonce replay is refused',async()=>{
     vi.spyOn(console,'error').mockImplementation(()=>undefined);
-    vi.mocked(DynamoDBClient.prototype.send).mockRejectedValueOnce(Object.assign(new Error('fictional replay'),{name:'ConditionalCheckFailedException'}));
+    rejectNonceOnce=true;
     const result=await GET(request('fictional-first-nonce-abcdefghijklmnopqrstuvwxyz'));
     expect(new URL(result.headers.get('location')!).searchParams.get('fullscript')).toBe('connection_failed');
     expect(connections).toEqual([]);expect(tokenExchanges()).toEqual([]);

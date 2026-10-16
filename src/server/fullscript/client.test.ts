@@ -133,6 +133,7 @@ describe("Fullscript server boundary", () => {
       configuration,
       actorKey: "a".repeat(64),
       organizationId: "11111111-1111-4111-8111-111111111111",
+      subject: "22222222-2222-4222-8222-222222222222",
       nonce: "n".repeat(32),
       now: 1_000_000,
     });
@@ -142,6 +143,7 @@ describe("Fullscript server boundary", () => {
     expect(verifyFullscriptState(started.state, configuration.stateSecret, 1_100_000)).toMatchObject({
       actorKey: "a".repeat(64),
       organizationId: "11111111-1111-4111-8111-111111111111",
+      subject: "22222222-2222-4222-8222-222222222222",
     });
     expect(() => verifyFullscriptState(`${started.state}x`, configuration.stateSecret, 1_100_000)).toThrow();
     expect(() => verifyFullscriptState(started.state, configuration.stateSecret, 2_000_000)).toThrow(/expired/);

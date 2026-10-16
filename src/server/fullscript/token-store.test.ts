@@ -38,15 +38,8 @@ describe('Fullscript saved connection custody',()=>{
     vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValue({Item} as never);
     await expect(store().get(key.actorKey,key.organizationId)).rejects.toMatchObject({code:'fullscript_unavailable'});
   });
-  it('validates before writing and uses only validated key fields',async()=>{
-    const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValue({} as never);
-    await store().put(fixture());
-    const command=send.mock.calls[0][0];expect(command).toBeInstanceOf(PutItemCommand);
-    expect(command.input).toMatchObject({Item:{pk:{S:'ORG#'+key.organizationId},sk:{S:'FULLSCRIPT#'+key.actorKey}}});
-    expect(JSON.parse((command as PutItemCommand).input.Item!.payload.S!)).toEqual(fixture());
-    send.mockClear();
-    await expect(store().put({...fixture(),actorKey:'invalid'})).rejects.toThrow('Fullscript is not configured');
-    expect(send).not.toHaveBeenCalled();
+  it('does not expose an unfenced new-installation write',()=>{
+    expect('put' in store()).toBe(false);
   });
   it('refuses malformed lookup and deletion keys before AWS I/O',async()=>{
     const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValue({} as never);
