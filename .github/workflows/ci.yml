@@ -330,6 +330,7 @@ jobs:
           npm run test:qualification-program-api-preflight
           npm run test:aws-synthetic-data-api-audit-review
           npm run test:aws-synthetic-data-api-audit-live-parent
+          npm run test:aws-synthetic-audit-retention-review
       - name: Build blocked qualification program Lambda from exact clean source (no deployment)
         run: npm run build:aws-qualification-program-lambda
       - name: AWS deployed synthetic acceptance harness gate
