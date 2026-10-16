@@ -10,7 +10,11 @@
  *   C. two accounts, the same clinic name at once: neither waits for the other; two separate clinics, each owner admitted
  *      only to their own;
  *   D. an operator suspension issued while the owner's clinical request is admitted waits for it; the next request is refused;
- *   E. an owner request issued while a suspension is uncommitted waits for it, then is refused.
+ *   E. an owner request issued while a suspension is uncommitted waits for it, then is refused;
+ *   F. two accounts with the same address at once: the second waits on the first's binding, then is refused by name
+ *      (workforce_binding_conflict), never with an unnamed unique-index error; one clinic exists for that address;
+ *   G. one account's held clinic proposal and its bootstrap at once: the bootstrap waits on the account's lock, then is
+ *      refused by name (workforce_request_pending).
  *
  * It never connects to an existing database, reads no database URL or credential, and writes nothing outside its own
  * temporary directory, which it removes. Usage:
@@ -216,7 +220,39 @@ try {
     check(s, /workforce_membership_refused/.test(refused.error), 'the owner\'s request is refused on the committed suspension');
     await a.send('rollback;');
   });
-  report.passed = report.scenarios.length === 5 && report.scenarios.every((entry) => entry.checks.length > 0 && entry.checks.every((c) => c.passed));
+  // F. Two accounts with the same address at once.
+  await scenario('two-accounts-same-address', async (s, a, b, _nameA, nameB) => {
+    const subjectOne = randomUUID(), subjectTwo = randomUUID();
+    const email = `same.address.${subjectOne.slice(0, 8)}@applicant.fictional.example`;
+    const one = { subject: subjectOne, email }, two = { subject: subjectTwo, email };
+    const first = parsed((await a.send(bootstrapOnce(one, randomUUID(), 'FICTIONAL ADDRESS ONE'))).output);
+    check(s, first?.duplicate === false, 'session A creates the clinic and binds the address');
+    const pending = b.send(bootstrapOnce(two, randomUUID(), 'FICTIONAL ADDRESS TWO'));
+    check(s, await waitingOnLock(nameB), 'session B waits on the first binding of that address');
+    await a.send('commit;');
+    const second = await pending;
+    check(s, /workforce_binding_conflict/.test(second.error), 'session B is refused by name, workforce_binding_conflict');
+    check(s, !/duplicate key value|unique constraint/.test(second.error), 'session B never surfaces an unnamed unique-index error');
+    await b.send('rollback;');
+    check(s, Number(psql(`select count(*) from clinical_private.workforce_clinic_bootstraps where email_sha256='${digest(email)}'`)) === 1, 'exactly one clinic exists for that address');
+    check(s, Number(psql(`select count(*) from clinical_core.workforce_identity_directory where email_sha256='${digest(email)}'`)) === 1, 'the address is bound to one account only');
+  });
+
+  // G. One account's held clinic proposal and its bootstrap at once.
+  await scenario('proposal-and-bootstrap-same-account', async (s, a, b, _nameA, nameB) => {
+    const who = applicant('proposal.race');
+    const proposal = await a.send(`begin; set local role clinical_workforce_application;
+      select clinical_private.submit_workforce_access_request('${randomUUID()}','${who.subject}','${digest(who.email)}','create_clinic',null,'FICTIONAL PROPOSED CLINIC');`);
+    check(s, !proposal.error, 'session A submits a clinic proposal, uncommitted');
+    const pending = b.send(bootstrapOnce(who, randomUUID(), 'FICTIONAL RACING BOOTSTRAP'));
+    check(s, await waitingOnLock(nameB), 'the bootstrap waits on the account\'s lock');
+    await a.send('commit;');
+    const second = await pending;
+    check(s, /workforce_request_pending/.test(second.error), 'the bootstrap is refused by name while the proposal is pending');
+    await b.send('rollback;');
+    check(s, clinicsOf(who) === 0, 'no clinic was created for the account');
+  });
+  report.passed = report.scenarios.length === 7 && report.scenarios.every((entry) => entry.checks.length > 0 && entry.checks.every((c) => c.passed));
 } catch (error) {
   const log = join(directory, 'server.log');
   if (existsSync(log)) process.stderr.write(readFileSync(log, 'utf8').slice(-2000));
