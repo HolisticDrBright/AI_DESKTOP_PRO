@@ -88,9 +88,9 @@ export async function runConnectIsolationOperator({ mode, approvalDigest, caller
   };
   const before = await inspect();
   check(before.grantState === 'default', 'starting_acl');
-  const report = { contract: 'qualification-connect-isolation-operator/1',
+  const report = { ...preflight, contract: 'qualification-connect-isolation-operator/1',
     accountId: ACCOUNT, region: REGION, database: DATABASE, clusterArn: outputs.DatabaseClusterArn,
-    mode, sqlSha256: SQL_SHA256, ...preflight, beforeAclSha256: before.aclSha256,
+    mode, sqlSha256: SQL_SHA256, beforeAclSha256: before.aclSha256,
     committed: false };
   if (mode === 'inspect') return report;
   // A current sibling session is an immediate refusal. Its absence is still

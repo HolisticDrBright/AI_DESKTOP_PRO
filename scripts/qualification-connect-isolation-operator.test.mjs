@@ -110,6 +110,7 @@ test('inspect is read-only and refuses a rehearsal approval argument', async () 
   const result = await runConnectIsolationOperator({ ...current,
     mode: 'inspect', splitPostgresStatements: await splitter() });
   assert.equal(result.committed, false);
+  assert.equal(result.contract, 'qualification-connect-isolation-operator/1');
   assert.equal(result.clientInventoryComplete, false);
   assert.equal(current.log.some(([kind]) => kind === 'begin'), false);
   await assert.rejects(runConnectIsolationOperator({ ...fixture(), mode: 'inspect',
