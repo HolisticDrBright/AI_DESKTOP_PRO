@@ -21,7 +21,9 @@ or human evidence, and nothing below says the apps are commercial or PHI ready.*
   `docs/claude-v2-billing-local-data-integration-return-2026-10-16.md` on the V2 branch.
 - **WP3 (Desktop):** `c7e1a178`, the care-messaging BLOCKED least-privilege credential candidate.
 - **WP2 (Desktop):** `451b12ca`, the checked route inventory, the env-clinic fix and the pinned suspended-clinic gap.
-  A follow-up commit fixes the inventory test's typing.
+  - `4d43f656` adds this document and narrows the inventory test's cell type (tsc).
+  - `933cadd0` classifies the inventory in the exhaustive caller audit. This was the full suite's one failure at
+    `451b12ca`: 1 failed, 9939 passed, 11 skipped. The CI run for `4d43f656` carries the same failure.
 - **WP4:** this document.
 
 ## 3. Failing-before and passing-after
