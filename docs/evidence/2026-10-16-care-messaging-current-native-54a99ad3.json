@@ -1,0 +1,107 @@
+{
+  "contract": "care-messaging-current-native/1",
+  "sourceCommit": "54a99ad3f361e70f3116e93ad64293d622adc82b",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "admitted-reply-holds-off-the-membership-removal",
+      "checks": [
+        {
+          "detail": "the practitioner binds through the proxy as the restricted role",
+          "passed": true
+        },
+        {
+          "detail": "the removal waits on the membership row the admitted reply holds",
+          "passed": true
+        },
+        {
+          "detail": "the admitted reply is stored",
+          "passed": true
+        },
+        {
+          "detail": "the removal commits after the reply commits",
+          "passed": true
+        },
+        {
+          "detail": "the next reply, with the same already-issued identity, is refused",
+          "passed": true
+        },
+        {
+          "detail": "exactly one reply was stored",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "reply-waiting-on-a-pending-removal-is-refused",
+      "checks": [
+        {
+          "detail": "the reply waits on the row the uncommitted membership removal holds",
+          "passed": true
+        },
+        {
+          "detail": "after the membership removal commits, the reply is refused",
+          "passed": true
+        },
+        {
+          "detail": "no partial write: no reply stored",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "reply-waiting-on-a-pending-clinic-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the reply waits on the row the uncommitted clinic suspension holds",
+          "passed": true
+        },
+        {
+          "detail": "after the clinic suspension commits, the reply is refused",
+          "passed": true
+        },
+        {
+          "detail": "no partial write: no reply stored",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-sibling-clinic-practitioner-cannot-bind-into-this-clinic",
+      "checks": [
+        {
+          "detail": "the sibling practitioner is refused at the binding",
+          "passed": true
+        },
+        {
+          "detail": "the same practitioner binds into their own clinic (the refusal is the clinic, not the person)",
+          "passed": true
+        },
+        {
+          "detail": "no reply stored",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "the-restricted-role-reaches-the-setter-only-through-its-proxy",
+      "checks": [
+        {
+          "detail": "calling the setter directly is refused",
+          "passed": true
+        },
+        {
+          "detail": "an unrelated chart write is refused",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidates are loaded into this throwaway cluster only; nothing is registered, applied or deployed, and no login is enabled.",
+    "Sessions assume the restricted login with SET SESSION AUTHORIZATION from a local superuser; no password or secret exists."
+  ],
+  "passed": true
+}

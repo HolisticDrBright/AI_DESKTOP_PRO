@@ -133,3 +133,76 @@ Existing care-messaging suites still pass unchanged: 8 files, 356 tests, includi
 - **Forged request context.** `clinical.claim.*` settings can be written by any role through `set_config`. The targets
   re-validate identities and memberships from rows, so the restricted role is still limited to messaging. Moving the
   context to a signed or locked form is a separate review.
+
+## 6. Successor: `database_current` under the restricted credential (next source pass)
+
+The blocker in §5 is now designed and source-tested, still BLOCKED. It is a new identity; the parent candidate and its
+rollback are unchanged (`7936d0c5…9dac`, `1b04682b…40eb`).
+
+**The design.** `infra/aws-clinical-core/source-candidates/care-messaging-qualification-current-context.sql` adds one
+fifth proxy, `clinical_care_messaging_qualification.set_current_workforce_context(subject, clinic)`:
+
+- It calls the unchanged current-membership setter with messaging's purpose fixed to `clinical_data`. The caller
+  cannot choose a purpose.
+- It is SECURITY DEFINER with an empty `search_path`, and owned by the setter's owner. So it runs with exactly the
+  privileges the setter already runs with.
+- The setter reads the subject's identity, person, clinic and membership from current rows and share-locks them for
+  the operation's transaction. The bind and the message are therefore one decision: an admitted reply holds off a
+  removal or suspension, and a reply waiting on one is refused.
+- No role gains a membership, schema USAGE, table privilege, sibling-database CONNECT or the general clinical API
+  role. The API role reaches five proxies and nothing else, and still cannot call the setter directly.
+- The guards refuse unless both parents are exactly present: the four proxy bodies and the setter's prosrc
+  `7054db76…6cd6`. The post-conditions repeat every reach check of the parent, with five proxies.
+
+| Identity | SHA-256 (LF bytes) |
+| --- | --- |
+| `care-messaging-qualification-current-context.sql` | `eac6bba8b99976fcf6ed5bc56209259975b5eaf7767fb7cfc582d960fea0e4e2` |
+| `care-messaging-qualification-current-context-rollback.sql` (drops the fifth proxy only) | `bab715073a39e9d110af54cfc2c9c8cbd81b0d328baf6f8c34cd9a24b56255e5` |
+| fifth proxy body (prosrc) | `8b1de4471e95f7e3a5a8aea7a390e9c1d9a522cdf3eefd445fc5332d82f2e5be` |
+| parent setter `workforce-current-membership-context.sql` (UNREGISTERED) | `ff89c1a2d5b934a3a49437099d14b34e5dffed400ae332f26eea2c311a891342`, prosrc `7054db763a6ff38b00a504a09398dcbd60f69b6476b6c85bab36da496d6e0cd6` |
+
+**Runtime.**
+
+- A new credential flag, `restricted_qualification_current`, accepted only with
+  `CARE_MESSAGING_WORKFORCE_AUTHORITY=database_current`.
+- The binding check covers 8 targets, the setter included (present but not executable by the role), and 5 proxies.
+- The statement allow-list rewrites the setter call to the proxy only when its purpose is `clinical_data`.
+- The parent `restricted_qualification` credential still refuses `database_current` with 503, by design.
+- `npm run build:aws-care-messaging-restricted-current` writes a separate BLOCKED template. It uses the same bundle
+  under a new identity, sets `CARE_MESSAGING_WORKFORCE_AUTHORITY`, and pins all four SQL hashes. The parent
+  restricted template differs from the overnight build only in its pinned source commit.
+
+**Construction order (repaired).** The exported factories `createRdsDataQualificationCareMessagingDatabase` and
+`createRdsDataQualificationProgramDatabase` built their default RDS client in the parameter list, before the body
+validated the configuration. So a refused secret, the cluster-master one included, already had a client. Building a
+client sends nothing; that was always true. But the documented guarantee is "refused before any client exists".
+Clients are now built only after validation.
+
+- Failing before: `rds-data-care-messaging-factory.test.ts`, 8 failed / 3 passed.
+- After: 11/11. The test counts constructions and sends separately.
+- The Lambda handler already validated first and is unchanged.
+
+**Evidence.**
+
+| Test | Result |
+| --- | --- |
+| `src/server/clinical-core/care-messaging-restricted-current.database.test.ts` (112 + setter + parent + successor) | 21/21. Covers: the guards; exact five-proxy reach and 8 unrelated refusals; `database_current` read and reply; cross-clinic, removed membership, suspended clinic and consent withdrawal refused with nothing written; parent still 503; drift 503; the allow-list; the rollback chain. Without the successor: 2 failed, 7 never ran (journey setup refused with 503), 12 passed |
+| `scripts/qualify-care-messaging-current-native.mjs` (PostgreSQL 16, two sessions through the restricted login) | 5 scenarios, 17 checks, all passed at `54a99ad3` (`docs/evidence/2026-10-16-care-messaging-current-native-54a99ad3.json`). An admitted reply holds off a membership removal; a reply waiting on a pending removal or a pending clinic suspension is refused with no row; a sibling clinic's practitioner cannot bind; the setter and a chart write are refused directly |
+| `scripts/care-messaging-restricted-credential.test.mjs` | 6/6, the current-context template included |
+| `cfn-lint` | both restricted templates lint clean |
+
+**Codex steps (not executed; in order, after §4).**
+
+1. Review and register the current-membership setter (`workforce-current-membership-context.sql`) by hash. The
+   successor refuses until the setter is present, exactly, and owned by the applying role.
+2. Apply `care-messaging-qualification-current-context.sql` as that owner, on `clinical_core_qualification` only.
+   Audit the post-conditions.
+3. Deploy the restricted-current template from a clean build at the reviewed commit, still blocked. Run hosted refusal
+   tests: unrelated functions denied, the setter not directly callable, a removed member and a suspended clinic
+   refused, and an in-flight removal waiting on an admitted reply.
+4. Rollback order: set `CARE_MESSAGING_WORKFORCE_AUTHORITY` back to `legacy_claims` (or stop the Lambda), then run
+   the current-context rollback. The parent's own rollback applies again afterwards.
+
+**Ownership.** The proxy must be owned by the setter's owner, so whoever applies it must be that role. If the operator
+cannot act as the setter's owner on Aurora, the successor refuses (`current_membership_setter_refused`). Messaging
+then keeps the 503 under the restricted credential; that is the documented fallback, not a widening.

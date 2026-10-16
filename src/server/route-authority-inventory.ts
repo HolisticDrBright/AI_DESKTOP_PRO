@@ -99,9 +99,9 @@ const allDisabled = (...evidence: string[]): Row => ({ unapproved_account: disab
 const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason) });
 const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims no operation checks clinical_core.organizations.status, so an already-selected '
   + 'session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses every workforce '
-  + 'clinical-data request into a clinic that is not active, where every legacy request enters (set_request_context), and deliberately leaves '
-  + 'consent management (retention, erasure, recording cleanup), identity linking and consumer requests running. Apply it, or require '
-  + 'database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
+  + 'clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters (set_request_context), '
+  + 'and deliberately leaves workforce consent management (retention, erasure, recording cleanup, privacy operations) and every consumer '
+  + 'request running. Apply it, or require database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
 const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
   + 'session already in a suspended or archived synthetic clinic still issues patient invitations. The production successor does not reach '
   + 'this schema. Enforce clinic status there too, or retire the synthetic boundary before any synthetic clinic is suspended. '
