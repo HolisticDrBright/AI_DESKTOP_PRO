@@ -2,7 +2,7 @@
 
 **Status: design and BLOCKED source candidates.** Nothing here is approved, applied, registered or deployed. It does
 not authorize PHI, production clinical activation, or any change to the reviewed
-`legacy-claims-clinic-status.sql` (its bytes and its rollback are pinned by three test files). Every row in every test
+`legacy-claims-clinic-status.sql` (its file bytes and its rollback are pinned by two test files, its definition hashes by a third). Every row in every test
 is fictional. PGlite and a throwaway local PostgreSQL 16 are the engines; neither is hosted Aurora evidence.
 
 This is for Brandon and security counsel. It records the conflict between two owner directions and proposes a path. It
