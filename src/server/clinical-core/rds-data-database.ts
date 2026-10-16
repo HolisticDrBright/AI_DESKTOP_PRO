@@ -50,13 +50,15 @@ export function createRdsDataClinicalCoreDatabase(
  * a member of the cluster-global clinical_core_api role. */
 export function createRdsDataQualificationProgramDatabase(
   configuration: RdsDataConfiguration,
-  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+  client?: RdsDataCommandClient,
 ): ClinicalCoreDatabase {
+  // Validated before any client is constructed (a default-parameter client would be built first).
   if (configuration.databaseName !== 'clinical_core_qualification' || configuration.region !== 'us-east-2'
     || !configuration.clusterArn.startsWith('arn:aws:rds:us-east-2:588966314750:cluster:')
     || !configuration.secretArn.startsWith('arn:aws:secretsmanager:us-east-2:588966314750:secret:alp-qualification-program-api-db-'))
     throw new RdsDataDatabaseError('configuration_invalid');
-  return createRdsDataDatabase(configuration, client, 'clinical_program_qualification_api');
+  return createRdsDataDatabase(configuration, client ?? createSingleAttemptRdsClient({ region: configuration.region }),
+    'clinical_program_qualification_api');
 }
 
 /** The dedicated care-messaging qualification credential (BLOCKED candidate,
@@ -69,10 +71,14 @@ export const CARE_MESSAGING_QUALIFICATION_SECRET_PREFIX =
 export const CARE_MESSAGING_QUALIFICATION_ROLE = 'clinical_care_messaging_qualification_api';
 export function createRdsDataQualificationCareMessagingDatabase(
   configuration: RdsDataConfiguration,
-  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
+  client?: RdsDataCommandClient,
 ): ClinicalCoreDatabase {
+  // Validate before constructing anything: a default-parameter client would be built before this line runs, so a
+  // refused secret (the cluster master above all) would already have a client. Construction sends nothing; it is still
+  // a client the boundary never meant to exist.
   if (!careMessagingQualificationConfiguration(configuration)) throw new RdsDataDatabaseError('configuration_invalid');
-  return createRdsDataDatabase(configuration, client, CARE_MESSAGING_QUALIFICATION_ROLE);
+  return createRdsDataDatabase(configuration, client ?? createSingleAttemptRdsClient({ region: configuration.region }),
+    CARE_MESSAGING_QUALIFICATION_ROLE);
 }
 export function careMessagingQualificationConfiguration(configuration: Partial<RdsDataConfiguration>): boolean {
   return configuration.databaseName === 'clinical_core_qualification' && configuration.region === 'us-east-2'

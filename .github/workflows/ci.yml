@@ -41,7 +41,7 @@ jobs:
           npm run build:aws-clinic-records
           npx vitest run src/server/clinical-core/clinic-record-privacy.database.test.ts src/server/clinical-core/production-clinic-records-api.test.ts src/server/clinical-core/clinic-records-deployment.test.ts
       - name: Fictional embedded database only; no AWS access or activation
-        run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts src/server/clinical-core/care-messaging-restricted-credential.database.test.ts
+        run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts src/server/clinical-core/care-messaging-restricted-credential.database.test.ts src/server/clinical-core/care-messaging-restricted-current.database.test.ts src/server/clinical-core/rds-data-care-messaging-factory.test.ts
       - name: Fullscript draft compiler transport and existing cart exclusions (fictional only)
         run: npm run test:fullscript-protocol-draft
       - name: Distinct Fullscript release identity and preserving rollback (no AWS or activation)
@@ -182,6 +182,7 @@ jobs:
           npm run build:aws-care-messaging
           node scripts/build-aws-care-messaging.mjs --release=112
           npm run build:aws-care-messaging-restricted-credential
+          npm run build:aws-care-messaging-restricted-current
           npm run test:aws-care-messaging-restricted-credential
           node scripts/build-aws-care-connections.mjs --release=112
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
@@ -191,6 +192,7 @@ jobs:
           cfn-lint dist/aws-clinical-core/care-connections/template.json
           cfn-lint dist/aws-clinical-core/care-messaging-qualification-112/template.json
           cfn-lint dist/aws-clinical-core/care-messaging-qualification-112-restricted/template.json
+          cfn-lint dist/aws-clinical-core/care-messaging-qualification-112-restricted-current/template.json
           cfn-lint dist/aws-clinical-core/care-connections-qualification-112/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-messaging/template.json
           cfn-lint dist/aws-clinical-core/inventory-care-qualification/care-connections/template.json

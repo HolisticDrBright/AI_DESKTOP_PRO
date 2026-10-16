@@ -8,6 +8,7 @@ import { CARE_MESSAGING_QUALIFICATION_ROLE, careMessagingQualificationConfigurat
 import type { ClinicalCoreTransaction } from './database';
 import { resolveQualificationExecution } from './qualification-execution';
 import { assertInventoryQualificationBinding, type InventoryQualificationBuild } from './adopted-plan-inventory-qualification-profile';
+import { CURRENT_MEMBERSHIP_SETTER_BODY_SHA256, CURRENT_MEMBERSHIP_SETTER_BOUND_STATEMENT, CURRENT_MEMBERSHIP_SETTER_STATEMENT } from './current-membership-workforce';
 
 export type CareMessagingBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106 | 112; migrationReleaseSha256: string;
@@ -182,18 +183,19 @@ export const CARE_MESSAGING_QUALIFICATION_STATEMENTS: ReadonlyMap<string, string
 ]);
 
 /** Metadata only, as the restricted role, on every transaction before business SQL. Names are joined, never cast to
- * regclass: the role has no USAGE on the clinical schemas, and must not need it to check them. */
-const restrictedContract = `with expected as (
+ * regclass: the role has no USAGE on the clinical schemas, and must not need it to check them. The counts are the
+ * credential's: seven targets and four proxies for the parent, eight and five for the current-context successor. */
+const restrictedContractFor = (targetCount: number, proxyCount: number) => `with expected as (
       select * from jsonb_to_recordset($1::jsonb) as e(schema text,name text,sha256 text,callable boolean)
     ), targets as (
-      select count(*)=7 and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
+      select count(*)=${targetCount} and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
         and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.sha256
         and not has_function_privilege(current_user,p.oid,'EXECUTE')
         and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
           where a.grantee=0 and a.privilege_type='EXECUTE')) valid
       from expected e join pg_namespace n on n.nspname=e.schema join pg_proc p on p.pronamespace=n.oid and p.proname=e.name
     ), proxies as (
-      select count(*)=4 and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
+      select count(*)=${proxyCount} and bool_and(p.prosecdef and p.proconfig=array['search_path=""']::text[]
         and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=x.sha256
         and has_function_privilege(current_user,p.oid,'EXECUTE')
         and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
@@ -201,7 +203,7 @@ const restrictedContract = `with expected as (
       from jsonb_to_recordset($3::jsonb) as x(name text,sha256 text)
       join pg_namespace n on n.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}' join pg_proc p on p.pronamespace=n.oid and p.proname=x.name
     ), proxy_count as (
-      select count(*)=4 valid from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}'
+      select count(*)=${proxyCount} valid from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}'
     ), tables as (
       select count(*)=4 and bool_and(c.relrowsecurity and c.relforcerowsecurity
         and not has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE')
@@ -232,6 +234,8 @@ const restrictedContract = `with expected as (
         and f.valid and x.valid and k.valid and t.valid and g.valid and r.valid as valid
       from targets f cross join proxies x cross join proxy_count k cross join tables t cross join triggers g cross join reach r`;
 
+const restrictedContract = restrictedContractFor(7, 4);
+
 export function bindRestrictedCareMessagingDatabase(database: ClinicalCoreDatabase, build: Pick<CareMessagingBuild, 'functions'>): ClinicalCoreDatabase {
   const functions = validateFunctions(build.functions);
   const proxies = CARE_MESSAGING_QUALIFICATION_PROXIES.map(({ name, bodySha256 }) => ({ name, sha256: bodySha256 }));
@@ -248,18 +252,78 @@ export function bindRestrictedCareMessagingDatabase(database: ClinicalCoreDataba
   }) };
 }
 
+/**
+ * BLOCKED current-context successor, a separate identity
+ * (infra/aws-clinical-core/source-candidates/care-messaging-qualification-current-context.sql over the parent credential
+ * and the UNREGISTERED current-membership setter). The same restricted role, plus one fifth proxy that binds messaging's
+ * own current workforce context (purpose fixed to `clinical_data`) through the unchanged setter, in the operation's
+ * transaction, with its rows share-locked. Under this credential, and only this one, `database_current` is accepted.
+ * The parent credential above is unchanged and still refuses it.
+ */
+export const CARE_MESSAGING_QUALIFICATION_CURRENT_CREDENTIAL = 'restricted_qualification_current';
+export const CARE_MESSAGING_QUALIFICATION_CURRENT_PROXY = { name: 'set_current_workforce_context',
+  target: 'clinical_private.set_current_workforce_context', bodySha256: '8b1de4471e95f7e3a5a8aea7a390e9c1d9a522cdf3eefd445fc5332d82f2e5be' } as const;
+type Rewrite = { sql: string; parameters?: (parameters: readonly unknown[]) => unknown[] };
+/** The setter is bound through its proxy: the reviewed setter, unreachable directly, and the proxy executable. */
+const currentProxyBound = `select coalesce((select count(*)=1 and bool_and(s.prosecdef and s.proconfig=array['search_path=""']::text[]
+      and encode(sha256(convert_to(s.prosrc,'UTF8')),'hex')=$1
+      and not has_function_privilege(current_user,s.oid,'EXECUTE')
+      and not exists(select 1 from aclexplode(coalesce(s.proacl,acldefault('f',s.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE')
+      and has_function_privilege(current_user,x.oid,'EXECUTE'))
+    from pg_proc s, pg_namespace sn, pg_proc x, pg_namespace xn
+    where sn.oid=s.pronamespace and sn.nspname='clinical_private' and s.proname='set_current_workforce_context'
+      and xn.oid=x.pronamespace and xn.nspname='${CARE_MESSAGING_QUALIFICATION_SCHEMA}' and x.proname='set_current_workforce_context'),false) as valid`;
+/** The parent's four statements, plus the current-membership path's two. The setter's purpose argument must be the one
+ * messaging uses; the proxy fixes it, so anything else is refused before it is sent. */
+export const CARE_MESSAGING_QUALIFICATION_CURRENT_STATEMENTS: ReadonlyMap<string, Rewrite> = new Map<string, Rewrite>([
+  ...[...CARE_MESSAGING_QUALIFICATION_STATEMENTS].map(([from, sql]): [string, Rewrite] => [from, { sql }]),
+  [CURRENT_MEMBERSHIP_SETTER_STATEMENT, { sql: `select ${CARE_MESSAGING_QUALIFICATION_SCHEMA}.set_current_workforce_context($1,$2) as binding`,
+    parameters: (parameters) => {
+      if (parameters.length !== 3 || parameters[2] !== 'clinical_data') throw new ProductionCareMessageError('service_unavailable');
+      return [parameters[0], parameters[1]];
+    } }],
+  [CURRENT_MEMBERSHIP_SETTER_BOUND_STATEMENT, { sql: currentProxyBound }],
+]);
+const restrictedCurrentContract = restrictedContractFor(8, 5);
+
+export function bindRestrictedCurrentCareMessagingDatabase(database: ClinicalCoreDatabase, build: Pick<CareMessagingBuild, 'functions'>): ClinicalCoreDatabase {
+  const functions = [...validateFunctions(build.functions),
+    { schema: 'clinical_private', name: 'set_current_workforce_context', sha256: CURRENT_MEMBERSHIP_SETTER_BODY_SHA256, callable: false }];
+  const proxies = [...CARE_MESSAGING_QUALIFICATION_PROXIES, CARE_MESSAGING_QUALIFICATION_CURRENT_PROXY]
+    .map(({ name, bodySha256 }) => ({ name, sha256: bodySha256 }));
+  return { transaction: work => database.transaction(async tx => {
+    const checked = await tx.query<{ valid: boolean }>(restrictedCurrentContract, [JSON.stringify(functions), JSON.stringify(tables), JSON.stringify(proxies)]);
+    if (checked.rows[0]?.valid !== true) throw new ProductionCareMessageError('service_unavailable');
+    const proxied: ClinicalCoreTransaction = { query: async (sql, parameters) => {
+      const rewrite = CARE_MESSAGING_QUALIFICATION_CURRENT_STATEMENTS.get(sql);
+      if (rewrite === undefined) throw new ProductionCareMessageError('service_unavailable');
+      return tx.query(rewrite.sql, rewrite.parameters ? rewrite.parameters(parameters ?? []) : parameters);
+    } };
+    return work(proxied);
+  }) };
+}
+
+const restrictedIdentity = (e: Environment, build: CareMessagingBuild) =>
+  build.migrationCount === 112 && build.migrationReleaseSha256 === qualificationRelease112
+    && e.PHI_ALLOWED === 'false' && e.CARE_MESSAGING_ACTIVATION === 'blocked' && e.DEPLOYMENT_ACCOUNT_ID === '588966314750'
+    && careMessagingQualificationConfiguration({ clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN, secretArn: e.CLINICAL_DATABASE_SECRET_ARN,
+      databaseName: e.CLINICAL_DATABASE_NAME, region: e.AWS_REGION });
 /** Deployment identity for the restricted successor, checked before any database client is constructed. */
 export function restrictedCareMessagingConfiguration(e: Environment, build: CareMessagingBuild): boolean {
   return e.CARE_MESSAGING_DATABASE_CREDENTIAL === CARE_MESSAGING_QUALIFICATION_CREDENTIAL
-    && build.migrationCount === 112 && build.migrationReleaseSha256 === qualificationRelease112
-    && e.PHI_ALLOWED === 'false' && e.CARE_MESSAGING_ACTIVATION === 'blocked' && e.DEPLOYMENT_ACCOUNT_ID === '588966314750'
-    && [undefined, '', 'legacy_claims'].includes(e.CARE_MESSAGING_WORKFORCE_AUTHORITY)
-    && careMessagingQualificationConfiguration({ clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN, secretArn: e.CLINICAL_DATABASE_SECRET_ARN,
-      databaseName: e.CLINICAL_DATABASE_NAME, region: e.AWS_REGION });
+    && [undefined, '', 'legacy_claims'].includes(e.CARE_MESSAGING_WORKFORCE_AUTHORITY) && restrictedIdentity(e, build);
+}
+/** The current-context successor: its own credential flag, and `database_current` exactly. */
+export function restrictedCurrentCareMessagingConfiguration(e: Environment, build: CareMessagingBuild): boolean {
+  return e.CARE_MESSAGING_DATABASE_CREDENTIAL === CARE_MESSAGING_QUALIFICATION_CURRENT_CREDENTIAL
+    && e.CARE_MESSAGING_WORKFORCE_AUTHORITY === 'database_current' && restrictedIdentity(e, build);
 }
 export function createRestrictedCareMessagingHandler(e: Environment, build: CareMessagingBuild,
   databaseFactory: (configuration: RdsDataConfiguration) => ClinicalCoreDatabase = createRdsDataQualificationCareMessagingDatabase,
   now?: () => number): (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> {
-  if (!restrictedCareMessagingConfiguration({ ...e }, build)) return serviceUnavailable;
-  return createHandler(e, build, databaseFactory, now, false, bindRestrictedCareMessagingDatabase);
+  if (restrictedCareMessagingConfiguration({ ...e }, build)) return createHandler(e, build, databaseFactory, now, false, bindRestrictedCareMessagingDatabase);
+  if (restrictedCurrentCareMessagingConfiguration({ ...e }, build)) {
+    return createHandler(e, build, databaseFactory, now, false, bindRestrictedCurrentCareMessagingDatabase);
+  }
+  return serviceUnavailable;
 }

@@ -18,6 +18,7 @@ const dir = mkdtempSync(join(tmpdir(), 'care-messaging-restricted-'));
 const build = (...args) => execFileSync(process.execPath, ['scripts/build-aws-care-messaging.mjs', ...args], { encoding: 'utf8', timeout: 120_000 });
 build('--release=112', `--out-dir=${join(dir, 'parent')}`);
 build('--release=112', '--credential=restricted', `--out-dir=${join(dir, 'restricted')}`);
+build('--release=112', '--credential=restricted-current', `--out-dir=${join(dir, 'current')}`);
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const parent = json(join(dir, 'parent/template.json'));
 const candidate = json(join(dir, 'restricted/template.json'));
@@ -25,6 +26,10 @@ const manifest = json(join(dir, 'restricted/artifact-manifest.json'));
 const parentManifest = json(join(dir, 'parent/artifact-manifest.json'));
 const login = 'infra/aws-clinical-core/source-candidates/care-messaging-qualification-login.sql';
 const rollback = 'infra/aws-clinical-core/source-candidates/care-messaging-qualification-login-rollback.sql';
+const currentSql = 'infra/aws-clinical-core/source-candidates/care-messaging-qualification-current-context.sql';
+const currentRollback = 'infra/aws-clinical-core/source-candidates/care-messaging-qualification-current-context-rollback.sql';
+const currentTemplate = json(join(dir, 'current/template.json'));
+const currentManifest = json(join(dir, 'current/artifact-manifest.json'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 
 test('the restricted template is the 112 template with only its credential boundary changed', () => {
@@ -81,9 +86,40 @@ test('the restricted bundle refuses before a client exists and sends only proxy 
 });
 
 test('the credential flag is refused without the 112 release or when repeated', () => {
-  for (const args of [['--credential=restricted'], ['--release=112', '--credential=restricted', '--credential=restricted'], ['--credential=master']]) {
+  for (const args of [['--credential=restricted'], ['--release=112', '--credential=restricted', '--credential=restricted'], ['--credential=master'],
+    ['--credential=restricted-current'], ['--release=112', '--credential=restricted', '--credential=restricted-current']]) {
     const run = spawnSync(process.execPath, ['scripts/build-aws-care-messaging.mjs', ...args, `--out-dir=${join(dir, 'refused')}`], { encoding: 'utf8' });
     assert.notEqual(run.status, 0, args.join(' '));
     assert.match(run.stderr, /care_message_build_argument_invalid/);
   }
 });
+
+test('the current-context template is the restricted template with only the successor\'s identity and database_current changed', () => {
+  const expected = structuredClone(candidate);
+  expected.Description = currentTemplate.Description;
+  expected.Metadata = currentTemplate.Metadata;
+  expected.Resources.Function.Properties.Environment.Variables.CARE_MESSAGING_DATABASE_CREDENTIAL = 'restricted_qualification_current';
+  expected.Resources.Function.Properties.Environment.Variables.CARE_MESSAGING_WORKFORCE_AUTHORITY = 'database_current';
+  assert.deepEqual(currentTemplate, expected);
+  assert.match(currentTemplate.Description, /^BLOCKED /);
+  // The parent restricted template does not choose an authority: it stays on legacy claims.
+  assert.equal(candidate.Resources.Function.Properties.Environment.Variables.CARE_MESSAGING_WORKFORCE_AUTHORITY, undefined);
+  const meta = currentTemplate.Metadata.ClinicalCore;
+  assert.equal(meta.ContractVersion, 'care-messaging-restricted-current/1');
+  assert.equal(meta.SqlCandidateSha256, sha(read(login)));
+  assert.equal(meta.SqlRollbackSha256, sha(read(rollback)));
+  assert.equal(meta.CurrentContextSqlSha256, sha(read(currentSql)));
+  assert.equal(meta.CurrentContextRollbackSha256, sha(read(currentRollback)));
+  assert.equal(meta.Activation, 'blocked');
+  assert.equal(meta.PhiAllowed, false);
+  assert.equal(currentManifest.credential, 'restricted_qualification_current');
+  assert.deepEqual(currentManifest.sqlCandidate.map(c => c.path), [login, rollback, currentSql, currentRollback]);
+  assert.equal(currentManifest.deploymentPerformed, false);
+  assert.deepEqual(currentManifest.defaults, { phiAllowed: false, activation: 'blocked', qualification: 'disabled' });
+  // One bundle serves both credentials; the environment chooses, and each refuses the other's authority.
+  assert.equal(currentManifest.codeSha256, manifest.codeSha256);
+  const code = readFileSync(join(dir, 'current/index.js'), 'utf8');
+  assert.ok(code.includes('}.set_current_workforce_context($1,$2) as binding'));
+  assert.match(code, /restricted_qualification_current/);
+});
+
