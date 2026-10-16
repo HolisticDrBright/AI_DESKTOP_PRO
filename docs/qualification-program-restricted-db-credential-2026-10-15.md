@@ -11,6 +11,17 @@ opens a transaction or mutates the database. A missing role, changed proxy,
 extra assignment or enabled production flag refuses. Pre-apply `inspect`
 retains its zero-role precondition; `rehearse` and `apply` are unchanged.
 
+The separate read-only `audit-isolation` mode starts with the same installed
+role and fixture checks, then pins the four known non-system databases and
+counts each role's `CONNECT`, readable non-system relations and callable
+non-system SECURITY DEFINER functions. It exits with a nonzero verdict if a
+sibling database is reachable or the inventory changes. The current cluster's
+default `PUBLIC CONNECT` grants intentionally produce a negative verdict; this
+is not an instruction to revoke them. A blanket revoke could disrupt other
+clients and requires an exact grant/client inventory, preserving migration,
+rollback and separate approval. The audit never reads relation contents and
+does not enable the credential.
+
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated
 qualification database, that precondition correctly refused execution. The

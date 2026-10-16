@@ -5,7 +5,8 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 import { PGlite } from '@electric-sql/pglite';
 import {
-  assertPrivileges, assertSnapshot, credentialStatements, privilegeSql,
+  assessCrossDatabaseIsolation, assertPrivileges, assertSnapshot,
+  credentialStatements, privilegeSql,
 } from './qualification-program-credential-operator.mjs';
 
 const sql = readFileSync('infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql', 'utf8');
@@ -86,4 +87,23 @@ test('qualification snapshot and privilege checks refuse drift rather than accep
   assert.doesNotThrow(() => assertPrivileges(privileges));
   assert.throws(() => assertPrivileges({ ...privileges, core_usage: true }), /privileges/);
   assert.throws(() => assertPrivileges({ ...privileges, proxy_count: 1 }), /privileges/);
+});
+
+test('cross-database audit refuses public sibling access and inventory drift', () => {
+  const rows = [
+    { database: 'alp_chat_rls_synthetic_v1', login_connect: false, api_connect: false,
+      api_readable_relations: 0, api_callable_security_definers: 0 },
+    { database: 'clinical_core', login_connect: false, api_connect: false,
+      api_readable_relations: 0, api_callable_security_definers: 0 },
+    { database: 'clinical_core_qualification', login_connect: true, api_connect: true,
+      api_readable_relations: 0, api_callable_security_definers: 2 },
+    { database: 'postgres', login_connect: false, api_connect: false,
+      api_readable_relations: 0, api_callable_security_definers: 0 },
+  ];
+  assert.equal(assessCrossDatabaseIsolation(rows).isolated, true);
+  assert.equal(assessCrossDatabaseIsolation(rows.map((row, index) => index === 0
+    ? { ...row, login_connect: true, api_readable_relations: 2 } : row)).isolated, false);
+  assert.throws(() => assessCrossDatabaseIsolation(rows.slice(1)), /database_inventory_changed/);
+  assert.throws(() => assessCrossDatabaseIsolation(rows.map((row, index) => index === 2
+    ? { ...row, api_callable_security_definers: 3 } : row)), /qualification_privilege_drift/);
 });

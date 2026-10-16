@@ -19,6 +19,9 @@ const PROFILE = 'ai-synthetic-member';
 const DATABASE = 'clinical_core_qualification';
 const FOUNDATION = 'ai-clinical-core-qualification-foundation';
 const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
+const DATABASE_INVENTORY = Object.freeze([
+  'alp_chat_rls_synthetic_v1', 'clinical_core', DATABASE, 'postgres',
+]);
 const RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 const SQL_PATH = 'infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql';
 const SQL_SHA256 = '7b8541f9c647b13decfef5e7fa42b1d96cab488b7ea91fc5a772d8f5520b2d6f';
@@ -121,6 +124,36 @@ export const privilegeSql = `select
  has_function_privilege('clinical_program_qualification_api',
    'clinical_program_qualification.set_request_context(uuid,uuid,text,text,text,text,text)','EXECUTE') as context_execute`;
 
+export const crossDatabasePrivilegeSql = `select current_database() as database,
+ has_database_privilege('clinical_program_qualification_login',current_database(),'CONNECT') as login_connect,
+ has_database_privilege('clinical_program_qualification_api',current_database(),'CONNECT') as api_connect,
+ (select count(*)::int from pg_class c join pg_namespace n on n.oid=c.relnamespace
+   where c.relkind in ('r','v','m','p','f') and n.nspname not in ('pg_catalog','information_schema')
+     and n.nspname not like 'pg_%' and has_schema_privilege('clinical_program_qualification_api',n.oid,'USAGE')
+     and has_table_privilege('clinical_program_qualification_api',c.oid,'SELECT')) as api_readable_relations,
+ (select count(*)::int from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+   where p.prosecdef and n.nspname not in ('pg_catalog','information_schema')
+     and n.nspname not like 'pg_%' and has_schema_privilege('clinical_program_qualification_api',n.oid,'USAGE')
+     and has_function_privilege('clinical_program_qualification_api',p.oid,'EXECUTE')) as api_callable_security_definers`;
+
+export function assessCrossDatabaseIsolation(rows) {
+  check(Array.isArray(rows) && rows.length === DATABASE_INVENTORY.length
+    && rows.every((row, index) => row?.database === DATABASE_INVENTORY[index]
+      && typeof row.login_connect === 'boolean' && typeof row.api_connect === 'boolean'
+      && Number.isInteger(row.api_readable_relations) && row.api_readable_relations >= 0
+      && Number.isInteger(row.api_callable_security_definers) && row.api_callable_security_definers >= 0),
+  'database_inventory_changed');
+  const qualification = rows.find(row => row.database === DATABASE);
+  check(qualification.api_readable_relations === 0
+    && qualification.api_callable_security_definers === 2, 'qualification_privilege_drift');
+  const siblings = rows.filter(row => row.database !== DATABASE);
+  return { isolated: siblings.every(row => !row.login_connect && !row.api_connect
+      && row.api_readable_relations === 0 && row.api_callable_security_definers === 0),
+    databases: rows.map(row => ({ database: row.database, loginConnect: row.login_connect,
+      apiConnect: row.api_connect, apiReadableRelations: row.api_readable_relations,
+      apiCallableSecurityDefiners: row.api_callable_security_definers })) };
+}
+
 export function assertSnapshot(row, installed, expectedCustody) {
   check(row?.database === DATABASE && row.migration_count === 112 && row.release_sha256 === RELEASE,
     'database_or_ledger');
@@ -158,7 +191,7 @@ async function canonicalSplitter() {
 
 async function main() {
   const [mode, approvalDigest] = process.argv.slice(2);
-  check(['inspect', 'inspect-installed', 'rehearse', 'apply'].includes(mode), 'command');
+  check(['inspect', 'inspect-installed', 'audit-isolation', 'rehearse', 'apply'].includes(mode), 'command');
   check(mode === 'apply' ? approvalDigest === SQL_SHA256 : approvalDigest === undefined, 'approval_argument');
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
   check(/^[a-f0-9]{40}$/.test(sourceCommit)
@@ -184,13 +217,14 @@ async function main() {
     && variables.CLINICAL_DATABASE_SECRET_ARN === outputs.DatabaseSecretArn, 'lambda_posture');
   const common = { resourceArn: outputs.DatabaseClusterArn, secretArn: outputs.DatabaseSecretArn, database: DATABASE };
   const client = new RDSDataClient({ region: REGION, credentials: fromIni({ profile: PROFILE }), maxAttempts: 1 });
-  const query = async (sql, transactionId) => {
-    const response = await client.send(new ExecuteStatementCommand({ ...common, transactionId, sql, formatRecordsAs: 'JSON' }));
+  const query = async (sql, transactionId, database = DATABASE) => {
+    const response = await client.send(new ExecuteStatementCommand({ ...common, database, transactionId,
+      sql, formatRecordsAs: 'JSON' }));
     return JSON.parse(response.formattedRecords ?? '[]');
   };
   const snapshot = async transactionId => (await query(snapshotSql, transactionId))[0];
   const before = await snapshot();
-  const installedInspection = mode === 'inspect-installed';
+  const installedInspection = mode === 'inspect-installed' || mode === 'audit-isolation';
   assertSnapshot(before, installedInspection);
   if (installedInspection) assertPrivileges((await query(privilegeSql))[0]);
   const custody = before.custody_sha256;
@@ -198,6 +232,22 @@ async function main() {
     region: REGION, database: DATABASE, sourceCommit, sqlSha256: SQL_SHA256,
     statementCount: statements.length, phiAllowed: false, productionActivation: 'blocked', committed: false };
   if (mode === 'inspect' || installedInspection) {
+    if (mode === 'audit-isolation') {
+      const inventory = await query("select datname as database from pg_database where datallowconn and not datistemplate and datname <> 'rdsadmin' order by datname");
+      check(inventory.length === DATABASE_INVENTORY.length
+        && inventory.every((row, index) => row.database === DATABASE_INVENTORY[index]),
+      'database_inventory_changed');
+      const rows = [];
+      for (const database of DATABASE_INVENTORY) {
+        const observation = await query(crossDatabasePrivilegeSql, undefined, database);
+        check(observation.length === 1, 'database_observation');
+        rows.push(observation[0]);
+      }
+      const assessment = assessCrossDatabaseIsolation(rows);
+      console.log(JSON.stringify({ ...result, installed: true, ...assessment }));
+      if (!assessment.isolated) process.exitCode = 2;
+      return;
+    }
     console.log(JSON.stringify({ ...result, installed: installedInspection }));
     return;
   }
