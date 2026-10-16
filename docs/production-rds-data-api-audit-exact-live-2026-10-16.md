@@ -55,3 +55,16 @@ For a local rebuild from the exact live stack, run
 `npm run build:aws-production-data-api-audit-live-candidate -- --profile <profile>`.
 Do not commit or submit its generated template without a fresh parent check
 and full review of the artifact.
+
+## Review-only change-set verifier
+
+After Brandon approved **creation for review only**, change set
+`review-data-api-audit-7b8cf85a-20261016` was created but not executed.
+The read-only verifier `npm run verify:aws-production-data-api-audit-review-change-set -- --profile ai-production`
+checks the exact change-set ARN, live account/stack/Trail posture, original and
+submitted template hashes, all 11 unchanged parameter values, and one in-place
+Trail update with no other resource. It reports `executionAuthorized:false`
+even on a successful review. Its pure negative tests run in
+`test:aws-production-foundation`; a live read is not run in CI. A later change
+to the stack or physical Trail must make it refuse. This is still not approval
+to execute, proof of CloudTrail delivery, or PHI readiness.
