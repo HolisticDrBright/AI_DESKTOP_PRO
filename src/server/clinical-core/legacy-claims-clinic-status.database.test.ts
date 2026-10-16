@@ -33,6 +33,8 @@ async function asApi<T>(actor: string, work: (query: (sql: string, args?: unknow
 }
 const createPatient = (actor: string) => asApi(actor, query => query("select clinical_core.create_patient_profile($1,'Fictional','Patient') as created", [org]));
 const myClinics = (actor: string) => asApi(actor, query => query('select organization_id from clinical_core.list_my_organizations()'));
+/** The read the telehealth visit routes authorize from under legacy claims (through the compatibility RPC). */
+const calendar = (actor: string) => asApi(actor, query => query("select clinical_core.get_desktop_calendar($1, now(), now() + interval '1 day') as calendar", [org]));
 
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
@@ -69,6 +71,8 @@ describe('legacy claims: what the operation itself refuses', () => {
   });
 });
 
+// The BLOCKED successor that closes this gap is legacy-claims-clinic-status.sql; its own test
+// (legacy-claims-clinic-status-successor.database.test.ts) shows these same operations refused once it is applied.
 describe('legacy claims: GAP (decision required) — the clinic\'s own status is not checked', () => {
   it.each(['suspended', 'archived'])('a %s clinic: its clinic list hides it, but an already-selected session still writes into it', async status => {
     await db.query('update clinical_core.organizations set status=$2 where id=$1', [org, status]);
@@ -78,5 +82,10 @@ describe('legacy claims: GAP (decision required) — the clinic\'s own status is
     await expect(createPatient(person)).resolves.toHaveLength(1);
     expect(await db.query('select count(*)::integer as n from clinical_core.patient_records where organization_id=$1', [org]))
       .toMatchObject({ rows: [{ n: 1 }] });
+  });
+  it.each(['suspended', 'archived'])('a %s clinic: the calendar the telehealth visit routes authorize from still answers', async status => {
+    await expect(calendar(person)).resolves.toHaveLength(1);
+    await db.query('update clinical_core.organizations set status=$2 where id=$1', [org, status]);
+    await expect(calendar(person)).resolves.toHaveLength(1);
   });
 });
