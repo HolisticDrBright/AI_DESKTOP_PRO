@@ -34,6 +34,7 @@ const E = {
   legacySuspendedGap: "src/server/clinical-core/legacy-claims-clinic-status.database.test.ts::a %s clinic: its clinic list hides it",
   legacyCalendarGap: 'src/server/clinical-core/legacy-claims-clinic-status.database.test.ts::a %s clinic: the calendar the telehealth visit routes authorize from',
   successorClosed: 'src/server/clinical-core/legacy-claims-clinic-status-successor.database.test.ts::a %s clinic: an already-selected session can neither write nor read in it',
+  custodyPreSuspension: 'src/server/clinical-core/suspended-clinic-custody.database.test.ts::commits, the same already-issued session',
   careSibling: "src/server/clinical-core/care-messaging-restricted-credential.database.test.ts::a sibling clinic's practitioner or patient, a token naming the sibling",
   identityRefusals: 'src/server/clinical-core/workforce-current-identity-consent.database.test.ts::refuses no membership, a pending application, a suspension',
   identityStale: 'src/server/clinical-core/workforce-current-identity-consent.database.test.ts::refuses a stale session',
@@ -100,11 +101,15 @@ const unverified = (reason: string, ...evidence: string[]): Cell => ({ result: '
 const allDisabled = (...evidence: string[]): Row => ({ unapproved_account: disabled(...evidence), suspended_clinic: disabled(...evidence),
   removed_membership: disabled(...evidence), stale_token: disabled(...evidence) });
 const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason) });
-const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims no operation checks clinical_core.organizations.status, so an already-selected '
-  + 'session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses every workforce '
-  + 'clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters (set_request_context), '
-  + 'and deliberately leaves workforce consent management (retention, erasure, recording cleanup, privacy operations) and every consumer '
-  + 'request running. Apply it, or require database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
+const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims the clinical path never checks clinical_core.organizations.status, so an '
+  + 'already-selected session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses '
+  + 'every workforce clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters '
+  + '(set_request_context). It admits workforce consent management and every consumer request at that entry. Of the workforce '
+  + 'consent-management paths, the retention service and assigned privacy operators run in a closed clinic; recording cleanup refuses '
+  + 'itself there (its own operator check); and a practitioner\'s own consent decision is refused only by the separate BLOCKED '
+  + 'workforce-consent-decision-clinic-status.sql. Apply them, or require database_current before any clinic can be suspended; whether an '
+  + 'existing session should outlive a suspension is an open owner decision. docs/desktop-onboarding-authority-2026-10-16.md, '
+  + 'docs/suspended-clinic-custody-2026-10-16.md';
 const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
   + 'session already in a suspended or archived synthetic clinic still issues patient invitations, and one issued before the suspension is '
   + 'still claimed into a verified connection. The production successor does not reach this schema. The separate BLOCKED successor '
@@ -139,7 +144,7 @@ export const ROUTE_FAMILIES = {
     description: 'The clinical workspace through data-compatibility RPCs: patients, charts (emr), inbox, billing, plans, programs, protocols, nutrition, knowledge, lens, copilot, labs, schedule, sync, tasks, reasoning',
     upstream: 'aws-production-clinical-api POST /clinical-core/workforce/data-compatibility (clinicalRpc / clinicalSelect)',
     legacy_claims: { unapproved_account: refused(E.legacyUnapproved, E.zeroAccessLegacy, E.envClinic),
-      suspended_clinic: { result: 'gap', evidence: [E.legacySuspendedGap, E.successorClosed], decision: SUSPENDED_DECISION },
+      suspended_clinic: { result: 'gap', evidence: [E.legacySuspendedGap, E.successorClosed, E.custodyPreSuspension], decision: SUSPENDED_DECISION },
       removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY, evidence: [E.legacyRemoved] } },
     database_current: { unapproved_account: refused(E.setterUnapproved, E.zeroAccessCurrent), suspended_clinic: refused(E.setterDisabledClinic),
       removed_membership: refused(E.setterUnapproved), stale_token: refused(E.setterUnapproved) },
