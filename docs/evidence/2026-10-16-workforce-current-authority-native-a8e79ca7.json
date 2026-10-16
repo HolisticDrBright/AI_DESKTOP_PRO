@@ -1,0 +1,72 @@
+{
+  "contract": "workforce-current-authority-native/1",
+  "sourceCommit": "a8e79ca7d2fa5e5fe3ec7cf86fe631c390418f96",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "admitted-request-fences-suspension",
+      "checks": [
+        {
+          "detail": "session A binds the current membership",
+          "passed": true
+        },
+        {
+          "detail": "session B suspension waits on the lock A holds",
+          "passed": true
+        },
+        {
+          "detail": "session A grant is recorded under the binding it was admitted with",
+          "passed": true
+        },
+        {
+          "detail": "session B suspension commits after A commits",
+          "passed": true
+        },
+        {
+          "detail": "the next request after the suspension is refused",
+          "passed": true
+        },
+        {
+          "detail": "exactly one grant row exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "pending-suspension-refuses-new-binding",
+      "checks": [
+        {
+          "detail": "session A binding waits on the uncommitted suspension",
+          "passed": true
+        },
+        {
+          "detail": "session A re-reads the committed suspension and is refused",
+          "passed": true
+        },
+        {
+          "detail": "no grant row was written",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "control-legacy-claim-context-does-not-fence",
+      "checks": [
+        {
+          "detail": "session A sets the legacy claim context",
+          "passed": true
+        },
+        {
+          "detail": "session B suspension commits at once, without waiting for session A",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidate SQL is loaded into this throwaway cluster only; nothing is registered, applied or deployed."
+  ],
+  "passed": true
+}

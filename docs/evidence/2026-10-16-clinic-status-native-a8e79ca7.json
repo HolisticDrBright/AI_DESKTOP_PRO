@@ -1,0 +1,190 @@
+{
+  "contract": "clinic-status-native/1",
+  "sourceCommit": "a8e79ca7d2fa5e5fe3ec7cf86fe631c390418f96",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "parent-admits-an-operation-after-the-clinic-is-suspended",
+      "checks": [
+        {
+          "detail": "with the suspension uncommitted, the operation neither waits nor is refused",
+          "passed": true
+        },
+        {
+          "detail": "nothing holds it back",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, an already-issued context is still admitted (the gap)",
+          "passed": true
+        },
+        {
+          "detail": "both writes landed in the suspended clinic",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "legacy-admitted-operation-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the legacy context is admitted into the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the clinic row the operation holds",
+          "passed": true
+        },
+        {
+          "detail": "the admitted write completes under the authority it was admitted with",
+          "passed": true
+        },
+        {
+          "detail": "the suspension commits after the operation commits",
+          "passed": true
+        },
+        {
+          "detail": "the next request, with the same already-issued identity, is refused",
+          "passed": true
+        },
+        {
+          "detail": "exactly one write landed",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "legacy-operation-waiting-on-a-pending-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the operation waits on the clinic row the suspension holds",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, the operation is refused",
+          "passed": true
+        },
+        {
+          "detail": "no partial write: no patient row",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "legacy-cross-clinic-requests-are-refused",
+      "checks": [
+        {
+          "detail": "a practitioner of clinic B only cannot write into clinic A (ERROR:  clinical_role_required)",
+          "passed": true
+        },
+        {
+          "detail": "a practitioner of clinic A only cannot write into clinic B (ERROR:  clinical_role_required)",
+          "passed": true
+        },
+        {
+          "detail": "neither clinic gained a row",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "current-admitted-operation-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the current context is admitted into the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the clinic row the operation holds",
+          "passed": true
+        },
+        {
+          "detail": "the admitted write completes under the authority it was admitted with",
+          "passed": true
+        },
+        {
+          "detail": "the suspension commits after the operation commits",
+          "passed": true
+        },
+        {
+          "detail": "the next request, with the same already-issued identity, is refused",
+          "passed": true
+        },
+        {
+          "detail": "exactly one write landed",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "current-operation-waiting-on-a-pending-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the operation waits on the clinic row the suspension holds",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, the operation is refused",
+          "passed": true
+        },
+        {
+          "detail": "no partial write: no patient row",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "current-cross-clinic-requests-are-refused",
+      "checks": [
+        {
+          "detail": "a practitioner of clinic B only cannot write into clinic A (ERROR:  workforce_membership_refused)",
+          "passed": true
+        },
+        {
+          "detail": "a practitioner of clinic A only cannot write into clinic B (ERROR:  workforce_membership_refused)",
+          "passed": true
+        },
+        {
+          "detail": "neither clinic gained a row",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "legacy-already-issued-context-reinstatement-and-open-paths",
+      "checks": [
+        {
+          "detail": "control: an active practitioner of an active clinic writes",
+          "passed": true
+        },
+        {
+          "detail": "the same already-issued identity and clinic, after the suspension, is refused",
+          "passed": true
+        },
+        {
+          "detail": "workforce consent management (retention, erasure, cleanup) still enters the closed clinic",
+          "passed": true
+        },
+        {
+          "detail": "a consumer request still enters the closed clinic",
+          "passed": true
+        },
+        {
+          "detail": "reinstating the clinic restores access: the suspension destroyed nothing",
+          "passed": true
+        },
+        {
+          "detail": "exactly the control and the reinstated writes landed",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidates are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "The two sessions call the SQL the services call; the services, tokens and Data API are not exercised here."
+  ],
+  "passed": true
+}

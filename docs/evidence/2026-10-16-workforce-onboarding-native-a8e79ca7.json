@@ -1,0 +1,199 @@
+{
+  "contract": "workforce-onboarding-native/1",
+  "sourceCommit": "a8e79ca7d2fa5e5fe3ec7cf86fe631c390418f96",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "files": [
+    {
+      "file": "infra/aws-clinical-core/source-candidates/workforce-token-binding-lookup.sql",
+      "sha256": "4098e1757b38fd1a0893185e765f1a9d5b74baf90da11f495ec957ff8e9fe165"
+    },
+    {
+      "file": "infra/aws-clinical-core/source-candidates/workforce-clinic-approved-onboarding.sql",
+      "sha256": "6ed75111bb58c11ad3741b2d96d200d4af7f018735224354454b23ddaacf3628"
+    },
+    {
+      "file": "infra/aws-clinical-core/production-candidates/workforce-invitation-role-repair.sql",
+      "sha256": "e21e78205a5dbb06b20ab5f800132357c00c92ec80c25ce38722b998caaadf03"
+    },
+    {
+      "file": "infra/aws-clinical-core/source-candidates/workforce-join-review-uniform-refusal.sql",
+      "sha256": "7086b1a90db8cac47120a9d2be54f91f966b24e264351d3a247be838c872ee29"
+    },
+    {
+      "file": "infra/aws-clinical-core/source-candidates/workforce-current-membership-context.sql",
+      "sha256": "ff89c1a2d5b934a3a49437099d14b34e5dffed400ae332f26eea2c311a891342"
+    },
+    {
+      "file": "infra/aws-clinical-core/source-candidates/workforce-onboarding-approval-authority.sql",
+      "sha256": "534d6c8baa9781a76f34421b39ddac8de0612bca5b4e729d4af70be644ab8ffb"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "approve-approve",
+      "checks": [
+        {
+          "detail": "session A decides first",
+          "passed": true
+        },
+        {
+          "detail": "session B waits for session A's decision",
+          "passed": true
+        },
+        {
+          "detail": "session B answers the stored decision as a duplicate",
+          "passed": true
+        },
+        {
+          "detail": "exactly one decision event exists",
+          "passed": true
+        },
+        {
+          "detail": "the first committed decision stands",
+          "passed": true
+        },
+        {
+          "detail": "exactly one membership exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "approve-then-reject",
+      "checks": [
+        {
+          "detail": "session A decides first",
+          "passed": true
+        },
+        {
+          "detail": "session B waits for session A's decision",
+          "passed": true
+        },
+        {
+          "detail": "session B is refused as a conflict",
+          "passed": true
+        },
+        {
+          "detail": "exactly one decision event exists",
+          "passed": true
+        },
+        {
+          "detail": "the first committed decision stands",
+          "passed": true
+        },
+        {
+          "detail": "exactly one membership exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "reject-then-approve",
+      "checks": [
+        {
+          "detail": "session A decides first",
+          "passed": true
+        },
+        {
+          "detail": "session B waits for session A's decision",
+          "passed": true
+        },
+        {
+          "detail": "session B is refused as a conflict",
+          "passed": true
+        },
+        {
+          "detail": "exactly one decision event exists",
+          "passed": true
+        },
+        {
+          "detail": "the first committed decision stands",
+          "passed": true
+        },
+        {
+          "detail": "no membership exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "demotion-waits-for-decision",
+      "checks": [
+        {
+          "detail": "session A approves",
+          "passed": true
+        },
+        {
+          "detail": "session B demotion waits on the reviewer membership session A locked",
+          "passed": true
+        },
+        {
+          "detail": "session B demotion commits after the decision",
+          "passed": true
+        },
+        {
+          "detail": "the decision stands and the demotion is applied after it",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "pending-demotion-refuses-decision",
+      "checks": [
+        {
+          "detail": "session A waits on the uncommitted demotion",
+          "passed": true
+        },
+        {
+          "detail": "session A re-reads the demoted row and is refused as not found",
+          "passed": true
+        },
+        {
+          "detail": "nothing was decided",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "revocation-waits-then-fences",
+      "checks": [
+        {
+          "detail": "the revocation waits for the practitioner's admitted request",
+          "passed": true
+        },
+        {
+          "detail": "the revocation then commits",
+          "passed": true
+        },
+        {
+          "detail": "the practitioner's next request is refused, whatever token it carries",
+          "passed": true
+        },
+        {
+          "detail": "one reasoned revocation is recorded",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "control-parent-review-does-not-fence",
+      "checks": [
+        {
+          "detail": "session A approves through the parent",
+          "passed": true
+        },
+        {
+          "detail": "session B demotion commits at once, while the parent's decision is still open",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidates are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "Whether RDS Data API transactions hold these row locks across statements is not shown here."
+  ],
+  "passed": true
+}

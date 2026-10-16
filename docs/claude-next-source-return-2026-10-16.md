@@ -29,7 +29,9 @@ PHI-ready.**
 | 3 | `d7661441` | Fullscript routes re-read the account's clinics, bind the token's email, and complete OAuth only in the starter's session |
 | 4 | `b18ed9f9` | Lens add-to-note no longer waits on the evaluation re-read. An insertion belongs to its note, once. Start after a Start-created note opens a new note |
 | 3 | `e946aa0a` | The remaining cells settled path by path. Lab documents refuse under clinic-membership sign-in |
-| 5 | this document's commit | Docs, native evidence files, the inventory decision-text correction |
+| 5 | `14cc2e46` | Docs, native evidence files, the inventory decision-text correction |
+| 5 | `a8e79ca7` | The native qualification harnesses wait for psql's errors as well as its stdout marker (§3, last row) |
+| 5 | this document's final commit | Gate results, the superseding native evidence at `a8e79ca7`, the browser battery |
 
 ## 3. Failing-before and passing-after
 
@@ -46,6 +48,7 @@ PHI-ready.**
 | Start after a Start-created note did nothing | the same spec | `toBeEditable` timed out (the signed composer stayed) | 9/9 |
 | Under `database_current`, lab upload and the original-document read sent the token to the transitional host | `src/server/legacy-backend-routes.test.ts` | 1 failed / 5 passed (200; token sent) | 6/6 |
 | Route inventory | `route-authority-inventory.test.ts` | 15 unverified | 157/157; 5 unverified |
+| A native harness could resolve a command before reading its error (two pipes) | `scripts/native-psql-session.test.mjs` | 0 passed / 2 failed (a refusal returned with an empty error) | 2/2; all five harnesses share the one sender |
 
 **The live-lens failure.** On CI run 38862137704's first attempt, the server's event-loop delay peaked at 2.2–2.5 s
 and its heap reached 3.45 GB. CPU load alone (0, 8 and 16 busy loops) did not reproduce the stall; latency stayed
@@ -53,6 +56,43 @@ at or below 562 ms. The rerun passing was never treated as a cause. The mechanis
 waited on a read that only refreshes the question. One variant run failed its first test with the patient layout's
 "Page not found"; the identical rerun did not. That was observed once and is recorded undiagnosed, not called a flake
 (`docs/evidence/2026-10-16-live-lens-add-to-note.json`).
+
+**The harness race.** The five native two-session scripts treated a psql command as finished when its `\echo` marker
+appeared on stdout. psql writes errors to stderr, a separate pipe, so under load the marker could be read first. The
+clinic-status run at `14cc2e46`, during a concurrent clinical build, recorded one check as failed: "a practitioner of
+clinic B only cannot write into clinic A ()", with an empty error. The script and SQL were unchanged since the clean
+pass at `fce7d5af`, and the SQL refuses that write deterministically.
+
+The same race could let a "no error" check pass on nothing. The earlier records (`fce7d5af`, `54a99ad3`, and the base's
+`80c807c9`) came from the racy harness. The sender now waits for a `\warn` marker on stderr as well.
+
+All five harnesses were rerun on the clean tree at `a8e79ca7`; these records supersede the earlier ones:
+
+| Harness | Scenarios | Checks | Failed |
+| --- | --- | --- | --- |
+| clinic status | 8 | 34 | 0 |
+| restricted care messaging | 5 | 17 | 0 |
+| workforce bootstrap | 8 | 35 | 0 |
+| current authority | 3 | 11 | 0 |
+| onboarding | 7 | 31 | 0 |
+
+Three CPU-loaded runs of the old harness did not reproduce the race; it is rare, and the module test reproduces it
+deterministically. The records are `docs/evidence/2026-10-16-*-native-a8e79ca7.json`.
+
+## 3a. Full suites and gates (local, at `e946aa0a`; harness and docs commits after it change no application code)
+
+| Gate | Result |
+| --- | --- |
+| `tsc --noEmit` | pass |
+| `npm run lint` | pass; 1 warning, pre-existing at the base (`scripts/build-qualification-program-api.mjs`, unused `fileURLToPath`) |
+| `npm run test:unit` | 650 files, **10038 passed, 11 skipped, 0 failed**. The skips: 9 patient-sync bridge round trips (they need a V2 checkout at `ALP_DIR`) and 2 governed-catalog seed checks (they need a real catalog source directory) |
+| `test:aws-care-messaging-restricted-credential` | 6/6 |
+| clean `build:clinical` (`.next` removed first) | pass |
+| `check:clinical-bundle` | PASS: 351 client chunks, no synthetic identity, no demo-only copy, none of the 21 server-only markers |
+| restricted and restricted-current builds + `cfn-lint` 1.57.2 | pass; `deploymentPerformed: false`, PHI off, blocked, qualification disabled |
+| `test:native-psql-session` | 2/2 (at `a8e79ca7`) |
+| native two-session harnesses | five of five, at `a8e79ca7` (above) |
+| browser order battery, forward and reverse | in the chat hand-back |
 
 ## 4. The 26 route-authority cells
 
@@ -121,12 +161,13 @@ for when Codex binds a matched pair.
 
 | Item | Implemented | Local | CI | Hosted | Device | Human/owner |
 | --- | --- | --- | --- | --- | --- | --- |
-| WP1 clinic-status successor | yes, BLOCKED | yes, PGlite + native two-session | hand-back | **no** | n/a | **decision pending** |
+| WP1 clinic-status successor | yes, BLOCKED | yes, PGlite + native two-session | inside `54a99ad3`'s success (`faee52be` and `fce7d5af` were pushed with it and had no run of their own) | **no** | n/a | **decision pending** |
 | WP2 restricted current context | yes, BLOCKED | yes, PGlite + native | `54a99ad3` success | **no** | n/a | **no** |
 | WP2 factory construction order | yes | yes | `54a99ad3` success | **no** | n/a | n/a |
 | WP3 Fullscript authority | yes | yes | `d7661441` success | **no** | n/a | **no** |
-| WP3 lab-document refusal | yes | yes | hand-back | **no** | n/a | n/a |
-| WP3 remaining cells | evidence only | yes | hand-back | **no** | n/a | n/a |
+| WP3 lab-document refusal | yes | yes | `e946aa0a` success | **no** | n/a | n/a |
+| WP3 remaining cells | evidence only | yes | `e946aa0a` success | **no** | n/a | n/a |
+| WP5 native harness race | yes | yes, five harnesses at `a8e79ca7` | hand-back | n/a | n/a | n/a |
 | WP4 lens add-to-note | yes | yes, spec 9/9 | `b18ed9f9` success, attempt 1 | **no** | n/a | n/a |
 | Launch acceptance (V2) | — | withholds 8/9 | — | **unobserved** | **unobserved** | **unobserved** |
 
@@ -137,7 +178,8 @@ for when Codex binds a matched pair.
 - Fullscript clinic authority;
 - the lab-document token leak under `database_current`;
 - the factory construction order;
-- the three lens add-to-note defects.
+- the three lens add-to-note defects;
+- the native harness error race.
 
 **Open and needing a decision:**
 
@@ -177,7 +219,8 @@ for when Codex binds a matched pair.
    `docs/care-messaging-restricted-credential-2026-10-16.md` §4).
 4. **Apply the current-context successor** as the setter's owner, then deploy the restricted-current template, still
    blocked. Run hosted refusals: unrelated functions denied; the setter not directly callable; a removed member and a
-   suspended clinic refused; an in-flight removal waiting on an admitted reply.
+   suspended clinic refused; an in-flight removal waiting on an admitted reply. Rehearse with the fixed native
+   harness (`a8e79ca7` or later); records from before that commit could carry a vacuous "no error" check.
 5. **The transitional host.** Either retire lab upload and the original-document read from `TRPC_BASE_URL`, or run its
    own refusal suite for an unapproved account, a suspended clinic, a removed member and an already-issued token.
 6. **Fictional hosted onboarding:**
