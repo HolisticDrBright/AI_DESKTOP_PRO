@@ -29,6 +29,10 @@ const ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-new-clinic
 const DISCOVERY = 'infra/aws-clinical-core/source-candidates/workforce-membership-discovery.sql';
 const LISTING = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-listing.sql';
 const LISTING_ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-listing-rollback.sql';
+const EVENT_ORDER = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-event-order.sql';
+const EVENT_ORDER_ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-bootstrap-operator-event-order-rollback.sql';
+const EVENT_ORDER_SHA256 = 'a03d96ed3dd676ec105807c9da92ebde55b5f801f39ad94fe4bba993a5cd2559';
+const EVENT_ORDER_ROLLBACK_SHA256 = 'c7b4ba0735d8b743a5614bdaa8b98a29c3331e2c800dd1892659802c8a654dfb';
 const LIST_SIGNATURE = 'clinical_private.list_bootstrapped_workforce_clinics(text)';
 const digest = (email: string) => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
 const sha = (file: string) => createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
@@ -313,7 +317,7 @@ describe('the new-clinic bootstrap candidate', () => {
     });
 
     describe('the operator listing candidate and the console API over it (coverage of the blocked operator path)', () => {
-      beforeAll(async () => { await exec(LISTING); }, 60_000);
+      beforeAll(async () => { await exec(LISTING); await exec(EVENT_ORDER); }, 60_000);
       const listed = (operatorSubject: string) => asRole('clinical_workforce_operator', async tx =>
         (await tx.query<{ r: unknown }>('select clinical_private.list_bootstrapped_workforce_clinics($1) as r', [operatorSubject])).rows[0]!.r as Array<Record<string, unknown>>);
       /** The operator connection, as the console's services see it: role-scoped, with the candidate's refusal names classified
@@ -346,6 +350,8 @@ describe('the new-clinic bootstrap candidate', () => {
         expect(readFileSync(LISTING, 'utf8')).toContain(WORKFORCE_CLINIC_BOOTSTRAP_CANDIDATE_SHA256);
         expect(sha(LISTING)).toBe(BOOTSTRAP_OPERATOR_LISTING_CANDIDATE_SHA256);
         expect(sha(LISTING_ROLLBACK)).toBe(BOOTSTRAP_OPERATOR_LISTING_ROLLBACK_SHA256);
+        expect(sha(EVENT_ORDER)).toBe(EVENT_ORDER_SHA256);
+        expect(sha(EVENT_ORDER_ROLLBACK)).toBe(EVENT_ORDER_ROLLBACK_SHA256);
       });
 
       it('only the operator role may call it, and only an active registered operator gets an answer', async () => {
@@ -377,6 +383,27 @@ describe('the new-clinic bootstrap candidate', () => {
         expect((theirs.events as Array<Record<string, unknown>>)[1]).toMatchObject({ operator: events[1]!.operator, byCaller: false });
         const text = JSON.stringify(await listed(second));
         for (const secret of [founder.subject, digest(founder.email), founder.email, operator, result.membershipId as string]) expect(text).not.toContain(secret);
+      });
+
+      it('keeps bootstrap before suspension when the recorded timestamps tie and UUIDs sort the other way', async () => {
+        const founder = applicant('same-time');
+        const request = randomUUID();
+        const result = await bootstrap(founder, 'FICTIONAL SAME TIME CLINIC', request);
+        await suspend(operator, result.organizationId, 'operator_request');
+        // Force a clock-resolution collision in this disposable database only; restore the append-only trigger.
+        await db.exec('alter table clinical_private.workforce_clinic_bootstrap_events disable trigger workforce_clinic_bootstrap_events_append_only');
+        try {
+          await db.query(`update clinical_private.workforce_clinic_bootstrap_events
+            set occurred_at='2026-10-16T00:00:00Z',
+              id=case action when 'bootstrapped' then 'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid
+                else '00000000-0000-4000-8000-000000000001'::uuid end
+            where request_id=$1`, [request]);
+        } finally {
+          await db.exec('alter table clinical_private.workforce_clinic_bootstrap_events enable trigger workforce_clinic_bootstrap_events_append_only');
+        }
+        const clinic = (await listed(operator)).find(row => row.organizationId === result.organizationId)!;
+        expect((clinic.events as Array<{ action: string }>).map(event => event.action))
+          .toEqual(['bootstrapped', 'suspended']);
       });
 
       it('the console lists, suspends and reviews only through the verified operator, and records each decision', async () => {
@@ -419,6 +446,11 @@ describe('the new-clinic bootstrap candidate', () => {
 
       it('its rollback removes only the read; every clinic, suspension and event stays', async () => {
         const before = [await count('select count(*) as n from clinical_private.workforce_clinic_bootstraps'), await count('select count(*) as n from clinical_private.workforce_clinic_bootstrap_events')];
+        await exec(EVENT_ORDER_ROLLBACK);
+        const restored = await db.query<{ digest: string }>(`select encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') as digest
+          from pg_proc p where p.oid=to_regprocedure($1)`, [LIST_SIGNATURE]);
+        expect(restored.rows[0]!.digest).toBe('e076188526e9d321920783dd2997df3cb7a0599db239d3b18e1a1545f5f15e58');
+        expect(await canExecute('clinical_workforce_operator', LIST_SIGNATURE)).toBe(true);
         await exec(LISTING_ROLLBACK);
         expect(await canExecute('clinical_workforce_operator', LIST_SIGNATURE)).toBeNull();
         expect([await count('select count(*) as n from clinical_private.workforce_clinic_bootstraps'), await count('select count(*) as n from clinical_private.workforce_clinic_bootstrap_events')]).toEqual(before);
