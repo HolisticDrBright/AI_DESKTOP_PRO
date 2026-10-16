@@ -7,14 +7,14 @@ import { fromIni } from '@aws-sdk/credential-provider-ini';
 import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
 import { assertPrivileges, assertSnapshot, privilegeSql, snapshotSql } from './qualification-program-credential-operator.mjs';
 
-const ACCOUNT = '588966314750';
-const REGION = 'us-east-2';
-const PROFILE = 'ai-synthetic-member';
-const DATABASE = 'clinical_core_qualification';
-const FOUNDATION = 'ai-clinical-core-qualification-foundation';
-const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
-const RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
-const DATABASES = Object.freeze([
+export const ACCOUNT = '588966314750';
+export const REGION = 'us-east-2';
+export const PROFILE = 'ai-synthetic-member';
+export const DATABASE = 'clinical_core_qualification';
+export const FOUNDATION = 'ai-clinical-core-qualification-foundation';
+export const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
+export const RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
+export const DATABASES = Object.freeze([
   'alp_chat_rls_synthetic_v1', 'clinical_core', DATABASE, 'postgres',
 ]);
 const LOGINS = Object.freeze(['clinical_admin', 'rdsadmin', 'rdswriteforwarduser']);
@@ -86,16 +86,16 @@ export function assessConnectPreflight({ caller, foundation, functionState,
   };
 }
 
-const databaseSql = `select datname as database, pg_get_userbyid(datdba) as owner,
+export const databaseSql = `select datname as database, pg_get_userbyid(datdba) as owner,
  datacl is null as default_acl,
  exists(select 1 from aclexplode(coalesce(datacl,acldefault('d',datdba))) acl
    where acl.grantee=0 and acl.privilege_type='CONNECT') as public_connect,
  has_database_privilege('clinical_program_qualification_login',datname,'CONNECT') as program_login_connect,
  has_database_privilege('clinical_program_qualification_api',datname,'CONNECT') as program_api_connect
  from pg_database where datallowconn and not datistemplate and datname <> 'rdsadmin' order by datname`;
-const loginSql = `select rolname as role, rolcanlogin as can_login, rolsuper as superuser
+export const loginSql = `select rolname as role, rolcanlogin as can_login, rolsuper as superuser
  from pg_roles where rolcanlogin order by rolname`;
-const sessionSql = `select datname as database, usename as role,
+export const sessionSql = `select datname as database, usename as role,
  coalesce(nullif(application_name,''),'<none>') as application, count(*)::int as sessions
  from pg_stat_activity where datname is not null
  group by datname,usename,application_name order by datname,usename,application_name`;

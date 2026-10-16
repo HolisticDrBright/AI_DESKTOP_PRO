@@ -311,6 +311,7 @@ jobs:
           npm run test:aws-qualification-connect-isolation
           npm run test:aws-qualification-connect-preflight
           npm run test:aws-qualification-connect-rehearsal
+          npm run test:aws-qualification-connect-operator
           npm run test:qualification-program-api-preflight
       - name: Build blocked qualification program Lambda from exact clean source (no deployment)
         run: npm run build:aws-qualification-program-lambda
