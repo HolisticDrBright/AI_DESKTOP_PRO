@@ -323,6 +323,16 @@ The applicant API sidesteps this by answering from the applicant's own rows. I d
    production pool decision and its immutable-attribute consequences (see the blocker doc).
 6. **The shared abuse counter service and the edge bot protection**, both of which need review.
 
+> **Update, 16 October 2026.** Brandon answered parts of decisions 1 and 2:
+> - A practitioner who creates a **new** clinic gets that clinic's records immediately after sign-up, and never another
+>   clinic's.
+> - Existing-clinic applicants still require clinic approval.
+> - Platform operators use a separate MFA-protected login.
+>
+> The design is a distinct door, source only and disabled. It is in
+> [new-clinic-bootstrap-2026-10-16.md](new-clinic-bootstrap-2026-10-16.md). This document's held proposal path is
+> unchanged, and immediate access is not live.
+
 ## 10. Status by level
 
 | Item | Implemented | Locally verified | CI verified | Hosted | Device | PHI-approved |
