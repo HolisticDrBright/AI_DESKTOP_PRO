@@ -13,10 +13,13 @@ vi.mock('next/headers', () => ({
 }));
 const release = vi.hoisted(() => ({ value: 'qualification' as 'blocked' | 'qualification' }));
 vi.mock('@/server/platform-operator-release', () => ({ get DESKTOP_PLATFORM_OPERATOR_CONSOLE_RELEASE() { return release.value; } }));
+vi.mock('@/server/clinic-bootstrap-release', () => ({ DESKTOP_CLINIC_BOOTSTRAP_RELEASE: 'qualification' }));
+vi.mock('@/adapters/mode', () => ({ USE_LIVE_API: true }));
 
 import { GET as listProposals, POST as decideProposal } from '@/app/api/operator/clinic-proposals/route';
 import { GET as listClinics, POST as suspendClinic } from '@/app/api/operator/bootstrapped-clinics/route';
 import { DELETE as signOut, GET as sessionState, POST as signIn } from '@/app/api/operator/session/route';
+import { GET as readNewClinic } from '@/app/api/onboarding/clinic-bootstrap/route';
 
 const OPERATOR_API = 'https://opsconsol1.execute-api.us-east-2.amazonaws.com';
 const APPLICANT_API = 'https://abcdefghij.execute-api.us-east-2.amazonaws.com';
@@ -148,6 +151,27 @@ describe('the operator console routes', () => {
     expect(await (await suspendClinic(post('/api/operator/bootstrapped-clinics', { organizationId: clinic, reason: 'security_concern' }))).json()).toEqual({ error: 'operator_self_approval_refused' });
     upstream = { status: 500, body: { error: 'database exploded at row 7' } };
     expect(await (await listClinics(get('/api/operator/bootstrapped-clinics'))).json()).toEqual({ error: 'platform_operator_unavailable' });
+  });
+});
+
+describe('one browser, an applicant and an operator', () => {
+  it('each door sends only its own token: the applicant route never the operator\'s, the operator route never the practitioner\'s', async () => {
+    const applicant = [{ alg: 'RS256' }, { sub: randomUUID(), token_use: 'id' }].map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.') + '.fictional';
+    browser.cookies = [{ name: 'aidp_at', value: applicant }, { name: 'aidp_exp', value: String(Date.now() + 3_600_000) }, { name: 'aidp_op', value: OPERATOR }];
+    upstream = { status: 200, body: { data: null } };
+    expect((await readNewClinic(get('/api/onboarding/clinic-bootstrap'))).status).toBe(200);
+    upstream = { status: 200, body: { data: LISTED } };
+    expect((await listClinics(get('/api/operator/bootstrapped-clinics'))).status).toBe(200);
+    const [[applicantUrl, applicantInit], [operatorUrl, operatorInit]] = sent();
+    expect(applicantUrl).toBe(`${APPLICANT_API}/clinical-core/workforce/clinic-bootstrap`);
+    expect((applicantInit.headers as Record<string, string>).authorization).toBe(`Bearer ${applicant}`);
+    expect(JSON.stringify(applicantInit)).not.toContain(OPERATOR);
+    expect(operatorUrl).toBe(`${OPERATOR_API}/clinical-core/platform-operator/bootstrapped-clinics`);
+    expect((operatorInit.headers as Record<string, string>).authorization).toBe(`Bearer ${OPERATOR}`);
+    expect(JSON.stringify(operatorInit)).not.toContain(applicant);
+    // Signing the operator out leaves the practitioner session alone, and the practitioner's sign-out never needs the operator's.
+    const out = await signOut(post('/api/operator/session', null, {}, 'DELETE'));
+    expect(setCookies(out).some(line => line.startsWith('aidp_at='))).toBe(false);
   });
 });
 
