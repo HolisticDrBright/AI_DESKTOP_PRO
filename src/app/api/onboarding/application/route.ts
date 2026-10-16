@@ -1,10 +1,11 @@
 import {NextResponse} from 'next/server';
 import {getRequestSession} from '@/server/session';
 import {readBoundedRequestBody} from '@/server/bounded-request-body';
+import {applicantClientKey,forwardToApplicantApi} from '@/server/workforce-applicant-upstream';
 import {sameBrowserOrigin} from '@/server/same-browser-origin';
 import {clinicalAuthorityMode} from '@/adapters/selected-clinic.server';
 import {clinicChoices} from '@/server/clinic-choices';
-import {abuseKey,sharedAbuseBoundary} from '@/server/public-abuse-boundary';
+import {sharedAbuseBoundary} from '@/server/public-abuse-boundary';
 import {APPLICATION_REFUSALS,applicationSubmission,applicationWithdrawal,normalizeApplicationRows} from '@/contracts/workforceApplication';
 
 /**
@@ -20,33 +21,15 @@ import {APPLICATION_REFUSALS,applicationSubmission,applicationWithdrawal,normali
  */
 const ROUTE='/clinical-core/workforce/applications';
 const json=(status:number,value:unknown)=>NextResponse.json(value,{status,headers:{'Cache-Control':'no-store'}});
-const PASSED=new Set([400,401,403,404,409,429]);
 
-function upstreamOrigin():string|null{
- try{
-  const origin=new URL(process.env.WORKFORCE_APPLICATIONS_API_ORIGIN??'');
-  if(origin.protocol!=='https:'||origin.pathname!=='/'||origin.search||origin.hash||origin.username||origin.password||origin.port
-   ||!/^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/.test(origin.hostname))return null;
-  return origin.origin;
- }catch{return null;}
-}
-function clientKey(request:Request):string{
- const forwarded=request.headers.get('x-forwarded-for')?.split(',')[0]?.trim().slice(0,128)||'local';
- return abuseKey('client',forwarded);
-}
-
+// The applicant API is reached only through src/server/workforce-applicant-upstream.ts (execute-api origin, bounded JSON).
 async function forward(request:Request,token:string,method:'GET'|'POST',path:string,body?:unknown){
- const origin=upstreamOrigin();if(!origin)return {status:503,payload:{error:'application_service_not_configured'}};
- const response=await fetch(origin+path,{method,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15000),
-  headers:{authorization:'Bearer '+token,...(body===undefined?{}:{'content-type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});
- const bytes=await readBoundedRequestBody({body:response.body,headers:response.headers,signal:request.signal},65536,15000);
- if(!response.headers.get('content-type')?.includes('application/json'))throw new Error('invalid');
- const payload=JSON.parse(new TextDecoder().decode(bytes)) as Record<string,unknown>;
- if(response.ok)return {status:response.status,payload};
- const code=typeof payload.error==='string'&&(APPLICATION_REFUSALS as readonly string[]).includes(payload.error)?payload.error:'workforce_application_unavailable';
- const pendingId=code==='workforce_application_already_pending'&&typeof payload.requestId==='string'&&/^[0-9a-f-]{36}$/i.test(payload.requestId)?{requestId:payload.requestId.toLowerCase()}:{};
- return {status:PASSED.has(response.status)?response.status:503,payload:{error:code,...pendingId}};
+ const answer=await forwardToApplicantApi(request,token,{method,path,body,refusals:APPLICATION_REFUSALS});
+ if(answer.ok)return {status:answer.status,payload:answer.payload};
+ const pendingId=answer.error==='workforce_application_already_pending'&&typeof answer.payload.requestId==='string'&&/^[0-9a-f-]{36}$/i.test(answer.payload.requestId)?{requestId:answer.payload.requestId.toLowerCase()}:{};
+ return {status:answer.status,payload:{error:answer.error,...pendingId}};
 }
+const clientKey=applicantClientKey;
 
 export async function GET(request:Request){
  const session=await getRequestSession();if(!session.token)return json(401,{error:'reauth_required'});

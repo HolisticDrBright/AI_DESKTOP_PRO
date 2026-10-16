@@ -58,7 +58,7 @@ export function servedCurrentMembershipFamilies(): ReadonlySet<GatedClinicFamily
 export const INDEPENDENT_FAMILIES = {
   campaign_api: "the campaign engine's own API (CAMPAIGN_API_ORIGIN)",
   /** A practitioner applying to a clinic has no clinic: the applicant API decides by the signed-in subject alone. */
-  workforce_applications: "/clinical-core/workforce/applications (BLOCKED applicant API; WORKFORCE_APPLICATIONS_API_ORIGIN)",
+  workforce_applications: "/clinical-core/workforce/applications and /clinical-core/workforce/clinic-bootstrap (BLOCKED applicant API; WORKFORCE_APPLICATIONS_API_ORIGIN)",
 } as const;
 
 /** The machine word for the refusal, the same one the identity API answers for an unconverted workforce route. */
