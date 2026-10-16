@@ -21,21 +21,25 @@ export const TRPC_BASE_URL =
  * ⚠️ LOCAL/E2E FALLBACK ONLY. The active organization now comes from the
  * practitioner's session (validated `aidp_org` cookie, set at sign-in or via
  * the Settings switcher). This env value exists solely for headless local
- * runs and the contract-fixture e2e suite — do NOT set it in a real
- * deployment.
+ * runs and the contract-fixture e2e suite, and it is admitted only inside
+ * that boundary (`isContractFixtureAllowed`, the same one the env demo
+ * credentials use): a deployed process that has it set still refuses a
+ * session with no selected clinic rather than choosing one for it.
  */
 const ENV_FALLBACK_ORG_ID =
   process.env.CLINICAL_ORG_ID ?? process.env.NEXT_PUBLIC_DEV_ORG_ID ?? "";
 
 import { AdapterError } from "./errors";
+import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 
 /**
  * Resolve the organization an org-scoped live call runs against: the
- * session's validated org first, the env fallback second (local/e2e only),
- * otherwise a clean, actionable error — never a silent empty scope.
+ * session's validated org first, the env fallback second (contract fixture
+ * only), otherwise a clean, actionable error — never a silent empty scope and
+ * never a clinic the session did not choose.
  */
 export function resolveOrgId(orgId?: string | null): string {
-  const resolved = orgId || ENV_FALLBACK_ORG_ID;
+  const resolved = orgId || (ENV_FALLBACK_ORG_ID && isContractFixtureAllowed() ? ENV_FALLBACK_ORG_ID : "");
   if (!resolved) {
     throw new AdapterError(
       "invalid",

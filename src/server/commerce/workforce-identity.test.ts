@@ -27,8 +27,11 @@ describe('resolveWorkforceIdentity', () => {
   });
   it('is null without a clinic when no env fallback clinic is configured, rather than a guessed clinic', async () => {
     const identity = await resolveWorkforceIdentity(session({ orgId: null }));
-    // The env fallback clinic is read at module load; in a run that sets CLINICAL_ORG_ID it is that clinic, never an invented one.
-    if (process.env.CLINICAL_ORG_ID || process.env.NEXT_PUBLIC_DEV_ORG_ID) expect(identity?.organizationId).toBe(process.env.CLINICAL_ORG_ID || process.env.NEXT_PUBLIC_DEV_ORG_ID);
+    // The env fallback clinic is admitted only inside the contract-fixture boundary (adapters/config.org-fallback.test.ts);
+    // there it is that clinic, never an invented one, and outside it a missing selection is no clinic at all.
+    const { isContractFixtureAllowed } = await import('@/server/runtime/contractFixture');
+    const configured = process.env.CLINICAL_ORG_ID || process.env.NEXT_PUBLIC_DEV_ORG_ID;
+    if (configured && isContractFixtureAllowed()) expect(identity?.organizationId).toBe(configured);
     else expect(identity).toBeNull();
   });
   it('names the clinic, not the person, when the session has no email', async () => {

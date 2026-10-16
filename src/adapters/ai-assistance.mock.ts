@@ -1,4 +1,4 @@
-import { USE_LIVE_API } from "./config";
+import { USE_LIVE_API } from "./mode";
 import { getCarePlan } from "./careplan.mock";
 import type { InboxThread } from "./inbox.mock";
 import { listThreads } from "./inbox.mock";

@@ -1,0 +1,68 @@
+import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { ROUTE_FAMILIES, ROUTE_FAMILY_EXACT, ROUTE_FAMILY_PREFIXES, routeFamily, type AuthorityCase, type AuthorityMode, type Cell } from './route-authority-inventory';
+
+/** The inventory is a claim about source; this holds it to the source. */
+const API = join(process.cwd(), 'src/app/api');
+function routes(dir = API): string[] {
+  return readdirSync(dir).flatMap(name => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return routes(path);
+    return name === 'route.ts' ? [relative(API, dir).split('\\').join('/')] : [];
+  });
+}
+const ALL = routes().sort();
+const MODES: AuthorityMode[] = ['legacy_claims', 'database_current'];
+const CASES: AuthorityCase[] = ['unapproved_account', 'suspended_clinic', 'removed_membership', 'stale_token'];
+const cells = Object.entries(ROUTE_FAMILIES).flatMap(([family, row]) =>
+  MODES.flatMap(mode => CASES.map(kase => ({ family, mode, kase, cell: (row[mode] as Record<AuthorityCase, Cell>)[kase] }))));
+
+describe('every Desktop API route has exactly one authority family', () => {
+  it('walks all route files', () => {
+    expect(ALL.length).toBeGreaterThan(250);
+    const unmapped = ALL.filter(route => routeFamily(route) === null);
+    expect(unmapped).toEqual([]);
+  });
+  it('lists no route that does not exist, and no prefix that matches nothing', () => {
+    expect(Object.keys(ROUTE_FAMILY_EXACT).filter(route => !ALL.includes(route))).toEqual([]);
+    expect(Object.keys(ROUTE_FAMILY_PREFIXES).filter(prefix => !ALL.some(route => route.startsWith(prefix)))).toEqual([]);
+  });
+  it('every family is the family of some route', () => {
+    const used = new Set(ALL.map(route => routeFamily(route)));
+    expect(Object.keys(ROUTE_FAMILIES).filter(family => !used.has(family as never))).toEqual([]);
+  });
+  it('the route families the onboarding review names land where their authority actually lives', () => {
+    expect(routeFamily('live/emr/note')).toBe('compatibility_rpc'); // charts
+    expect(routeFamily('live/billing/invoice')).toBe('compatibility_rpc');
+    expect(routeFamily('live/care-messages')).toBe('care_messages');
+    expect(routeFamily('live/program-assignments')).toBe('program_assignments');
+    expect(routeFamily('live/privacy-operations')).toBe('unconverted_claims_families'); // export and corrections
+    expect(routeFamily('live/telehealth/start')).toBe('telehealth_visits'); // provider visits
+    expect(routeFamily('live/clinical-core/posture')).toBe('synthetic_identity_boundary'); // identity and consent
+    expect(routeFamily('auth/org')).toBe('sign_in_and_clinic_choice'); // the compatibility fallback's clinic choice
+    expect(routeFamily('onboarding/clinic-bootstrap')).toBe('applicant');
+    expect(routeFamily('operator/session')).toBe('platform_operator');
+  });
+});
+
+describe('every cell is backed by source, or says it is not', () => {
+  it.each(cells.map(c => [`${c.family} / ${c.mode} / ${c.kase}`, c.cell] as const))('%s', (_name, cell) => {
+    if (cell.result === 'refused' || cell.result === 'refused_disabled' || cell.result === 'gap') expect(cell.evidence.length).toBeGreaterThan(0);
+    else expect(cell.reason.length).toBeGreaterThan(10);
+    if (cell.result === 'gap') expect(cell.decision).toMatch(/docs\/desktop-onboarding-authority-2026-10-16\.md/);
+    for (const evidence of ('evidence' in cell ? cell.evidence ?? [] : [])) {
+      const [file, title] = evidence.split('::');
+      expect(existsSync(join(process.cwd(), file!)), evidence).toBe(true);
+      expect(title!.length, evidence).toBeGreaterThan(10);
+      expect(readFileSync(join(process.cwd(), file!), 'utf8'), evidence).toContain(title!);
+    }
+  });
+  it('the open gaps and unverified cells are exactly these; closing or finding one updates this list deliberately', () => {
+    const named = (result: Cell['result']) => cells.filter(c => c.cell.result === result).map(c => `${c.family}/${c.mode}/${c.kase}`).sort();
+    expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic']);
+    const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
+      .map(result => [result, named(result as Cell['result']).length]));
+    expect(counts).toEqual({ refused: 49, refused_disabled: 36, gap: 1, token_lifetime: 12, not_applicable: 20, unverified: 26 });
+  });
+});
