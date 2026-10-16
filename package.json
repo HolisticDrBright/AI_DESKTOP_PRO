@@ -115,6 +115,7 @@
     "test:aws-qualification-program-credential-operator": "node --test scripts/qualification-program-credential-operator.test.mjs",
     "test:aws-qualification-connect-isolation": "node --test scripts/qualification-database-connect-isolation.test.mjs",
     "test:aws-qualification-connect-preflight": "node --test scripts/qualification-connect-isolation-preflight.test.mjs",
+    "test:aws-qualification-connect-rehearsal": "node --test scripts/qualification-connect-isolation-rehearsal.test.mjs",
     "test:qualification-program-api-preflight": "node --test scripts/preflight-qualification-program-api.test.mjs",
     "build:inventory-qualification-identity-mapping": "node scripts/build-inventory-qualification-identity-mapping.mjs",
     "build:aws-chat-transcription": "node scripts/build-aws-chat-transcription.mjs",

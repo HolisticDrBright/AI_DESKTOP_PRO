@@ -61,6 +61,17 @@ the four default-ACL databases, all login roles and a point-in-time session
 summary. Its result always says `clientInventoryComplete:false` and
 `eligibleForAwsGrantChange:false`; no session snapshot can approve the
 four-database change. Five credential-free preflight tests are CI-gated.
+`scripts/qualification-connect-isolation-rehearsal.mjs` is a source-only
+rollback engine with **no CLI or commit path**. It accepts only the exact
+candidate digest and its five canonical interior statements, sets a short
+transaction-local timeout, checks isolated grants and fixture custody inside
+the transaction, rolls back, then requires the prior full ACL digest and
+custody to match. A late statement or rollback failure refuses; an uncertain
+rollback demands manual inspection. Six CI-gated tests cover parsing,
+success, late failure, uncertain rollback, post-rollback ACL drift and
+pre-transaction posture refusal. This
+does not run against AWS, prove post-commit connection admission from another
+session, or authorize a hosted rehearsal.
 
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated

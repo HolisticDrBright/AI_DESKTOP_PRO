@@ -14,9 +14,11 @@ const fixture = () => ({
     ['Activation', 'blocked'], ['DataClassification', 'synthetic_only'],
     ['DatabaseClusterArn', cluster], ['DatabaseSecretArn', secret],
   ].map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) },
-  functionState: { State: 'Active', LastUpdateStatus: 'Successful', Environment: { Variables: {
+  functionState: { FunctionName: '6zt8e9qz04-qualification-bound-programs',
+    State: 'Active', LastUpdateStatus: 'Successful', Environment: { Variables: {
     PHI_ALLOWED: 'false', PROGRAM_ACTIVATION: 'blocked',
     CLINICAL_DATABASE_NAME: 'clinical_core_qualification',
+    MIGRATION_RELEASE_SHA256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4',
     CLINICAL_DATABASE_CLUSTER_ARN: cluster, CLINICAL_DATABASE_SECRET_ARN: secret,
   } } },
   databaseRows: databases.map(database => ({ database, owner: 'clinical_admin',

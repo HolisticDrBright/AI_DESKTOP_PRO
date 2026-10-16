@@ -13,6 +13,7 @@ const PROFILE = 'ai-synthetic-member';
 const DATABASE = 'clinical_core_qualification';
 const FOUNDATION = 'ai-clinical-core-qualification-foundation';
 const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
+const RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 const DATABASES = Object.freeze([
   'alp_chat_rls_synthetic_v1', 'clinical_core', DATABASE, 'postgres',
 ]);
@@ -46,9 +47,11 @@ export function assertTargetPosture({ caller, foundation, functionState }) {
     && outputs.DatabaseSecretArn?.startsWith(`arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:rds!cluster-`),
   'foundation');
   const variables = functionState?.Environment?.Variables ?? {};
-  check(functionState?.State === 'Active' && functionState.LastUpdateStatus === 'Successful'
+  check(functionState?.FunctionName === FUNCTION && functionState.State === 'Active'
+    && functionState.LastUpdateStatus === 'Successful'
     && variables.PHI_ALLOWED === 'false' && variables.PROGRAM_ACTIVATION === 'blocked'
     && variables.CLINICAL_DATABASE_NAME === DATABASE
+    && variables.MIGRATION_RELEASE_SHA256 === RELEASE
     && variables.CLINICAL_DATABASE_CLUSTER_ARN === outputs.DatabaseClusterArn
     && variables.CLINICAL_DATABASE_SECRET_ARN === outputs.DatabaseSecretArn,
   'lambda_posture');
