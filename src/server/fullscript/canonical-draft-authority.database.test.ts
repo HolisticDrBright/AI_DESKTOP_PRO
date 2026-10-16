@@ -309,8 +309,10 @@ describe('same-target Fullscript authority with canonical SQL and fictional revi
 });
 
 describe('canonical delivery composition, fictional SQL and provider observations, not hosted qualification',()=>{
+// A fictional, unsigned ID token: the saved connection is keyed by its subject (the account), not its email.
+const FICTIONAL_ID_TOKEN=[{alg:'RS256',kid:'fictional'},{sub:'b1234567-1234-4123-8123-123456789012',email:'fictional@example.test',token_use:'id'}].map(p=>Buffer.from(JSON.stringify(p)).toString('base64url')).join('.')+'.fictional-signature';
  const session=():RequestSession=>({signedIn:true,email:'fictional.practitioner@example.test',orgId:org,
-  expired:false,expiresAt:null,token:'fictional-identity-token'});
+  expired:false,expiresAt:null,token:FICTIONAL_ID_TOKEN});
  const runtime=(a=actor(),s:RequestSession|null=session(),target=database(),providerEnvironment?:()=>Promise<NodeJS.ProcessEnv>)=>createCanonicalFullscriptDelivery({
   database:target,configuration:cfg,actor:a,session:s??undefined,providerEnvironment});
  const bridge=(duringCredentialObservation?:()=>Promise<void>)=>vi.spyOn(credentialBinding,'createCredentialBoundFullscriptDraftProvider')

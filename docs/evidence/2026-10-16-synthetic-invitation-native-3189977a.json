@@ -1,0 +1,107 @@
+{
+  "contract": "synthetic-invitation-native/1",
+  "sourceCommit": "3189977af553c9469d978a07abad9d8802e15812",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "parent-issues-and-claims-after-the-clinic-is-suspended",
+      "checks": [
+        {
+          "detail": "with the suspension uncommitted, an issue neither waits nor is refused",
+          "passed": true
+        },
+        {
+          "detail": "nothing holds it back",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, an earlier invitation is still claimed into a verified connection (the gap)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "admitted-issue-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the issue is admitted into the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the clinic row the issue holds",
+          "passed": true
+        },
+        {
+          "detail": "the suspension commits after the issue commits",
+          "passed": true
+        },
+        {
+          "detail": "the next issue, with the same already-issued identity, is refused (ERROR:  synthetic_context_refused)",
+          "passed": true
+        },
+        {
+          "detail": "exactly one invitation exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "issue-waiting-on-a-pending-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the issue waits on the uncommitted suspension",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, the issue is refused (ERROR:  synthetic_context_refused)",
+          "passed": true
+        },
+        {
+          "detail": "no invitation was written",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "claim-waiting-on-a-pending-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the invitation is issued while the clinic is active",
+          "passed": true
+        },
+        {
+          "detail": "the claim waits on the uncommitted archival",
+          "passed": true
+        },
+        {
+          "detail": "after the archival commits, the claim is refused (ERROR:  synthetic_context_refused)",
+          "passed": true
+        },
+        {
+          "detail": "the connection stays unverified",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-sibling-clinic-is-not-held-back",
+      "checks": [
+        {
+          "detail": "clinic B issues without waiting",
+          "passed": true
+        },
+        {
+          "detail": "and its invitation is claimed",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional synthetic rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidate is loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "The two sessions call the SQL the synthetic identity API calls; the API, tokens and Data API are not exercised here."
+  ],
+  "passed": true
+}

@@ -1,0 +1,151 @@
+{
+ "check": "live_lens_page_not_found_observation",
+ "evidenceLevel": "local",
+ "sourceCommit": "60fd7390ca6895909af61f51dfd369fac49a58a6",
+ "observation": "One earlier debugging run (lens-start-before, first attempt, source variant before the add-to-note repair) failed e2e/live-lens.spec.ts:67 with the root not-found page; the identical rerun passed.",
+ "whatProducesThatPage": [
+  "src/app/patients/[patientId]/layout.tsx calls notFound() only when api.patients.get returns no row; a failed read throws to the error boundary instead (patients.live.ts get; clinicalSelect throws on HTTP errors).",
+  "The fixture backend answers patient_profiles with [] when the bearer's memberships are revoked, the bearer carries --noorg or outsider, or the clinic is not the bearer's (scripts/live-stub-server.mjs memberOrgIdsForBearer and the patient_profiles handler).",
+  "Every fixture session shares one bearer, fixture-access-token; live-inbox, live-programs, live-sync and live-tasks revoke and later restore it through /__control/revoke-memberships."
+ ],
+ "instrumentation": "A debugging-only fetch preload in the dev server recorded every patient_profiles read (time, pid, clinic, row count, bearer digest, never the token) and every fixture sign-in; the dev server log was kept for restart lines.",
+ "coldRuns": [
+  {
+   "run": "run1",
+   "serverReady": "2026-10-16T20:56:19Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.9m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T20:56:41.370Z",
+    "ms": 16,
+    "pid": 19355,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  },
+  {
+   "run": "run2",
+   "serverReady": "2026-10-16T20:58:32Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.7m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T20:58:48.432Z",
+    "ms": 32,
+    "pid": 20179,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  },
+  {
+   "run": "run3",
+   "serverReady": "2026-10-16T21:00:30Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.8m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T21:00:46.258Z",
+    "ms": 11,
+    "pid": 21035,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  },
+  {
+   "run": "run4",
+   "serverReady": "2026-10-16T21:02:34Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.7m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T21:02:46.348Z",
+    "ms": 7,
+    "pid": 21801,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  },
+  {
+   "run": "run5",
+   "serverReady": "2026-10-16T21:04:28Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.6m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T21:04:39.505Z",
+    "ms": 7,
+    "pid": 22476,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  },
+  {
+   "run": "run6",
+   "serverReady": "2026-10-16T21:06:20Z",
+   "playwrightExit": "0",
+   "result": [
+    "9 passed (1.7m)"
+   ],
+   "patientReads": 11,
+   "emptyPatientReads": 0,
+   "firstPatientRead": {
+    "t": "2026-10-16T21:06:30.461Z",
+    "ms": 22,
+    "pid": 23107,
+    "org": "eq.org-fixture",
+    "rows": 1,
+    "status": 200
+   },
+   "distinctBearerDigests": 1,
+   "distinctServerPids": 1,
+   "devServerRestartLines": 0
+  }
+ ],
+ "coldRunsResult": "6 of 6 cold runs (fresh fixture backend and fresh next dev each) passed 9 of 9; 66 patient reads, 0 empty, one bearer digest, one clinic, one server pid per run, no restart lines. Not reproduced.",
+ "deterministicProducerOfTheSymptom": {
+  "method": "Fresh backend and dev server; GET the lens encounter page; revoke the shared fixture bearer through the backend's own control; GET again; reset; GET again.",
+  "result": "control 200 with the patient breadcrumb; revoked 404 (root not-found page, no breadcrumb), patient read 0 rows; after reset 200. The symptom follows a revoked shared bearer deterministically.",
+  "patientReads": []
+ },
+ "whyThisIsNotTheDiagnosis": "The original run started its own fresh backend and ran only live-lens.spec.ts, which never revokes; a process check right after it found no other backend, dev server or Playwright process. Nothing places a revocation or a second client on that run's backend, so the mechanism is a candidate, not a cause.",
+ "status": "unresolved: observed once, not reproduced in 6 cold runs, one deterministic producer of the identical page identified but not shown to have occurred. No timeout raised, no retry added, nothing changed in source.",
+ "limitations": [
+  "Local next dev and the in-memory fixture backend only; not CI, not hosted."
+ ]
+}

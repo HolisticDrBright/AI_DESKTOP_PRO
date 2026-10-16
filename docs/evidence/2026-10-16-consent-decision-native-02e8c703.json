@@ -1,0 +1,115 @@
+{
+  "contract": "consent-decision-native/1",
+  "sourceCommit": "02e8c703463ad9966cec53f33ec985f568fb3d2e",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "status-successor-alone-admits-a-practitioner-decision-in-a-suspended-clinic",
+      "checks": [
+        {
+          "detail": "with the suspension uncommitted, the grant neither waits nor is refused",
+          "passed": true
+        },
+        {
+          "detail": "nothing holds it back",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension commits, the same practitioner still records a withdrawal (the residual)",
+          "passed": true
+        },
+        {
+          "detail": "both decisions landed in the suspended clinic",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "admitted-decision-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the grant is admitted into the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the clinic row the decision holds",
+          "passed": true
+        },
+        {
+          "detail": "the suspension commits after the decision commits",
+          "passed": true
+        },
+        {
+          "detail": "the next decision, with the same already-issued identity, is refused (ERROR:  consent_actor_refused)",
+          "passed": true
+        },
+        {
+          "detail": "exactly the admitted decision exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "decision-waiting-on-a-pending-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the grant waits on the uncommitted archival",
+          "passed": true
+        },
+        {
+          "detail": "after the archival commits, the grant is refused (ERROR:  consent_actor_refused)",
+          "passed": true
+        },
+        {
+          "detail": "no decision was written",
+          "passed": true
+        },
+        {
+          "detail": "a retry of the same grant afterwards is refused too",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "patient-withdrawal-and-retention-sweep-are-not-held-back",
+      "checks": [
+        {
+          "detail": "the patient's own withdrawal commits during the pending suspension",
+          "passed": true
+        },
+        {
+          "detail": "the retention sweep runs without waiting",
+          "passed": true
+        },
+        {
+          "detail": "and runs after the suspension commits",
+          "passed": true
+        },
+        {
+          "detail": "the withdrawal is recorded",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-sibling-clinic-is-not-held-back",
+      "checks": [
+        {
+          "detail": "clinic B records its decision without waiting",
+          "passed": true
+        },
+        {
+          "detail": "and it is recorded",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidates are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "The two sessions call the SQL the identity service calls (set_request_context, then the decision function); the service, tokens and Data API are not exercised here."
+  ],
+  "passed": true
+}

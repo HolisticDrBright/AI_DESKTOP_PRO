@@ -71,9 +71,13 @@ failed membership read, could be handed a clinic by configuration — exactly "a
   that already selected it keeps writing — `create_patient_profile` succeeds.
 
 The mechanism: `clinical_private.assert_production_context` (64 call sites) compares the claimed clinic with the
-argument, and `has_clinical_role` / `is_active_member` read only the membership row. Nothing on the legacy path reads
+argument, and `has_clinical_role` / `is_active_member` read only the membership row. Nothing on the legacy clinical path reads
 `clinical_core.organizations.status` except care messaging and the clinic list. Under `database_current` the
 current-membership setter does read it.
+
+*Correction (16 October):* two more legacy readers exist. `care_connection_actor` (care connections and the
+clinic-records candidate) and `recording_cleanup_operator` (recording cleanup and legal holds) both refuse a closed
+clinic. See `docs/suspended-clinic-custody-2026-10-16.md` §4.
 
 Closing it is one SQL successor that changes every legacy family at once (for example, `has_clinical_role` and
 `is_active_member` requiring `organizations.status = 'active'`), and it collides with obligations a suspended clinic

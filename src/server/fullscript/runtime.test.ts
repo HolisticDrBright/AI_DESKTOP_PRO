@@ -10,8 +10,10 @@ vi.mock('./token-store',async importOriginal=>({...await importOriginal<typeof i
   createAwsFullscriptTokenStore:()=>({get:mocks.get,put:mocks.put,replace:mocks.replace,delete:mocks.remove})}));
 vi.mock('./client',async importOriginal=>({...await importOriginal<typeof import('./client')>(),
   readFullscriptConfiguration:mocks.configuration,refreshFullscriptToken:mocks.refresh,revokeFullscriptToken:mocks.revoke}));
+// A fictional, unsigned ID token: the saved connection is keyed by its subject (the account), not its email.
+const FICTIONAL_ID_TOKEN=[{alg:'RS256',kid:'fictional'},{sub:'b1234567-1234-4123-8123-123456789012',email:'fictional@example.test',token_use:'id'}].map(p=>Buffer.from(JSON.stringify(p)).toString('base64url')).join('.')+'.fictional-signature';
 const session:RequestSession={signedIn:true,email:'fictional@example.test',orgId:'a1234567-1234-4123-8123-123456789012',
-  token:'fictional-identity-token',expired:false,expiresAt:null};
+  token:FICTIONAL_ID_TOKEN,expired:false,expiresAt:null};
 let config:ReturnType<typeof readFullscriptConfiguration>;
 const fixture=():StoredFullscriptConnection=>({...fullscriptActor(session),environment:'sandbox_us',
   accessToken:'fictional-access-token-abcdefghijklmnopqrstuvwxyz',refreshToken:'fictional-refresh-token-abcdefghijklmnopqrstuvwxyz',

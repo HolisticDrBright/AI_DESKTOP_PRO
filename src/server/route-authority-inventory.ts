@@ -34,6 +34,7 @@ const E = {
   legacySuspendedGap: "src/server/clinical-core/legacy-claims-clinic-status.database.test.ts::a %s clinic: its clinic list hides it",
   legacyCalendarGap: 'src/server/clinical-core/legacy-claims-clinic-status.database.test.ts::a %s clinic: the calendar the telehealth visit routes authorize from',
   successorClosed: 'src/server/clinical-core/legacy-claims-clinic-status-successor.database.test.ts::a %s clinic: an already-selected session can neither write nor read in it',
+  custodyPreSuspension: 'src/server/clinical-core/suspended-clinic-custody.database.test.ts::commits, the same already-issued session',
   careSibling: "src/server/clinical-core/care-messaging-restricted-credential.database.test.ts::a sibling clinic's practitioner or patient, a token naming the sibling",
   identityRefusals: 'src/server/clinical-core/workforce-current-identity-consent.database.test.ts::refuses no membership, a pending application, a suspension',
   identityStale: 'src/server/clinical-core/workforce-current-identity-consent.database.test.ts::refuses a stale session',
@@ -84,10 +85,17 @@ const E = {
   privacyAssignment: 'src/server/clinical-core/unconverted-families-clinic-status.database.test.ts::privacy operations: decided by the operator assignment, not clinic membership or clinic status',
   recordingCleanupRemoved: 'src/server/clinical-core/encounter-recording-authority.database.test.ts::refuses a disabled workforce identity and suspended membership even with an assignment',
   labAttestationRemoved: 'src/server/clinical-core/lab-attestation-review.database.test.ts::refuses a reviewer whose authority was withdrawn after the view loaded',
+  recordingCaptureRemoved: 'src/server/clinical-core/recording-transcription.database.test.ts::capture (segment with an already-issued capture token, state, readiness), the transcript list and the proposed-note list',
+  syntheticFamiliesRemoved: 'src/server/clinical-core/unconverted-families-removed-membership.database.test.ts::unconverted synthetic families: a removed membership is refused on the next request',
+  calendarBusyRemoved: 'src/server/clinical-core/unconverted-families-removed-membership.database.test.ts::calendar busy sync: the membership is checked before the request is read',
+  notificationSettingsRemoved: 'src/server/notifications/patient-notifications.database.test.ts::a member whose membership is removed is refused on the next read',
   clinicRecordsRemoved: 'src/server/clinical-core/clinic-record-privacy.database.test.ts::leaks no row, text or receipt metadata across patients, clinics, roles or pools',
   syntheticInviteRemoved: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a removed membership is refused on the next request',
   syntheticInviteSuspended: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::invitations: a %s clinic — GAP: the already-selected session still issues one',
   syntheticPosture: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::posture: answered from the token alone',
+  syntheticSuccessorIssue: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::clinic, already-issued practitioner session: ${withSuccessor ? \'refused, nothing written\'',
+  syntheticSuccessorClaim: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::an invitation issued before the suspension, claimed after it',
+  syntheticSuccessorRace: 'scripts/qualify-synthetic-invitation-native.mjs::issue-waiting-on-a-pending-suspension-is-refused',
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
@@ -97,21 +105,30 @@ const unverified = (reason: string, ...evidence: string[]): Cell => ({ result: '
 const allDisabled = (...evidence: string[]): Row => ({ unapproved_account: disabled(...evidence), suspended_clinic: disabled(...evidence),
   removed_membership: disabled(...evidence), stale_token: disabled(...evidence) });
 const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason) });
-const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims no operation checks clinical_core.organizations.status, so an already-selected '
-  + 'session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses every workforce '
-  + 'clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters (set_request_context), '
-  + 'and deliberately leaves workforce consent management (retention, erasure, recording cleanup, privacy operations) and every consumer '
-  + 'request running. Apply it, or require database_current before any clinic can be suspended. docs/desktop-onboarding-authority-2026-10-16.md';
+const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims the clinical path never checks clinical_core.organizations.status, so an '
+  + 'already-selected session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses '
+  + 'every workforce clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters '
+  + '(set_request_context). It admits workforce consent management and every consumer request at that entry. Of the workforce '
+  + 'consent-management paths, the retention service and assigned privacy operators run in a closed clinic; recording cleanup refuses '
+  + 'itself there (its own operator check); and a practitioner\'s own consent decision is refused only by the separate BLOCKED '
+  + 'workforce-consent-decision-clinic-status.sql. Apply them, or require database_current before any clinic can be suspended; whether an '
+  + 'existing session should outlive a suspension is an open owner decision. docs/desktop-onboarding-authority-2026-10-16.md, '
+  + 'docs/suspended-clinic-custody-2026-10-16.md';
 const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
-  + 'session already in a suspended or archived synthetic clinic still issues patient invitations. The production successor does not reach '
-  + 'this schema. Enforce clinic status there too, or retire the synthetic boundary before any synthetic clinic is suspended. '
-  + 'docs/desktop-onboarding-authority-2026-10-16.md';
+  + 'session already in a suspended or archived synthetic clinic still issues patient invitations, and one issued before the suspension is '
+  + 'still claimed into a verified connection. The production successor does not reach this schema. The separate BLOCKED successor '
+  + 'synthetic-invitation-clinic-status.sql refuses both the issue and the claim unless the clinic is active, holding the clinic row so a '
+  + 'suspension and either call serialize; a connection verified earlier is left as it is. Apply it, or retire the synthetic boundary before '
+  + 'any synthetic clinic is suspended. docs/desktop-onboarding-authority-2026-10-16.md, docs/suspended-clinic-custody-2026-10-16.md';
 const CATALOG_HOSTS = 'The Desktop reads the synthetic, PHI-disabled catalog host or the production one by runtime, not by authority mode. '
   + 'The synthetic host (the one deployed; reference rows only, no clinic data) has no clinic or membership table: it admits an already-issued '
   + 'token until it expires. The production host binds the current membership in the read\'s own transaction (BLOCKED setter) and refuses.';
 const LAB_HOST = 'The transitional host at TRPC_BASE_URL (deployed as DEPLOYED_TRPC_BASE_URL; not in this repository) decides with the bearer '
-  + 'token alone, under its own row-level security; the Desktop sends it no clinic (pinned). Settling this needs that host\'s own suite, or a '
-  + 'hosted probe with an unapproved account, a suspended clinic, a removed member and an already-issued token.';
+  + 'token alone, under its own row-level security; the Desktop sends it no clinic (pinned). Its last known source (V2 expo/backend/labs/'
+  + 'upload-route.ts, Supabase RLS under the caller\'s JWT) was deleted from V2 at b2850a2 on 22 July and is on no current branch, and the '
+  + 'deployed build is unknown, so no source test can stand for it. Settling this needs the hosted four-persona probe in '
+  + 'docs/route-authority-unverified-2026-10-16.md: an unapproved account, a member of a suspended clinic, a removed member and an '
+  + 'already-issued token, each against upload and document read, expecting 401/403 and no row or object written or returned.';
 const STALE_LEGACY = 'The service takes the clinic from the token, then each SQL operation re-reads membership rows, so a removed member is refused on the next request (removed_membership); the token itself stays usable only until API Gateway refuses its exp.';
 /** Every case under database_current for a family on the current-membership setter, bound in the transaction. */
 const currentRows = (removed: string): Row => ({
@@ -134,7 +151,7 @@ export const ROUTE_FAMILIES = {
     description: 'The clinical workspace through data-compatibility RPCs: patients, charts (emr), inbox, billing, plans, programs, protocols, nutrition, knowledge, lens, copilot, labs, schedule, sync, tasks, reasoning',
     upstream: 'aws-production-clinical-api POST /clinical-core/workforce/data-compatibility (clinicalRpc / clinicalSelect)',
     legacy_claims: { unapproved_account: refused(E.legacyUnapproved, E.zeroAccessLegacy, E.envClinic),
-      suspended_clinic: { result: 'gap', evidence: [E.legacySuspendedGap, E.successorClosed], decision: SUSPENDED_DECISION },
+      suspended_clinic: { result: 'gap', evidence: [E.legacySuspendedGap, E.successorClosed, E.custodyPreSuspension], decision: SUSPENDED_DECISION },
       removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY, evidence: [E.legacyRemoved] } },
     database_current: { unapproved_account: refused(E.setterUnapproved, E.zeroAccessCurrent), suspended_clinic: refused(E.setterDisabledClinic),
       removed_membership: refused(E.setterUnapproved), stale_token: refused(E.setterUnapproved) },
@@ -143,7 +160,8 @@ export const ROUTE_FAMILIES = {
     description: 'The synthetic API\'s posture and invitations, claims-based by design',
     upstream: 'aws-identity-api (synthetic) /clinical-core/workforce/{posture,invitations}',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
-      suspended_clinic: { result: 'gap', evidence: [E.syntheticInviteSuspended, E.syntheticPosture], decision: SYNTHETIC_SUSPENDED_DECISION },
+      suspended_clinic: { result: 'gap', decision: SYNTHETIC_SUSPENDED_DECISION,
+        evidence: [E.syntheticInviteSuspended, E.syntheticPosture, E.syntheticSuccessorIssue, E.syntheticSuccessorClaim, E.syntheticSuccessorRace] },
       removed_membership: { result: 'token_lifetime', reason: 'Invitations re-read the membership row and refuse a removed member on the next request; posture is answered from the token alone (no clinic data) until it expires.',
         evidence: [E.syntheticInviteRemoved, E.syntheticPosture] },
       stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
@@ -192,11 +210,10 @@ export const ROUTE_FAMILIES = {
     upstream: 'claims-based workforce services (recording, identity API workforce routes, privacy operations, lab attestation)',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
       suspended_clinic: { result: 'gap', evidence: [E.recordingSuspended, E.privacyAssignment], decision: SUSPENDED_DECISION },
-      removed_membership: unverified('Pinned refused on the next request: encounter-recording participants, recording cleanup, lab attestation review, '
-        + 'clinic records. Privacy operations are decided by the operator assignment, not membership (its revocation refuses). Not pinned family by '
-        + 'family: recording capture, drafting and transcription; calendar connection; patient notification settings; workforce Ask ALP; consult '
-        + 'links, requests, retention, disputes, outcomes, protocol carts, note templates and intake.',
-        E.recordingRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved, E.clinicRecordsRemoved, E.privacyAssignment),
+      // Every route of the family, path by path: each operation re-reads the membership row (privacy operations, the
+      // operator assignment) on the next request, so a token that still names the clinic reaches nothing.
+      removed_membership: refused(E.recordingRemoved, E.recordingCaptureRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved,
+        E.clinicRecordsRemoved, E.privacyAssignment, E.syntheticFamiliesRemoved, E.calendarBusyRemoved, E.notificationSettingsRemoved),
       stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
     database_current: allDisabled(E.unconvertedRefused, E.unconvertedConsult),
   },
@@ -228,8 +245,9 @@ export const ROUTE_FAMILIES = {
   },
   fullscript_connection: {
     description: 'The practitioner\'s Fullscript connection in one clinic (OAuth start/callback, status, action, disconnect). Each '
-      + 'request re-reads the account\'s current clinics before the connection is touched, the practitioner is the ID token\'s '
-      + 'email (not the display cookie), and the callback completes only in the session that started it',
+      + 'request re-reads the account\'s current clinics before the connection is touched and again before a provider answer is '
+      + 'returned, the connection is keyed by the ID token\'s subject (an older email-keyed row is never claimed), lab checkout is '
+      + 'held, and the callback completes only in the session that started it',
     upstream: 'Fullscript API and the DynamoDB token store; the clinic list (list_my_organizations or subject-only discovery) as the authority read',
     legacy_claims: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptEmail),
       suspended_clinic: refused(E.fullscriptRemoved, E.legacySuspendedGap), removed_membership: refused(E.fullscriptRemoved, E.fullscriptCallback),

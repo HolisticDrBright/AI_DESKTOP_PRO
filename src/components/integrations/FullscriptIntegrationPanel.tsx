@@ -14,6 +14,8 @@ type Posture = {
   scopes?: string[];
   connectedAt?: string | null;
   reason?: string;
+  /** A connection saved under the older email key exists; it is not used until this account reconnects. */
+  reconnectRequired?: boolean;
 };
 
 export function FullscriptIntegrationPanel() {
@@ -86,6 +88,11 @@ export function FullscriptIntegrationPanel() {
           <p className="m-0 text-[11px] text-positive-deep">Authorized as {posture.resourceOwnerType ?? "Fullscript user"}. Scopes: {posture.scopes?.join(", ") || "not reported"}.</p>
           <Btn size="sm" variant="outline" onClick={() => void disconnect()}>Disconnect</Btn>
         </div>
+      ) : null}
+      {posture?.reconnectRequired ? (
+        <p className="mt-2 text-[11.5px] text-warning-deep" data-testid="fullscript-reconnect-required">
+          An earlier Fullscript connection was saved before connections were tied to your account, so it isn&apos;t used. Reconnect to use Fullscript.
+        </p>
       ) : null}
       {error ? <p role="alert" className="mt-2 text-[11.5px] text-critical">{error}</p> : null}
       {!posture?.configured && !error ? <p className="mt-2 text-[11.5px] text-warning-deep">Add the sandbox credentials to the AWS secret and configure the encrypted token table before connecting.</p> : null}
