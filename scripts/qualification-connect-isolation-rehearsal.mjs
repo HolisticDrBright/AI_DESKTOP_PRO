@@ -65,7 +65,10 @@ export async function rehearseConnectIsolation({ sql, splitPostgresStatements,
     assertSnapshot(after, 'default', before.custodySha256);
     check(after.aclSha256 === before.aclSha256, 'rollback_acl_mismatch');
     return { rehearsalRolledBack: true, committed: false,
-      custodySha256: before.custodySha256, beforeAclSha256: before.aclSha256 };
+      custodySha256: before.custodySha256,
+      beforeGrantState: before.grantState, beforeAclSha256: before.aclSha256,
+      insideGrantState: inside.grantState, insideAclSha256: inside.aclSha256,
+      afterGrantState: after.grantState, afterAclSha256: after.aclSha256 };
   } catch (error) {
     if (transactionId && !rolledBack) {
       try { await rollback(transactionId); }

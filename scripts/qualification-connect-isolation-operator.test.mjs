@@ -111,6 +111,8 @@ test('inspect is read-only and refuses a rehearsal approval argument', async () 
     mode: 'inspect', splitPostgresStatements: await splitter() });
   assert.equal(result.committed, false);
   assert.equal(result.contract, 'qualification-connect-isolation-operator/1');
+  assert.equal(result.beforeGrantState, 'default');
+  assert.equal(result.custodySha256, 'c'.repeat(64));
   assert.equal(result.clientInventoryComplete, false);
   assert.equal(current.log.some(([kind]) => kind === 'begin'), false);
   await assert.rejects(runConnectIsolationOperator({ ...fixture(), mode: 'inspect',
@@ -126,6 +128,10 @@ test('approved rehearsal checks custody inside the transaction and proves exact 
   assert.equal(result.rehearsalRolledBack, true);
   assert.equal(result.committed, false);
   assert.equal(result.afterAclSha256, result.beforeAclSha256);
+  assert.equal(result.beforeGrantState, 'default');
+  assert.equal(result.insideGrantState, 'isolated');
+  assert.notEqual(result.insideAclSha256, result.beforeAclSha256);
+  assert.equal(result.afterGrantState, 'default');
   assert.equal(current.log.filter(([kind]) => kind === 'begin').length, 1);
   assert.equal(current.log.filter(([kind]) => kind === 'rollback').length, 1);
 });

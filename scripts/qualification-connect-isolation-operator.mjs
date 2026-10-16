@@ -90,7 +90,8 @@ export async function runConnectIsolationOperator({ mode, approvalDigest, caller
   check(before.grantState === 'default', 'starting_acl');
   const report = { ...preflight, contract: 'qualification-connect-isolation-operator/1',
     accountId: ACCOUNT, region: REGION, database: DATABASE, clusterArn: outputs.DatabaseClusterArn,
-    mode, sqlSha256: SQL_SHA256, beforeAclSha256: before.aclSha256,
+    mode, sqlSha256: SQL_SHA256, beforeGrantState: before.grantState,
+    beforeAclSha256: before.aclSha256, custodySha256: before.custodySha256,
     committed: false };
   if (mode === 'inspect') return report;
   // A current sibling session is an immediate refusal. Its absence is still
@@ -100,7 +101,10 @@ export async function runConnectIsolationOperator({ mode, approvalDigest, caller
   const result = await rehearseConnectIsolation({ sql, splitPostgresStatements,
     begin, execute, inspect, rollback });
   return { ...report, rehearsalRolledBack: result.rehearsalRolledBack,
-    afterAclSha256: result.beforeAclSha256 };
+    insideGrantState: result.insideGrantState,
+    insideAclSha256: result.insideAclSha256,
+    afterGrantState: result.afterGrantState,
+    afterAclSha256: result.afterAclSha256 };
 }
 
 function aws(...args) {
