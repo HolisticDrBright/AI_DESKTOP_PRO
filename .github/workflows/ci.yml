@@ -184,6 +184,7 @@ jobs:
           npm run build:aws-care-messaging-restricted-credential
           npm run build:aws-care-messaging-restricted-current
           npm run test:aws-care-messaging-restricted-credential
+          npm run test:native-psql-session
           node scripts/build-aws-care-connections.mjs --release=112
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint dist/aws-clinical-core/fullscript-api/template.json

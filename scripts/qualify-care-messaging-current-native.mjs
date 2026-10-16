@@ -24,6 +24,7 @@ import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir, userInfo } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { psqlSender } from './native-psql-session.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = process.argv.slice(2);
@@ -113,25 +114,9 @@ try {
   const open = (name) => {
     const [command, full] = asUser(join(bin, 'psql'), ['-h', socket, '-U', 'postgres', '-d', DATABASE, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=0']);
     const child = spawn(command, full, { env: { ...childEnv, PGAPPNAME: name }, stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = '', errors = '', marker = 0;
-    child.stdout.on('data', (chunk) => { output += chunk; });
-    child.stderr.on('data', (chunk) => { errors += chunk; });
+    const send = psqlSender(child, name, 'care_current_native_session_timeout');
     const session = {
-      send(sql) {
-        const id = `__done_${name}_${++marker}__`;
-        const startOut = output.length, startErr = errors.length;
-        child.stdin.write(`${sql}\n\\echo ${id}\n`);
-        return new Promise((resolve, reject) => {
-          const deadline = setTimeout(() => reject(Error(`care_current_native_session_timeout:${name}`)), 60_000);
-          const check = () => {
-            if (output.includes(id, startOut)) {
-              clearTimeout(deadline); child.stdout.off('data', check);
-              resolve({ output: output.slice(startOut, output.indexOf(id, startOut)).trim(), error: errors.slice(startErr).trim() });
-            }
-          };
-          child.stdout.on('data', check); check();
-        });
-      },
+      send,
       child,
     };
     sessions.push(session);

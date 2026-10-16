@@ -245,6 +245,7 @@
     "build:aws-care-messaging-restricted-credential": "node scripts/build-aws-care-messaging.mjs --release=112 --credential=restricted",
     "build:aws-care-messaging-restricted-current": "node scripts/build-aws-care-messaging.mjs --release=112 --credential=restricted-current",
     "test:aws-care-messaging-restricted-credential": "node --test scripts/care-messaging-restricted-credential.test.mjs",
+    "test:native-psql-session": "node --test scripts/native-psql-session.test.mjs",
     "build:aws-care-connections": "node scripts/build-aws-care-connections.mjs",
     "inspect:aws-care-messaging-qualification": "node scripts/inspect-care-messaging-qualification.mjs",
     "inspect:aws-care-connections-qualification": "node scripts/inspect-care-connections-qualification.mjs",
