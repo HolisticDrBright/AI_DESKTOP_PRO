@@ -13,7 +13,9 @@ const params = rows => Object.fromEntries((rows ?? []).map(row => [row.Parameter
 
 export function assessAuditLiveParent({ caller, stack, template, trailResource, bucketResource,
   clusterResource, selectors, trailStatus }) {
-  if (caller?.Account !== account || stack?.StackName !== stackName ||
+  if (caller?.Account !== account ||
+      !String(caller.Arn ?? '').startsWith(`arn:aws:sts::${account}:assumed-role/`) ||
+      stack?.StackName !== stackName ||
       !['CREATE_COMPLETE', 'UPDATE_COMPLETE'].includes(stack.StackStatus)) refuse();
   const p = params(stack.Parameters);
   if (p.ProjectName !== 'ai-clinical-core' || p.EnvironmentName !== 'synthetic-staging' ||

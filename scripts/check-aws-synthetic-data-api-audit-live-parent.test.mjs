@@ -6,7 +6,8 @@ import { assessAuditLiveParent, account, stackName } from './check-aws-synthetic
 const template = JSON.parse(readFileSync('infra/aws-clinical-core/template.json', 'utf8'));
 const bucket = 'ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7';
 const fixture = () => ({
-  caller: { Account: account },
+  caller: { Account: account,
+    Arn: `arn:aws:sts::${account}:assumed-role/OrganizationAccountAccessRole/fictional-review` },
   stack: { StackName: stackName, StackStatus: 'UPDATE_COMPLETE', Parameters: [
     { ParameterKey: 'ProjectName', ParameterValue: 'ai-clinical-core' },
     { ParameterKey: 'EnvironmentName', ParameterValue: 'synthetic-staging' },
@@ -36,6 +37,7 @@ test('exact fictional live posture permits review but never execution', () => {
 test('wrong account, production classification and incomplete stacks refuse', () => {
   for (const change of [
     x => { x.caller.Account = '173535830222'; },
+    x => { x.caller.Arn = `arn:aws:iam::${account}:root`; },
     x => { x.stack.Parameters[2].ParameterValue = 'phi'; },
     x => { x.stack.StackStatus = 'UPDATE_IN_PROGRESS'; },
   ]) { const x = fixture(); change(x); assert.throws(() => assessAuditLiveParent(x), /not reviewable/); }
