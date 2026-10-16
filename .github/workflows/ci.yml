@@ -176,6 +176,7 @@ jobs:
         run: |
           npm run test:platform-operator-identity
           npm run build:platform-operator-identity
+          npm run test:platform-operator-hosted-verifier
           npm run test:platform-operator-reader-policy
           npm run build:platform-operator-reader-policy
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
