@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 const sourcePath = new URL('../infra/aws-clinical-core/identity-api-extension.json', import.meta.url);
 const outputPath = new URL('../infra/aws-clinical-core/qualification-program-api-candidate.json', import.meta.url);
