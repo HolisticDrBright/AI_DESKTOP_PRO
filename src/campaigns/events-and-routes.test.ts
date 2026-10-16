@@ -94,6 +94,19 @@ describe('the campaign API', () => {
     expect(ok.statusCode).toBe(200);
     expect(JSON.parse(ok.body).data).toMatchObject({ action: 'overview', role: 'marketing_admin' });
   });
+  it('GAP pinned: a practitioner login revoked in the clinical database keeps staff access here until its token expires', async () => {
+    // The emergency revocation disables the workforce identity row; this engine never reads it. It decides from the
+    // authorizer's claims and its own role grant, so the same already-issued token answers until `exp` (and a refreshed
+    // one after that, until Cognito disables the user). docs/clinic-continuity-emergency-revocation-2026-10-16.md.
+    const { e } = await onLists([]);
+    const revokedButUnexpired = await e.http({ routeKey: 'POST /campaigns/workforce', body: '{"action":"overview"}', requestContext: jwt() });
+    expect(revokedButUnexpired.statusCode).toBe(200);
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const sources = readdirSync('src/campaigns', { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isFile() && /\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name))
+      .map(entry => readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8')).join('\n');
+    expect(sources).not.toMatch(/clinical_core\.identities|set_request_context|set_current_workforce_context|AdminGetUser|identity_revocation/);
+  });
   it('switched off, every route answers 503', async () => {
     const e = fictionalEngine({ config: { enabled: false } });
     for (const routeKey of ['GET /campaigns/public/join/{practice}/{program}', 'POST /campaigns/public/join', 'POST /campaigns/public/confirm']) {

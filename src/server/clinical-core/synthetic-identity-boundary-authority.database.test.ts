@@ -78,6 +78,16 @@ describe('the synthetic identity boundary under the legacy sign-in', () => {
     expect(await invitations()).toBe(0);
   });
 
+  it('a disabled workforce identity (a revoked login): invitations refused on the next request, posture still answered from the token', async () => {
+    expect((await invite()).statusCode).toBe(201);
+    await pg.query("update clinical_core.identities set status='disabled' where person_id=$1 and identity_pool='workforce'", [person]);
+    expect((await invite()).statusCode).toBe(403);
+    expect(await invitations()).toBe(1);
+    const posture = await createAwsIdentityApiHandler({ database: unreadable, configuration })(event('GET /clinical-core/workforce/posture'));
+    expect(posture.statusCode).toBe(200);
+    expect(JSON.stringify(JSON.parse(posture.body ?? '{}').data)).not.toContain(org);
+  });
+
   it.each(['suspended', 'archived'])('invitations: a %s clinic — GAP: the already-selected session still issues one', async status => {
     await pg.query('update clinical_core.organizations set status=$2 where id=$1', [org, status]);
     expect((await invite()).statusCode).toBe(201);
