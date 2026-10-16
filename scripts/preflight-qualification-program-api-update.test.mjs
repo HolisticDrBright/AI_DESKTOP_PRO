@@ -52,7 +52,7 @@ function fixture() {
     lambda: { FunctionArn: lambdaArn, State: 'Active', LastUpdateStatus: 'Successful',
       CodeSha256: '575Fr1TJFj7yxh9oFjjNWS8Kv7ABlu5TOFCA4yV1qsc=',
       Environment: { Variables: { SOURCE_COMMIT: deployedCommit, PHI_ALLOWED: 'false',
-        PROGRAM_ACTIVATION: 'blocked', QUALIFICATION_EXECUTION: 'programs_fictional_only',
+        PROGRAM_ACTIVATION: 'blocked', QUALIFICATION_EXECUTION: 'enabled',
         CLINICAL_DATABASE_NAME: 'clinical_core_qualification', CLINICAL_DATABASE_SECRET_ARN: oldSecret,
         QUALIFICATION_PROGRAM_BOUNDARY_SHA256: '0f07717d240d981b3900f6c2e926aa79025157f916e869c4a74def52214261a6',
         MIGRATION_RELEASE_SHA256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4' } } },

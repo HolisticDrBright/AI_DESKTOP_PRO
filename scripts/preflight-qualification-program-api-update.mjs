@@ -89,7 +89,7 @@ export function evaluateQualificationProgramUpdatePreflight(input) {
     || lambda.LastUpdateStatus !== 'Successful' || lambda.CodeSha256 !== deployedCodeSha256
     || env?.SOURCE_COMMIT !== deployedCommit || env.PHI_ALLOWED !== 'false'
     || env.PROGRAM_ACTIVATION !== 'blocked'
-    || env.QUALIFICATION_EXECUTION !== 'programs_fictional_only'
+    || env.QUALIFICATION_EXECUTION !== 'enabled'
     || env.CLINICAL_DATABASE_NAME !== 'clinical_core_qualification'
     || !/^arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-[A-Za-z0-9-]+$/.test(
       env.CLINICAL_DATABASE_SECRET_ARN ?? '')
