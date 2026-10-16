@@ -1,5 +1,26 @@
 # Restricted credential for the fictional program API — source-only review
 
+## October 16 fixture-preserving operator update
+
+The earlier operator pinned zero program assignments. After Brandon approved a
+single fictional education-only program and assignment in the isolated
+qualification database, that precondition correctly refused execution. The
+candidate SQL and its guarded rollback are **unchanged**. The operator now
+requires exactly the observed program, published version, verified connection
+and offered assignment (including their pinned IDs and content/source digests),
+exactly one row in each of `programs`, `program_versions` and
+`program_assignments`, and a hash of all program, version,
+assignment and selected connection rows. It compares that hash before, inside
+and after a rehearsal or apply transaction. A changed, additional, missing or
+reassigned record refuses before any candidate statement commits. It does not
+delete the fixture or weaken PHI, production or entitlement holds. This source
+change must pass current CI and a fresh read-only hosted inspect before any
+previously approved inactive-role SQL could be considered for execution. The
+owner's earlier review packet assumed zero assignments, so the new custody
+precondition should be reviewed with the updated operator rather than inferred
+from the prior zero-row check. No credential, login activation or stack change
+is covered.
+
 Status: **BLOCKED candidate, not applied or deployed.** This is not a PHI, billing, production-program or paid-build approval.
 
 ## Observed hosted gap

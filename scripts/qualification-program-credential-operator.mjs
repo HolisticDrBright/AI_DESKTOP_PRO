@@ -22,6 +22,17 @@ const FUNCTION = '6zt8e9qz04-qualification-bound-programs';
 const RELEASE = '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4';
 const SQL_PATH = 'infra/aws-clinical-core/source-candidates/qualification-program-api-login.sql';
 const SQL_SHA256 = '7b8541f9c647b13decfef5e7fa42b1d96cab488b7ea91fc5a772d8f5520b2d6f';
+// The sole fictional program/assignment was created after the original
+// zero-row operator. Preserve it byte-for-byte; never relax this to an
+// arbitrary nonzero row count or use a destructive cleanup to regain zero.
+const FIXTURE = Object.freeze({
+  programId: 'a60c16af-77bf-47e1-900c-5c6cada9bcdf',
+  versionId: '2fd15312-3256-42bb-9131-e34fbf5a2656',
+  versionContentSha256: '3bb72b61c33e6d595d068b2b47e49a0f8ff5379aac93073c35b7f924e67e0c57',
+  assignmentId: '4ad10ac1-7855-4999-907e-82c723fb63d2',
+  connectionId: '1e6b5f97-1021-4922-a5fe-04e5f5e798b0',
+  sourceDigest: '7f5a03b4d075abe00f2a1b9e5bb171b4b7be0b5620ee023a163c369bbed243fd',
+});
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const refuse = reason => { throw new Error(`qualification_credential_refused:${reason}`); };
 const check = (condition, reason) => { if (!condition) refuse(reason); };
@@ -48,7 +59,28 @@ const snapshotSql = `select current_database() as database,
  (select count(*)::int from pg_roles where rolname in
    ('clinical_program_qualification_api','clinical_program_qualification_login')) as role_count,
  (select count(*)::int from pg_namespace where nspname='clinical_program_qualification') as schema_count,
+ (select count(*)::int from clinical_core.programs) as program_count,
+ (select count(*)::int from clinical_core.program_versions) as version_count,
+ (select count(*)::int from clinical_core.program_versions where status='published') as published_count,
  (select count(*)::int from clinical_core.program_assignments) as assignment_count,
+ (select count(*)::int from clinical_core.programs p
+   join clinical_core.program_versions v on v.program_id=p.id and v.organization_id=p.organization_id
+   join clinical_core.program_assignments a on a.program_version_id=v.id and a.organization_id=p.organization_id
+   join clinical_core.patient_connections c on c.id=a.connection_id and c.organization_id=p.organization_id
+   where p.id='${FIXTURE.programId}'::uuid and p.status='active' and p.active_version_id=v.id
+     and v.id='${FIXTURE.versionId}'::uuid and v.status='published'
+     and v.content_sha256='${FIXTURE.versionContentSha256}'
+     and encode(sha256(convert_to(v.content::text,'UTF8')),'hex')='${FIXTURE.versionContentSha256}'
+     and a.id='${FIXTURE.assignmentId}'::uuid and a.state='offered'
+     and a.source_digest='${FIXTURE.sourceDigest}'
+     and c.id='${FIXTURE.connectionId}'::uuid and c.state='verified') as fixture_count,
+ (select encode(sha256(convert_to(jsonb_build_object(
+   'programs',(select coalesce(jsonb_agg(to_jsonb(p) order by p.id),'[]'::jsonb) from clinical_core.programs p),
+   'versions',(select coalesce(jsonb_agg(to_jsonb(v) order by v.id),'[]'::jsonb) from clinical_core.program_versions v),
+   'assignments',(select coalesce(jsonb_agg(to_jsonb(a) order by a.id),'[]'::jsonb) from clinical_core.program_assignments a),
+   'connections',(select coalesce(jsonb_agg(to_jsonb(c) order by c.id),'[]'::jsonb)
+     from clinical_core.patient_connections c where c.id='${FIXTURE.connectionId}'::uuid)
+ )::text,'UTF8')),'hex')) as custody_sha256,
  (select count(*)::int from clinical_core.program_qualification_subjects) as designated_count,
  (select enabled from clinical_core.program_qualification_boundary) as qualification_enabled,
  (select enabled from clinical_core.production_program_activation) as production_enabled,
@@ -89,12 +121,16 @@ export const privilegeSql = `select
  has_function_privilege('clinical_program_qualification_api',
    'clinical_program_qualification.set_request_context(uuid,uuid,text,text,text,text,text)','EXECUTE') as context_execute`;
 
-export function assertSnapshot(row, installed) {
+export function assertSnapshot(row, installed, expectedCustody) {
   check(row?.database === DATABASE && row.migration_count === 112 && row.release_sha256 === RELEASE,
     'database_or_ledger');
   check(row.role_count === (installed ? 2 : 0) && row.schema_count === (installed ? 1 : 0),
     'candidate_state');
-  check(row.assignment_count === 0 && row.designated_count === 3 && row.qualification_enabled === true
+  check(row.program_count === 1 && row.version_count === 1 && row.published_count === 1
+    && row.assignment_count === 1 && row.fixture_count === 1
+    && /^[a-f0-9]{64}$/.test(row.custody_sha256 ?? '')
+    && (expectedCustody === undefined || row.custody_sha256 === expectedCustody)
+    && row.designated_count === 3 && row.qualification_enabled === true
     && row.production_enabled === false && row.consumer_enabled === false, 'fixture_or_activation');
 }
 
@@ -155,6 +191,7 @@ async function main() {
   const snapshot = async transactionId => (await query(snapshotSql, transactionId))[0];
   const before = await snapshot();
   assertSnapshot(before, false);
+  const custody = before.custody_sha256;
   const result = { contract: 'qualification-program-credential-operator/1', mode, accountId: ACCOUNT,
     region: REGION, database: DATABASE, sourceCommit, sqlSha256: SQL_SHA256,
     statementCount: statements.length, phiAllowed: false, productionActivation: 'blocked', committed: false };
@@ -164,19 +201,19 @@ async function main() {
   let commitAttempted = false;
   try {
     await query("select pg_advisory_xact_lock(hashtext('alp:qualification-program-credential'))", transactionId);
-    assertSnapshot(await snapshot(transactionId), false);
+    assertSnapshot(await snapshot(transactionId), false, custody);
     for (const statement of statements) await query(statement, transactionId);
-    assertSnapshot(await snapshot(transactionId), true);
+    assertSnapshot(await snapshot(transactionId), true, custody);
     assertPrivileges((await query(privilegeSql, transactionId))[0]);
     if (mode === 'rehearse') {
       await client.send(new RollbackTransactionCommand({ ...common, transactionId }));
-      assertSnapshot(await snapshot(), false);
+      assertSnapshot(await snapshot(), false, custody);
       console.log(JSON.stringify({ ...result, rehearsalRolledBack: true }));
       return;
     }
     commitAttempted = true;
     await client.send(new CommitTransactionCommand({ ...common, transactionId }));
-    assertSnapshot(await snapshot(), true);
+    assertSnapshot(await snapshot(), true, custody);
     assertPrivileges((await query(privilegeSql))[0]);
     console.log(JSON.stringify({ ...result, committed: true }));
   } catch (error) {

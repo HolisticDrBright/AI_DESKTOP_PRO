@@ -63,11 +63,17 @@ test('an operator transaction rolls back a late failure after creating roles and
 test('qualification snapshot and privilege checks refuse drift rather than accepting a partial apply', () => {
   const before = { database: 'clinical_core_qualification', migration_count: 112,
     release_sha256: '45aec4369ec94bf6339a17e47eadba7b81e7b5195fd5be46c2903e587b709fb4',
-    role_count: 0, schema_count: 0, assignment_count: 0, designated_count: 3,
+    role_count: 0, schema_count: 0, program_count: 1, version_count: 1, published_count: 1,
+    assignment_count: 1, fixture_count: 1, custody_sha256: 'a'.repeat(64), designated_count: 3,
     qualification_enabled: true, production_enabled: false, consumer_enabled: false };
   assert.doesNotThrow(() => assertSnapshot(before, false));
+  assert.doesNotThrow(() => assertSnapshot(before, false, 'a'.repeat(64)));
   assert.throws(() => assertSnapshot({ ...before, role_count: 1 }, false), /candidate_state/);
   assert.throws(() => assertSnapshot({ ...before, production_enabled: true }, false), /fixture_or_activation/);
+  assert.throws(() => assertSnapshot({ ...before, assignment_count: 2 }, false), /fixture_or_activation/);
+  assert.throws(() => assertSnapshot({ ...before, fixture_count: 0 }, false), /fixture_or_activation/);
+  assert.throws(() => assertSnapshot({ ...before, custody_sha256: 'b'.repeat(64) }, false, 'a'.repeat(64)),
+    /fixture_or_activation/);
   const privileges = { proxy_count: 2, safe_role_count: 2, membership_count: 1,
     total_memberships: 1, intact_proxy_count: 2, public_proxy_execute_count: 0,
     core_usage: false, private_usage: false, proxy_usage: true,
