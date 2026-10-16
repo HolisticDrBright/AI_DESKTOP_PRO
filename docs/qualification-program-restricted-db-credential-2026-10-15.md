@@ -45,6 +45,12 @@ production or PHI approval. A separate exact review must inventory clients,
 RDS internal access, connection restart behavior and rollback before any
 synthetic execution; this broad change cannot be inferred from the earlier
 inactive-role approval.
+The strict cross-database audit would still report two residual PUBLIC-readable
+relations in the synthetic chat database after a CONNECT-only repair. Those
+object grants are unreachable by the dedicated credential while sibling
+CONNECT is denied, but this candidate does not remove them or make the entire
+strict audit pass. The local candidate test is wired into CI; a passing CI run
+does not substitute for a hosted rehearsal or grant/client review.
 
 The earlier operator pinned zero program assignments. After Brandon approved a
 single fictional education-only program and assignment in the isolated
