@@ -21,7 +21,7 @@ function canonical(value) {
 
 export function changedTemplatePaths(live, parent) {
   const changed = [];
-  for (const section of ["AWSTemplateFormatVersion", "Description", "Metadata", "Parameters", "Conditions", "Resources", "Outputs"]) {
+  for (const section of new Set([...Object.keys(live ?? {}), ...Object.keys(parent ?? {})])) {
     const observed = live?.[section];
     const expected = parent?.[section];
     if (JSON.stringify(canonical(observed)) === JSON.stringify(canonical(expected))) continue;

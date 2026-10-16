@@ -39,5 +39,8 @@ assert.deepEqual(changedTemplatePaths(reordered, parent), []);
 const otherTrail = structuredClone(parent);
 otherTrail.Resources.AuditTrail.Properties.IsLogging = false;
 assert.deepEqual(changedTemplatePaths(otherTrail, parent), ["Resources.AuditTrail"]);
+const addedMapping = structuredClone(parent);
+addedMapping.Mappings = { Unreviewed: { Flag: { Enabled: "true" } } };
+assert.deepEqual(changedTemplatePaths(addedMapping, parent), ["Mappings"]);
 
 console.log("Production Data API audit live-parent preflight rejects account and template drift.");
