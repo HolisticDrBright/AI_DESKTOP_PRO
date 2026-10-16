@@ -11,3 +11,14 @@ export function localReturnPath(value: string | null, fallback: "/" | "/patients
     return url.pathname + url.search + url.hash;
   } catch { return fallback; }
 }
+
+/**
+ * Where a completed sign-in goes, from the server's clinic step (reported under clinic-membership sign-in only): no
+ * active clinic goes to onboarding; several, or clinics that could not be read, go to an explicit choice that then
+ * returns to `next`; a single selected clinic, or no step at all (the legacy default), goes straight to `next`.
+ */
+export function afterSignInPath(clinicStep: unknown, next: string): string {
+  if (clinicStep === "onboard") return "/apply";
+  if (clinicStep === "choose" || clinicStep === "unknown") return `/select-clinic?next=${encodeURIComponent(next)}`;
+  return next;
+}

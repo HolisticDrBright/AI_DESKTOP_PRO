@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
-import { localReturnPath } from "@/lib/local-return-path";
+import { afterSignInPath, localReturnPath } from "@/lib/local-return-path";
 import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
 import { WORKFORCE_SELF_SIGNUP_READY } from "@/server/clinical-core/workforce-self-signup-release";
 
@@ -90,7 +90,7 @@ export function LoginForm() {
         body: JSON.stringify(mfaMode ? { code: mfaCode } : { email, password }),
       });
       const json = (await res.json().catch(() => ({}))) as {
-        data?: { signedIn?: boolean; email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
+        data?: { signedIn?: boolean; email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string; clinicStep?: unknown };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -110,7 +110,7 @@ export function LoginForm() {
       // A full document transition reads the new httpOnly session and drops
       // any previous account's client state. push() followed by refresh()
       // races on cold routes and can leave successful sign-in on this page.
-      window.location.replace(localReturnPath(new URLSearchParams(window.location.search).get("next")));
+      window.location.replace(afterSignInPath(json.data.clinicStep, localReturnPath(new URLSearchParams(window.location.search).get("next"))));
     } catch {
       setError("The sign-in service is unreachable right now. Please try again.");
     } finally {

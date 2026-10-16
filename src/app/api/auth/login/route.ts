@@ -4,7 +4,7 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { organizationsLive } from "@/adapters/organizations.live";
 import { writeSelectedClinic } from "@/server/selected-clinic-cookies";
-import { signInClinic } from "@/server/clinic-choices";
+import { failedSignInClinicChoice, signInClinicChoice } from "@/server/clinic-choices";
 
 /**
  * POST { email, password } → practitioner sign-in against the clinical
@@ -90,26 +90,28 @@ export async function POST(req: NextRequest) {
       return res;
     }
 
-    // Auto-select the organization when the practitioner has exactly one (or
-    // default to the first). Pending invitations are claimed first, so a
-    // newly invited practitioner's first sign-in activates their membership.
-    // Tolerated failure: Settings offers selection.
-    let orgId: string | null = null;
+    // Auto-select the organization when the practitioner has exactly one (or,
+    // under the legacy default, the first). Pending invitations are claimed
+    // first, so a newly invited practitioner's first sign-in activates their
+    // membership. Tolerated failure: /select-clinic and Settings offer selection.
+    // Under database_current: the new account's own discovered clinics, only a single one is selected, and the
+    // reply says where the practitioner goes next (choose, onboard, or unknown when the clinics could not be read).
+    // The selection is always rewritten for this account, so a previous account's clinic is never carried over.
+    let choice = failedSignInClinicChoice();
     try {
       await organizationsLive.claim(tokens.accessToken).catch(() => undefined);
-      // Under database_current: the new account's own discovered clinics, and only a single one is selected.
-      orgId = await signInClinic(tokens.accessToken);
+      choice = await signInClinicChoice(tokens.accessToken);
     } catch {
-      orgId = null;
+      choice = failedSignInClinicChoice();
     }
 
-    const res = NextResponse.json({ data: { signedIn: true, email: tokens.email } });
+    const res = NextResponse.json({ data: { signedIn: true, email: tokens.email, ...(choice.step ? { clinicStep: choice.step } : {}) } });
     const week = 60 * 60 * 24 * 7;
     res.cookies.set(AUTH_COOKIES.access, tokens.accessToken, cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.refresh, tokens.refreshToken, cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(week));
-    writeSelectedClinic(res, orgId, tokens.accessToken, week);
+    writeSelectedClinic(res, choice.organizationId, tokens.accessToken, week);
     return res;
   } catch (e) {
     const err = toAdapterError(e);
