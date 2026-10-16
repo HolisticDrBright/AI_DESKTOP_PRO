@@ -281,6 +281,67 @@ describe('applied: the same messaging journey runs through the proxies, with its
     expect(sent).toHaveLength(2);
     expect(sent.every(sql => sql.startsWith('with expected as ('))).toBe(true);
   });
+
+  it("a sibling clinic's practitioner or patient, a token naming the sibling, a removed member and a closed clinic are refused through the proxies", async () => {
+    const [sibling, siblingStaff, siblingOwner, siblingPatient, siblingConnection] = Array.from({ length: 5 }, () => randomUUID());
+    // The sibling subjects are designated too, so each refusal below comes from the database's own checks through the
+    // proxies, not from the qualification boundary turning an undesignated subject away first.
+    const handler = createRestrictedCareMessagingHandler(environment({ QUALIFICATION_IDENTITY_SUBJECTS:
+      [owner, other, staff, siblingStaff, siblingOwner].map(subject).join(',') }), build, () => restricted, () => now);
+    await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL sibling')", [sibling]);
+    for (const [id, pool] of [[siblingStaff, 'workforce'], [siblingOwner, 'consumer']] as const) {
+      await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)', [id, 'subject_' + id.replaceAll('-', '')]);
+      await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)', [id, pool, subject(id)]);
+    }
+    await db.query("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner')", [sibling, siblingStaff]);
+    await db.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'Fictional','Sibling')", [siblingPatient, sibling, 'patient_sibling_' + siblingPatient.replaceAll('-', '')]);
+    await db.query("insert into clinical_core.patient_connections(id,organization_id,patient_record_id,consumer_person_id,state,verified_at) values($1,$2,$3,$4,'verified',now())", [siblingConnection, sibling, siblingPatient, siblingOwner]);
+    // The clinic's own patient consents again, so the clinic's practitioner can read; every refusal below is then the
+    // caller's, not the consent's.
+    await db.query(`insert into clinical_core.consent_grants(organization_id,patient_record_id,connection_id,artifact_id,scope,status,method,
+      representative_authority,version,recorded_by_person_id) values($1,$2,$3,$4,'messaging','granted','patient_app','self',3,$5)`, [org, patient, connection, artifact, owner]);
+    const sent = await handler(request(send(), owner));
+    expect(sent.statusCode).toBe(200);
+    const threadId = JSON.parse(sent.body).data.threadId;
+    const readThread = (who: string, pool: 'consumer' | 'workforce' = 'workforce', claimed = org) => {
+      const event = request({ action: 'read', threadId }, who, pool);
+      (event.requestContext as { authorizer: { jwt: { claims: Record<string, unknown> } } }).authorizer.jwt.claims['custom:organization_id'] = claimed;
+      return handler(event);
+    };
+    expect(await readThread(staff)).toMatchObject({ statusCode: 200 });
+    const thread = (await readThread(staff)).body;
+    // A sibling clinic's practitioner and patient. The database refuses the practitioner whose token names this clinic
+    // (no membership here) and the patient whatever clinic the token names (a patient is bound by connection rows, and
+    // there is none here). A workforce token naming the sibling clinic is refused before any SQL by the service, which
+    // serves exactly one clinic; so is this clinic's own practitioner holding such a token.
+    for (const [who, pool, claimed, status] of [[siblingStaff, 'workforce', org, 403], [siblingOwner, 'consumer', org, 403],
+      [siblingOwner, 'consumer', sibling, 403], [siblingStaff, 'workforce', sibling, 401], [staff, 'workforce', sibling, 401]] as const) {
+      const answer = await readThread(who, pool, claimed);
+      expect(answer.statusCode, `${pool} ${who === staff ? 'own practitioner' : 'sibling'} naming ${claimed === org ? 'this clinic' : 'the sibling'}`).toBe(status);
+      expect(answer.body).not.toContain('FICTIONAL');
+    }
+    // A removed membership, on the next request with the same token.
+    await db.query("update clinical_core.organization_memberships set status='suspended' where organization_id=$1 and person_id=$2", [org, staff]);
+    expect(await readThread(staff)).toMatchObject({ statusCode: 403 });
+    await db.query("update clinical_core.organization_memberships set status='active' where organization_id=$1 and person_id=$2", [org, staff]);
+    expect((await readThread(staff)).body).toBe(thread);
+    // A closed clinic: refused by messaging's own actor check, and again by the clinic-status successor once applied.
+    // The patient's retained export (consumer pool) keeps working either way.
+    const successor = read('infra/aws-clinical-core/source-candidates/legacy-claims-clinic-status.sql');
+    const rollback = read('infra/aws-clinical-core/source-candidates/legacy-claims-clinic-status-rollback.sql');
+    await db.query("update clinical_core.organizations set status='suspended' where id=$1", [org]);
+    try {
+      for (const applied of [false, true]) {
+        if (applied) await db.exec(successor);
+        expect(await readThread(staff), `successor ${applied}`).toMatchObject({ statusCode: 403 });
+        expect((await handler(request({ action: 'export', section: 'messages' }, owner, 'consumer', true))).statusCode, `successor ${applied}`).toBe(200);
+      }
+    } finally {
+      await db.exec(rollback);
+      await db.query("update clinical_core.organizations set status='active' where id=$1", [org]);
+    }
+    expect((await readThread(staff)).body).toBe(thread);
+  });
 });
 
 describe('the configuration is refused before any database client exists', () => {

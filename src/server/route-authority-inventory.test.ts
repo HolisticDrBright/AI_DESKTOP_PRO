@@ -61,9 +61,9 @@ describe('every cell is backed by source, or says it is not', () => {
   });
   it('the open gaps and unverified cells are exactly these; closing or finding one updates this list deliberately', () => {
     const named = (result: Cell['result']) => cells.filter(c => c.cell.result === result).map(c => `${c.family}/${c.mode}/${c.kase}`).sort();
-    expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic']);
+    expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic', 'telehealth_visits/legacy_claims/suspended_clinic']);
     const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
       .map(result => [result, named(result as Cell['result']).length]));
-    expect(counts).toEqual({ refused: 57, refused_disabled: 36, gap: 1, token_lifetime: 12, not_applicable: 20, unverified: 18 });
+    expect(counts).toEqual({ refused: 59, refused_disabled: 36, gap: 2, token_lifetime: 12, not_applicable: 20, unverified: 15 });
   });
 });
