@@ -56,12 +56,18 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [newNoteType, setNewNoteType] = useState<ComposerNoteType>("soap");
   const [creating, setCreating] = useState(false);
+  // Each Start is a new note. The composer of a note begun here keeps its key after it saves, so without this a second
+  // Start (after that note was saved or signed) kept the same composer and nothing visible happened.
+  const [newNoteSeq, setNewNoteSeq] = useState(0);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // One pending explicit insertion, addressed to the note it was made for. The composer of that note takes it once;
+  // until then it waits here, and no other note's composer (opened or started later) ever applies it.
   const [noteInsert, setNoteInsert] = useState<ComposerInsert | null>(null);
   const insertSeq = useRef(0);
+  const insertTaken = useCallback((seq: number) => setNoteInsert((current) => (current?.seq === seq ? null : current)), []);
   const recordingOwner = useRef<AwsBrowserRecording | null>(null);
 
   const load = useCallback(async () => {
@@ -248,6 +254,7 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
                   type="button"
                   onClick={() => {
                     setActiveNoteId(null);
+                    setNewNoteSeq((seq) => seq + 1);
                     setCreating(true);
                   }}
                   className="h-7 cursor-pointer rounded-md border-none bg-action px-2 text-[11.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
@@ -268,12 +275,13 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
         <Card className="px-4 py-[14px]">
           {creating ? (
             <NoteComposer
-              key={`new-${newNoteType}`}
+              key={`new-${newNoteType}-${newNoteSeq}`}
               encounterId={encounterId}
               noteId={null}
               noteType={newNoteType}
               encounterOpen={open}
               insert={noteInsert}
+              onInsertTaken={insertTaken}
               onNoteCreated={(id) => setActiveNoteId(id)}
               onStateChanged={() => void load()}
             />
@@ -285,6 +293,7 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
               noteType={notes.find((n) => n.noteId === activeNoteId)?.noteType ?? "soap"}
               encounterOpen={open}
               insert={noteInsert}
+              onInsertTaken={insertTaken}
               onNoteCreated={(id) => setActiveNoteId(id)}
               onStateChanged={() => void load()}
             />
@@ -303,7 +312,9 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
       {recordingMode === "aws" ? <AwsRecordingConsentPanel key={encounterId} encounterId={encounterId}
         ownerRef={recordingOwner} encounterOpen={encounter.status === 'in_progress'}
         canInsertProposal={Boolean(activeDraftNoteId)}
-        onProposedInsert={({ text, provenance }) => setNoteInsert({ seq: ++insertSeq.current, text, provenance })} /> : <RecordingScribePanel
+        onProposedInsert={({ text, provenance }) => {
+          if (activeDraftNoteId) setNoteInsert({ seq: ++insertSeq.current, noteId: activeDraftNoteId, text, provenance });
+        }} /> : <RecordingScribePanel
         key={encounterId}
         encounterId={encounterId}
         encounterOpen={open}
@@ -317,9 +328,10 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
       <LensPanel
         encounterId={encounterId}
         activeDraftNoteId={activeDraftNoteId}
-        onAddToNote={({ questionId, text, label }) =>
+        onAddToNote={({ questionId, text, label, noteId }) =>
           setNoteInsert({
             seq: ++insertSeq.current,
+            noteId,
             text,
             provenance: { refType: "differential_question", refId: questionId, label },
           })

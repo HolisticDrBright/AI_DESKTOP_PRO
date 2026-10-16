@@ -59,11 +59,14 @@ const PROVENANCE_TYPE_LABEL: Record<string, string> = {
 
 /**
  * An EXPLICIT insertion request from another panel (e.g. the lens panel's
- * add-to-note). Each request carries a fresh `seq`; it appends to the first
- * section of an EDITABLE note only — signed content is never touched.
+ * add-to-note). Each request carries a fresh `seq` and the note it was made for;
+ * only that note's composer applies it, once, to the first section of an
+ * EDITABLE note — signed content is never touched, and no other note (opened or
+ * started later) ever receives it.
  */
 export interface ComposerInsert {
   seq: number;
+  noteId: string;
   text: string;
   provenance: { refType: string; refId?: string | null; label: string };
 }
@@ -158,6 +161,7 @@ export function NoteComposer({
   noteType,
   encounterOpen,
   insert = null,
+  onInsertTaken,
   onNoteCreated,
   onStateChanged,
 }: {
@@ -166,8 +170,10 @@ export function NoteComposer({
   noteType: ComposerNoteType;
   /** Whether the encounter still accepts documentation (in_progress/completed). */
   encounterOpen: boolean;
-  /** Explicit external insertion request (lens add-to-note). Applied once per seq. */
+  /** Explicit external insertion request (lens add-to-note). Applied once per seq, by the note it names. */
   insert?: ComposerInsert | null;
+  /** Called when this composer has taken the insertion (applied or refused), so it is not delivered again. */
+  onInsertTaken?: (seq: number) => void;
   onNoteCreated: (noteId: string) => void;
   onStateChanged: () => void;
 }) {
@@ -492,7 +498,10 @@ export function NoteComposer({
   const appliedInsertSeq = useRef(0);
   useEffect(() => {
     if (!insert || insert.seq === appliedInsertSeq.current) return;
+    // Another note's request waits for that note; it is never applied here.
+    if (insert.noteId !== noteIdState) return;
     appliedInsertSeq.current = insert.seq;
+    onInsertTaken?.(insert.seq);
     if (!editable) {
       setNotice(null);
       setSaveError("This note no longer accepts insertions — it is not an editable draft.");
@@ -520,7 +529,7 @@ export function NoteComposer({
     setDirty(true);
     setNotice("Inserted from the lens panel — review, then save.");
     scheduleAutosave();
-  }, [insert, editable, sections, scheduleAutosave]);
+  }, [insert, noteIdState, onInsertTaken, editable, sections, scheduleAutosave]);
 
   const noteAction = async (payload: Record<string, unknown>, failLabel: string) => {
     if (saveInFlight.current || uncertainAttempt.current || sessionInvalid) {

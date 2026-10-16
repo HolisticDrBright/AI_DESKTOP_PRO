@@ -1,0 +1,44 @@
+{
+  "check": "live_lens_add_to_note",
+  "spec": "e2e/live-lens.spec.ts",
+  "test": "steps 5–7, 9–10: lifecycle, versioned answers preserving originals, explicit add-to-note, dismiss with feedback, signed notes untouched",
+  "evidenceLevel": "local",
+  "ciObservation": {
+    "head": "88bd5d051d7cae417fa01805b9d1b9d37ed70061",
+    "run": 38862137704,
+    "attempt1": "failed at e2e/live-lens.spec.ts:260: Subjective expected /Differential question .*Structured sleep history/ within 5000 ms, received \"Visit narrative by the practitioner.\"",
+    "attempt1ServerLoopDelayMaxMs": [2227.175423, 2453.667839, 2506.096639],
+    "attempt1ServerHeapUsedMaxBytes": 3453265952,
+    "attempt2": "passed",
+    "rerunIsNotARootCause": true
+  },
+  "mechanism": "LensPanel.addToNote awaited POST /api/live/lens/question (noteUse) and then the full evaluation re-read GET /api/live/lens/evaluation (30 s deadline) before handing the text to the note. The note text waited on a read that only refreshes the question's state; any server stall on that GET (the CI server showed event-loop delays above 2 s) kept the practitioner's explicit insertion out of the note past the test's 5 s window.",
+  "reproduction": {
+    "method": "Hold the first evaluation GET after the click (page.route, released after the assertion). No timeout raised, no skip.",
+    "oldCode": "failed at the same assertion with the CI-identical received value \"Visit narrative by the practitioner.\" (4 passed, 1 failed, 4 did not run)",
+    "cpuStress": "Not a reproduction route: with 0, 8 and 16 busy loops on 4 cores the click-to-append latency stayed at or below 562 ms (stress8 and stress16 runs, 13 of 13 passed). CPU load alone does not reproduce the CI stall; the held read does."
+  },
+  "defectsFoundAndRepaired": [
+    {
+      "id": "insert_gated_on_evaluation_read",
+      "repair": "The text is handed to the note as soon as the audit write succeeds, addressed to the note that was open when the practitioner clicked; the evaluation re-read follows.",
+      "failingBefore": "old code: toHaveValue at line 265 received \"Visit narrative by the practitioner.\"",
+      "passingAfter": "9 passed"
+    },
+    {
+      "id": "insert_replayed_into_later_composers",
+      "repair": "ComposerInsert carries noteId; only that note's composer applies it, once, and reports it taken so the workspace clears it. The AWS recording proposal path is addressed the same way and inserts nothing without an open draft.",
+      "failingBefore": "variant with the Start fix and the decoupling but without addressing: line 296 expected \"\" for the new note's Subjective, received \"Differential question (western_conventional · Sleep): Structured sleep history: …\\nAnswer: Sleeps about 6 hours; snoring confirmed by partner.\" (the signed note's insertion replayed into a different, new note)",
+      "passingAfter": "9 passed"
+    },
+    {
+      "id": "start_after_started_note_did_nothing",
+      "repair": "Each Start increments a sequence in the new-note composer's key, so Start after a Start-created note (saved or signed) opens a new, empty note.",
+      "failingBefore": "variant with addressing but without the sequence: line 294 toBeEditable on Subjective timed out (element not found; the signed composer stayed)",
+      "passingAfter": "9 passed"
+    }
+  ],
+  "observedOnceUnexplained": "One variant run (lens-start-before, first attempt) failed the spec's first test at line 67 with the patient layout's \"Page not found\" (api.patients.get returned no row). The rerun of the identical tree reached line 294 as expected. Not reproduced and not diagnosed; recorded, not called a flake.",
+  "afterRun": "LENS_SPEC=e2e/live-lens.spec.ts: 9 passed (2.0m)",
+  "browserOrderBattery": "see the return document; this file records the per-spec debugging runs only"
+}

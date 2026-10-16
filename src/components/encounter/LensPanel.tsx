@@ -187,7 +187,7 @@ export function LensPanel({
   encounterId: string;
   /** The open draft/ready note that explicit add-to-note may write into (null = none). */
   activeDraftNoteId: string | null;
-  onAddToNote: (payload: { questionId: string; text: string; label: string }) => void;
+  onAddToNote: (payload: { questionId: string; text: string; label: string; noteId: string }) => void;
 }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -419,22 +419,41 @@ export function LensPanel({
     }
   };
 
+  // The audit write first, for the note open now; the text follows as soon as it is recorded, addressed to that note.
+  // The evaluation re-read that refreshes the question's state comes after: it used to come first, so a slow or stalled
+  // read (up to its 30 s deadline) held back the text the practitioner asked for, and the text then landed in whichever
+  // note was open when the read finished.
   const addToNote = async (q: LensQuestion) => {
-    if (!activeDraftNoteId) return;
-    const ok = await questionAction(
-      { action: "noteUse", questionId: q.id, noteId: activeDraftNoteId },
-      "Could not record the note use",
-    );
-    if (!ok) return;
-    const latest = answerHistory[q.id]?.[answerHistory[q.id].length - 1];
-    const answerText = latest ? String((latest.value as { text?: string }).text ?? "") : "";
-    const text = `Differential question (${paradigmLabel(q)} · ${domainName.get(q.domainCode) ?? q.domainCode}): ${q.questionText}${answerText ? `\nAnswer: ${answerText}` : ""}`;
-    onAddToNote({
-      questionId: q.id,
-      text,
-      label: `Differential question — ${q.questionText.slice(0, 80)}`,
-    });
-    setNotice("Added to the open draft note (audited).");
+    const noteId = activeDraftNoteId;
+    if (!noteId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/live/lens/question", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "noteUse", questionId: q.id, noteId }),
+      });
+      if (!res.ok) {
+        setError(await readError(res));
+        return;
+      }
+      const latest = answerHistory[q.id]?.[answerHistory[q.id].length - 1];
+      const answerText = latest ? String((latest.value as { text?: string }).text ?? "") : "";
+      const text = `Differential question (${paradigmLabel(q)} · ${domainName.get(q.domainCode) ?? q.domainCode}): ${q.questionText}${answerText ? `\nAnswer: ${answerText}` : ""}`;
+      onAddToNote({
+        questionId: q.id,
+        text,
+        label: `Differential question — ${q.questionText.slice(0, 80)}`,
+        noteId,
+      });
+      setNotice("Added to the open draft note (audited).");
+      await loadEvaluation(paradigm);
+    } catch {
+      setError("Could not record the note use — the lens service is unreachable.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const paradigmLabel = (q: LensQuestion) =>

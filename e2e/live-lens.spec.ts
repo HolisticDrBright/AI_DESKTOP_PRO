@@ -256,8 +256,14 @@ test("steps 5–7, 9–10: lifecycle, versioned answers preserving originals, ex
   await page.getByLabel("Subjective").fill("Visit narrative by the practitioner.");
   await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v1/, { timeout: 10_000 });
   await expect(addBtn).toBeEnabled();
+  // The text is the practitioner's explicit request, recorded by its audit write. It must not wait for the evaluation
+  // re-read that refreshes the question afterwards: hold that read, and the text still arrives in the note.
+  let releaseRead: () => void = () => undefined;
+  const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
+  await page.route(/\/api\/live\/lens\/evaluation\?/, async (route) => { await readHeld; await route.continue(); }, { times: 1 });
   await addBtn.click();
   await expect(page.getByLabel("Subjective")).toHaveValue(/Differential question .*Structured sleep history/, { timeout: 5_000 });
+  releaseRead();
   await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v2/, { timeout: 10_000 });
   await expect(page.getByTestId("provenance-panel")).toContainText("Differential question");
 
@@ -280,6 +286,23 @@ test("steps 5–7, 9–10: lifecycle, versioned answers preserving originals, ex
   // The signed note is no longer a target — add-to-note is disabled again.
   await expect(bp.getByTestId("q-add-to-note")).toBeDisabled();
   expect(await page.getByTestId("note-composer").innerText()).toBe(signedContent);
+
+  // Start opens a new, empty note even after the note begun here was signed, and an insert belongs to the note it was
+  // recorded for, once: neither the new note nor the signed note reopened from the rail receives it again.
+  const settled = () => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(page.getByLabel("Subjective")).toBeEditable();
+  await settled();
+  expect(await page.getByLabel("Subjective").inputValue()).toBe("");
+  await expect(page.getByText("Inserted from the lens panel")).toHaveCount(0);
+  await page.getByRole("button", { name: /^SOAP signed/ }).click();
+  await expect(page.getByTestId("signature-line")).toBeVisible();
+  await settled();
+  await expect(page.getByText("Inserted from the lens panel")).toHaveCount(0);
+  // The reopened note is the signed note exactly, less the signing action's own transient "Note signed." status.
+  const lockedNote = signedContent.replace("Note signed.\n\n", "");
+  expect(lockedNote).not.toBe(signedContent);
+  expect(await page.getByTestId("note-composer").innerText()).toBe(lockedNote);
 });
 
 test("step 8: a transcript correction (source change) marks the evaluation STALE — retained, never recomputed silently", async ({ page }) => {
