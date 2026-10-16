@@ -5,6 +5,12 @@ Branch `claude/new-clinic-bootstrap-20261016`. Base: `agent/onboarding-refusal-m
 [38828712715](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/38828712715), succeeded. The base's
 onboarding refusal mapping is complete and was not redone.
 
+> **Update, 16 October 2026 (onboarding closure).** The Desktop surfaces now exist in source, all blocked: the two doors
+> on `/apply`, the clinic step and `/select-clinic`, and the operator console with its BLOCKED listing candidate. The
+> same-address race is refused by name (candidate SHA `82efb74c…`). The native harness now runs 8 scenarios and 35
+> checks. See `docs/new-clinic-onboarding-closure-2026-10-16.md`. The sections below describe the bootstrap as first
+> prepared; where they say "not built" or give the older counts, the closure document supersedes them.
+
 ## Status
 
 - **Immediate record access is not implemented in any live system, and nothing can reach it.**
@@ -14,7 +20,8 @@ onboarding refusal mapping is complete and was not redone.
   - `WORKFORCE_CLINIC_BOOTSTRAP_RELEASE` is `blocked`, so its routes refuse before reading an account or a row;
   - `PLATFORM_OPERATOR_SIGN_IN_RELEASE` is `blocked`;
   - the SQL candidate is unregistered, and even once applied it refuses until its owner-only release row is switched on;
-  - no Lambda entrypoint, host, Desktop surface or operator pool exists.
+  - no Lambda entrypoint, host or operator pool exists; the Desktop surfaces exist in source and are blocked
+    (`DESKTOP_CLINIC_BOOTSTRAP_RELEASE`, `DESKTOP_PLATFORM_OPERATOR_CONSOLE_RELEASE`).
 - **Nothing was applied, registered, deployed or configured.** No ledger entry, Cognito pool, AWS setting, secret or
   PHI was touched.
 
@@ -188,4 +195,4 @@ routes answer `503 workforce_application_unavailable`. The names:
 | Bootstrap routes and service | yes, blocked | route and service tests | see the hand-back | unobserved | no |
 | Separate MFA operator sign-in | yes, blocked; no pool exists | authenticator tests | see the hand-back | unobserved | no |
 | Operator suspension service | yes, blocked; no surface | service test + database cases | see the hand-back | unobserved | no |
-| Desktop surface | **no** | — | — | — | — |
+| Desktop surface | yes, blocked (closure document) | route, journey, chooser, operator and browser tests | see the closure hand-back | unobserved | no |
