@@ -1,5 +1,6 @@
 import { CampaignError, HTTP_STATUS, type EngineDeps } from './practice-context';
 import { createPublicCampaigns } from './public';
+import { WORKFORCE_SUBJECT } from './staff-revocation';
 import { createWorkforceCampaigns } from './workforce';
 
 /**
@@ -13,6 +14,8 @@ import { createWorkforceCampaigns } from './workforce';
  *   POST /campaigns/public/unsubscribe                   { token } -> unsubscribed
  * Staff route (the workforce pool's JWT authorizer verifies issuer, audience and signature):
  *   POST /campaigns/workforce                            the Campaigns screen; practice and person from the token
+ *     Before any staff operation, the token's subject is checked against the emergency revocation's signal
+ *     (staff-revocation.ts): revoked is 403, and an unreadable or unconfigured signal is 503, never "not revoked".
  *
  * Bodies are never logged. A failure is an error status, never an empty answer.
  */
@@ -60,9 +63,12 @@ export function createCampaignHttpHandler(deps: EngineDeps) {
         }
         case 'POST /campaigns/workforce': {
           const claims = event.requestContext?.authorizer?.jwt?.claims ?? {};
-          const practiceId = claims['custom:organization_id'], personId = claims['custom:person_id'], exp = Number(claims.exp);
+          const practiceId = claims['custom:organization_id'], personId = claims['custom:person_id'], subject = claims.sub, exp = Number(claims.exp);
           if (typeof practiceId !== 'string' || !UUID.test(practiceId) || typeof personId !== 'string' || !UUID.test(personId)
+            || typeof subject !== 'string' || !WORKFORCE_SUBJECT.test(subject)
             || !Number.isFinite(exp) || exp * 1000 <= Date.now()) throw new CampaignError('forbidden', 'identity_refused');
+          if (!deps.staffRevocation) throw new CampaignError('unavailable', 'staff_revocation_unconfigured');
+          if (await deps.staffRevocation.revoked(subject)) throw new CampaignError('forbidden', 'identity_refused');
           const email = typeof claims.email === 'string' && claims.email_verified !== false && claims.email_verified !== 'false' ? claims.email.toLowerCase() : null;
           return json(200, { data: await staff.handle({ practiceId: practiceId.toLowerCase(), personId: personId.toLowerCase(), email }, body(event, 262_144)) });
         }

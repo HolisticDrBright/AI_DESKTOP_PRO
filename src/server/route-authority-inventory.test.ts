@@ -62,8 +62,9 @@ describe('every cell is backed by source, or says it is not', () => {
   it('the open gaps and unverified cells are exactly these; closing or finding one updates this list deliberately', () => {
     const named = (result: Cell['result']) => cells.filter(c => c.cell.result === result).map(c => `${c.family}/${c.mode}/${c.kase}`).sort();
     // The compromised-identity case (a login revoked by the BLOCKED emergency revocation, its token unexpired) adds the
-    // campaign engine's gap in both modes and the transitional lab host's fifth unverified persona.
-    expect(named('gap')).toEqual(['campaigns/database_current/compromised_identity', 'campaigns/legacy_claims/compromised_identity',
+    // transitional lab host's fifth unverified persona. The campaign engine's gap in both modes is closed: its staff
+    // route reads the revocation's signal and refuses when it cannot (docs/campaign-staff-revocation-2026-10-17.md).
+    expect(named('gap')).toEqual([
       'compatibility_rpc/legacy_claims/suspended_clinic', 'synthetic_identity_boundary/legacy_claims/suspended_clinic',
       'telehealth_visits/legacy_claims/suspended_clinic', 'unconverted_claims_families/legacy_claims/suspended_clinic']);
     expect(named('unverified')).toEqual(['transitional_lab_documents/legacy_claims/compromised_identity',
@@ -71,10 +72,11 @@ describe('every cell is backed by source, or says it is not', () => {
       'transitional_lab_documents/legacy_claims/suspended_clinic', 'transitional_lab_documents/legacy_claims/unapproved_account']);
     const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
       .map(result => [result, named(result as Cell['result']).length]));
-    expect(counts).toEqual({ refused: 72, refused_disabled: 60, gap: 6, token_lifetime: 23, not_applicable: 24, unverified: 5 });
+    expect(counts).toEqual({ refused: 74, refused_disabled: 60, gap: 4, token_lifetime: 23, not_applicable: 24, unverified: 5 });
     // Every clinical-data family refuses a revoked login under both authorities; what does not is named above or reads no clinic data.
     const revoked = cells.filter(c => c.kase === 'compromised_identity' && c.cell.result === 'refused').map(c => `${c.family}/${c.mode}`).sort();
-    expect(revoked).toEqual(['care_messages/database_current', 'care_messages/legacy_claims', 'compatibility_rpc/database_current',
+    expect(revoked).toEqual(['campaigns/database_current', 'campaigns/legacy_claims',
+      'care_messages/database_current', 'care_messages/legacy_claims', 'compatibility_rpc/database_current',
       'compatibility_rpc/legacy_claims', 'fullscript_connection/database_current', 'fullscript_connection/legacy_claims',
       'program_assignments/database_current', 'sign_in_and_clinic_choice/database_current', 'sign_in_and_clinic_choice/legacy_claims',
       'telehealth_calendar/database_current', 'telehealth_calendar/legacy_claims', 'telehealth_visits/database_current',

@@ -80,7 +80,9 @@ describe('the campaign code path holds no clinical credential and reads no clini
       for (const s of statements.filter(x => x.Effect === 'Allow')) {
         for (const action of [s.Action].flat()) expect(action, `${name} ${action}`).toMatch(/^(?:logs|dynamodb|kms|secretsmanager|ses|sqs|lambda):/);
         if ([s.Action].flat().some(a => a.startsWith('secretsmanager:'))) expect(JSON.stringify(s.Resource), name).toMatch(/CampaignKeySecret/);
-        if ([s.Action].flat().some(a => a.startsWith('dynamodb:'))) expect(JSON.stringify(s.Resource), name).toMatch(/CampaignTable/);
+        if ([s.Action].flat().some(a => a.startsWith('dynamodb:'))) expect(JSON.stringify(s.Resource), name).toMatch(/CampaignTable|CampaignStaffRevocationTable/);
+        // The staff revocation signal is read-only here, and only for the API function that serves staff.
+        if (JSON.stringify(s.Resource).includes('CampaignStaffRevocationTable')) expect([name, [s.Action].flat()]).toEqual(['CampaignApiRole', ['dynamodb:GetItem']]);
       }
     }
     expect(JSON.stringify(template)).not.toMatch(/rds-data|clinical_core|ClinicalApi|CLINICAL_|cognito-idp:Admin/);
@@ -111,7 +113,7 @@ describe('one practice\'s lists, emails and results are invisible to another, th
       const who = TOKENS[String((init.headers as Record<string, string>).authorization).replace(/^Bearer /, '')];
       if (!who) return new Response('{"message":"Unauthorized"}', { status: 401, headers: { 'content-type': 'application/json' } });
       const reply = await engine.http({ routeKey: 'POST /campaigns/workforce', body: String(init.body),
-        requestContext: { authorizer: { jwt: { claims: { 'custom:organization_id': who.practiceId, 'custom:person_id': who.personId, email: who.email, exp: Date.now() / 1000 + 300 } } } } });
+        requestContext: { authorizer: { jwt: { claims: { sub: `fictional-workforce-${who.personId}`, 'custom:organization_id': who.practiceId, 'custom:person_id': who.personId, email: who.email, exp: Date.now() / 1000 + 300 } } } } });
       return new Response(reply.body, { status: reply.statusCode, headers: reply.headers });
     });
     // Practice A: ready, with one confirmed subscriber and a test send recorded.

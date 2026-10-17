@@ -67,8 +67,8 @@ export const identityRevocationSummary = z.object({
 }).strict();
 export const identityRevocationOutcome = z.object({
   summary: identityRevocationSummary,
-  provider: z.array(z.object({ step: z.enum(['disable_user', 'global_sign_out']), outcome: z.enum(['succeeded', 'failed']),
-    failure: z.enum(['not_found', 'throttled', 'unavailable', 'access_denied', 'timeout', 'unknown']).optional() }).strict()).max(2),
+  provider: z.array(z.object({ step: z.enum(['campaign_signal', 'disable_user', 'global_sign_out']), outcome: z.enum(['succeeded', 'failed']),
+    failure: z.enum(['not_found', 'throttled', 'unavailable', 'access_denied', 'timeout', 'unknown']).optional() }).strict()).max(3),
 }).strict();
 export type IdentityRevocationSummary = z.infer<typeof identityRevocationSummary>;
 

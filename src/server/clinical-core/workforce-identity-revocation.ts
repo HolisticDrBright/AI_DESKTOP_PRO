@@ -21,6 +21,9 @@ import { IDENTITY_REVOCATION_REASONS, identityRevocationDecisionRequest, identit
  *      finishes first and every later request is refused, in every clinic, whatever token it carries;
  *   3. only after that commit, AdminDisableUser and then AdminUserGlobalSignOut on the workforce pool. Each attempt is
  *      recorded by its own idempotency key; a failure stays an actionable pending item and is never a receipt.
+ *      Where the campaign engine runs, its staff revocation signal is published first, as a third step recorded the
+ *      same way (the BLOCKED successor workforce-revocation-campaign-signal.sql admits the step and keeps the item on
+ *      the work list until it is confirmed). The campaign API refuses every staff operation for a published subject.
  * A provider outage therefore never delays the refusal, and a database refusal never depends on the provider.
  *
  * Nothing here logs, stores or returns a token, a password, an email or a patient datum. The provider username is the
@@ -34,8 +37,20 @@ export const WORKFORCE_IDENTITY_EMERGENCY_REVOCATION_SUCCESSOR_PROSRC_SHA256 = '
 export const REVOCATION_REASONS = IDENTITY_REVOCATION_REASONS;
 export const REVOCATION_DECISIONS = ['approve', 'decline', 'confirm', 'dispute'] as const;
 export const PROVIDER_STEPS = ['disable_user', 'global_sign_out'] as const;
+/** The campaign staff revocation signal (staff-revocation-signal/1), published before the provider steps. */
+export const SIGNAL_STEP = 'campaign_signal' as const;
+export const WORKFORCE_REVOCATION_CAMPAIGN_SIGNAL_SHA256 = 'b8d5e9b1332e8804e0a23223884b1870b87d9fa08078743b2b0922c32caebeb8';
+export const WORKFORCE_REVOCATION_CAMPAIGN_SIGNAL_ROLLBACK_SHA256 = 'edfc76fd7d767f2704da087040558f1969b3afa57d82f8a640ded7ff01286add';
+/** prosrc SHA-256: the parents the successor replaces, as the emergency revocation wrote them, and the successors. */
+export const WORKFORCE_REVOCATION_CAMPAIGN_SIGNAL_PROSRC = {
+  parentSummary: '775819dd791c2df318aaa18544ba7bd0ea12a9c9749dba68e81943146904a4a7',
+  parentRecord: '60817476eca810cd704937eb2df836dcb69b4fe4986eb0db81d65d52aad0f3d6',
+  summary: 'da11a53c05619318ccb6e88af3f7c51a9b48f7d3bef3acac34cb2c6ac78f9fe6',
+  record: '8eab347a286520a0619681dc895ea9a216fbb25d4653b4b1e8f47ec7e2b3d458',
+} as const;
 export const PROVIDER_FAILURES = ['not_found', 'throttled', 'unavailable', 'access_denied', 'timeout', 'unknown'] as const;
 export type ProviderStep = typeof PROVIDER_STEPS[number];
+export type RecordedStep = ProviderStep | typeof SIGNAL_STEP;
 export type ProviderFailure = typeof PROVIDER_FAILURES[number];
 
 const OPERATOR = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,6 +67,9 @@ export class WorkforceProviderFailure extends Error {
 }
 /** The workforce identity provider, one step at a time. A step that cannot be confirmed throws WorkforceProviderFailure. */
 export interface WorkforceIdentityProvider { revoke(step: ProviderStep, username: string): Promise<void> }
+/** The campaign staff revocation signal's writer: one never-overwritten item per revoked workforce subject. A
+ * publication that cannot be confirmed throws WorkforceProviderFailure. */
+export interface StaffRevocationSignalPublisher { publish(subject: string, revocationId: string): Promise<void> }
 
 /** The Cognito adapter, scoped to the ONE workforce pool it was built for: the pool never comes from a caller. It refuses
  * to be built for a pool it is told belongs to someone else (the operator pool, the consumer pool). Both calls are
@@ -111,12 +129,14 @@ function refusal(error: unknown): WorkforceIdentityRevocationError {
 }
 const parse = (value: unknown) => { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return null; } };
 
-export type RevocationOutcome = { summary: RevocationSummary; provider: Array<{ step: ProviderStep; outcome: 'succeeded' | 'failed'; failure?: ProviderFailure }> };
+export type RevocationOutcome = { summary: RevocationSummary; provider: Array<{ step: RecordedStep; outcome: 'succeeded' | 'failed'; failure?: ProviderFailure }> };
 
 export function createWorkforceIdentityRevocation(input: {
   /** The operator connection (`clinical_workforce_operator`). */
   database: ClinicalCoreDatabase;
   provider: WorkforceIdentityProvider;
+  /** Present exactly when the campaign engine runs and the campaign-signal successor is applied. */
+  signal?: StaffRevocationSignalPublisher;
   /** Present exactly when the membership fence is in force for this deployment. */
   fence?: RevocationFence;
   release?: 'blocked' | 'qualification';
@@ -137,14 +157,19 @@ export function createWorkforceIdentityRevocation(input: {
       });
     } catch (error) { throw refusal(error); }
   };
-  /** Both provider steps, each recorded by its own key. Recording after a provider success may itself fail: the item then
-   * stays pending in the work list, and the retry is idempotent at the provider. */
+  /** The campaign signal (when configured) and both provider steps, each recorded by its own key. One failing never
+   * stops the next. Recording after a success may itself fail: the item then stays pending in the work list, and the
+   * retry is idempotent at the provider and at the signal. */
+  const steps: readonly RecordedStep[] = input.signal ? [SIGNAL_STEP, ...PROVIDER_STEPS] : PROVIDER_STEPS;
   const signOut = async (operator: string, revocationId: string, username: string, before: RevocationSummary): Promise<RevocationOutcome> => {
     const attempts: RevocationOutcome['provider'] = [];
     let summary = before;
-    for (const step of PROVIDER_STEPS) {
+    for (const step of steps) {
       let failure: ProviderFailure | undefined;
-      try { await input.provider.revoke(step, username); } catch (error) {
+      try {
+        if (step === SIGNAL_STEP) await input.signal!.publish(username, revocationId);
+        else await input.provider.revoke(step, username);
+      } catch (error) {
         failure = error instanceof WorkforceProviderFailure ? error.code : 'unknown';
       }
       attempts.push(failure ? { step, outcome: 'failed', failure } : { step, outcome: 'succeeded' });

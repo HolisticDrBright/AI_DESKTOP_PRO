@@ -105,7 +105,10 @@ const E = {
   discoveryDisabled: 'src/server/clinical-core/workforce-membership-discovery.database.test.ts::refuses an unknown, disabled or consumer identity',
   syntheticRevoked: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::a disabled workforce identity (a revoked login): invitations refused on the next request',
   applicantCognito: 'src/server/clinical-core/aws-workforce-applicant-identity.test.ts::refuses %s without returning an applicant',
-  campaignsRevoked: 'src/campaigns/events-and-routes.test.ts::GAP pinned: a practitioner login revoked in the clinical database keeps staff access here',
+  campaignsRevoked: 'src/campaigns/staff-revocation.test.ts::is refused for every kind of staff operation, before anything is read, changed or sent',
+  campaignsSignalOutage: 'src/campaigns/staff-revocation.test.ts::a signal that cannot be read refuses every staff operation with 503, and changes nothing',
+  campaignsSignalWire: 'src/integration/staff-revocation-signal.test.ts::what the emergency revocation publishes, the campaign staff route refuses',
+  campaignsSignalRecorded: 'src/server/clinical-core/workforce-revocation-campaign-signal.database.test.ts::the signal goes first; a signal outage never delays the login refusal',
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
@@ -122,12 +125,11 @@ const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspen
 const REVOKED_LEGACY: Cell = { result: 'refused', evidence: [E.revokedLogin, E.revokedLoginRace, E.custodyCompromised] };
 /** The same under database_current: the setter share-locks and checks the identity row. */
 const REVOKED_CURRENT: Cell = { result: 'refused', evidence: [E.setterDisabledClinic, E.revokedLoginCurrent] };
-const REVOKED_CAMPAIGNS_DECISION = 'Brandon with Codex: the campaign engine authorizes staff from the token\'s claims and its own role grant and '
-  + 'never reads the clinical identity row, so a practitioner login revoked for a suspected compromise keeps campaign staff access (the '
-  + 'practice\'s contacts, sequences and broadcasts) until the ID token expires, and through refreshed tokens until Cognito disables the '
-  + 'user. The revocation\'s provider step (AdminDisableUser, AdminUserGlobalSignOut) bounds it only if it succeeds. Close it with a '
-  + 'revocation read in the staff route (a revocation item the revocation service writes, or Cognito Enabled per request), or keep '
-  + 'campaigns off until it has one. docs/desktop-onboarding-authority-2026-10-16.md, docs/clinic-continuity-emergency-revocation-2026-10-16.md';
+/** A revoked login at the campaign API: its staff route reads the emergency revocation's signal before every staff
+ * operation and refuses when it cannot (src/campaigns/staff-revocation.ts). The signal is published by the BLOCKED
+ * revocation as a recorded third step (workforce-revocation-campaign-signal.sql), like the identity row every other
+ * family reads. docs/campaign-staff-revocation-2026-10-17.md */
+const REVOKED_CAMPAIGNS: Cell = { result: 'refused', evidence: [E.campaignsRevoked, E.campaignsSignalOutage, E.campaignsSignalWire, E.campaignsSignalRecorded] };
 const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims the clinical path never checks clinical_core.organizations.status, so an '
   + 'already-selected session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses '
   + 'every workforce clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters '
@@ -304,10 +306,10 @@ export const ROUTE_FAMILIES = {
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy), suspended_clinic: { result: 'token_lifetime', reason: 'The campaign store has no clinic status; a practice is the token\'s claim until it expires.' },
       removed_membership: { result: 'token_lifetime', reason: 'No membership rows in the campaign store; the claim stands until the token expires.' },
       stale_token: { result: 'token_lifetime', reason: 'Claims-based by design.' },
-      compromised_identity: { result: 'gap', evidence: [E.campaignsRevoked], decision: REVOKED_CAMPAIGNS_DECISION } },
+      compromised_identity: REVOKED_CAMPAIGNS },
     database_current: { unapproved_account: refused(E.campaignIndependent), suspended_clinic: { result: 'token_lifetime', reason: 'Independent of clinical authority; as under legacy.' },
       removed_membership: { result: 'token_lifetime', reason: 'As under legacy.' }, stale_token: { result: 'token_lifetime', reason: 'As under legacy.' },
-      compromised_identity: { result: 'gap', evidence: [E.campaignsRevoked], decision: REVOKED_CAMPAIGNS_DECISION } },
+      compromised_identity: REVOKED_CAMPAIGNS },
   },
   applicant: {
     description: 'Applying to a clinic and the BLOCKED new-clinic bootstrap: an applicant has no clinic by definition',
