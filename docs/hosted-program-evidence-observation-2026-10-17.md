@@ -148,7 +148,7 @@ or inside an observed answer (`provider_shaped_evidence:<step>`).
 
 - `refused`;
 - `fictional_only_not_hosted_evidence`: every check passed, but on an injected reader or transport, or on a pair other
-  than `REVIEWED_SOURCE_PAIR`;
+  than one `reviewedCheckoutPair` built in this process;
 - `accepted`: only with the AWS CLI reader built with its own runner, the global-fetch transport, and the reviewed pair.
 
 ### 3.6 The read-only command
@@ -211,9 +211,12 @@ The other scripts §6 of the packet names were not touched:
 
 1. **The fictional battery.**
    - Run `npm run test:hosted-program-acceptance`.
-   - Expect 36 pass.
+   - Expect 37 pass.
 2. **Checkpoint D0, read-only, with the `ai-synthetic-member` profile.**
-   - Run `node scripts/hosted-program-acceptance.mjs --observe-read-only`.
+   - Run `node scripts/hosted-program-acceptance.mjs --observe-read-only` from a clean checkout of the reviewed Desktop
+     code commit, the one the V2 kit's `sourcePair.desktopCommit` names. The reviewed commit is that checkout's `HEAD`.
+     A dirty or untracked tree refuses `source_dirty` before any AWS read. Nothing pins a commit in this file, because a
+     runtime commit cannot name itself.
    - Expect exit 1 and `verdict: "refused"` with `reviewed_artifact_required`. If the pinned release is still live, also
      expect `observed_source_stale`.
    - Record `observed.lambdaCodeKey`, `desktopCommit`, `codeSha256` and `revisionId` as D0.
@@ -230,7 +233,8 @@ The other scripts §6 of the packet names were not touched:
      depend on the build root (F4).
 5. **After that release** (Brandon's approval; an AWS write):
    - Run step 2 with `--reviewed-artifact=<absolute path>/candidate.zip`.
-   - Expect `binding_observed` only if the stack key names `8bfe2349…` and `CodeSha256` equals `sha256(candidate.zip)`.
+   - Expect `binding_observed` only if the stack key names the checkout's `HEAD` (the reviewed code commit) and
+     `CodeSha256` equals `sha256(candidate.zip)`.
    - Anything else is a refusal, and it is the result. Do not edit around it.
 6. **Journey acceptance on `wxv734oi12`.**
    - Expect `execution_not_qualification` before the first write (F3). Do not record a smoke pass in its place.
@@ -243,7 +247,7 @@ The other scripts §6 of the packet names were not touched:
 - **H3: credentialed drivers.** No credentialed journey command exists: no token acquisition and no Windows credential
   handling. No settlement or daily-guidance acceptance journey was built either. Only the binding gate covers their
   function.
-- **H4: the reviewed artifact.** There is no reviewed `8bfe2349` artifact yet, so the binding refuses with
+- **H4: the reviewed artifact.** There is no reviewed artifact for the selected code commit yet, so the binding refuses with
   `reviewed_artifact_required`.
 - **H5: token signatures.** Signatures are not verified locally; API Gateway verifies them. Only issuer, audience, use and
   attestation are compared.

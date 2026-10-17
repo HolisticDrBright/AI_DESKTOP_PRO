@@ -2,7 +2,8 @@
  * Hosted program ACCEPTANCE for the Desktop synthetic API: a separate path from the hosted smoke scripts, which stay smoke.
  *
  * A run is accepted only on values this process observed for itself (scripts/hosted-program-acceptance-observation.mjs):
- * - the stack-advertised Desktop commit must equal the reviewed 40-character commit;
+ * - the stack-advertised Desktop commit must equal the reviewed 40-character commit, which is the HEAD of the clean
+ *   checkout the run is made from (`reviewedCheckoutPair`), the same rule the shared-manifest acceptance CLIs apply;
  * - the live `CodeSha256` must equal the reviewed artifact, whose `index.js` must be the bundle pinned for that commit;
  * - the authorizers, the function and every token must name the synthetic pools;
  * - every answer must carry `x-clinical-execution: qualification` (an unmarked 401/403 is counted, never classifies);
@@ -21,6 +22,7 @@
  *   node scripts/hosted-program-acceptance.mjs --observe-read-only [--reviewed-artifact=<abs zip>] [--deployment-claim=<abs json>]
  */
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {lstatSync, readFileSync} from 'node:fs';
 import {isAbsolute, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -30,7 +32,11 @@ import {PROGRAM_TARGET, HostedObservationError, createAwsCliReader, createWriteL
   classifyWrite} from './hosted-program-acceptance-observation.mjs';
 
 /** The reviewed Desktop half of the selected code pair (docs/codex-hosted-qualification-packet-2026-10-17.md §1-2).
- * A new pair is a reviewed source change of these values.
+ *
+ * The Desktop commit is not pinned here: a runtime commit cannot name itself, and a pin one commit behind would make the
+ * run's own checkout disagree with it. The reviewed commit is the HEAD of the clean checkout the run is made from
+ * (`reviewedCheckoutPair`), which must be the code commit the V2 launch kit's `sourcePair.desktopCommit` names; the V2
+ * half is named there, not here. A new bundle pin is a reviewed source change of the values below.
  *
  * The identity bundle digest is deliberately unpinned. The unminified bundle keeps a `// <path>` comment per module,
  * relative to the build root, so its bytes depend on where `node_modules` sits: the same `8bfe2349` source gave
@@ -39,11 +45,28 @@ import {PROGRAM_TARGET, HostedObservationError, createAwsCliReader, createWriteL
  * of the reviewed commit records it here in a reviewed change, every artifact refuses `reviewed_bundle_unpinned`. */
 export const REVIEWED_SOURCE_PAIR = Object.freeze({
   contract: 'desktop-reviewed-source-pair/1',
-  desktopCommit: '8bfe2349af869cbc0d93712fe6050300bb4ce4ab',
-  v2Commit: 'dd704abf820de5556c5e6da9dcb39495c138fa87',
+  desktopCommit: null,
   identityBundleSha256: null,
   identityBundleBytes: null,
 });
+
+const REVIEWED_PAIRS = new WeakSet([REVIEWED_SOURCE_PAIR]);
+/** True only for the pinned constant and for pairs `reviewedCheckoutPair` built in this process. */
+export const isReviewedPair = pair => typeof pair === 'object' && pair !== null && REVIEWED_PAIRS.has(pair);
+
+/** The reviewed pair for a run made from this checkout: it refuses a dirty or untracked tree and anything but an exact
+ * 40-character HEAD, and names that HEAD as the reviewed Desktop commit. `run` is injectable for tests. */
+export function reviewedCheckoutPair({run = (args) => execFileSync('git', args, {encoding: 'utf8', windowsHide: true, timeout: 10_000})} = {}) {
+  const fail = code => {throw new AcceptanceRefusedError([code]);};
+  let head, status;
+  try {head = run(['rev-parse', 'HEAD']).trim(); status = run(['status', '--porcelain', '--untracked-files=all']);}
+  catch {fail('source_unobserved');}
+  if (!HEX40.test(head)) fail('source_unobserved');
+  if (status.trim() !== '') fail('source_dirty');
+  const pair = Object.freeze({...REVIEWED_SOURCE_PAIR, desktopCommit: head, source: 'clean_checkout_head'});
+  REVIEWED_PAIRS.add(pair);
+  return pair;
+}
 
 export class AcceptanceRefusedError extends Error {
   constructor(refusals, report = null) {
@@ -166,7 +189,7 @@ export function evaluateTargetBinding({observation, pair = REVIEWED_SOURCE_PAIR,
 
 /** What the read-only command prints: the binding only. It never says a journey was accepted. */
 export function targetBindingReport(binding, {pair = REVIEWED_SOURCE_PAIR, target = PROGRAM_TARGET} = {}) {
-  const hosted = binding.observationValid && binding.observed.transport === 'aws-cli' && pair === REVIEWED_SOURCE_PAIR && target === PROGRAM_TARGET;
+  const hosted = binding.observationValid && binding.observed.transport === 'aws-cli' && isReviewedPair(pair) && target === PROGRAM_TARGET;
   return {contract: 'hosted-program-target-binding/1',
     verdict: binding.refusals.length ? 'refused' : hosted ? 'binding_observed' : 'fictional_only_not_hosted_evidence',
     refusals: binding.refusals, expected: binding.expected, observed: binding.observed, deploymentClaim: binding.deploymentClaim,
@@ -265,7 +288,7 @@ export function evaluateHostedProgramAcceptance({before, after, pair = REVIEWED_
     if (!observed) refusals.add('evidence_not_observed');
     if (providerShaped(observed ? item.body : item)) refusals.add('provider_shaped_evidence');
   }
-  const reviewedPair = pair === REVIEWED_SOURCE_PAIR && target === PROGRAM_TARGET;
+  const reviewedPair = isReviewedPair(pair) && target === PROGRAM_TARGET;
   const hostedTransport = binding.observationValid && before.transport === 'aws-cli' && isAdapterObservation(after) && after.transport === 'aws-cli'
     && responses.length > 0 && responses.every(r => isObservedResponse(r) && r.transport === 'https-fetch');
   const satisfied = refusals.size === 0;
@@ -391,9 +414,10 @@ async function main() {
     try {claim = JSON.parse(readBounded(args.claim, 1024 * 1024).toString('utf8'));}
     catch (error) {throw error instanceof AcceptanceRefusedError ? error : new AcceptanceRefusedError(['deployment_claim_unreadable']);}
   }
+  const pair = reviewedCheckoutPair();
   const observation = await observeProgramTarget(createAwsCliReader());
-  const binding = evaluateTargetBinding({observation, artifact, deploymentClaim: claim});
-  console.log(JSON.stringify(targetBindingReport(binding)));
+  const binding = evaluateTargetBinding({observation, pair, artifact, deploymentClaim: claim});
+  console.log(JSON.stringify(targetBindingReport(binding, {pair})));
   if (binding.refusals.length) process.exitCode = 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
