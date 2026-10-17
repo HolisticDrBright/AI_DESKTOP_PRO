@@ -34,8 +34,20 @@ export function assessPoolEmailVerification(template, stackResource, pool, resou
   if (!Array.isArray(actual) || actual.some(value => typeof value !== "string")) {
     throw new Error("pool_observation_invalid");
   }
+  // This is not a general CloudFormation drift check. In particular, do not return
+  // an overall green observation while the deployed template omits intentional
+  // live email delivery or pool-tier settings that a repair must preserve.
+  const unmodeledLiveSettings = [];
+  if (pool.EmailConfiguration?.EmailSendingAccount === "DEVELOPER"
+    && resource.Properties?.EmailConfiguration === undefined) {
+    unmodeledLiveSettings.push("EmailConfiguration");
+  }
+  if (pool.UserPoolTier === "PLUS" && resource.Properties?.UserPoolTier === undefined) {
+    unmodeledLiveSettings.push("UserPoolTier");
+  }
+  const emailVerificationMatches = actual.length === 1 && actual[0] === "email";
   return {
-    contract: "production-pool-email-verification-observation/1",
+    contract: "production-pool-email-verification-observation/2",
     account: PRODUCTION_COGNITO_TARGET.account,
     region: PRODUCTION_COGNITO_TARGET.region,
     stack: PRODUCTION_COGNITO_TARGET.stack,
@@ -43,10 +55,23 @@ export function assessPoolEmailVerification(template, stackResource, pool, resou
     poolId: physicalId,
     declared: ["email"],
     actual,
-    status: actual.length === 1 && actual[0] === "email" ? "matches" : "drift",
+    status: !emailVerificationMatches ? "drift"
+      : unmodeledLiveSettings.length > 0 ? "review_required" : "matches",
+    unmodeledLiveSettings,
+    templateReapplyApproved: false,
     hostedRegistrationVerified: false,
     mutations: false,
   };
+}
+
+export function summarizePoolObservations(pools) {
+  if (!Array.isArray(pools) || pools.length !== PRODUCTION_COGNITO_TARGET.resources.length
+    || pools.some((pool, index) => pool?.resourceName !== PRODUCTION_COGNITO_TARGET.resources[index]
+      || !["matches", "drift", "review_required"].includes(pool.status))) {
+    throw new Error("pool_observation_invalid");
+  }
+  return pools.some(pool => pool.status === "drift") ? "drift"
+    : pools.some(pool => pool.status === "review_required") ? "review_required" : "matches";
 }
 
 function observe(profile) {
@@ -69,9 +94,10 @@ function observe(profile) {
     const pool = aws("cognito-idp", "describe-user-pool", "--user-pool-id", physicalId).UserPool;
     return assessPoolEmailVerification(template, stackResource, pool, resourceName);
   });
-  return { contract: "production-email-verification-observation/2", account: PRODUCTION_COGNITO_TARGET.account,
+  return { contract: "production-email-verification-observation/3", account: PRODUCTION_COGNITO_TARGET.account,
     region: PRODUCTION_COGNITO_TARGET.region, stack: PRODUCTION_COGNITO_TARGET.stack,
-    status: pools.every(pool => pool.status === "matches") ? "matches" : "drift", pools,
+    status: summarizePoolObservations(pools), pools,
+    templateReapplyApproved: false,
     hostedRegistrationVerified: false, mutations: false };
 }
 

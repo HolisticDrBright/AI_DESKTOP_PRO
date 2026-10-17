@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { assertProductionObserver, assessPoolEmailVerification } from "./check-aws-production-cognito-live.mjs";
+import { assertProductionObserver, assessPoolEmailVerification,
+  summarizePoolObservations } from "./check-aws-production-cognito-live.mjs";
 
 const template = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
 const consumerResource = { StackResourceDetail: {
@@ -25,11 +26,37 @@ test("only the pinned production assumed-role account can observe", () => {
 
 test("matching live auto-verification is a narrow configuration observation", () => {
   assert.deepEqual(assessPoolEmailVerification(template, consumerResource, consumer, "ConsumerUserPool"), {
-    contract: "production-pool-email-verification-observation/1", account: "173535830222",
+    contract: "production-pool-email-verification-observation/2", account: "173535830222",
     region: "us-east-2", stack: "ai-longevity-production-clinical-foundation",
     resourceName: "ConsumerUserPool", poolId: "us-east-2_kl37QO1DJ", declared: ["email"], actual: ["email"],
-    status: "matches", hostedRegistrationVerified: false, mutations: false,
+    status: "matches", unmodeledLiveSettings: [], templateReapplyApproved: false,
+    hostedRegistrationVerified: false, mutations: false,
   });
+});
+
+test("restoring email verification alone cannot green an unsafe older template", () => {
+  const report = assessPoolEmailVerification(template, consumerResource, {
+    ...consumer,
+    EmailConfiguration: { EmailSendingAccount: "DEVELOPER", SourceArn: "arn:aws:ses:us-east-2:173535830222:identity/example.test" },
+    UserPoolTier: "PLUS",
+  }, "ConsumerUserPool");
+  assert.equal(report.status, "review_required");
+  assert.deepEqual(report.unmodeledLiveSettings, ["EmailConfiguration", "UserPoolTier"]);
+  assert.equal(report.templateReapplyApproved, false);
+  assert.equal(report.hostedRegistrationVerified, false);
+  assert.equal(summarizePoolObservations([
+    report,
+    { ...report, resourceName: "WorkforceUserPool" },
+  ]), "review_required");
+});
+
+test("overall observer refuses incomplete evidence and preserves the strongest hold", () => {
+  const consumerReport = assessPoolEmailVerification(template, consumerResource, consumer, "ConsumerUserPool");
+  const workforceReport = assessPoolEmailVerification(template, workforceResource, workforce, "WorkforceUserPool");
+  assert.equal(summarizePoolObservations([consumerReport, workforceReport]), "matches");
+  assert.equal(summarizePoolObservations([{ ...consumerReport, status: "drift" }, workforceReport]), "drift");
+  assert.throws(() => summarizePoolObservations([consumerReport]), /pool_observation_invalid/);
+  assert.throws(() => summarizePoolObservations([workforceReport, consumerReport]), /pool_observation_invalid/);
 });
 
 test("live missing auto-verification is drift, never a registration pass", () => {
