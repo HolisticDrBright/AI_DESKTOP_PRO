@@ -29,9 +29,10 @@ import type { FullscriptCallbackOutcome } from "@/lib/fullscript-presentation";
  * best effort, and that is logged (without the token) as the one remaining way to orphan it.
  */
 type IssuedReason = Extract<FullscriptRevocationReason, "install_refused" | "practitioner_connected_elsewhere" | "install_unconfirmed">;
+type RevocationOutbox = NonNullable<ReturnType<typeof createAwsFullscriptRevocationOutbox>>;
 async function queueIssued(installation: StoredFullscriptConnection, reason: IssuedReason, revokeNow: (token: string) => Promise<void>) {
-  let outbox: ReturnType<typeof createAwsFullscriptRevocationOutbox> = null;
-  let item: Awaited<ReturnType<NonNullable<typeof outbox>["queue"]>> | null = null;
+  let outbox: RevocationOutbox | null = null;
+  let item: Awaited<ReturnType<RevocationOutbox["queue"]>> | null = null;
   // Recording it can fail in any way; that never changes what the practitioner is told, only what is logged.
   try { outbox = createAwsFullscriptRevocationOutbox(); item = outbox ? await outbox.queue(installation, reason) : null; } catch { item = null; }
   // A lost install reply may still have saved this token: the reconciler revokes it only if no saved connection holds it.
