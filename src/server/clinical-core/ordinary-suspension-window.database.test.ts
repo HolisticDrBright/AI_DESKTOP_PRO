@@ -202,6 +202,9 @@ describe('the candidate', () => {
       { iat: now - 60, exp: now - 60 + 2 * 86_400, access: 'read' }, { iat: now + 600, exp: now + 4200, access: 'read' },
       { iat: -5, exp: 3600, access: 'read' }, { iat: now - 7200, exp: now - 3600, access: 'read' },
     ]) expect([evidence, await outcome(h.readPatient(evidence))]).toEqual([evidence, CLOSED]);
+    // Expired evidence is refused whatever the purpose, consent management included.
+    expect(await outcome(h.as({ iat: now - 7200, exp: now - 3600, access: 'write' }, 'select 1', [], { purpose: 'consent_management' }))).toBe(CLOSED);
+    expect(await outcome(h.as(token(60, 3600, 'write'), 'select 1', [], { purpose: 'consent_management' }))).toBe('admitted');
   });
 
   it('a session issued before the suspension reads until its own expiry, read-only, its statements and lock waits bounded by the time left', async () => {

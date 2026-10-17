@@ -42,7 +42,7 @@ test('a refusal is returned with the send that raised it, even when stderr is re
 test('every native qualification script drives psql through this sender and nothing else', () => {
   for (const script of ['qualify-clinic-status-native.mjs', 'qualify-care-messaging-current-native.mjs', 'qualify-workforce-bootstrap-native.mjs',
     'qualify-workforce-current-authority-native.mjs', 'qualify-workforce-onboarding-native.mjs', 'qualify-synthetic-invitation-native.mjs',
-    'qualify-consent-decision-native.mjs', 'qualify-emergency-revocation-native.mjs', 'qualify-ordinary-suspension-window-native.mjs']) {
+    'qualify-consent-decision-native.mjs', 'qualify-emergency-revocation-native.mjs', 'qualify-ordinary-suspension-window-native.mjs', 'qualify-consent-grant-paths-native.mjs']) {
     const source = readFileSync(new URL(script, import.meta.url), 'utf8');
     assert.match(source, /from '\.\/native-psql-session\.mjs'/, script);
     assert.match(source, /psqlSender\(child, name, '[a-z_]+_session_timeout'\)/, script);

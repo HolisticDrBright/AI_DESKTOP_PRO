@@ -115,16 +115,16 @@ describe('the production Desktop adapter', () => {
 describe('the clinical-state adapter (patient list, lab documents and observations, lab review)', () => {
   it('ships blocked: the seven-argument entry', async () => {
     const db = recording();
-    await createAwsProductionClinicalStateAdapter(db.database).listDesktopPatients(context(window));
+    await createAwsProductionClinicalStateAdapter(db.database).listDesktopPatients!(context(window));
     expect(db.entry()!.parameters).toHaveLength(7);
   });
 
   it('qualification: reads declare read; the lab review declares write; a consumer request is never windowed', async () => {
     const db = recording();
     const adapter = createAwsProductionClinicalStateAdapter(db.database, { suspensionWindow: 'qualification' });
-    await adapter.listDesktopPatients(context(window));
+    await adapter.listDesktopPatients!(context(window));
     expect(db.entry()!.parameters.slice(7)).toEqual([window.issuedAt, window.expiresAt, 'read']);
-    for (const read of [() => adapter.listDesktopLabDocuments(context(window), PATIENT), () => adapter.listPatientLabObservations(context(window), PATIENT),
+    for (const read of [() => adapter.listDesktopLabDocuments!(context(window), PATIENT), () => adapter.listPatientLabObservations(context(window), PATIENT),
       () => adapter.listLabImports(context(window), 'review_pending')]) {
       db.calls.length = 0;
       await read();
@@ -141,7 +141,7 @@ describe('the clinical-state adapter (patient list, lab documents and observatio
   it('qualification without evidence: a workforce request is refused before any transaction', async () => {
     const db = recording();
     const adapter = createAwsProductionClinicalStateAdapter(db.database, { suspensionWindow: 'qualification' });
-    await expect(adapter.listDesktopPatients(context())).rejects.toMatchObject({ category: 'clinical_state_refused' });
+    await expect(adapter.listDesktopPatients!(context())).rejects.toMatchObject({ category: 'clinical_state_refused' });
     expect(db.database.transaction).not.toHaveBeenCalled();
   });
 });

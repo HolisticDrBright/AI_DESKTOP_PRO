@@ -14,13 +14,13 @@ import type { DesktopCompatibilityRequest } from "./aws-desktop-compatibility";
  * calls the ten-argument entry, which exists only once the candidate is applied. Moving it is Codex work after review.
  */
 export const ORDINARY_SUSPENSION_WINDOW_RELEASE: "blocked" | "qualification" = "blocked";
-export const ORDINARY_SUSPENSION_WINDOW_SHA256 = "4c9dcb22ca8e23e7a706e57d860611e165bd07f4d15d2ee4740b8ff1a49af280";
-export const ORDINARY_SUSPENSION_WINDOW_ROLLBACK_SHA256 = "952c0e8e4c5a2f9aa42a3d4ac585d009ba78c4353d0b4c1c2f8deaaa2bd4f41d";
+export const ORDINARY_SUSPENSION_WINDOW_SHA256 = "94b25a4a7557f4256e6b678c8d338160afcf98371787aadd90a88c2154b3f90b";
+export const ORDINARY_SUSPENSION_WINDOW_ROLLBACK_SHA256 = "efd8665c81b90599913074721818b6cbdc6c45fc47df54318da1c6cb51184466";
 /** prosrc SHA-256 the candidate pins: the seven- and ten-argument entries and the private admission function. */
 export const ORDINARY_SUSPENSION_WINDOW_PROSRC = {
   seven: "359837b0d0f46046fae4ea842ddef0b02d9cb284294ac76b30bc442c126370d1",
   ten: "f1f07d424d6f1b2da2fbf3a381b3e0eba90a13f24712bacb753ccb4cecf2933d",
-  admit: "a5c99e52cdd3901a2ea5b4d27e3fda9c75964ba614101a4615e2d8b8b569e527",
+  admit: "8ccbfd1375c1e11ce1205140219fc56ccfbf87da186d905b991e418f94252b32",
   parent: "3ee98d29830ee366a1c670c236cbf018b710eb7dbbc48d3ee090e7d66c36097b",
 } as const;
 

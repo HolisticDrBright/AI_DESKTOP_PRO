@@ -64,6 +64,10 @@ revocation successor (prosrc `3ee98d29…`). Its preserving rollback is `workfor
      own consent decisions, which the consent-decision candidate governs;
    - every consumer request.
 
+   Evidence, when it is sent, is checked whatever the purpose: malformed or expired evidence is refused for
+   `consent_management` and consumer requests too. Only the window itself is limited to `clinical_data` and
+   `identity_link`.
+
 **Why `iat` and not `auth_time`.** A Cognito refresh keeps the original `auth_time` and issues a new `iat`. The rule is
 about the token that was valid at the suspension, so the candidate reads `iat`.
 
@@ -119,7 +123,7 @@ clinic at once, which is stricter than the rule allows.
 | --- | --- |
 | **Failing before**, on the parent, PGlite (`ordinary-suspension-window.database.test.ts`) | After a suspension, the seven values read and write: one test. No ten-argument entry and no transition table exist. |
 | **Failing before**, native scenario 1 | The same, on PostgreSQL 16: three DEFECT checks. |
-| PGlite, the candidate | 21/21. Covers: pin, transitions, the active clinic, malformed and expired evidence, the window (read-only, timeouts), a held write, a disguised write, refresh and skew, expiry, missing evidence, unrecorded suspension, re-suspension, archived, sibling clinic, emergency revocation, consent management, the read set against the schema, the production adapter over the database (blocked and qualification), guards, rollback ordering. |
+| PGlite, the candidate | 21/21. Covers: pin, transitions, the active clinic, malformed and expired evidence (expired refused for any purpose, consent management included), the window (read-only, timeouts), a held write, a disguised write, refresh and skew, expiry, missing evidence, unrecorded suspension, re-suspension, archived, sibling clinic, emergency revocation, consent management, the read set against the schema, the production adapter over the database (blocked and qualification), guards, rollback ordering. |
 | Native (`scripts/qualify-ordinary-suspension-window-native.mjs`) | 8 scenarios, 23 checks, all passing (`docs/evidence/2026-10-17-ordinary-suspension-window-native-*.json`). |
 | Unit (`ordinary-suspension-window.test.ts`) | 9/9: evidence from claims only, entry SQL per switch, access classification, refusal before the database. |
 | Existing suites touched | 175/175 (identity API, clinical state, production adapter, current-identity, membership discovery, emergency revocation); route inventory and continuity matrix 225/225. |
@@ -128,11 +132,11 @@ clinic at once, which is stricter than the rule allows.
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `workforce-ordinary-suspension-window.sql` | `4c9dcb22ca8e23e7a706e57d860611e165bd07f4d15d2ee4740b8ff1a49af280` |
-| `workforce-ordinary-suspension-window-rollback.sql` | `952c0e8e4c5a2f9aa42a3d4ac585d009ba78c4353d0b4c1c2f8deaaa2bd4f41d` |
+| `workforce-ordinary-suspension-window.sql` | `94b25a4a7557f4256e6b678c8d338160afcf98371787aadd90a88c2154b3f90b` |
+| `workforce-ordinary-suspension-window-rollback.sql` | `efd8665c81b90599913074721818b6cbdc6c45fc47df54318da1c6cb51184466` |
 | prosrc of the seven-argument entry | `359837b0d0f46046fae4ea842ddef0b02d9cb284294ac76b30bc442c126370d1` |
 | prosrc of the ten-argument entry | `f1f07d424d6f1b2da2fbf3a381b3e0eba90a13f24712bacb753ccb4cecf2933d` |
-| prosrc of `admit_request_context` | `a5c99e52cdd3901a2ea5b4d27e3fda9c75964ba614101a4615e2d8b8b569e527` |
+| prosrc of `admit_request_context` | `8ccbfd1375c1e11ce1205140219fc56ccfbf87da186d905b991e418f94252b32` |
 | Required parent prosrc (the emergency revocation's entry) | `3ee98d29830ee366a1c670c236cbf018b710eb7dbbc48d3ee090e7d66c36097b` |
 
 **Ordering:**

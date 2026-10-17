@@ -154,12 +154,13 @@ begin
   end if;
   -- Evidence, when sent, must be whole and well formed: NumericDate seconds, issued before it expires, a lifetime
   -- between 5 minutes and 1 day (Cognito's own ID-token bounds), issued no later than 60 seconds ahead of this clock,
-  -- and a declared read or write. Anything else is refused, never repaired.
+  -- not yet expired, and a declared read or write, whatever the purpose. Anything else is refused, never repaired.
   if _evidence and (_token_issued_at is null or _token_expires_at is null or _access is null
       or _access not in ('read','write')
       or _token_issued_at <= 0 or _token_expires_at <= _token_issued_at
       or _token_expires_at - _token_issued_at not between 300 and 86400
-      or to_timestamp(_token_issued_at) > clock_timestamp() + interval '60 seconds') then
+      or to_timestamp(_token_issued_at) > clock_timestamp() + interval '60 seconds'
+      or clock_timestamp() >= to_timestamp(_token_expires_at)) then
     raise exception using errcode = '42501', message = 'request_context_refused';
   end if;
   if _identity_pool = 'workforce' and _purpose in ('clinical_data','identity_link') then
@@ -267,7 +268,7 @@ declare _seven regprocedure := to_regprocedure('clinical_private.set_request_con
 begin
   if (select encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') from pg_proc where oid = _seven) <> '359837b0d0f46046fae4ea842ddef0b02d9cb284294ac76b30bc442c126370d1'
     or (select encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') from pg_proc where oid = _ten) <> 'f1f07d424d6f1b2da2fbf3a381b3e0eba90a13f24712bacb753ccb4cecf2933d'
-    or (select encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') from pg_proc where oid = _admit) <> 'a5c99e52cdd3901a2ea5b4d27e3fda9c75964ba614101a4615e2d8b8b569e527'
+    or (select encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') from pg_proc where oid = _admit) <> '8ccbfd1375c1e11ce1205140219fc56ccfbf87da186d905b991e418f94252b32'
     or exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
       where p.oid in (_seven, _ten, _admit) and a.grantee = 0)
     or exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a

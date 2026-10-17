@@ -22,7 +22,7 @@ begin
       is distinct from 'f1f07d424d6f1b2da2fbf3a381b3e0eba90a13f24712bacb753ccb4cecf2933d'
     or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p
       where p.oid = to_regprocedure('clinical_private.admit_request_context(uuid,uuid,text,text,text,text,text,bigint,bigint,text)'))
-      is distinct from 'a5c99e52cdd3901a2ea5b4d27e3fda9c75964ba614101a4615e2d8b8b569e527'
+      is distinct from '8ccbfd1375c1e11ce1205140219fc56ccfbf87da186d905b991e418f94252b32'
     or to_regclass('clinical_private.organization_status_transitions') is null then
     raise exception using errcode = '55000', message = 'ordinary_suspension_window_rollback_refused';
   end if;
