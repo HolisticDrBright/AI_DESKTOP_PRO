@@ -1,3 +1,9 @@
+/**
+ * Hosted SMOKE test of the daily-guidance route; not acceptance evidence. It checks no deployed source, stack or
+ * `x-clinical-execution` marker; it creates and deletes a temporary fictional Cognito user; and its model-path check
+ * reads `provenance.provider` from the answer body, the API's own claim rather than an observed provider call.
+ * Acceptance is the separate path scripts/hosted-program-acceptance.mjs.
+ */
 import { randomBytes, randomUUID } from "node:crypto";
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import {

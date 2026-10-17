@@ -1,4 +1,12 @@
-/** Hosted smoke test of selected synthetic-only routes with designated fictional identities. */
+/**
+ * Hosted SMOKE test of selected synthetic-only routes with designated fictional identities. It is not acceptance evidence,
+ * and its output is kept unchanged:
+ * - `deployedSourceCommit` is printed but never compared with the deployed stack;
+ * - it binds only to the old unversioned artifact `58f59783…` and checks no `x-clinical-execution` marker;
+ * - its create-or-reuse branches skip their writes on a replay and it still prints `verdict: 'pass'`, so a pass does
+ *   not say which writes this run performed.
+ * Acceptance is the separate path scripts/hosted-program-acceptance.mjs.
+ */
 import {readFileSync} from 'node:fs';
 import {spawnSync,execFileSync} from 'node:child_process';
 import {createHash,createHmac,randomUUID} from 'node:crypto';

@@ -262,6 +262,8 @@ jobs:
         run: npm run test:synthetic-identity-timeout
       - name: Bind fictional API/mobile sources and refuse unsafe schema rollback (no AWS calls)
         run: npm run test:synthetic-care-release
+      - name: Hosted program acceptance refuses forged, stale, unmarked, replayed and provider-shaped evidence (fictional adapters, no AWS calls)
+        run: npm run test:hosted-program-acceptance
       - name: Intent-aware exact-source artifact and read-only preflight refusals
         run: npm run test:synthetic-care-intent-release
       - name: Intent code upload and single-resource change-set refusals

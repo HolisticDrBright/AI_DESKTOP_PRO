@@ -165,6 +165,7 @@
     "build:care-intent-release-database": "node scripts/build-care-erasure-intent-release.mjs",
     "test:synthetic-care-intent-upload": "node --test scripts/synthetic-care-intent-upload.test.mjs",
     "test:synthetic-care-release": "node --test scripts/synthetic-care-release.test.mjs scripts/upload-synthetic-care-release.test.mjs scripts/prepare-synthetic-care-code-change.test.mjs scripts/verify-synthetic-care-consumer.test.mjs scripts/verify-deployed-synthetic-care.test.mjs scripts/retain-synthetic-care-version.test.mjs scripts/care-recovery-routing.test.mjs scripts/care-erasure-release.test.mjs scripts/care-erasure-cancellation.test.mjs scripts/verify-synthetic-care-cancellation.test.mjs",
+    "test:hosted-program-acceptance": "node --test scripts/hosted-program-acceptance.test.mjs",
     "release:synthetic-care-erasure": "node scripts/release-synthetic-care-erasure.mjs --release-fictional-care-erasure-with-fresh-recovery",
     "retain:synthetic-care-version": "node scripts/retain-synthetic-care-version.mjs --retain-reviewed-fictional-code-only",
     "verify:deployed-synthetic-care": "node scripts/verify-deployed-synthetic-care.mjs --inspect-deployed-fictional-only",

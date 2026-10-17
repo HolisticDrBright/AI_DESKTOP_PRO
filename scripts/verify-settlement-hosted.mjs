@@ -1,4 +1,11 @@
-// Real JWT/Data API synthetic acceptance. Uses existing owner-approved fictional identities only.
+/**
+ * Hosted SMOKE test of message settlement over real JWTs and the Data API, with existing owner-approved fictional
+ * identities only. Its output fields (`apiAcceptance`, `verdict`) are kept unchanged, but it is not acceptance evidence:
+ * - its `sourceCommit` and `artifactSha256` are copied from the local dist/settlement-qualification/deployment.json;
+ * - the live code digest is compared with that same file, not with a reviewed source;
+ * - no answer's `x-clinical-execution` marker is checked.
+ * Acceptance is the separate path scripts/hosted-program-acceptance.mjs.
+ */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
