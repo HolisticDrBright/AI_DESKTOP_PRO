@@ -194,7 +194,7 @@ export const QUALIFICATION_ISSUER_RELEASE_MAP: readonly ReleaseMapEntry[] = Obje
     mfaRequirement: { required: false, cite: null, note: 'Recording, privacy, personal-storage, owned-lab and owned-voice stacks take WorkforceIssuer as a parameter; the acceptance CLIs compare SourceCommit only.' },
     tokenTimes: { note: 'Recording family handlers use recordingWorkforceIdentity (15-minute auth_time).', cite: PROGRAM_TOKEN_TIMES.cite },
     stackReads: { names: ['Output and Parameter SourceCommit against the manifest; no issuer or audience comparison'],
-      cite: { file: 'src/server/clinical-core/qualification-target-manifest.ts', line: 222, text: 'if (parameters.SourceCommit !== manifest.sourceCommit) refuse();' } },
+      cite: { file: 'src/server/clinical-core/qualification-target-manifest.ts', line: 225, text: 'if (parameters.SourceCommit !== manifest.sourceCommit) refuse();' } },
     hostedHold: 'The shared-manifest acceptance CLIs never compare the authorizer issuer with anything (docs/codex-hosted-qualification-packet-2026-10-17.md §5): which pool these stacks were deployed with is unobserved. A plan that includes them must carry an observed authorizer.',
   },
   {
@@ -249,7 +249,7 @@ export const QUALIFICATION_ISSUER_RELEASE_MAP: readonly ReleaseMapEntry[] = Obje
 export const OTHER_POOL_PINS: readonly (Cite & { reason: string })[] = Object.freeze([
   { file: 'scripts/prepare-aws-lab-test-account.ps1', line: 2, text: '[string]$UserPoolId = "us-east-2_nYngyyYGE",', reason: 'consumer smoke script against the synthetic staging API; not admissible hosted evidence' },
   { file: 'scripts/provision-synthetic-ask-alp-personas.mjs', line: 14, text: 'const poolId = process.env.CONSUMER_USER_POOL_ID ?? "us-east-2_nYngyyYGE";', reason: 'consumer persona provisioning for the synthetic staging API' },
-  { file: 'scripts/qualify-aws-daily-guidance-hosted.mjs', line: 14, text: 'const USER_POOL = "us-east-2_nYngyyYGE";', reason: 'consumer smoke script; compares only iss with a constant' },
+  { file: 'scripts/qualify-aws-daily-guidance-hosted.mjs', line: 20, text: 'const USER_POOL = "us-east-2_nYngyyYGE";', reason: 'consumer smoke script; compares only iss with a constant' },
 ]);
 
 export type QualificationIssuerRefusal = 'release_map_entry_unknown' | 'api_mismatch' | 'workforce_issuer_unbound' | 'issuer_unknown'

@@ -217,7 +217,11 @@ describe('the candidate', () => {
     expect(settings!.a).toBe('ordinary_suspension_window');
     const left = (before.exp! * 1000) - Date.now();
     for (const value of [settings!.st, settings!.lt]) {
-      const ms = Number(value.replace(/ms$/, '')) * (value.endsWith('min') ? 60_000 : value.endsWith('s') && !value.endsWith('ms') ? 1000 : 1);
+      // PostgreSQL shows a duration in the largest unit that divides it exactly ("2879999ms", "2879s", "48min"); a
+      // correct setting must parse in every one of them, so an unparsed unit is a test failure, never NaN.
+      const parsed = /^(\d+)(ms|s|min|h)?$/.exec(value);
+      expect(parsed, `unparsed duration ${value}`).not.toBeNull();
+      const ms = Number(parsed![1]) * ({ ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const)[(parsed![2] ?? 'ms') as 'ms' | 's' | 'min' | 'h'];
       expect(ms).toBeGreaterThan(left - 120_000);
       expect(ms).toBeLessThanOrEqual(left + 1000);
     }
