@@ -5,7 +5,8 @@ import { runExportRetentionAcceptance } from "./export-retention-acceptance";
 import { loadClinicalCoreMigrations } from "./migrations";
 import { productionArtifactReleaseHash } from "./production-migrations";
 import { bindQualificationTarget, loadQualificationTargetManifest, QualificationTargetManifestError } from "./qualification-target-manifest";
-import { EXPORT_ACCEPTANCE_CANDIDATES, observeQualificationTarget } from "./qualification-target-observation";
+import { EXPORT_ACCEPTANCE_CANDIDATES, observeAcceptanceBoundary } from "./qualification-target-observation";
+import { boundarySummary } from "./qualification-target-boundary";
 import { observeScheduledRetentionRemoval } from "./scheduled-retention-observation";
 
 /** Hosted runner, bound to the reviewed qualification target manifest (`CLINICAL_QUALIFICATION_TARGET`): the API origin,
@@ -19,7 +20,12 @@ import { observeScheduledRetentionRemoval } from "./scheduled-retention-observat
  * personal-storage and privacy-operations stacks, and checks their posture, source and resource parameters against the
  * manifest before the first request. `SOURCE_COMMIT` and `OBSERVED_AWS_ACCOUNT_ID` are assertions by whoever set them, so
  * they are never accepted in place of that; a value that disagrees is refused. `ACCEPTANCE_MODE=exploratory` runs a
- * diagnostic on asserted values instead, and its report can never read as acceptance. The exit status is the verdict. */
+ * diagnostic on asserted values instead, and its report can never read as acceptance. The exit status is the verdict.
+ *
+ * Acceptance is bounded at the source (qualification-target-boundary.ts): the checkout must be clean as well as at the
+ * manifest's exact commit, and after the last request (and the scheduled-removal observation) the same stacks are
+ * observed again; a stack that changed, is mid-update or moved commit, or a checkout that changed, invalidates the
+ * report, which is still written. Only a `qualified` run exits 0 in acceptance mode. */
 async function main() {
   const manifest = loadQualificationTargetManifest(required("CLINICAL_QUALIFICATION_TARGET"));
   const migrations = loadClinicalCoreMigrations(path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations"));
@@ -29,7 +35,7 @@ async function main() {
   const scheduledMinutes = process.env.SCHEDULED_CLEANUP_WAIT_MINUTES?.trim();
   const scheduledCleanupWaitMs = scheduledMinutes ? Number(scheduledMinutes) * 60_000 : undefined;
   if (scheduledCleanupWaitMs !== undefined && (!Number.isSafeInteger(scheduledCleanupWaitMs) || scheduledCleanupWaitMs <= 0 || scheduledCleanupWaitMs > 3 * 60 * 60_000)) throw new Error("scheduled_cleanup_wait_invalid");
-  const observation = mode === "acceptance" ? observeQualificationTarget(manifest, EXPORT_ACCEPTANCE_CANDIDATES) : null;
+  const observation = mode === "acceptance" ? observeAcceptanceBoundary(manifest, EXPORT_ACCEPTANCE_CANDIDATES, { asserted: process.env }) : null;
   const sourceCommit = observation?.sourceCommit ?? (process.env.SOURCE_COMMIT?.trim() || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
   const awsAccountId = observation?.awsAccountId ?? required("OBSERVED_AWS_ACCOUNT_ID");
   const target = bindQualificationTarget(manifest, { awsAccountId, sourceCommit, migrationReleaseHash: productionArtifactReleaseHash(migrations) }, process.env);
@@ -45,14 +51,17 @@ async function main() {
       });
       return JSON.parse(raw);
     })} : {}),
+    ...(observation ? { sourceBoundary: { before: observation, after: () => observeAcceptanceBoundary(manifest, EXPORT_ACCEPTANCE_CANDIDATES) } } : {}),
   });
   mkdirSync("dist/qualification", { recursive: true });
   const out = `dist/qualification/export-retention-acceptance-${report.finishedAt.replace(/[:.]/g, "-")}.json`;
   writeFileSync(out, JSON.stringify(report, null, 2), { flag: "wx" });
-  console.log(JSON.stringify({ ok: report.ok, report: out, evidenceSha256: report.evidenceSha256, execution: report.execution, unmarkedDenials: report.unmarkedDenials, verdict: report.verdict,
+  console.log(JSON.stringify({ ok: report.ok, qualified: report.qualified, report: out, evidenceSha256: report.evidenceSha256, execution: report.execution, unmarkedDenials: report.unmarkedDenials,
+    unverified: report.unverified, verdict: report.verdict, sourceBoundary: boundarySummary(report.sourceBoundary),
     target: observation ? { source: "observed", stacks: observation.stacks } : { source: "asserted_by_caller", stacks: [] },
     notConfigured: report.steps.filter((s) => s.outcome === "not_configured").map((s) => s.name), failed: report.steps.filter((s) => s.outcome === "failed").map((s) => `${s.name}:${s.detail ?? ""}`), retained: report.retained }));
-  if (!report.ok) process.exitCode = 1;
+  // Acceptance exits 0 only for a qualified run; exploration keeps its own (never qualified) partial verdict.
+  if (!(mode === "acceptance" ? report.qualified : report.ok)) process.exitCode = 1;
 }
 function required(name: string) { const value = process.env[name]?.trim(); if (!value) throw new Error("acceptance_configuration_missing"); return value; }
 main().catch((error) => {

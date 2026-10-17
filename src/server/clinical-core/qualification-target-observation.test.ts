@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { validateQualificationTargetManifest, type QualificationTargetManifest } from "./qualification-target-manifest";
-import { EXPORT_ACCEPTANCE_CANDIDATES, observeQualificationTarget } from "./qualification-target-observation";
+import { EXPORT_ACCEPTANCE_CANDIDATES, RECORDING_ACCEPTANCE_CANDIDATES, assertBoundaryUnchangedSince, observeAcceptanceBoundary, observeQualificationTarget } from "./qualification-target-observation";
+import { closeAcceptanceBoundary, compareAcceptanceBoundaries } from "./qualification-target-boundary";
+import { FICTIONAL_ACCOUNT, FICTIONAL_COMMIT, FictionalQualificationDeployment, fictionalQualificationManifest } from "./testing/qualification-target-fictional";
 
 // A fictional deployment answered by a recorded `aws`/`git`: no AWS call, no credential, no request.
 const example = JSON.parse(readFileSync("infra/aws-clinical-core/qualification-target.example.json", "utf8")) as Record<string, unknown>;
@@ -89,5 +91,90 @@ describe("observing the qualification target from the command line", () => {
     expect(() => observe({ stacks: { [m.foundationStackName]: JSON.stringify({ StackStatus: "CREATE_COMPLETE", Outputs: [{ OutputKey: "PhiAllowed", OutputValue: "true" }] }) } })).toThrow("target_stack_refused");
     expect(() => observe({ stacks: { [m.foundationStackName]: JSON.stringify({ StackStatus: "CREATE_COMPLETE", Outputs: [{ OutputKey: "PhiAllowed", OutputValue: "false" }, { OutputKey: "ApiId", OutputValue: "wxv734oi12" }] }) } })).toThrow("target_stack_refused");
     expect(observe().stacks).toHaveLength(2);
+  });
+});
+
+describe("the acceptance source boundary: a clean exact checkout and the same deployment before and after the run", () => {
+  // A fictional deployment (testing/qualification-target-fictional.ts): fictional account, stacks and commit, answered
+  // through the observer's own runner. Not hosted evidence.
+  const setup = (drain: string[] = []) => {
+    const m = fictionalQualificationManifest(), d = new FictionalQualificationDeployment(m, drain);
+    const observe = (candidates: readonly string[] = EXPORT_ACCEPTANCE_CANDIDATES, options: Parameters<typeof observeAcceptanceBoundary>[2] = {}) =>
+      observeAcceptanceBoundary(m, candidates, { runner: d.runner, ...options });
+    return { m, d, observe };
+  };
+  test("an observation fingerprints each stack it read, the foundation included, so a later read can be compared with it", () => {
+    const { m, d } = setup();
+    const observation = observeQualificationTarget(m, EXPORT_ACCEPTANCE_CANDIDATES, { runner: d.runner });
+    expect(observation.foundation).toMatchObject({ candidate: "foundation", stackName: m.foundationStackName, stackStatus: "CREATE_COMPLETE" });
+    expect(observation.stacks[0]).toMatchObject({ candidate: "personal-storage", stackName: m.stacks["personal-storage"], sourceCommit: m.sourceCommit, lastUpdatedTime: null,
+      stackId: expect.stringContaining(":stack/fictional-qualification-personal-storage/") });
+    for (const fingerprint of [observation.foundation, ...observation.stacks]) expect(fingerprint.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(new Set(observation.stacks.map((s) => s.sha256)).size).toBe(2);
+  });
+  test("a dirty checkout is refused before any AWS call, whatever HEAD says", () => {
+    const { d, observe } = setup();
+    d.status = " M src/server/clinical-core/recording-acceptance.ts\n";
+    expect(() => observe()).toThrow("target_source_dirty");
+    d.status = "?? stray-local-file.json\n";
+    expect(() => observe()).toThrow("target_source_dirty");
+    expect(d.awsCalls()).toBe(0);
+    d.status = "";
+    expect(observe()).toMatchObject({ clean: true, sourceCommit: FICTIONAL_COMMIT });
+  });
+  test("a stale checkout, a missing stack and an asserted value that disagrees with the observation are refused", () => {
+    const { d, observe } = setup();
+    d.head = "c".repeat(40);
+    expect(() => observe()).toThrow("target_source_mismatch");
+    d.head = FICTIONAL_COMMIT;
+    // SOURCE_COMMIT and OBSERVED_AWS_ACCOUNT_ID are what the wrapper saw; a disagreement means the checkout or the
+    // signed-in account changed between the two steps, and it is refused rather than silently overridden.
+    expect(() => observe(EXPORT_ACCEPTANCE_CANDIDATES, { asserted: { SOURCE_COMMIT: "c".repeat(40) } })).toThrow("target_source_mismatch");
+    expect(() => observe(EXPORT_ACCEPTANCE_CANDIDATES, { asserted: { OBSERVED_AWS_ACCOUNT_ID: "444455556666" } })).toThrow("target_account_refused");
+    expect(observe(EXPORT_ACCEPTANCE_CANDIDATES, { asserted: { SOURCE_COMMIT: FICTIONAL_COMMIT, OBSERVED_AWS_ACCOUNT_ID: FICTIONAL_ACCOUNT } }).clean).toBe(true);
+    d.remove("privacy-operations");
+    expect(() => observe()).toThrow("target_stack_refused");
+  });
+  test("the same deployment before and after is unchanged; a redeploy in between is a change even when SourceCommit stays the same", () => {
+    const { d, observe } = setup();
+    const before = observe();
+    expect(closeAcceptanceBoundary("acceptance", { before, after: () => observe() })).toMatchObject({ state: "unchanged", changed: [], refusal: null, source: "observed" });
+    // A mid-run redeploy of the same commit (a new code version, the same SourceCommit) still changes the stack.
+    d.redeploy("privacy-operations", { parameters: { CodeVersion: "fictional-code-version-2" } });
+    const redeployed = closeAcceptanceBoundary("acceptance", { before, after: () => observe() });
+    expect(redeployed).toMatchObject({ state: "changed", changed: ["privacy-operations"], refusal: "target_changed_mid_run" });
+    expect(redeployed.after?.stacks.find((s) => s.candidate === "privacy-operations")?.sourceCommit).toBe(FICTIONAL_COMMIT);
+    expect(compareAcceptanceBoundaries(before, observe())).toEqual(["privacy-operations"]);
+  });
+  test("a stack that is mid-update, redeployed from another commit or gone at the closing boundary refuses the report", () => {
+    for (const change of [(d: FictionalQualificationDeployment) => d.redeploy("personal-storage", { status: "UPDATE_IN_PROGRESS" }),
+      (d: FictionalQualificationDeployment) => d.redeploy("personal-storage", { outputs: { SourceCommit: "c".repeat(40) }, parameters: { SourceCommit: "c".repeat(40) } }),
+      (d: FictionalQualificationDeployment) => d.remove("personal-storage")]) {
+      const { d, observe } = setup(), before = observe();
+      change(d);
+      expect(closeAcceptanceBoundary("acceptance", { before, after: () => observe() })).toMatchObject({ state: "refused", refusal: "target_stack_refused:personal-storage", after: null });
+    }
+  });
+  test("the checkout changing during the run refuses the report too: a new HEAD or an edited file", () => {
+    const { d, observe } = setup(), before = observe();
+    d.status = " M src/server/clinical-core/export-retention-acceptance.ts\n";
+    expect(closeAcceptanceBoundary("acceptance", { before, after: () => observe() })).toMatchObject({ state: "refused", refusal: "target_source_dirty:checkout" });
+    d.status = ""; d.head = "d".repeat(40);
+    expect(closeAcceptanceBoundary("acceptance", { before, after: () => observe() })).toMatchObject({ state: "refused", refusal: "target_source_mismatch:checkout" });
+  });
+  test("a step that observed another deployment than the one before it is refused (the fixture and the run of one recording acceptance)", () => {
+    const { d, observe } = setup(), fixture = observe(RECORDING_ACCEPTANCE_CANDIDATES);
+    expect(() => assertBoundaryUnchangedSince(observe(RECORDING_ACCEPTANCE_CANDIDATES), fixture.sha256)).not.toThrow();
+    expect(() => assertBoundaryUnchangedSince(observe(RECORDING_ACCEPTANCE_CANDIDATES), undefined)).not.toThrow();
+    d.redeploy("recording-transcription");
+    expect(() => assertBoundaryUnchangedSince(observe(RECORDING_ACCEPTANCE_CANDIDATES), fixture.sha256)).toThrow("target_changed_between_steps");
+    expect(() => assertBoundaryUnchangedSince(fixture, "not-a-digest")).toThrow("target_changed_between_steps");
+  });
+  test("a drain-posture boundary observes the draining voice candidate; an exploratory run is never observed and never acceptance evidence", () => {
+    const { observe } = setup(["owned-voice"]);
+    expect(observe(["owned-voice"], { posture: "drain" }).stacks).toHaveLength(1);
+    expect(() => observe(["owned-voice"])).toThrow("target_stack_refused");
+    expect(closeAcceptanceBoundary("exploratory")).toMatchObject({ state: "not_observed", source: "asserted_by_caller", before: null, after: null });
+    expect(closeAcceptanceBoundary("acceptance")).toMatchObject({ state: "not_observed" });
   });
 });

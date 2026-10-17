@@ -65,6 +65,15 @@ function Assert-QualificationSourceCommit($Target) {
   return $head
 }
 
+function Assert-QualificationCleanCheckout {
+  # Acceptance evidence names the manifest's commit, and HEAD alone does not say what the working tree runs: an edited or
+  # untracked file is not that commit. Exploration may still run on a working tree (it is never acceptance evidence). The
+  # Node CLIs check this again themselves, before their first request and after their last one.
+  $status = git status --porcelain --untracked-files=all
+  if ($LASTEXITCODE -ne 0) { throw 'qualification_target_refused:git' }
+  if ("$status".Trim()) { throw 'qualification_target_refused:source_dirty' }
+}
+
 function Assert-QualificationAccount($Target) {
   $identityJson = aws sts get-caller-identity --output json
   if ($LASTEXITCODE -ne 0 -or -not $identityJson) { throw 'qualification_target_refused:sts' }

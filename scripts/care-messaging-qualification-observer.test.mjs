@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {CARE_OBSERVER as c,CareObservationError,assertCareArtifact,inspectCareMessagingQualification} from './care-messaging-qualification-observer.mjs';
 import {inspectionArguments,inspectionAwsReader,inspectionCodeReader,inspectionLedgerReader} from './care-messaging-inspection-io.mjs';
+import {careInspectionOptions,careInspectionOutcome} from './care-qualification-inspection-cli.mjs';
 import {qualificationConsentArtifact,qualificationCare112Artifact,QUALIFICATION_CARE_112_LEDGER} from './qualification-consent-ledger.mjs';
 import {crc32,careMessagingZip} from './care-messaging-zip.mjs';
 
@@ -172,6 +173,38 @@ test('missing stack requires repeated actual absence; denied access is not absen
  assert.equal((await inspectCareMessagingQualification(f.options)).status,'not_deployed');
  f.responses['cloudformation/describe-stacks/candidate']=new CareObservationError('aws_read_failed');
  await assert.rejects(()=>inspectCareMessagingQualification(f.options),/aws_read_failed/);
+});
+test('inventory may record a missing candidate; an acceptance run must refuse it',async()=>{
+ const f=fixture();f.responses['cloudformation/describe-stacks/candidate']=new CareObservationError('stack_missing');delete f.options.binding;
+ const missing=await inspectCareMessagingQualification(f.options);
+ assert.equal(missing.status,'not_deployed');assert.equal(missing.acceptance,false);
+ // Inventory, the default: the missing stack is reported on stdout and the inspector exits 0, as before.
+ assert.deepEqual(careInspectionOutcome(missing,{acceptance:false},f.options.head),{exitCode:0,stream:'stdout',line:JSON.stringify(missing)});
+ // An acceptance wrapper asks with --acceptance: a candidate that is not deployed is not a precondition met, so it exits 1.
+ const refused=careInspectionOutcome(missing,{acceptance:true},f.options.head);
+ assert.equal(refused.exitCode,1);assert.equal(refused.stream,'stderr');
+ assert.deepEqual(JSON.parse(refused.line),{status:'not_completed',category:'candidate_not_deployed',mutations:false,acceptance:false,phiAllowed:false});
+ // A verified deployment meets the precondition, and still claims no acceptance and no human review.
+ const verified=await inspectCareMessagingQualification(fixture().options);
+ const met=careInspectionOutcome(verified,{acceptance:true},f.options.head);
+ assert.equal(met.exitCode,0);assert.equal(met.stream,'stdout');
+ assert.deepEqual(JSON.parse(met.line),{...verified,acceptancePrecondition:'deployment_bindings_verified',acceptance:false,humanReviewsVerified:false});
+ // A report for another head, or one that claims more than the inspector can, is not a precondition either.
+ for(const report of [{...verified,sourceCommit:'b'.repeat(40)},{...verified,acceptance:true},{...verified,mutations:true},{...verified,phiAllowed:true},{status:'inspection_failed'},null]){
+  const outcome=careInspectionOutcome(report,{acceptance:true},f.options.head);
+  assert.equal(outcome.exitCode,1);assert.match(outcome.line,/"category":"deployment_not_verified"/);
+ }
+});
+test('the acceptance option is explicit, single and needs the reviewed binding; it is refused before AWS otherwise',()=>{
+ for(const candidate of ['care-messaging','care-connections']){
+  assert.equal(careInspectionOptions(['--acceptance','--binding=reviewed.json'],candidate).acceptance,true);
+  assert.equal(careInspectionOptions(['--binding=reviewed.json'],candidate).acceptance,false);
+  assert.equal(careInspectionOptions([],candidate).acceptance,false);
+  for(const args of [['--acceptance'],['--acceptance','--acceptance','--binding=reviewed.json'],['--acceptance=true','--binding=reviewed.json']])
+   assert.throws(()=>careInspectionOptions(args,candidate),/argument_refused/);
+ }
+ const result=spawnSync(process.execPath,['scripts/inspect-care-messaging-qualification.mjs','--acceptance'],{encoding:'utf8',timeout:15000,windowsHide:true});
+ assert.equal(result.status,1);assert.match(result.stderr,/"category":"argument_refused"/);
 });
 test('a candidate appearing during missing-stack inspection is not certified absent',async()=>{
  const f=fixture(),read=f.options.readAws;f.options.readAws=async(...args)=>{

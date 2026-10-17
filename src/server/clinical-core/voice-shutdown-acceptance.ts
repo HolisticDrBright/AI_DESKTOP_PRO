@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/voice-shutdown-acceptance is server-only.");
 import { createHash } from "node:crypto";
-import { observeExecution, summariseExecution, type ObservedExecution } from "./qualification-execution";
+import { observeExecution, summariseExecution, summariseStepEvidence, unverifiedSteps, type ObservedExecution, type StepEvidence } from "./qualification-execution";
+import { boundaryAllowsOk, closeAcceptanceBoundary, qualifiedVerdict, type AcceptanceBoundaryInput, type AcceptanceSourceBoundary } from "./qualification-target-boundary";
 
 /**
  * Hosted acceptance of the reviewed voice shutdown (drain) transition. The drain path has existed in source since the
@@ -13,7 +14,10 @@ import { observeExecution, summariseExecution, type ObservedExecution } from "./
  * batch is not an empty inventory, and two inventory reads are not an atomic snapshot. The report records what the
  * deployment refused and what the inventories still hold; completion remains a reviewed human step.
  */
-export type VoiceShutdownStep = { index: number; name: string; expected: string; outcome: "passed" | "failed" | "skipped"; status?: number; detail?: string };
+/** `evidence` says what answered the step. The drain refusal is the function's own unmarked 503 (`production`, since
+ * qualification execution is disabled while draining); an `unmarked_denial` step was answered only by 401/403s that
+ * API Gateway's authorizer gives before any function runs, which is recorded and never counted as a pass. */
+export type VoiceShutdownStep = { index: number; name: string; expected: string; outcome: "passed" | "failed" | "skipped"; status?: number; detail?: string; evidence: StepEvidence };
 export type VoiceShutdownReport = {
   schemaVersion: "voice-shutdown-acceptance/1"; environment: "synthetic-staging"; ok: boolean;
   sourceCommit: string; migrationReleaseHash: string; configurationSha256: string; awsAccountId: string;
@@ -25,6 +29,12 @@ export type VoiceShutdownReport = {
   /** Stated on every report: this harness never certifies deletion and never observes an atomic snapshot. */
   certifies: { deletion: false; atomicSnapshot: false };
   verdict: { mode: "exploratory" | "acceptance"; mandatory: string[]; unmet: string[] };
+  /** Mandatory steps that passed on unmarked authorizer denials alone: unverified, so `ok` is false while any remain. */
+  unverified: string[];
+  /** The clean checkout and the draining stack observed before the first request and after the last (qualification-target-boundary.ts). */
+  sourceBoundary: AcceptanceSourceBoundary;
+  /** The hosted verdict: acceptance mode, `ok`, and an observed, unchanged source boundary. Exploratory runs are never qualified. */
+  qualified: boolean;
   evidenceSha256: string;
 };
 export const VOICE_SHUTDOWN_ACCEPTANCE_STEPS = ["drain refuses starting work", "drain refuses reading a job", "drain refuses cancelling a job",
@@ -49,6 +59,9 @@ export async function runVoiceShutdownAcceptance(input: {
   /** The CLI obtains both inventories directly from the reviewed AWS stack in acceptance mode. */
   readInventory?: () => Promise<VoiceInventoryObservation>;
   mode?: "exploratory" | "acceptance";
+  /** The CLI's observation before the run, and how to observe again after its last request and inventory read. A
+   * changed or refused closing observation invalidates the report; without one the run is never qualified. */
+  sourceBoundary?: AcceptanceBoundaryInput;
   fetch?: FetchLike; now?: () => number;
 }): Promise<VoiceShutdownReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, startedAt = new Date(now()).toISOString();
@@ -59,10 +72,11 @@ export async function runVoiceShutdownAcceptance(input: {
   const steps: VoiceShutdownStep[] = [];
   const executions = new Set<string>();
   let index = 0;
+  let answered = new Set<string>(); // what answered the current step
   const step = async (name: string, expected: string, work: () => Promise<{ outcome: VoiceShutdownStep["outcome"]; status?: number; detail?: string }>) => {
-    index += 1;
-    try { const result = await work(); steps.push({ index, name, expected, ...result }); return result; }
-    catch (error) { const detail = error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : "step_failed"; steps.push({ index, name, expected, outcome: "failed", detail }); return { outcome: "failed" as const, detail }; }
+    index += 1; answered = new Set<string>();
+    try { const result = await work(); steps.push({ index, name, expected, ...result, evidence: summariseStepEvidence(answered) }); return result; }
+    catch (error) { const detail = error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : "step_failed"; steps.push({ index, name, expected, outcome: "failed", detail, evidence: summariseStepEvidence(answered) }); return { outcome: "failed" as const, detail }; }
   };
   const call = async (path: string, bearer: string, method: "GET" | "POST" | "DELETE", body?: Record<string, unknown>) => {
     let response: Response;
@@ -70,7 +84,7 @@ export async function runVoiceShutdownAcceptance(input: {
       response = await fetcher(`${origin}${path}`, { method, headers: { authorization: `Bearer ${bearer}`, ...(body ? { "content-type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), redirect: "manual", signal: AbortSignal.timeout(25_000) });
     } catch { return { status: 0, body: null as unknown, marked: false }; }
-    observeExecution(executions, response.headers, response.status);
+    observeExecution(executions, response.headers, response.status); observeExecution(answered, response.headers, response.status);
     const marked = response.headers.get("x-clinical-execution") === "qualification";
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 65_536) return { status: response.status, body: null as unknown, marked };
@@ -99,8 +113,9 @@ export async function runVoiceShutdownAcceptance(input: {
   // 4. No identity has a way back in. Cross-pool authorizer denial is distinct from a Lambda drain refusal.
   await step("drain refuses another identity the same way", "unmarked 401/403 at the consumer authorizer or 503 voice_cleanup_only; never served", async () => {
     const r = await call(`${ROOT}/${FICTIONAL_JOB}`, input.workforceIdToken, "GET");
-    // The consumer-only JWT authorizer rejects a workforce token before Lambda.
-    // This proves cross-pool denial, not that the gateway emitted a drain response.
+    // The consumer-only JWT authorizer rejects a workforce token before Lambda. The step records that denial as the
+    // authorizer's, but an unmarked 401/403 is unverified evidence (it cannot tell a cross-pool refusal from an expired
+    // or malformed token), so on its own it never makes the run a pass; only the drain refusal is the function's answer.
     const gatewayDenied = (r.status === 401 || r.status === 403) && !r.marked;
     const ok = cleanupOnly(r) || gatewayDenied;
     return { outcome: ok ? "passed" : "failed", status: r.status, detail: gatewayDenied ? "workforce_denied_by_consumer_authorizer" : ok ? undefined : errorCode(r) };
@@ -135,12 +150,16 @@ export async function runVoiceShutdownAcceptance(input: {
   const unmet = mandatory.filter((name) => !steps.some((s) => s.name === name && s.outcome === "passed"));
   // The deployment must have answered, and never as qualification: draining serves no one.
   const executionOk = observed.execution !== "unobserved" && observed.execution !== "qualification" && observed.execution !== "mixed";
-  const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk && first.outcome === "passed";
+  const unverified = unverifiedSteps(mandatory, steps);
+  // The closing observation comes after the last request and the second inventory read.
+  const sourceBoundary = closeAcceptanceBoundary(mode, input.sourceBoundary);
+  const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk && first.outcome === "passed"
+    && unverified.length === 0 && boundaryAllowsOk(sourceBoundary);
   const report: Omit<VoiceShutdownReport, "evidenceSha256"> = {
     schemaVersion: "voice-shutdown-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit, migrationReleaseHash: input.migrationReleaseHash,
     configurationSha256, awsAccountId: input.expectedAwsAccountId, startedAt, finishedAt, steps,
     retained: latest && validInventory(latest) ? { jobMetadata: latest.counts.jobMetadata, uncleanJobs: latest.counts.uncleanJobs, objectVersions: latest.counts.objectVersions, providerJobs: latest.counts.providerJobs } : null,
-    ...observed, certifies: { deletion: false, atomicSnapshot: false }, verdict: { mode, mandatory, unmet },
+    ...observed, certifies: { deletion: false, atomicSnapshot: false }, verdict: { mode, mandatory, unmet }, unverified, sourceBoundary, qualified: qualifiedVerdict(mode, ok, sourceBoundary),
   };
   return { ...report, evidenceSha256: createHash("sha256").update(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })).digest("hex") };
 }

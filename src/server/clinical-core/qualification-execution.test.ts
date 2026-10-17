@@ -58,4 +58,20 @@ describe("observed execution", () => {
     expect(summariseExecution(d)).toEqual({ execution: "unobserved", unmarkedDenials: true });
     expect(Object.keys(summariseExecution(p))).not.toContain("productionActivationEvidence");
   });
+  test("a step answered only by unmarked 401/403 has unverified evidence: neither qualification nor production", async () => {
+    // API Gateway's JWT authorizer answers these before any function runs, and an expired or foreign token is refused the
+    // same way, so such an answer cannot say which code refused, or why.
+    const { observeExecution, summariseStepEvidence } = await import("./qualification-execution");
+    const denied = new Set<string>(); observeExecution(denied, plain, 401); observeExecution(denied, plain, 403);
+    expect(summariseStepEvidence(denied)).toBe("unmarked_denial");
+    const candidate = new Set<string>(); observeExecution(candidate, plain, 401); observeExecution(candidate, marked, 403);
+    expect(summariseStepEvidence(candidate)).toBe("qualification");
+    const production = new Set<string>(); observeExecution(production, plain, 503);
+    expect(summariseStepEvidence(production)).toBe("production");
+    const mixed = new Set<string>(); observeExecution(mixed, plain, 200); observeExecution(mixed, marked, 200);
+    expect(summariseStepEvidence(mixed)).toBe("mixed");
+    const unreached = new Set<string>(); observeExecution(unreached, plain, 0);
+    expect(summariseStepEvidence(unreached)).toBe("none");
+    expect(summariseStepEvidence(new Set())).toBe("none");
+  });
 });

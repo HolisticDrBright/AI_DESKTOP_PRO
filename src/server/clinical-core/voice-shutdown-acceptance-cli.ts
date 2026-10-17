@@ -5,7 +5,8 @@ import { runVoiceShutdownAcceptance, type VoiceInventoryObservation } from "./vo
 import { loadClinicalCoreMigrations } from "./migrations";
 import { productionArtifactReleaseHash } from "./production-migrations";
 import { bindQualificationTarget, loadQualificationTargetManifest, QualificationTargetManifestError } from "./qualification-target-manifest";
-import { observeQualificationTarget } from "./qualification-target-observation";
+import { observeAcceptanceBoundary } from "./qualification-target-observation";
+import { boundarySummary } from "./qualification-target-boundary";
 import { readVoiceDrainInventory } from "./owned-voice-inventory-reader";
 
 /** Hosted acceptance of the reviewed voice shutdown transition, bound to the same reviewed qualification target manifest
@@ -13,12 +14,16 @@ import { readVoiceDrainInventory } from "./owned-voice-inventory-reader";
  * `QualificationExecution=disabled`, PHI false), which this run observes for itself in acceptance mode before asking the
  * deployment anything. Acceptance reads two inventories directly from the reviewed stack around the HTTP probes.
  * `CLINICAL_VOICE_INVENTORIES` is allowed only for exploratory diagnostics, never as acceptance evidence.
- * Nothing here certifies erasure: the report says so on its face. */
+ * Nothing here certifies erasure: the report says so on its face.
+ *
+ * Acceptance is bounded at the source (qualification-target-boundary.ts): a clean checkout at the manifest's exact
+ * commit and the draining stack observed before the first request, and observed again after the last request and the
+ * second inventory read; a change between the two invalidates the report. Only a `qualified` run exits 0. */
 async function main() {
   const manifest = loadQualificationTargetManifest(required("CLINICAL_QUALIFICATION_TARGET"));
   const migrations = loadClinicalCoreMigrations(path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations"));
   const mode = process.env.ACCEPTANCE_MODE?.trim() === "exploratory" ? "exploratory" : "acceptance";
-  const observation = mode === "acceptance" ? observeQualificationTarget(manifest, ["owned-voice"], { posture: "drain" }) : null;
+  const observation = mode === "acceptance" ? observeAcceptanceBoundary(manifest, ["owned-voice"], { posture: "drain", asserted: process.env }) : null;
   const sourceCommit = observation?.sourceCommit ?? (process.env.SOURCE_COMMIT?.trim() || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
   const awsAccountId = observation?.awsAccountId ?? required("OBSERVED_AWS_ACCOUNT_ID");
   const target = bindQualificationTarget(manifest, { awsAccountId, sourceCommit, migrationReleaseHash: productionArtifactReleaseHash(migrations) }, process.env);
@@ -45,14 +50,17 @@ async function main() {
     expectedAwsAccountId: target.expectedAwsAccountId, observedAwsAccountId: target.observedAwsAccountId,
     sourceCommit: target.sourceCommit, migrationReleaseHash: target.migrationReleaseHash, mode, inventories,
     ...(mode === "acceptance" ? {readInventory} : {}),
+    ...(observation ? { sourceBoundary: { before: observation, after: () => observeAcceptanceBoundary(manifest, ["owned-voice"], { posture: "drain" }) } } : {}),
   });
   mkdirSync("dist/qualification", { recursive: true });
   const out = `dist/qualification/voice-shutdown-acceptance-${report.finishedAt.replace(/[:.]/g, "-")}.json`;
   writeFileSync(out, JSON.stringify(report, null, 2), { flag: "wx" });
-  console.log(JSON.stringify({ ok: report.ok, report: out, evidenceSha256: report.evidenceSha256, execution: report.execution, verdict: report.verdict, retained: report.retained,
+  console.log(JSON.stringify({ ok: report.ok, qualified: report.qualified, report: out, evidenceSha256: report.evidenceSha256, execution: report.execution, unmarkedDenials: report.unmarkedDenials,
+    unverified: report.unverified, verdict: report.verdict, sourceBoundary: boundarySummary(report.sourceBoundary), retained: report.retained,
     certifies: report.certifies, target: observation ? { source: "observed", stacks: observation.stacks } : { source: "asserted_by_caller", stacks: [] },
     failed: report.steps.filter((s) => s.outcome === "failed").map((s) => `${s.name}:${s.detail ?? ""}`) }));
-  if (!report.ok) process.exitCode = 1;
+  // Acceptance exits 0 only for a qualified run; exploration keeps its own (never qualified) partial verdict.
+  if (!(mode === "acceptance" ? report.qualified : report.ok)) process.exitCode = 1;
 }
 function required(name: string) { const value = process.env[name]?.trim(); if (!value) throw new Error("acceptance_configuration_missing"); return value; }
 main().catch((error) => {

@@ -93,14 +93,27 @@ function aws {
   throw 'unexpected_external_call'
 }
 function npm { $global:External++; $global:LASTEXITCODE = 0 }
-function git { $global:LASTEXITCODE = 0; if ($args[0] -eq 'rev-parse') { return $global:Head }; throw 'unexpected_git_call' }
+function git {
+  $global:LASTEXITCODE = 0
+  if ($args[0] -eq 'rev-parse') { return $global:Head }
+  # The working tree as `git status --porcelain --untracked-files=all` prints it; empty is a clean checkout.
+  if ($args[0] -eq 'status' -and ($args -contains '--porcelain') -and ($args -contains '--untracked-files=all')) { return $global:Dirty }
+  throw 'unexpected_git_call'
+}
 function node {
   $global:External++; $global:LASTEXITCODE = 0
   $global:Selected = [ordered]@{ command = ($args -join ' '); target = $env:CLINICAL_QUALIFICATION_TARGET; apiOriginEnv = $env:CLINICAL_API_ORIGIN; databaseEnv = $env:CLINICAL_DATABASE_NAME
-    account = $env:OBSERVED_AWS_ACCOUNT_ID; source = $env:SOURCE_COMMIT; mode = $env:ACCEPTANCE_MODE }
-  if ("$($args)" -match 'fixture') { return '{"ok":true,"encounterId":"11111111-1111-4111-8111-111111111111","database":"clinical_core_qualification","reused":false}' }
+    account = $env:OBSERVED_AWS_ACCOUNT_ID; source = $env:SOURCE_COMMIT; mode = $env:ACCEPTANCE_MODE; fixtureBoundary = $env:CLINICAL_RECORDING_FIXTURE_BOUNDARY }
+  if ("$($args)" -match 'fixture') {
+    $global:FixtureCalls++
+    $boundary = if ($global:FixtureBoundary) { ',"boundary":"' + $global:FixtureBoundary + '"' } else { '' }
+    return '{"ok":true,"encounterId":"11111111-1111-4111-8111-111111111111","database":"clinical_core_qualification","reused":false' + $boundary + '}'
+  }
 }
 $global:Head = $commit
+$global:Dirty = ''
+$global:FixtureBoundary = 'f0' * 32
+$global:FixtureCalls = 0
 $global:StsAccount = '588966314750'
 $global:StsArn = 'arn:aws:sts::588966314750:assumed-role/QualificationOperator/fictional-session'
 # Each runner clears the token variables in its finally block, as a real run must; the test sets fictional ones per case.
@@ -138,6 +151,8 @@ if ($global:Selected.account -ne '588966314750' -or $global:Selected.source -ne 
 Invoke-Case 'recording selects the qualification target' { Recording-Run $good } $null
 if ($global:Selected.target -ne $good -or $global:Selected.apiOriginEnv -or $global:Selected.databaseEnv) { throw 'recording runner passed an ambient origin or database' }
 if ($global:Selected.command -notlike '*run*') { throw 'recording runner did not reach the run command' }
+# The run must see the deployment the fixture saw: the fixture's boundary digest is handed to the run, which refuses a change.
+if ($global:Selected.fixtureBoundary -ne $global:FixtureBoundary) { throw 'recording runner did not hand the fixture boundary to the run' }
 
 # 2. The audit's cases: the documented staging foundation, the staging API and the staging database, in the target manifest.
 Invoke-Case 'staging foundation as the qualification foundation' { Export-Run (Write-Target @{ foundationStackName = 'ai-clinical-core-synthetic-staging' }) } 'qualification_target_refused:foundationStackName'
@@ -169,6 +184,28 @@ Invoke-Case 'an unfilled example target' { Export-Run (Write-Target @{ sourceCom
 $global:Head = 'f' * 40
 Invoke-Case 'a checkout that is not the deployed commit' { Export-Run $good } 'qualification_target_refused:sourceCommit_checkout'
 $global:Head = $commit
+# A clean checkout is part of the commit: HEAD alone does not say what the working tree runs. Acceptance refuses a dirty
+# or untracked tree before any AWS call; exploration may still run on one and stays non-acceptance.
+$global:Dirty = ' M src/server/clinical-core/recording-acceptance.ts'
+Invoke-Case 'export acceptance from a dirty checkout' { Export-Run $good } 'qualification_target_refused:source_dirty'
+if ($global:External -ne 0) { throw 'an external call happened before the dirty checkout was refused' }
+Invoke-Case 'recording acceptance from a dirty checkout' { Recording-Run $good } 'qualification_target_refused:source_dirty'
+if ($global:External -ne 0) { throw 'an external call happened before the dirty checkout was refused' }
+$global:Dirty = '?? stray-local-manifest.json'
+Invoke-Case 'export acceptance with an untracked file' { Export-Run $good } 'qualification_target_refused:source_dirty'
+Invoke-Case 'export exploration from a dirty checkout' { Export-Run $good 'exploratory' } $null
+if ($global:Selected.mode -ne 'exploratory') { throw 'exploratory mode was not passed through' }
+Invoke-Case 'recording exploration from a dirty checkout' { Recording-Run $good 'exploratory' } $null
+if ($global:Selected.fixtureBoundary) { throw 'an exploratory recording run was handed an acceptance boundary' }
+$global:Dirty = ''
+$global:FixtureBoundary = $null
+# The fixture ran (it writes the encounter), but the run must not: Invoke-Case's no-CLI rule cannot express that, so this is by hand.
+$global:Selected = $null; Set-FictionalTokens; $caught = 'none'
+try { Recording-Run $good *> $null } catch { $caught = $_.Exception.Message }
+if ($caught -notlike '*did not report its source boundary*') { throw "recording acceptance without a fixture boundary did not refuse (got $caught)" }
+if ($global:Selected.command -notlike '*fixture*') { throw 'recording acceptance reached the run command without a fixture boundary' }
+$global:passed++
+$global:FixtureBoundary = 'f0' * 32
 function Invoke-CandidateCase([string]$name, [hashtable]$patch, [string]$expect, [string]$stack = 'ai-clinical-core-qualification-personal-storage', [scriptblock]$body) {
   if (-not $body) { $body = { Export-Run $good } }
   $global:StackOutputs[$stack] = (CandidateStack $patch)
@@ -258,6 +295,11 @@ Invoke-Case 'a draining voice candidate without a source parameter' { Voice-Run 
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ SourceCommitParameter = ('c' * 40) })
 Invoke-Case 'a draining voice candidate with another source parameter' { Voice-Run $good } 'qualification_target_refused:stack_source.owned-voice'
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack)
+$global:Dirty = ' M src/server/clinical-core/voice-shutdown-acceptance.ts'
+Invoke-Case 'voice shutdown acceptance from a dirty checkout' { Voice-Run $good } 'qualification_target_refused:source_dirty'
+if ($global:External -ne 0) { throw 'an external call happened before the dirty checkout was refused' }
+Invoke-Case 'voice shutdown exploration from a dirty checkout' { Voice-Run $good 'exploratory' '' } $null
+$global:Dirty = ''
 Invoke-Case 'voice shutdown acceptance refuses caller inventories' { Voice-Run $good 'acceptance' $inventoryFile } 'caller-supplied inventories are exploratory only'
 Invoke-Case 'voice shutdown exploration without inventories' { Voice-Run $good 'exploratory' '' } $null
 

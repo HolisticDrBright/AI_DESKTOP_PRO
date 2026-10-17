@@ -102,3 +102,21 @@ export function summariseExecution(seen: Set<string>): { execution: ObservedExec
   const execution: ObservedExecution = modes.size === 0 ? "unobserved" : modes.size > 1 ? "mixed" : modes.has(QUALIFICATION_EXECUTION_MODE) ? "qualification" : "production";
   return { execution, unmarkedDenials: seen.has("unmarked_denial") };
 }
+
+/** What answered one step of a hosted run. `unmarked_denial` means every answer the step received was a 401 or 403
+ * without the marker. That is unverified evidence, not a third execution: API Gateway's JWT authorizer answers those
+ * before any function runs, and it refuses an expired, malformed or foreign-pool token exactly as it refuses the
+ * identity under test. So it never says which code refused, or why, and it is never qualification or production
+ * evidence. A step with at least one marked answer is attributed to the candidate (`qualification`); `none` means the
+ * step received no answer at all (it made no request, or every request failed to connect). */
+export type StepEvidence = "qualification" | "production" | "mixed" | "unmarked_denial" | "none";
+export function summariseStepEvidence(seen: Set<string>): StepEvidence {
+  const { execution, unmarkedDenials } = summariseExecution(seen);
+  if (execution !== "unobserved") return execution;
+  return unmarkedDenials ? "unmarked_denial" : "none";
+}
+
+/** The mandatory steps that passed on unverified evidence alone. A hosted verdict never counts them as passed. */
+export function unverifiedSteps(mandatory: readonly string[], steps: ReadonlyArray<{ name: string; outcome: string; evidence: StepEvidence }>): string[] {
+  return mandatory.filter((name) => steps.some((s) => s.name === name && s.outcome === "passed" && s.evidence === "unmarked_denial"));
+}
