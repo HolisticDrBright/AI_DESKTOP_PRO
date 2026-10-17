@@ -24,7 +24,7 @@ The handoff was `expo/docs/claude-overnight-source-closure-2026-10-17.md` on V2
 
 | Repository | Code commit | Branch | Built on | Exact-head CI |
 | --- | --- | --- | --- | --- |
-| Desktop | DESKTOP_CODE | `claude/desktop-source-closure-20261017` | `c327e9ae` (Codex's audit successor `88f49ca6` + this session's docs `a38a62be`) | DESKTOP_CI |
+| Desktop | `30095ff67ad7feb4b11ca57be793c8f88fbfe02c` | `claude/desktop-source-closure-20261017` | `c327e9ae` (Codex's audit successor `88f49ca6` + this session's docs `a38a62be`) | [39020630526](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39020630526) (in progress when this was written; the result is in the hand-back message) |
 | V2 | `54391a47fd3df9c6e1abde173d0998d86b31576b` | `claude/v2-source-closure-20261017` | `4325c047` (Codex's advisory-drift gate, CI [39014144521](https://github.com/HolisticDrBright/AI_LONGEVITY_PRO_V2/actions/runs/39014144521) success) | **None available.** See below. |
 
 **V2 CI is unavailable, and it is not a code failure.** Every V2 run since about 08:16 UTC has ended as `failure` within
@@ -57,8 +57,7 @@ Actions billing. Until a run on the exact V2 head passes, V2 has no exact-head C
   - `4325c047`;
   - WP4 V2 `a1de19db`, merged at `abaa3737`;
   - WP1 V2 `8be5f7dd`, merged at `54391a47`.
-- **Metadata heads, above the code pair:** V2 KIT_HEAD (the kit rebind, `expo/release/` only) and Desktop
-  DESKTOP_DOC_HEAD (this document, `docs/` and `CLAUDE.md` only).
+- **Metadata heads, above the code pair:** V2 `c4a661d389753709501691233b81f071916f412d` (the kit rebind, `expo/release/` only) and Desktop: this document's own commit (`docs/` and `CLAUDE.md` only; a document cannot name its own commit).
 
 All package branches are pushed, with their own heads:
 
@@ -195,7 +194,27 @@ The full Desktop suite on `20775244` had **3 failures**, fixed in `aa7e8b9b`:
   advisories remain unapproved; no new high advisory or lockfile drift"), the image-size patch, the iOS parser, store
   readiness, the kit, preflight, the Core scope mirror and the knowledge package checks.
 
-DESKTOP_VERIFICATION
+**Desktop at `30095ff6`, the code commit:**
+
+- typecheck exit 0; lint exit 0;
+- full unit suite: 688 of 688 files passed; 10,636 tests passed, 5 expected failures, 11 existing skips. The 5 are the
+  three original revocation-signal races, WP3's send inside the outage window and WP5's R1;
+- `test:migration-sql-bytes` passes;
+- `test:hosted-program-acceptance` 37/37.
+
+**Desktop CI:**
+
+| Head | Run | Result |
+| --- | --- | --- |
+| `20775244` (WP3 merged) | [39018940106](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39018940106) | **failure** (first failed run): `qualification-issuer-release-map.test.ts`, the stale citations |
+| `4c805b80` (with the fix `aa7e8b9b`) | [39020364533](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39020364533) | **success**, all jobs |
+| `30095ff6` (code commit) | [39020630526](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39020630526) | in progress at writing |
+| Package branches | `5227b644` [39017577115](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39017577115); `4b33f7bd` [39017940236](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39017940236); `0dd4e608` [39018897709](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39018897709); `05400972` [39019193831](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39019193831) | **success** |
+| `48e2545f` | [39020586322](https://github.com/HolisticDrBright/AI_DESKTOP_PRO/actions/runs/39020586322) | in progress at writing |
+| `b8fbbdba`, `8d06e560` (intermediate merges) | | cancelled by me to free runners; superseded by `4c805b80` |
+
+**The V2 source observer on the rebound kit head `c4a661d`:** 9 ACCEPTED, 9 WITHHELD, `RELEASE ACCEPTANCE WITHHELD`,
+exit 1. `observedHeads` shows the code unchanged since `54391a47`.
 
 **The browser battery was not run.** No browser path changed: `git diff --name-only c327e9ae <code commit>` touches nothing
 under `src/app`, `src/components`, `src/lib`, `src/adapters`, `e2e/` or the stub server. The last battery passed the
@@ -323,7 +342,7 @@ pass.
 ## 8. Graphify append text (not applied; the shared map was not changed)
 
 ```
-node: desktop-source-closure-20261017 (Desktop DESKTOP_CODE) -> contains: 88f49ca6, a38a62be, 5227b644, 0dd4e608, 78f4c654, bd2fbf5f, 05400972, 4b33f7bd, 48e2545f, aa7e8b9b
+node: desktop-source-closure-20261017 (Desktop 30095ff6) -> contains: 88f49ca6, a38a62be, 5227b644, 0dd4e608, 78f4c654, bd2fbf5f, 05400972, 4b33f7bd, 48e2545f, aa7e8b9b
 node: v2-source-closure-20261017 (V2 54391a47) -> contains: 4325c047, a1de19db, 8be5f7dd
 edge: hosted-acceptance-source-boundary -> refuses: dirty checkout, mid-run redeploy, asserted-source mismatch, unmarked-denial-only steps, not_deployed under --acceptance
 edge: hosted-program-acceptance -> binds: clean checkout HEAD, observed LambdaCodeKey commit, observed CodeSha256, marker; holds: identity API unmarked, bundle digest unpinned
