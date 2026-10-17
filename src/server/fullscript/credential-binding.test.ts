@@ -6,6 +6,10 @@ import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 import {createCredentialBoundFullscriptDraftProvider,observeFullscriptDraftInstallation} from './credential-binding';
 import {FullscriptApiClient,readFullscriptConfiguration} from './client';
 import type {StoredFullscriptConnection} from './token-store';
+// The fence read is faked at its boundary: no fence item exists for this fictional subject or clinic (generation 0/0).
+vi.mock('./membership-generation',async importOriginal=>({...await importOriginal<typeof import('./membership-generation')>(),
+  createAwsFullscriptGenerationReader:()=>({current:async()=>({protocol:'fullscript-generation/1' as const,subjectFence:0,clinicFence:0})}),
+  createAwsFullscriptRevocationOutbox:()=>({supersede:async()=>'moved' as const,pending:async()=>[],settle:async()=>undefined})}));
 
 // A fictional, unsigned ID token: the saved connection is keyed by its subject (the account), not its email.
 const FICTIONAL_ID_TOKEN=[{alg:'RS256',kid:'fictional'},{sub:'b1234567-1234-4123-8123-123456789012',email:'fictional@example.test',token_use:'id'}].map(p=>Buffer.from(JSON.stringify(p)).toString('base64url')).join('.')+'.fictional-signature';
@@ -17,7 +21,8 @@ const fixture=():StoredFullscriptConnection=>({...fullscriptActor(session),envir
   installationId:'b1234567-1234-4123-8123-123456789012',
   oauthClientId:'fictional-client-id-abcdefghijklmnopqrstuvwxyz',
   oauthRedirectUri:'https://fictional.example.test/api/live/fullscript/oauth/callback',
-  resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:[...FULLSCRIPT_DRAFT_SCOPES]});
+  resourceOwner:{id:'fictional-practitioner-id',type:'Practitioner'},scope:[...FULLSCRIPT_DRAFT_SCOPES],
+  membershipGeneration:{protocol:'fullscript-generation/1',subjectFence:0,clinicFence:0}});
 const input={fullscriptPatientId:'fictional-patient-id',practitionerId:'fictional-practitioner-id',
   idempotencyKey:'alp-cart-'+'a'.repeat(64),recommendations:[{variantId:'fictional-variant-id',unitsToPurchase:'1',instructions:'Fictional existing directions'}]};
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});

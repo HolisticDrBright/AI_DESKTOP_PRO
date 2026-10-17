@@ -40,7 +40,7 @@ export function evaluateQualificationProgramPreflight(input) {
     || template.Parameters.DatabaseClusterArn?.AllowedValues?.[0] !== f.DatabaseClusterArn
     || template.Parameters.ClinicalCoreKeyArn?.AllowedValues?.[0] !== f.LogsKmsKeyArn) reject('foundation');
   const b = map(billing?.Parameters), bo = map(billing?.Outputs);
-  if (billing?.StackStatus !== 'CREATE_COMPLETE' || b.BillingActivation !== 'blocked'
+  if (!['CREATE_COMPLETE', 'UPDATE_COMPLETE'].includes(billing?.StackStatus) || b.BillingActivation !== 'blocked'
     || b.CommercialReleaseApproval !== 'blocked' || b.EnabledStores !== 'none'
     || b.StoreEnvironment !== 'Sandbox' || b.StoreSecretArn !== '' || b.ReservedConcurrency !== '0'
     || bo.Activation !== 'blocked'
@@ -74,7 +74,7 @@ function aws(...args) {
     { encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
-const databaseSql = `select current_database(),
+export const databaseSql = `select current_database(),
   (select count(*)::int from clinical_core.schema_migrations),
   (select encode(sha256(convert_to(string_agg(version||':'||sha256,E'\\n' order by version),'UTF8')),'hex')
     from clinical_core.schema_migrations),

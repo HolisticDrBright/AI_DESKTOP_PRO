@@ -1,0 +1,190 @@
+{
+  "contract": "emergency-revocation-native/1",
+  "sourceCommit": "938ce20fc778b8db42ad2bc4d04d3836fa983916",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "without-the-entry-lock-a-receipt-precedes-an-admitted-write",
+      "checks": [
+        {
+          "detail": "the compromised session's write is admitted and still open",
+          "passed": true
+        },
+        {
+          "detail": "DEFECT without the lock: the revocation receipt returns at once, without waiting for the open write",
+          "passed": true
+        },
+        {
+          "detail": "at the receipt the login is disabled and the write is not yet visible",
+          "passed": true
+        },
+        {
+          "detail": "DEFECT without the lock: the write then commits after the receipt",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "admitted-read-holds-off-the-revocation",
+      "checks": [
+        {
+          "detail": "the already-issued session reads the patient in the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the revocation waits on the identity row the admitted request holds",
+          "passed": true
+        },
+        {
+          "detail": "the admitted request finishes its own work",
+          "passed": true
+        },
+        {
+          "detail": "the revocation commits after the request commits",
+          "passed": true
+        },
+        {
+          "detail": "the next request with the same token is refused (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "request-waiting-on-a-pending-revocation-is-refused",
+      "checks": [
+        {
+          "detail": "the revocation is recorded and not yet committed",
+          "passed": true
+        },
+        {
+          "detail": "the request waits on the uncommitted revocation",
+          "passed": true
+        },
+        {
+          "detail": "after the revocation commits, the waiting request is refused (ERROR:  request_context_refused)",
+          "passed": true
+        },
+        {
+          "detail": "the identity is disabled",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "write-racing-the-revocation-in-both-orders",
+      "checks": [
+        {
+          "detail": "the admitted write is made",
+          "passed": true
+        },
+        {
+          "detail": "the revocation waits for the admitted write",
+          "passed": true
+        },
+        {
+          "detail": "the revocation commits after the write commits",
+          "passed": true
+        },
+        {
+          "detail": "the admitted write is there, committed before the receipt",
+          "passed": true
+        },
+        {
+          "detail": "a write that arrives during the pending revocation waits",
+          "passed": true
+        },
+        {
+          "detail": "then it is refused (ERROR:  request_context_refused)",
+          "passed": true
+        },
+        {
+          "detail": "and nothing was written",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "current-authority-and-another-clinic-are-refused-too",
+      "checks": [
+        {
+          "detail": "both wait on the pending revocation",
+          "passed": true
+        },
+        {
+          "detail": "the current-membership setter refuses (ERROR:  workforce_membership_refused)",
+          "passed": true
+        },
+        {
+          "detail": "the sibling clinic refuses (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "an-unrelated-practitioner-is-not-held-back",
+      "checks": [
+        {
+          "detail": "the colleague reads without waiting",
+          "passed": true
+        },
+        {
+          "detail": "and after the revocation commits",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-retried-revocation-converges-on-the-request-id",
+      "checks": [
+        {
+          "detail": "the retry waits for the first",
+          "passed": true
+        },
+        {
+          "detail": "the retry answers the same proposal as a duplicate",
+          "passed": true
+        },
+        {
+          "detail": "one proposal exists",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "an-approval-waits-for-an-admitted-request",
+      "checks": [
+        {
+          "detail": "the proposal alone changes nothing",
+          "passed": true
+        },
+        {
+          "detail": "the session is admitted while the proposal waits",
+          "passed": true
+        },
+        {
+          "detail": "the second operator's approval waits for the admitted request",
+          "passed": true
+        },
+        {
+          "detail": "the approval commits after it",
+          "passed": true
+        },
+        {
+          "detail": "the next request is refused (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidate and its parents are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "The sessions call the SQL the services call (set_request_context or set_current_workforce_context, then the operation; the operator functions on the operator role). Tokens, Cognito, the fence store and the Data API are not exercised here."
+  ],
+  "entries": {
+    "alp": "3ee98d29830ee366a1c670c236cbf018b710eb7dbbc48d3ee090e7d66c36097b",
+    "alp_unlocked": "36d00be99597f6b527863cece9b9e174a900b49b7c2cd2085224061954b2d0ea"
+  },
+  "passed": true
+}

@@ -196,3 +196,21 @@ describe('large-export job routes',()=>{
     expect(s.jobs.issuePrivacyExportDownload).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('an owner whose Core membership has ended',()=>{
+  // The V2 expired-Core client contract (ai_longevity_pro_v2 __tests__/expired-core-saved-data-contract.test.ts) models
+  // this service: recovery of saved data is free, so a personal read checks scope and storage consent, never membership.
+  // Paid actions are gated where they start (lab-analysis job creation calls requireCore; reads do not, owned-lab-api.test.ts).
+  it('reads saved personal data and the active plan without any membership check',async()=>{
+    const s=setup({...config,allowedScopes:['forms_checkins','protocols_supplements']});
+    expect((await s.handler(event())).statusCode).toBe(200);
+    (s.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:{current:null,history:[],historyLimit:100}}]});
+    const g=event('GET /clinical-core/consumer/personal/active-plan');g.queryStringParameters={};
+    expect((await s.handler(g)).statusCode).toBe(200);
+    const {readFileSync}=await import('node:fs');
+    for(const file of ['owned-consumer-api.ts','owned-consumer-records.ts','owned-consumer-api-lambda.ts']){
+      const source=readFileSync(new URL(`./${file}`,import.meta.url),'utf8');
+      expect([file,/core_subscription_required|requireConsumerCore|core-subscription-guard|subscription/i.test(source)]).toEqual([file,false]);
+    }
+  });
+});

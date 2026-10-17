@@ -328,6 +328,7 @@ jobs:
           npm run test:aws-qualification-connect-rehearsal
           npm run test:aws-qualification-connect-operator
           npm run test:qualification-program-api-preflight
+          npm run test:qualification-program-api-update-preflight
           npm run test:aws-synthetic-data-api-audit-review
           npm run test:aws-synthetic-data-api-audit-live-parent
           npm run test:aws-synthetic-audit-retention-review

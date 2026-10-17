@@ -342,6 +342,21 @@ const ONBOARDING_REJECTION_CATEGORY: Readonly<Record<string, ClinicalCoreDatabas
   workforce_request_pending: "conflict",
   workforce_bootstrap_suspension_invalid: "request_invalid",
   workforce_clinic_bootstrap_not_found: "operation_refused",
+  // The BLOCKED emergency login revocation and its recovery routes (workforce-identity-emergency-revocation.sql,
+  // workforce-identity-recovery.sql).
+  workforce_identity_revocation_not_released: "operation_refused",
+  workforce_identity_revocation_invalid: "request_invalid",
+  workforce_identity_not_found: "operation_refused",
+  workforce_identity_revocation_not_found: "operation_refused",
+  workforce_identity_revocation_conflict: "conflict",
+  workforce_independent_operator_required: "identity_refused",
+  workforce_identity_recovery_not_released: "operation_refused",
+  workforce_identity_recovery_invalid: "request_invalid",
+  workforce_identity_recovery_conflict: "conflict",
+  workforce_identity_subject_retired: "identity_refused",
+  workforce_custodial_access_refused: "identity_refused",
+  // The BLOCKED membership-fence guard: an identity or membership change that did not begin the fence.
+  membership_fence_required: "operation_refused",
 };
 const ONBOARDING_REJECTION_TOKEN = new RegExp(`(?:^|\\bERROR:\\s*)(${Object.keys(ONBOARDING_REJECTION_CATEGORY).join("|")})\\b`);
 

@@ -1,6 +1,7 @@
 /**
- * Every Desktop API route, by authority family, for the four onboarding cases: an unapproved self-signed-up account,
- * a suspended clinic, a removed membership and a stale (already-issued) token. Checked, not asserted: the test
+ * Every Desktop API route, by authority family, for five cases: an unapproved self-signed-up account, a suspended
+ * clinic, a removed membership, a stale (already-issued) token, and a compromised identity: a practitioner login whose
+ * workforce identity the BLOCKED emergency revocation has disabled while its token is still unexpired. Checked, not asserted: the test
  * (route-authority-inventory.test.ts) walks src/app/api, refuses a route that is missing or listed twice, and refuses a
  * cell that claims a refusal or a gap without naming a test that exists and says so.
  *
@@ -16,7 +17,7 @@
  *   not_applicable    the case cannot arise for this family (no clinic authority is exercised); `reason` says why
  *   unverified        no source test was found either way; `reason` says what would settle it. Never a pass.
  */
-export type AuthorityCase = 'unapproved_account' | 'suspended_clinic' | 'removed_membership' | 'stale_token';
+export type AuthorityCase = 'unapproved_account' | 'suspended_clinic' | 'removed_membership' | 'stale_token' | 'compromised_identity';
 export type AuthorityMode = 'legacy_claims' | 'database_current';
 export type Cell =
   | { result: 'refused' | 'refused_disabled'; evidence: readonly string[] }
@@ -96,6 +97,15 @@ const E = {
   syntheticSuccessorIssue: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::clinic, already-issued practitioner session: ${withSuccessor ? \'refused, nothing written\'',
   syntheticSuccessorClaim: 'src/server/clinical-core/synthetic-invitation-clinic-status.database.test.ts::an invitation issued before the suspension, claimed after it',
   syntheticSuccessorRace: 'scripts/qualify-synthetic-invitation-native.mjs::issue-waiting-on-a-pending-suspension-is-refused',
+  revokedLogin: 'src/server/clinical-core/workforce-identity-emergency-revocation.database.test.ts::one decision disables the login in every clinic; the next request is refused whatever the token',
+  revokedLoginService: 'src/server/clinical-core/workforce-identity-emergency-revocation.database.test.ts::a delayed provider answer never delays the refusal',
+  revokedLoginRace: 'scripts/qualify-emergency-revocation-native.mjs::request-waiting-on-a-pending-revocation-is-refused',
+  revokedLoginCurrent: 'scripts/qualify-emergency-revocation-native.mjs::current-authority-and-another-clinic-are-refused-too',
+  custodyCompromised: 'src/server/clinical-core/suspended-clinic-custody.database.test.ts::a compromised credential is ended by disabling its identity',
+  discoveryDisabled: 'src/server/clinical-core/workforce-membership-discovery.database.test.ts::refuses an unknown, disabled or consumer identity',
+  syntheticRevoked: 'src/server/clinical-core/synthetic-identity-boundary-authority.database.test.ts::a disabled workforce identity (a revoked login): invitations refused on the next request',
+  applicantCognito: 'src/server/clinical-core/aws-workforce-applicant-identity.test.ts::refuses %s without returning an applicant',
+  campaignsRevoked: 'src/campaigns/events-and-routes.test.ts::GAP pinned: a practitioner login revoked in the clinical database keeps staff access here',
 } as const;
 
 const refused = (...evidence: string[]): Cell => ({ result: 'refused', evidence });
@@ -103,8 +113,21 @@ const disabled = (...evidence: string[]): Cell => ({ result: 'refused_disabled',
 const na = (reason: string): Cell => ({ result: 'not_applicable', reason });
 const unverified = (reason: string, ...evidence: string[]): Cell => ({ result: 'unverified', reason, ...(evidence.length ? { evidence } : {}) });
 const allDisabled = (...evidence: string[]): Row => ({ unapproved_account: disabled(...evidence), suspended_clinic: disabled(...evidence),
-  removed_membership: disabled(...evidence), stale_token: disabled(...evidence) });
-const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason) });
+  removed_membership: disabled(...evidence), stale_token: disabled(...evidence), compromised_identity: disabled(...evidence) });
+const allNa = (reason: string): Row => ({ unapproved_account: na(reason), suspended_clinic: na(reason), removed_membership: na(reason), stale_token: na(reason),
+  compromised_identity: na(reason) });
+/** A revoked login under legacy claims: set_request_context, the entry every legacy workforce request takes, reads the
+ * identity row on every request (and, with the BLOCKED candidate, holds it for the operation), so the next request is
+ * refused in every clinic, before any operation. */
+const REVOKED_LEGACY: Cell = { result: 'refused', evidence: [E.revokedLogin, E.revokedLoginRace, E.custodyCompromised] };
+/** The same under database_current: the setter share-locks and checks the identity row. */
+const REVOKED_CURRENT: Cell = { result: 'refused', evidence: [E.setterDisabledClinic, E.revokedLoginCurrent] };
+const REVOKED_CAMPAIGNS_DECISION = 'Brandon with Codex: the campaign engine authorizes staff from the token\'s claims and its own role grant and '
+  + 'never reads the clinical identity row, so a practitioner login revoked for a suspected compromise keeps campaign staff access (the '
+  + 'practice\'s contacts, sequences and broadcasts) until the ID token expires, and through refreshed tokens until Cognito disables the '
+  + 'user. The revocation\'s provider step (AdminDisableUser, AdminUserGlobalSignOut) bounds it only if it succeeds. Close it with a '
+  + 'revocation read in the staff route (a revocation item the revocation service writes, or Cognito Enabled per request), or keep '
+  + 'campaigns off until it has one. docs/desktop-onboarding-authority-2026-10-16.md, docs/clinic-continuity-emergency-revocation-2026-10-16.md';
 const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims the clinical path never checks clinical_core.organizations.status, so an '
   + 'already-selected session keeps working in a suspended or archived clinic. The BLOCKED successor legacy-claims-clinic-status.sql refuses '
   + 'every workforce clinical-data and identity-linking request into a clinic that is not active, where every legacy request enters '
@@ -136,6 +159,7 @@ const currentRows = (removed: string): Row => ({
   suspended_clinic: refused(E.setterDisabledClinic),
   removed_membership: refused(removed),
   stale_token: refused(E.setterUnapproved, E.identityStale),
+  compromised_identity: REVOKED_CURRENT,
 });
 
 export const ROUTE_FAMILIES = {
@@ -143,18 +167,20 @@ export const ROUTE_FAMILIES = {
     description: 'Sign-in, MFA, reset, session refresh and the clinic step: which clinic a session may select, never authority itself',
     upstream: 'Cognito; list_my_organizations (legacy) or subject-only membership discovery (database_current)',
     legacy_claims: { unapproved_account: refused(E.legacySignIn, E.envClinic), suspended_clinic: refused(E.legacySuspendedGap),
-      removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: 'An expired session is refreshed by the middleware or signed out; the clinic list is re-read only at sign-in and on the clinic step.' } },
+      removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: 'An expired session is refreshed by the middleware or signed out; the clinic list is re-read only at sign-in and on the clinic step.' },
+      compromised_identity: REVOKED_LEGACY },
     database_current: { unapproved_account: refused(E.signInNoClinic, E.signInOutage), suspended_clinic: refused(E.signInSuspended),
-      removed_membership: refused(E.signInRevocation), stale_token: refused(E.signInOutage) },
+      removed_membership: refused(E.signInRevocation), stale_token: refused(E.signInOutage), compromised_identity: refused(E.discoveryDisabled) },
   },
   compatibility_rpc: {
     description: 'The clinical workspace through data-compatibility RPCs: patients, charts (emr), inbox, billing, plans, programs, protocols, nutrition, knowledge, lens, copilot, labs, schedule, sync, tasks, reasoning',
     upstream: 'aws-production-clinical-api POST /clinical-core/workforce/data-compatibility (clinicalRpc / clinicalSelect)',
     legacy_claims: { unapproved_account: refused(E.legacyUnapproved, E.zeroAccessLegacy, E.envClinic),
       suspended_clinic: { result: 'gap', evidence: [E.legacySuspendedGap, E.successorClosed, E.custodyPreSuspension], decision: SUSPENDED_DECISION },
-      removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY, evidence: [E.legacyRemoved] } },
+      removed_membership: refused(E.legacyRemoved), stale_token: { result: 'token_lifetime', reason: STALE_LEGACY, evidence: [E.legacyRemoved] },
+      compromised_identity: REVOKED_LEGACY },
     database_current: { unapproved_account: refused(E.setterUnapproved, E.zeroAccessCurrent), suspended_clinic: refused(E.setterDisabledClinic),
-      removed_membership: refused(E.setterUnapproved), stale_token: refused(E.setterUnapproved) },
+      removed_membership: refused(E.setterUnapproved), stale_token: refused(E.setterUnapproved), compromised_identity: REVOKED_CURRENT },
   },
   synthetic_identity_boundary: {
     description: 'The synthetic API\'s posture and invitations, claims-based by design',
@@ -164,7 +190,9 @@ export const ROUTE_FAMILIES = {
         evidence: [E.syntheticInviteSuspended, E.syntheticPosture, E.syntheticSuccessorIssue, E.syntheticSuccessorClaim, E.syntheticSuccessorRace] },
       removed_membership: { result: 'token_lifetime', reason: 'Invitations re-read the membership row and refuse a removed member on the next request; posture is answered from the token alone (no clinic data) until it expires.',
         evidence: [E.syntheticInviteRemoved, E.syntheticPosture] },
-      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY },
+      compromised_identity: { result: 'token_lifetime', reason: 'Invitations enter the synthetic set_request_context, which reads the identity row, and refuse a revoked login on the next request; posture is answered from the token alone (environment, pool and classification; no clinic data) until it expires. The emergency revocation candidate itself is production-only.',
+        evidence: [E.syntheticRevoked] } },
     database_current: allDisabled(E.unconvertedRefused),
   },
   care_messages: {
@@ -172,9 +200,9 @@ export const ROUTE_FAMILIES = {
     upstream: 'care-messaging POST /clinical-core/workforce/messages',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
       suspended_clinic: refused(E.careSibling), removed_membership: refused(E.careSibling),
-      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY }, compromised_identity: REVOKED_LEGACY },
     database_current: { unapproved_account: refused(E.careForeign, E.gatedRefused), suspended_clinic: refused(E.setterDisabledClinic),
-      removed_membership: refused(E.careRemoved), stale_token: refused(E.careStale) },
+      removed_membership: refused(E.careRemoved), stale_token: refused(E.careStale), compromised_identity: REVOKED_CURRENT },
   },
   program_assignments: {
     description: 'Assigned programs (practitioner side)',
@@ -192,18 +220,22 @@ export const ROUTE_FAMILIES = {
     description: 'Appointment requests, actions, slots and payments',
     upstream: 'telehealth /clinical-core/workforce/appointments/*',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy, E.telehealthRecheck), suspended_clinic: refused(E.telehealthRecheck),
-      removed_membership: refused(E.telehealthRecheck), stale_token: refused(E.telehealthRecheck) },
+      removed_membership: refused(E.telehealthRecheck), stale_token: refused(E.telehealthRecheck),
+      compromised_identity: refused(E.telehealthRecheck, E.revokedLogin) },
     database_current: { unapproved_account: refused(E.telehealthCurrentReads), suspended_clinic: refused(E.telehealthCurrentReads),
-      removed_membership: refused(E.telehealthCurrentReads), stale_token: refused(E.telehealthCurrentReads) },
+      removed_membership: refused(E.telehealthCurrentReads), stale_token: refused(E.telehealthCurrentReads),
+      compromised_identity: refused(E.telehealthCurrentReads, E.identityRefusals) },
   },
   telehealth_visits: {
     description: 'Visit consent, start, end, notes, signing and chart transfer',
     upstream: 'telehealth /clinical-core/workforce/appointments/visits/*',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
       suspended_clinic: { result: 'gap', evidence: [E.legacyCalendarGap, E.successorClosed], decision: SUSPENDED_DECISION },
-      removed_membership: refused(E.telehealthVisitRevoked), stale_token: refused(E.telehealthVisitRevoked) },
+      removed_membership: refused(E.telehealthVisitRevoked), stale_token: refused(E.telehealthVisitRevoked),
+      compromised_identity: refused(E.telehealthVisitRevoked, E.revokedLogin) },
     database_current: { unapproved_account: refused(E.telehealthCurrentReads), suspended_clinic: refused(E.telehealthCurrentReads),
-      removed_membership: refused(E.telehealthCurrentWrites), stale_token: refused(E.telehealthCurrentWrites) },
+      removed_membership: refused(E.telehealthCurrentWrites), stale_token: refused(E.telehealthCurrentWrites),
+      compromised_identity: refused(E.telehealthCurrentReads, E.identityRefusals) },
   },
   unconverted_claims_families: {
     description: 'Encounter recording, calendar connection, patient notification settings, workforce Ask ALP, privacy operations, lab attestation, consult links/requests/records/retention/disputes/outcomes/carts/note templates',
@@ -214,7 +246,8 @@ export const ROUTE_FAMILIES = {
       // operator assignment) on the next request, so a token that still names the clinic reaches nothing.
       removed_membership: refused(E.recordingRemoved, E.recordingCaptureRemoved, E.recordingCleanupRemoved, E.labAttestationRemoved,
         E.clinicRecordsRemoved, E.privacyAssignment, E.syntheticFamiliesRemoved, E.calendarBusyRemoved, E.notificationSettingsRemoved),
-      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY },
+      compromised_identity: refused(E.revokedLogin, E.custodyCompromised, E.recordingCleanupRemoved, E.labAttestationRemoved) },
     database_current: allDisabled(E.unconvertedRefused, E.unconvertedConsult),
   },
   governed_catalog: {
@@ -223,11 +256,13 @@ export const ROUTE_FAMILIES = {
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy),
       suspended_clinic: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogSuspended] },
       removed_membership: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] },
-      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY } },
+      stale_token: { result: 'token_lifetime', reason: STALE_LEGACY },
+      compromised_identity: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic] } },
     database_current: { unapproved_account: refused(E.zeroAccessCurrent),
       suspended_clinic: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogSuspended] },
       removed_membership: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] },
-      stale_token: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] } },
+      stale_token: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic, E.catalogRemoved] },
+      compromised_identity: { result: 'token_lifetime', reason: CATALOG_HOSTS, evidence: [E.catalogSynthetic] } },
   },
   transitional_scribe: {
     description: 'The transitional scribe routes (chunk, consent, recording, transcript): a local contract-fixture harness only, refused on '
@@ -240,38 +275,46 @@ export const ROUTE_FAMILIES = {
     description: 'Lab PDF upload and the original lab-document read, still served by the transitional host',
     upstream: 'TRPC_BASE_URL /api/clinical/labs/upload and /api/clinical/labs/document/:id (not an AWS clinical API; not in this repository)',
     legacy_claims: { unapproved_account: unverified(LAB_HOST, E.labLegacy), suspended_clinic: unverified(LAB_HOST, E.labLegacy),
-      removed_membership: unverified(LAB_HOST, E.labLegacy), stale_token: unverified(LAB_HOST, E.labLegacy) },
+      removed_membership: unverified(LAB_HOST, E.labLegacy), stale_token: unverified(LAB_HOST, E.labLegacy),
+      compromised_identity: unverified(LAB_HOST + ' A revoked login is the fifth persona: its unexpired token against both requests after the revocation.', E.labLegacy) },
     database_current: allDisabled(E.labCurrent, E.zeroAccessCurrent),
   },
   fullscript_connection: {
     description: 'The practitioner\'s Fullscript connection in one clinic (OAuth start/callback, status, action, disconnect). Each '
       + 'request re-reads the account\'s current clinics before the connection is touched and again before a provider answer is '
-      + 'returned, the connection is keyed by the ID token\'s subject (an older email-keyed row is never claimed), lab checkout is '
+      + 'returned, the connection is keyed by the ID token\'s subject (an older email-keyed row is never claimed) and bound to the '
+      + 'membership generation it was installed under (a removed and re-added member reconnects), lab checkout is '
       + 'held, and the callback completes only in the session that started it',
     upstream: 'Fullscript API and the DynamoDB token store; the clinic list (list_my_organizations or subject-only discovery) as the authority read',
     legacy_claims: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptEmail),
       suspended_clinic: refused(E.fullscriptRemoved, E.legacySuspendedGap), removed_membership: refused(E.fullscriptRemoved, E.fullscriptCallback),
-      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage) },
+      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage),
+      compromised_identity: refused(E.fullscriptOutage, E.fullscriptRemoved, E.revokedLogin) },
     database_current: { unapproved_account: refused(E.fullscriptNoClinic, E.fullscriptOtherAccount),
       suspended_clinic: refused(E.fullscriptRemoved, E.signInSuspended), removed_membership: refused(E.fullscriptRemoved, E.fullscriptCallback),
-      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage) },
+      stale_token: refused(E.fullscriptRemoved, E.fullscriptNoClinic, E.fullscriptOutage),
+      compromised_identity: refused(E.fullscriptOutage, E.fullscriptRemoved, E.discoveryDisabled) },
   },
   campaigns: {
     description: 'The campaign engine (marketing; never clinical data)',
     upstream: 'campaign API (its own authorizer; practice from the token)',
     legacy_claims: { unapproved_account: refused(E.zeroAccessLegacy), suspended_clinic: { result: 'token_lifetime', reason: 'The campaign store has no clinic status; a practice is the token\'s claim until it expires.' },
       removed_membership: { result: 'token_lifetime', reason: 'No membership rows in the campaign store; the claim stands until the token expires.' },
-      stale_token: { result: 'token_lifetime', reason: 'Claims-based by design.' } },
+      stale_token: { result: 'token_lifetime', reason: 'Claims-based by design.' },
+      compromised_identity: { result: 'gap', evidence: [E.campaignsRevoked], decision: REVOKED_CAMPAIGNS_DECISION } },
     database_current: { unapproved_account: refused(E.campaignIndependent), suspended_clinic: { result: 'token_lifetime', reason: 'Independent of clinical authority; as under legacy.' },
-      removed_membership: { result: 'token_lifetime', reason: 'As under legacy.' }, stale_token: { result: 'token_lifetime', reason: 'As under legacy.' } },
+      removed_membership: { result: 'token_lifetime', reason: 'As under legacy.' }, stale_token: { result: 'token_lifetime', reason: 'As under legacy.' },
+      compromised_identity: { result: 'gap', evidence: [E.campaignsRevoked], decision: REVOKED_CAMPAIGNS_DECISION } },
   },
   applicant: {
     description: 'Applying to a clinic and the BLOCKED new-clinic bootstrap: an applicant has no clinic by definition',
     upstream: 'applicant API /clinical-core/workforce/{applications,clinic-bootstrap}',
     legacy_claims: { unapproved_account: na('This is the unapproved account\'s own door; it acts on the subject alone and never names a clinic.'),
-      suspended_clinic: refused(E.bootstrapSuspended), removed_membership: na('No membership is exercised.'), stale_token: refused(E.applicantNoClinic) },
+      suspended_clinic: refused(E.bootstrapSuspended), removed_membership: na('No membership is exercised.'), stale_token: refused(E.applicantNoClinic),
+      compromised_identity: { result: 'token_lifetime', reason: 'The applicant API checks the Cognito account (AdminGetUser: enabled and confirmed), not the clinical identity row, so a revoked login is refused here once the revocation\'s provider step disables the user, and admitted until then. It reaches no clinic data: a request to join waits for the clinic, and the bootstrap is BLOCKED.', evidence: [E.applicantCognito] } },
     database_current: { unapproved_account: na('As under legacy.'), suspended_clinic: refused(E.bootstrapSuspended),
-      removed_membership: na('No membership is exercised.'), stale_token: refused(E.bootstrapBlocked) },
+      removed_membership: na('No membership is exercised.'), stale_token: refused(E.bootstrapBlocked),
+      compromised_identity: { result: 'token_lifetime', reason: 'As under legacy: the Cognito account, not the identity row.', evidence: [E.applicantCognito] } },
   },
   platform_operator: {
     description: 'The platform-operator console (BLOCKED release; separate TOTP sign-in and cookie scoped to /api/operator)',

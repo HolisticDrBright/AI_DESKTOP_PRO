@@ -14,7 +14,7 @@ function routes(dir = API): string[] {
 }
 const ALL = routes().sort();
 const MODES: AuthorityMode[] = ['legacy_claims', 'database_current'];
-const CASES: AuthorityCase[] = ['unapproved_account', 'suspended_clinic', 'removed_membership', 'stale_token'];
+const CASES: AuthorityCase[] = ['unapproved_account', 'suspended_clinic', 'removed_membership', 'stale_token', 'compromised_identity'];
 const cells = Object.entries(ROUTE_FAMILIES).flatMap(([family, row]) =>
   MODES.flatMap(mode => CASES.map(kase => ({ family, mode, kase, cell: (row[mode] as Record<AuthorityCase, Cell>)[kase] }))));
 
@@ -61,12 +61,23 @@ describe('every cell is backed by source, or says it is not', () => {
   });
   it('the open gaps and unverified cells are exactly these; closing or finding one updates this list deliberately', () => {
     const named = (result: Cell['result']) => cells.filter(c => c.cell.result === result).map(c => `${c.family}/${c.mode}/${c.kase}`).sort();
-    expect(named('gap')).toEqual(['compatibility_rpc/legacy_claims/suspended_clinic', 'synthetic_identity_boundary/legacy_claims/suspended_clinic',
+    // The compromised-identity case (a login revoked by the BLOCKED emergency revocation, its token unexpired) adds the
+    // campaign engine's gap in both modes and the transitional lab host's fifth unverified persona.
+    expect(named('gap')).toEqual(['campaigns/database_current/compromised_identity', 'campaigns/legacy_claims/compromised_identity',
+      'compatibility_rpc/legacy_claims/suspended_clinic', 'synthetic_identity_boundary/legacy_claims/suspended_clinic',
       'telehealth_visits/legacy_claims/suspended_clinic', 'unconverted_claims_families/legacy_claims/suspended_clinic']);
-    expect(named('unverified')).toEqual(['transitional_lab_documents/legacy_claims/removed_membership', 'transitional_lab_documents/legacy_claims/stale_token',
+    expect(named('unverified')).toEqual(['transitional_lab_documents/legacy_claims/compromised_identity',
+      'transitional_lab_documents/legacy_claims/removed_membership', 'transitional_lab_documents/legacy_claims/stale_token',
       'transitional_lab_documents/legacy_claims/suspended_clinic', 'transitional_lab_documents/legacy_claims/unapproved_account']);
     const counts = Object.fromEntries(['refused', 'refused_disabled', 'gap', 'token_lifetime', 'not_applicable', 'unverified']
       .map(result => [result, named(result as Cell['result']).length]));
-    expect(counts).toEqual({ refused: 58, refused_disabled: 48, gap: 4, token_lifetime: 18, not_applicable: 20, unverified: 4 });
+    expect(counts).toEqual({ refused: 72, refused_disabled: 60, gap: 6, token_lifetime: 23, not_applicable: 24, unverified: 5 });
+    // Every clinical-data family refuses a revoked login under both authorities; what does not is named above or reads no clinic data.
+    const revoked = cells.filter(c => c.kase === 'compromised_identity' && c.cell.result === 'refused').map(c => `${c.family}/${c.mode}`).sort();
+    expect(revoked).toEqual(['care_messages/database_current', 'care_messages/legacy_claims', 'compatibility_rpc/database_current',
+      'compatibility_rpc/legacy_claims', 'fullscript_connection/database_current', 'fullscript_connection/legacy_claims',
+      'program_assignments/database_current', 'sign_in_and_clinic_choice/database_current', 'sign_in_and_clinic_choice/legacy_claims',
+      'telehealth_calendar/database_current', 'telehealth_calendar/legacy_claims', 'telehealth_visits/database_current',
+      'telehealth_visits/legacy_claims', 'unconverted_claims_families/legacy_claims']);
   });
 });

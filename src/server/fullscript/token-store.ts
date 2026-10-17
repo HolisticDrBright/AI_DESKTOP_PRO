@@ -14,6 +14,8 @@ export type StoredFullscriptConnection = FullscriptToken & {
   installationId?: string;
   oauthClientId?: string;
   oauthRedirectUri?: string;
+  /** The membership generation the installation was admitted under (membership-generation.ts). */
+  membershipGeneration?: { protocol: "fullscript-generation/1"; subjectFence: number; clinicFence: number };
 };
 
 const tokenKey = z.object({
@@ -39,6 +41,11 @@ const storedConnection = tokenKey.extend({
     return url.protocol==='https:'&&!url.username&&!url.password&&!url.search&&!url.hash
       &&url.pathname==='/api/live/fullscript/oauth/callback';
   }).optional(),
+  membershipGeneration: z.object({
+    protocol: z.literal("fullscript-generation/1"),
+    subjectFence: z.number().int().min(0),
+    clinicFence: z.number().int().min(0),
+  }).strict().optional(),
 }).strict();
 
 /** A DynamoDB key does not prove the JSON payload belongs to that account.
@@ -89,6 +96,7 @@ export function createAwsFullscriptTokenStore(env: NodeJS.ProcessEnv = process.e
       const after = parseStoredFullscriptConnection(replacement, expectedKey);
       if (after.environment !== before.environment || after.connectedAt !== before.connectedAt
         || after.installationId !== before.installationId
+        || JSON.stringify(after.membershipGeneration) !== JSON.stringify(before.membershipGeneration)
         || after.oauthClientId !== before.oauthClientId || after.oauthRedirectUri !== before.oauthRedirectUri
         || after.resourceOwner.id !== before.resourceOwner.id || after.resourceOwner.type !== before.resourceOwner.type
         || after.scope.length !== before.scope.length || after.scope.some(scope => !before.scope.includes(scope))) {

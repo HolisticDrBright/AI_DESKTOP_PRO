@@ -15,6 +15,12 @@ import {
 import { createAwsFullscriptTokenStore, parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
 import { createAwsFullscriptConnectionAdmission } from "./connection-admission";
 import { FULLSCRIPT_DRAFT_SCOPES } from './draft-scopes';
+import {
+  createAwsFullscriptGenerationReader,
+  createAwsFullscriptRevocationOutbox,
+  FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE,
+  sameGeneration,
+} from "./membership-generation";
 
 /**
  * The key a practitioner's saved connection is stored under: the clinic and the workforce account (the ID token's
@@ -47,6 +53,20 @@ async function emailKeyedConnectionExists(store: NonNullable<ReturnType<typeof c
   return (await store.get(actorKey, session.orgId)) !== null;
 }
 
+/**
+ * Whether this saved connection was made under the membership generation that is current now. If not (a membership
+ * removed and re-added, a clinic suspended and reinstated, an identity disabled, or a connection older than generations),
+ * it is moved into the revocation outbox and never used again. Without the fence table nothing is used at all.
+ */
+async function connectionIsCurrent(session: RequestSession, connection: StoredFullscriptConnection, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const reader = createAwsFullscriptGenerationReader(env);
+  const subject = tokenSubject(session.token);
+  if (!reader || !subject || !session.orgId) throw new FullscriptUnavailableError();
+  if (sameGeneration(connection.membershipGeneration, await reader.current(subject, session.orgId))) return true;
+  try { await createAwsFullscriptRevocationOutbox(env)?.supersede(connection, "membership_changed"); } catch { /* read again next time */ }
+  return false;
+}
+
 export async function disconnectFullscript(session: RequestSession): Promise<void> {
   const configuration = readFullscriptConfiguration();
   const store = createAwsFullscriptTokenStore();
@@ -69,7 +89,8 @@ export async function fullscriptPosture(session: RequestSession) {
     const saved = await store.get(actor.actorKey, actor.organizationId);
     const connection = saved ? parseStoredFullscriptConnection(saved, actor) : null;
     if (connection && connection.environment !== configuration.environment) throw new FullscriptUnavailableError();
-    if (!connection && await emailKeyedConnectionExists(store, session)) {
+    if ((connection && !(await connectionIsCurrent(session, connection, process.env)))
+      || (!connection && await emailKeyedConnectionExists(store, session))) {
       return { configured: true, connected: false, reconnectRequired: true, environment: configuration.environment,
         resourceOwnerType: null, scopes: [], connectedAt: null, productionApproved: configuration.environment === "production_us" } as const;
     }
@@ -114,6 +135,8 @@ export async function connectedFullscriptClient(session: RequestSession, require
   if (!connection && await emailKeyedConnectionExists(store, session)) throw new FullscriptUnavailableError(FULLSCRIPT_RECONNECT_REQUIRED);
   if (!connection || connection.environment !== configuration.environment) throw new FullscriptUnavailableError("Connect Fullscript first.");
   connection = parseStoredFullscriptConnection(connection, actor);
+  // Before any use or refresh: a connection made under authority that has since been reduced is never used again.
+  if (!(await connectionIsCurrent(session, connection, env))) throw new FullscriptUnavailableError(FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE);
   // Validate the saved OAuth client BEFORE a refresh transmits its credential.
   // Legacy lookup remains supported, but draft use cannot upgrade a legacy or
   // staff installation merely by renewing its token.
