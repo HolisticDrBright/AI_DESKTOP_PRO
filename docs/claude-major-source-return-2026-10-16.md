@@ -1,5 +1,9 @@
 # Major source return (16 October)
 
+**Later D2 update:** Brandon selected withdrawals-only for suspended clinics. The historical candidate identity and
+native evidence below predate that decision. The revised, still-BLOCKED source and remaining qualification work are
+in `docs/withdrawal-only-closed-clinic-review-2026-10-16.md`.
+
 **Scope:** source engineering only, with fictional data. Nothing was deployed or applied. No credential, store product
 or paid build was created, PHI stayed off, and nothing was merged to `main`. Neither product is commercial-ready or
 PHI-ready. Every SQL candidate here is BLOCKED.

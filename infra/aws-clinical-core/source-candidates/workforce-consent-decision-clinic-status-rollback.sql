@@ -8,7 +8,7 @@ do $guard$
 begin
   if to_regprocedure('clinical_private.require_active_consent_clinic(uuid)') is null
     or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.record_consent_grant(uuid,uuid,text,text,text)')) <> '89ebfcfc7dbf9cb5443fec121ebac0b4eadde24c6fccc802ec2030ea9c3cf33c'
-    or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.revoke_consent_grant(uuid,text,text)')) <> 'fafbcf48ed8a24c7d50d8171c7955bd7c3ac0bf7a8a863f94ea2795733b8a9a1'
+    or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.revoke_consent_grant(uuid,text,text)')) <> '002dc02bb8e55e9853a3fffa8ecbc1dd1f900893bce7ee2421530b53627da88f'
     or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_private.require_active_consent_clinic(uuid)')) <> 'b0831b02f1f634d5d5d49e29a12c3ac2f0f7d634a834cdd14773a991c4a49888' then
     raise exception using errcode = '55000', message = 'consent_decision_rollback_refused';
   end if;

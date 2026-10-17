@@ -150,7 +150,8 @@ try {
     closeAll(a, b);
   }
 
-  // Admitted first: the decision holds the clinic row; the suspension waits for it, and the next decision is refused.
+  // Admitted first: a new grant holds the clinic row; the suspension waits. Afterwards a withdrawal still narrows
+  // processing, while a new grant remains refused by the active-clinic check.
   {
     const entry = scenario('admitted-decision-holds-off-the-suspension');
     reactivate('alp');
@@ -163,10 +164,12 @@ try {
     check(entry, await waitingOnLock(bName, 'alp'), 'the suspension waits on the clinic row the decision holds');
     await a.send('commit;');
     check(entry, !(await pending).error, 'the suspension commits after the decision commits');
-    const next = await a.send(`${begin} ${context(ids.personA, ids.clinicA)} ${revoke(row)}`);
-    check(entry, REFUSAL.test(next.error), `the next decision, with the same already-issued identity, is refused (${firstLine(next.error)})`);
+    const next = await a.send(`${begin} ${context(ids.personA, ids.clinicA)} ${revoke(row)} commit;`);
+    check(entry, last(next) === 'revoked' && !next.error, 'the same authorized practitioner may record a withdrawal after suspension');
+    check(entry, history('alp', row) === '1:granted,2:revoked', 'the admitted grant and later withdrawal are recorded');
+    const newGrant = await a.send(`${begin} ${context(ids.personA, ids.clinicA)} ${grant(row)}`);
+    check(entry, REFUSAL.test(newGrant.error), `a new grant in the closed clinic is refused (${firstLine(newGrant.error)})`);
     await a.send('rollback;');
-    check(entry, history('alp', row) === '1:granted', 'exactly the admitted decision exists');
     closeAll(a, b);
   }
 

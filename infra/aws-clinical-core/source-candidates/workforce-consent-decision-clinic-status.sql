@@ -4,8 +4,9 @@
 -- Parents (20260812010000_production_identity_consent.sql), prosrc SHA-256:
 --   clinical_core.record_consent_grant  75d010fcb9ea0a014d72cc056a8606b071e22ee65bf03eb509b266f7d782bba3
 --   clinical_core.revoke_consent_grant  0bb066f2d50d473906527ce1dc2dca38b8416e5d5e6c556751b092a2b22be0af
--- The successor redefines exactly these two functions, each identical to its parent except for one added workforce
--- check, and adds one private helper. Signatures, owner, SECURITY DEFINER, search_path and grants are kept (create or
+-- The successor redefines exactly these two functions. A workforce new grant requires an active clinic, while an
+-- authorized withdrawal still narrows processing in a closed clinic. One private helper enforces the grant check.
+-- Signatures, owner, SECURITY DEFINER, search_path and grants are kept (create or
 -- replace keeps the parents' EXECUTE grants). No table, row, policy or role changes. It is independent of
 -- legacy-claims-clinic-status.sql, which it does not touch and which stays byte-pinned.
 -- Rollback: workforce-consent-decision-clinic-status-rollback.sql restores both parents exactly and drops the helper.
@@ -13,16 +14,16 @@
 -- The defect (suspended-clinic-custody.database.test.ts pins it): the legacy-claims-clinic-status successor refuses
 -- workforce clinical_data and identity_link in a closed clinic but admits workforce consent_management, because that
 -- one purpose also carries the authorized cleanup, retention and privacy paths, and the request context cannot tell
--- them apart. So a practitioner of a suspended or archived clinic could still record a new consent grant or
--- withdrawal for that clinic's patient. The practitioner's decision has its own boundary that does tell the actors
--- apart: these two functions, whose workforce branch is a clinical role in the connection's clinic. Here that branch
--- also requires the clinic to be active, share-locked inside the operation's transaction. Nothing else changes:
+-- them apart. So a practitioner of a suspended or archived clinic could still record a new consent grant. The
+-- practitioner's decision has its own boundary that does tell the actors apart: these two functions, whose workforce
+-- branch is a clinical role in the connection's clinic. New grants require the clinic to be active, share-locked
+-- inside the operation's transaction; withdrawals require an active clinical membership but not active clinic status.
+-- Nothing else changes:
 -- the patient's own grant and withdrawal (consumer pool), consent reads, the retention service and privacy operators
 -- (separately assigned, never this function) and recording cleanup (its own operator check) are as they were. The
 -- refusal is the existing `consent_actor_refused`, which a non-member already receives, so it says neither whether
--- the clinic exists nor why it is closed. Whether a practitioner may still record a patient's withdrawal in a closed
--- clinic is Brandon's and counsel's decision (docs/suspended-clinic-custody-2026-10-16.md): this candidate refuses it,
--- as directed, and the patient's own withdrawal stays open.
+-- the clinic exists nor why it is closed. Brandon chose withdrawals-only in a closed clinic; the patient's own
+-- withdrawal stays open. This candidate remains BLOCKED and unregistered pending review.
 begin;
 
 do $guard$
@@ -161,13 +162,8 @@ begin
   ) then
     raise exception using errcode = '42501', message = 'consent_actor_refused';
   end if;
-  -- workforce-consent-decision-clinic-status: a workforce actor records a consent decision only for an active clinic,
-  -- read and share-locked until this transaction ends, so a suspension waits for an admitted decision and a decision
-  -- waiting on an uncommitted suspension re-reads it and is refused. The patient's own decision (consumer pool) is not
-  -- gated here, and no cleanup, retention or privacy path calls this function.
-  if clinical_private.claim('identity_pool') = 'workforce' then
-    perform clinical_private.require_active_consent_clinic(_connection.organization_id);
-  end if;
+  -- Withdrawal only narrows processing. A workforce actor still needs an active clinical membership for this exact
+  -- connection, but the clinic's suspended or archived status does not prevent this revocation.
   select * into _latest from clinical_core.consent_grants g
   where g.connection_id = _connection_id and g.scope = _scope
   order by g.version desc limit 1;
@@ -199,7 +195,7 @@ $$;
 do $post$
 begin
   if (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.record_consent_grant(uuid,uuid,text,text,text)')) <> '89ebfcfc7dbf9cb5443fec121ebac0b4eadde24c6fccc802ec2030ea9c3cf33c'
-    or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.revoke_consent_grant(uuid,text,text)')) <> 'fafbcf48ed8a24c7d50d8171c7955bd7c3ac0bf7a8a863f94ea2795733b8a9a1'
+    or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_core.revoke_consent_grant(uuid,text,text)')) <> '002dc02bb8e55e9853a3fffa8ecbc1dd1f900893bce7ee2421530b53627da88f'
     or (select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') from pg_proc p where p.oid = to_regprocedure('clinical_private.require_active_consent_clinic(uuid)')) <> 'b0831b02f1f634d5d5d49e29a12c3ac2f0f7d634a834cdd14773a991c4a49888'
     or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('clinical_private.require_active_consent_clinic(uuid)') and p.prosecdef
       and p.proconfig = array['search_path=""']::text[] and p.proowner = (select oid from pg_roles where rolname = current_user))

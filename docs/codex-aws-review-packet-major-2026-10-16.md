@@ -2,6 +2,11 @@
 
 **This is a review hand-back, not authorization.**
 
+**D2 superseded:** Brandon later selected withdrawals-only. The consent candidate and rollback hashes below describe
+the earlier refuse-withdrawal source and must not be used for an apply. Use
+`docs/withdrawal-only-closed-clinic-review-2026-10-16.md` for the revised, still-BLOCKED source; other rows remain
+historical review context.
+
 - Nothing here was applied, registered, deployed or switched on.
 - No credential, store product or paid build was created.
 - Every row used was fictional.

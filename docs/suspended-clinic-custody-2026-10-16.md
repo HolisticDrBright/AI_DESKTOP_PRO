@@ -14,8 +14,8 @@ The two owner directions (16 October):
 
 1. Keep lawful practitioner access to patient records available. This includes the concern about **existing sessions
    after a clinic suspension**.
-2. Block **new practitioner consent decisions** for a suspended clinic, while authorized cleanup processes existing
-   withdrawals.
+2. Block **new practitioner consent grants** for a suspended clinic, while authorized practitioners may record
+   withdrawals and authorized cleanup processes existing withdrawals.
 
 Direction 2 is now source (§5). Direction 1 conflicts with the BLOCKED status successor. That successor refuses every
 workforce clinical read and write in a clinic that is not active, existing sessions included. A suspension is also the
@@ -54,6 +54,13 @@ suspicion. §6 proposes continuity paths that do not trust that login.
 > D5. A patient's request for copies of clinic-held records while the clinic is closed. The clinic-records candidate
 > refuses it, because its actor check reads clinic status. Who fulfils it, and through which path in §6?
 
+**Owner decision after this packet:** Brandon selected D2(B), withdrawals only. The BLOCKED consent candidate now
+refuses a new workforce grant while allowing an active clinical member to record a withdrawal for the exact connection.
+An inactive member remains refused, and the patient's own withdrawal remains open. This only covers the legacy-claims
+path: the unreleased `database_current` context setter still refuses workforce `consent_management` in a closed clinic
+before the function runs. Do not activate either path as a complete withdrawals-only release until that separate
+authority design and its races are reviewed and tested. D1, D3, D4 and D5 remain open.
+
 ## 2. What the source actually defines
 
 Traced from source on this branch. Each claim below is cited to its file.
@@ -85,7 +92,7 @@ stages: deployed / with the status successor / with both successors. Evidence is
 
 | Actor | Patient-record reads | New clinical writes | Consent decisions | Exports (patient copies) | Privacy fulfilment |
 | --- | --- | --- | --- | --- | --- |
-| **(a) a practitioner session open before the suspension** | gap / refused / refused | gap / refused / refused | gap / **gap** / refused | refused at all three stages: the clinic-records candidate's `care_connection_actor` requires an active clinic (read in source, not executed here) | not this actor's path |
+| **(a) a practitioner session open before the suspension** | gap / refused / refused | gap / refused / refused | gap / **gap** / new grant refused, withdrawal admitted for an active member | refused at all three stages: the clinic-records candidate's `care_connection_actor` requires an active clinic (read in source, not executed here) | not this actor's path |
 | **(b) a new sign-in** | No clinic to select: `list_my_organizations` drops a non-active clinic, so the Desktop sends none. A token that already names the clinic behaves as (a). | as reads | as reads | as reads | — |
 | **(c) a verified replacement credential** | No source path rebinds a person to a new subject (identities are unique per person and pool). Simulated by a direct rebind: the old subject is refused at once everywhere, and the new subject behaves as (a). | as reads | as reads | as reads | — |
 | **(d) clinic owner or admin** | as (a): the gate is the clinic's status, not the role | as (a) | as (a) | as (a) | — |
@@ -154,17 +161,19 @@ document are corrected in this change.
 
 `infra/aws-clinical-core/source-candidates/workforce-consent-decision-clinic-status.sql`, BLOCKED, with its rollback:
 
-- **The boundary.** It gates the workforce branch of `record_consent_grant` and `revoke_consent_grant`. That branch is
+- **The boundary.** It gates the workforce branch of `record_consent_grant`; `revoke_consent_grant` retains active
+  clinical-membership authority without requiring active clinic status. The decision functions are
   the only place that knows the actor is a practitioner exercising a clinical role, so it can tell a decision from
   cleanup. The status successor's entry point (`set_request_context`) cannot, because both arrive as workforce
   `consent_management`.
-- **The rule.** The connection's clinic must be active, read and share-locked in the operation's transaction.
+- **The rule.** A new grant requires the connection's clinic to be active, read and share-locked in the operation's
+  transaction. A withdrawal remains available to an active clinical member of that connection's clinic.
 - **The refusal.** The existing `consent_actor_refused`, which a non-member already receives. It reveals nothing
   about the clinic.
 - **Unchanged.** The patient's own decisions, consent reads, the retention service, privacy operators, recording
   cleanup, and `legacy-claims-clinic-status.sql`.
-- **Pinning.** Parent prosrc SHA-256 is `75d010fc…` (grant) and `0bb066f2…` (revoke). The successor is `89ebfcfc…`
-  (grant) and `fafbcf48…` (revoke); the helper is `b0831b02…`. The full values are in the file and the test.
+- **Pinning.** Parent prosrc SHA-256 is `75d010fc…` (grant) and `0bb066f2…` (revoke). The revised successor is
+  `89ebfcfc…` (grant) and `002dc02b…` (revoke); the helper is `b0831b02…`. The full values are in the file and test.
 - **Guards.** It refuses a synthetic-staging schema and a drifted parent, applies once, and does not expose its
   helper to the API role.
 
@@ -173,13 +182,14 @@ document are corrected in this change.
 | Check | Result |
 | --- | --- |
 | Failing before (stage 3 without the candidate) | 8 failed, 37 passed |
-| Passing after | 49/49 |
-| Native, `npm run qualify:consent-decision-native` | 5 scenarios, 19 checks, all passing |
+| Passing after D2(B) revision | 52/52 PGlite cases; a removed member remains refused |
+| Native, `npm run qualify:consent-decision-native` | Revised script parses, but PostgreSQL 16 was not available on this Windows host; rerun on a real local PostgreSQL and fictional Aurora before use |
 
-The native evidence is `docs/evidence/2026-10-16-consent-decision-native-02e8c703.json`. Its scenarios:
+The prior native evidence `docs/evidence/2026-10-16-consent-decision-native-02e8c703.json` describes the superseded
+refuse-withdrawal candidate and is **not evidence for this revision**. The revised script must show:
 
 - the status successor alone admits a practitioner decision before and after a suspension (the residual);
-- an admitted decision holds off the suspension, and the next decision is refused;
+- an admitted grant holds off the suspension; a later withdrawal is allowed but a new grant is refused;
 - a decision waiting on a pending archival is refused, and so is its retry;
 - the patient's own withdrawal and the retention sweep are not held back;
 - a sibling clinic is not held back.

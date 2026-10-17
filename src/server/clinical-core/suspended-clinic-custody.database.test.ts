@@ -36,7 +36,7 @@ const GRANT = 'clinical_core.record_consent_grant(uuid,uuid,text,text,text)';
 const REVOKE = 'clinical_core.revoke_consent_grant(uuid,text,text)';
 const HELPER = 'clinical_private.require_active_consent_clinic(uuid)';
 const PARENT = { grant: '75d010fcb9ea0a014d72cc056a8606b071e22ee65bf03eb509b266f7d782bba3', revoke: '0bb066f2d50d473906527ce1dc2dca38b8416e5d5e6c556751b092a2b22be0af' };
-const SUCCESSOR = { grant: '89ebfcfc7dbf9cb5443fec121ebac0b4eadde24c6fccc802ec2030ea9c3cf33c', revoke: 'fafbcf48ed8a24c7d50d8171c7955bd7c3ac0bf7a8a863f94ea2795733b8a9a1' };
+const SUCCESSOR = { grant: '89ebfcfc7dbf9cb5443fec121ebac0b4eadde24c6fccc802ec2030ea9c3cf33c', revoke: '002dc02bb8e55e9853a3fffa8ecbc1dd1f900893bce7ee2421530b53627da88f' };
 
 type Stage = 'deployed' | 'status successor' | 'status and consent-decision successors';
 const STAGES: Stage[] = ['deployed', 'status successor', 'status and consent-decision successors'];
@@ -134,7 +134,7 @@ describe.each(STAGES)('suspended-clinic custody, legacy claims: %s', stage => {
     });
 
     it.each(['suspended', 'archived'] as const)(`after a %s commits, the same already-issued session: ${!status ? 'GAP: keeps reading, writing and deciding'
-      : !decision ? 'reads and writes refused; GAP: still records consent decisions' : 'reads, writes and consent decisions all refused'}`, async closed => {
+      : !decision ? 'reads and writes refused; GAP: still records new consent grants' : 'reads, writes and new grants refused; withdrawals stay available'}`, async closed => {
       await expect(readPatient(practitioner)).resolves.toHaveLength(1); // the session is live before the change
       await close(clinicA, closed);
       expect(await outcome(readPatient(practitioner))).toBe(status ? CLOSED : 'admitted');
@@ -153,11 +153,11 @@ describe.each(STAGES)('suspended-clinic custody, legacy claims: %s', stage => {
       await outcome(revokeAs(practitioner));
       const after = await custody();
       expect(after.patients).toBe(before.patients + (status ? 0 : 1));
-      expect(after.grants).toBe(before.grants + (decision ? 0 : 1));
+      expect(after.grants).toBe(before.grants + 1);
       expect(after.audit).toBeGreaterThanOrEqual(before.audit);
       await db.query("update clinical_core.organizations set status='active' where id=$1", [clinicA]); // a direct write: no reinstatement writer exists
       await expect(readPatient(practitioner)).resolves.toHaveLength(1);
-      expect((await history()).at(-1)).toBe(decision ? '1:granted' : '2:revoked');
+      expect((await history()).at(-1)).toBe('2:revoked');
     });
 
     it('the patient is never refused by either candidate: their own grant and withdrawal run in the closed clinic', async () => {
@@ -198,13 +198,22 @@ describe.each(STAGES)('suspended-clinic custody, legacy claims: %s', stage => {
       expect(await history()).toEqual(decision ? [] : ['1:granted']);
     });
 
-    it(`a practitioner of a suspended clinic records a withdrawal on the patient's behalf: ${decision ? 'refused (the owner\'s direction; the patient\'s own withdrawal stays open)' : 'admitted'}`, async () => {
+    it('a practitioner of a suspended clinic records a withdrawal on the patient\'s behalf, but cannot add a new grant', async () => {
       await grantAs(practitioner);
       await close(clinicA);
-      expect(await outcome(revokeAs(practitioner))).toBe(decision ? DECISION_CLOSED : 'admitted');
-      expect(await history()).toEqual(decision ? ['1:granted'] : ['1:granted', '2:revoked']);
-      // Refused to the practitioner, the withdrawal is still the patient's to make.
-      if (decision) await expect(revokeAs(consumer, clinicA, connectionA, 'consumer')).resolves.toHaveLength(1);
+      expect(await outcome(revokeAs(practitioner))).toBe('admitted');
+      expect(await history()).toEqual(['1:granted', '2:revoked']);
+      expect(await outcome(grantAs(practitioner))).toBe(decision ? DECISION_CLOSED : 'admitted');
+    });
+
+    it('a suspended member cannot use withdrawal-only access; the patient can still withdraw', async () => {
+      await grantAs(practitioner);
+      await close(clinicA);
+      await db.query("update clinical_core.organization_memberships set status='suspended' where organization_id=$1 and person_id=$2", [clinicA, practitioner]);
+      expect(await outcome(revokeAs(practitioner))).toMatch(/^refused:/);
+      expect(await history()).toEqual(['1:granted']);
+      await expect(revokeAs(consumer, clinicA, connectionA, 'consumer')).resolves.toHaveLength(1);
+      expect(await history()).toEqual(['1:granted', '2:revoked']);
     });
 
     it(`a retry after the suspension: ${decision ? 'refused before replay or version checks, no second version' : 'the deployed answer is the version conflict, not a refusal'}`, async () => {
