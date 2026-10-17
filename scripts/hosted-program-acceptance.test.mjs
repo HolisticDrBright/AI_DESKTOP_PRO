@@ -151,8 +151,8 @@ test('a complete fictional run satisfies every check and is still not hosted evi
 
 test('the reviewed source pair is the packet code pair, and a substituted pair is never hosted evidence', async () => {
   const m = need();
-  assert.equal(m.REVIEWED_SOURCE_PAIR.desktopCommit, '8bfe2349af869cbc0d93712fe6050300bb4ce4ab');
-  assert.equal(m.REVIEWED_SOURCE_PAIR.v2Commit, 'dd704abf820de5556c5e6da9dcb39495c138fa87');
+  // The Desktop commit is the clean checkout's HEAD (reviewedCheckoutPair), never a pin a runtime commit cannot hold.
+  assert.equal(m.REVIEWED_SOURCE_PAIR.desktopCommit, null);
   // Unpinned until a clean `npm ci` build of the reviewed commit records it: a layout-dependent local build is no pin.
   assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleSha256, null);
   assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleBytes, null);
@@ -497,4 +497,19 @@ test('coverage: the gaps the qualification packet names are still present in the
   const guidance = split(smokeText('qualify-aws-daily-guidance-hosted.mjs')).body;
   assert.doesNotMatch(guidance, /describe-stacks|CodeSha256|SourceCommit|x-clinical-execution/);
   assert.match(guidance, /generated\.provider !== "openai"/);
+});
+
+test('the reviewed Desktop commit is the clean checkout HEAD; a dirty tree, a short or missing HEAD refuses', () => {
+  const m = need();
+  const git = (head, status) => args => args[0] === 'rev-parse' ? `${head}\n` : status;
+  const pair = m.reviewedCheckoutPair({run: git(PAIR_COMMIT, '')});
+  assert.equal(pair.desktopCommit, PAIR_COMMIT);
+  assert.equal(pair.source, 'clean_checkout_head');
+  assert.ok(Object.isFrozen(pair) && m.isReviewedPair(pair));
+  assert.equal(pair.identityBundleSha256, null, 'the bundle stays unpinned until a reviewed clean build records it');
+  assert.ok(!m.isReviewedPair({...pair}), 'a copy of a reviewed pair is not one');
+  assert.throws(() => m.reviewedCheckoutPair({run: git(PAIR_COMMIT, ' M scripts/hosted-program-acceptance.mjs\n')}), /source_dirty/);
+  assert.throws(() => m.reviewedCheckoutPair({run: git(PAIR_COMMIT, '?? stray.json\n')}), /source_dirty/);
+  assert.throws(() => m.reviewedCheckoutPair({run: git('abc1234', '')}), /source_unobserved/);
+  assert.throws(() => m.reviewedCheckoutPair({run: () => {throw new Error('not a repository');}}), /source_unobserved/);
 });
