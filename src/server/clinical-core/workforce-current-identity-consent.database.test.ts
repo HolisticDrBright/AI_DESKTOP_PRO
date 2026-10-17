@@ -13,10 +13,18 @@ import type { ClinicalCoreDatabase } from './database';
 import { classifyDatabaseRejection } from './rds-data-database';
 
 // The workforce identity and consent family under the unactivated `database_current` authority: the real production
-// handler and adapters over the assembled production schema plus the UNREGISTERED current-membership setter, in PGlite
+// handler and adapters over the assembled production schema plus the UNREGISTERED current-membership setter and
+// its separately BLOCKED withdrawal-only dependency, in PGlite
 // with fictional rows. Nothing here registers, applies or deploys SQL.
 const CANDIDATE = 'infra/aws-clinical-core/source-candidates/workforce-current-membership-context.sql';
 const ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-current-membership-context-rollback.sql';
+const DECISION = 'infra/aws-clinical-core/source-candidates/workforce-consent-decision-clinic-status.sql';
+const WITHDRAWAL = 'infra/aws-clinical-core/source-candidates/workforce-current-withdrawal-only.sql';
+const WITHDRAWAL_ROLLBACK = 'infra/aws-clinical-core/source-candidates/workforce-current-withdrawal-only-rollback.sql';
+// Rehearsals run inside an enclosing PGlite transaction. Strip the standalone
+// candidate's BEGIN/COMMIT so the test can actually roll back both drops.
+const rollbackBody = (path: string) => readFileSync(path, 'utf8')
+  .replace(/^\s*begin;\s*/i, '').replace(/\s*commit;\s*$/i, '');
 const ISSUER = 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_AZMa5gxSZ';
 const AUDIENCE = '67moqjql53ms7247tphe5ftpd8';
 const CLINIC = randomUUID(), OTHER = randomUUID(), FOREIGN = randomUUID();
@@ -133,6 +141,8 @@ beforeAll(async () => {
   db = new PGlite({ extensions: { pgcrypto } });
   for (const migration of manifest.migrations) await db.exec(files[migration.file]);
   await db.exec(readFileSync(CANDIDATE, 'utf8'));
+  await db.exec(readFileSync(DECISION, 'utf8'));
+  await db.exec(readFileSync(WITHDRAWAL, 'utf8'));
   await db.query(`insert into clinical_core.organizations(id,organization_label)
     values($1,'FICTIONAL PILOT CLINIC'),($2,'FICTIONAL SECOND CLINIC'),($3,'FICTIONAL FOREIGN CLINIC')`, [CLINIC, OTHER, FOREIGN]);
   for (const [who, pool] of [[practitioner, 'workforce'], [staff, 'workforce'], [applicant, 'workforce'], [outsider, 'workforce'], [consumer, 'consumer']] as const) {
@@ -188,7 +198,8 @@ describe('workforce identity and consent under current database membership', () 
     expect((await db.query(`select recorded_by_person_id from clinical_core.consent_grants where id=$1`,
       [(granted.body.data as { consentId: string }).consentId])).rows).toEqual([{ recorded_by_person_id: practitioner.person }]);
     expect(await revoke(who)).toMatchObject({ status: 201, body: { data: { status: 'revoked' } } });
-    expect(queries.filter((sql) => sql.includes('set_current_workforce_context'))).toHaveLength(4);
+    expect(queries.filter((sql) => sql.includes('set_current_workforce_context'))).toHaveLength(3);
+    expect(queries.filter((sql) => sql.includes('revoke_current_workforce_consent'))).toHaveLength(1);
     expectNoLegacyAuthority();
   });
 
@@ -337,10 +348,15 @@ describe('workforce identity and consent under current database membership', () 
     atStart = undefined;
     expect(await count('clinical_core.connection_invitations')).toBe(before);
     expect((await posture({ sub: practitioner.sub })).status).toBe(200);
+    atStart = async (tx) => {
+      await tx.exec('drop function clinical_private.revoke_current_workforce_consent(text,uuid,uuid,text,text)');
+    };
+    expect(await revoke({ sub: practitioner.sub })).toEqual({ status: 503, body: { error: 'database_unavailable' } });
+    atStart = undefined;
     expectNoLegacyAuthority();
   });
 
-  it('rolls the candidate back preservingly: only the setter goes, and current-mode requests then refuse with 503', async () => {
+  it('rolls the candidate chain back preservingly: only the wrapper and setter go, and current-mode requests then refuse with 503', async () => {
     const catalog = (tx: Transaction) => tx.query<{ entry: string }>(`select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')'
       ||md5(pg_get_functiondef(p.oid))||coalesce(array_to_string(p.proacl,','),'') as entry from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname like 'clinical%' order by 1`).then((result) => result.rows.map((row) => row.entry));
@@ -350,18 +366,22 @@ describe('workforce identity and consent under current database membership', () 
       as entry from pg_policies order by 1`).then((result) => result.rows.map((row) => row.entry));
     await db.transaction(async (tx) => {
       const [beforeCatalog, beforeRows, beforePolicies] = [await catalog(tx), await rows(tx), await policies(tx)];
-      await tx.exec(readFileSync(ROLLBACK, 'utf8'));
+      await tx.exec(rollbackBody(WITHDRAWAL_ROLLBACK));
+      await tx.exec(rollbackBody(ROLLBACK));
       const afterCatalog = await catalog(tx);
       expect(beforeCatalog.filter((entry) => !afterCatalog.includes(entry)).map((entry) => entry.split('(')[0]))
-        .toEqual(['clinical_private.set_current_workforce_context']);
+        .toEqual(['clinical_private.revoke_current_workforce_consent', 'clinical_private.set_current_workforce_context']);
       expect(afterCatalog.filter((entry) => !beforeCatalog.includes(entry))).toEqual([]);
       expect(await rows(tx)).toEqual(beforeRows);
       expect(await policies(tx)).toEqual(beforePolicies);
-      await expect(tx.exec(readFileSync(ROLLBACK, 'utf8'))).rejects.toThrow(/does not exist/);
+      await expect(tx.exec(rollbackBody(ROLLBACK))).rejects.toThrow(/does not exist/);
       await tx.rollback();
     });
     // Inside each request, the same rollback leaves the handler refusing rather than falling back.
-    atStart = async (tx) => { await tx.exec(readFileSync(ROLLBACK, 'utf8')); };
+    atStart = async (tx) => {
+      await tx.exec(rollbackBody(WITHDRAWAL_ROLLBACK));
+      await tx.exec(rollbackBody(ROLLBACK));
+    };
     expect(await posture({ sub: practitioner.sub })).toEqual({ status: 503, body: { error: 'database_unavailable' } });
     expect(await grant({ sub: practitioner.sub })).toEqual({ status: 503, body: { error: 'database_unavailable' } });
     expect(await organizations({ sub: practitioner.sub })).toEqual({ status: 503, body: { error: 'database_unavailable' } });

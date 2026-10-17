@@ -56,10 +56,10 @@ suspicion. §6 proposes continuity paths that do not trust that login.
 
 **Owner decision after this packet:** Brandon selected D2(B), withdrawals only. The BLOCKED consent candidate now
 refuses a new workforce grant while allowing an active clinical member to record a withdrawal for the exact connection.
-An inactive member remains refused, and the patient's own withdrawal remains open. This only covers the legacy-claims
-path: the unreleased `database_current` context setter still refuses workforce `consent_management` in a closed clinic
-before the function runs. Do not activate either path as a complete withdrawals-only release until that separate
-authority design and its races are reviewed and tested. D1, D3, D4 and D5 remain open.
+An inactive member remains refused, and the patient's own withdrawal remains open. A later, separately BLOCKED
+`database_current` source candidate provides one exact withdrawal operation without relaxing its general context setter;
+see `docs/current-membership-withdrawal-only-2026-10-16.md`. Its two-session races and fictional hosted behaviour are
+unverified. Do not activate either path as a complete withdrawals-only release yet. D1, D3, D4 and D5 remain open.
 
 ## 2. What the source actually defines
 
@@ -102,11 +102,12 @@ stages: deployed / with the status successor / with both successors. Evidence is
 | **(e′) recording cleanup operator** | — | — | — | **refused at all three stages by its own deployed check** (`recording_cleanup_operator` requires an active clinic), and so is placing a legal hold: **finding (§4)** | — |
 | the patient (consumer) | own records: no candidate changes them | — | own grant and withdrawal run at all three stages | owned privacy export runs (consumer pool) | — |
 
-**`database_current` (not activated).** The current-membership setter refuses all three purposes in a non-active
-clinic (`workforce_membership_refused`), consent management included, before any operation runs
-(`workforce-current-identity-consent.database.test.ts`, `legacy-claims-clinic-status.database.test.ts`). Privacy
-operations, recording cleanup and the other unconverted families are refused at the Desktop before any token leaves
-(`clinic-authority-families.ts`).
+**`database_current` (not activated).** The general current-membership setter still refuses all three purposes in a
+non-active clinic (`workforce_membership_refused`), consent management included. A separate blocked and unregistered
+wrapper now admits only an exact withdrawal for a current clinical member, clears its transaction-local claims, and
+leaves that general refusal untouched (`workforce-current-withdrawal-only.database.test.ts`). Privacy operations,
+recording cleanup and the other unconverted families are refused at the Desktop before any token leaves
+(`clinic-authority-families.ts`). No hosted or two-session result exists for the wrapper.
 
 **Other events, both modes.**
 
