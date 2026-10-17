@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import {labSpecimenTransferSchema,labSpecimenReceiptSchema,labSpecimenRecordSchema,specimenContent,type LabSpecimenTransfer,type LabSpecimenReceipt,type LabSpecimenRecord} from "../../contracts/labSpecimenTransfer";
 import {labResultTransferV2,type LabResultTransferV2} from "../../contracts/labResultTransfer";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import { ORDINARY_SUSPENSION_WINDOW_RELEASE } from "./ordinary-suspension-window";
 import {
   ClinicalCoreAdapterError,
   type ClinicalRequestContext,
@@ -106,18 +107,25 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
   return createAwsClinicalStateAdapter(database, "synthetic");
 }
 
-export function createAwsProductionClinicalStateAdapter(database: ClinicalCoreDatabase): AwsProductionClinicalStateAdapter {
-  return createAwsClinicalStateAdapter(database, "production");
+/**
+ * `suspensionWindow` is the BLOCKED ordinary-suspension window (ordinary-suspension-window.ts): `blocked` (the default)
+ * keeps the seven-argument entry; `qualification` sends a workforce request's verified token `iat`/`exp` and whether it
+ * reads or writes, and refuses a workforce request without that evidence before the database.
+ */
+export function createAwsProductionClinicalStateAdapter(database: ClinicalCoreDatabase,
+  options: { suspensionWindow?: "blocked" | "qualification" } = {}): AwsProductionClinicalStateAdapter {
+  return createAwsClinicalStateAdapter(database, "production", options.suspensionWindow ?? ORDINARY_SUSPENSION_WINDOW_RELEASE);
 }
 
 function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
   database: ClinicalCoreDatabase,
   boundary: "synthetic" | "production",
+  release: "blocked" | "qualification" = "blocked",
 ): AwsClinicalStateAdapter<Context> {
   return {
     async getConsumerConnection(context) {
       assertContext(context, boundary, "consumer");
-      const rows = await run(database, context, async (tx) => (await tx.query<{
+      const rows = await run(database, release, context, async (tx) => (await tx.query<{
         connection_id: string;
         patient_record_id: string;
         state: "verified" | "paused";
@@ -153,7 +161,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
           ...(payload.result.referenceRange ? { referenceRange: payload.result.referenceRange } : {}),
         },
       });
-      const row = await run(database, context, async (tx) => first(await tx.query<{
+      const row = await run(database, release, context, async (tx) => first(await tx.query<{
         event_id: string;
         state: LabImportResult["state"];
         duplicate: boolean;
@@ -181,7 +189,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       const parsed = labResultTransferV2.safeParse(input);
       if (!parsed.success) throw new ClinicalStateError("request_invalid");
       // The candidate re-checks every field, computes its own digest and records no status: nothing here can add one.
-      const row = await run(database, context, async (tx) => first(await tx.query<{
+      const row = await run(database, release, context, async (tx) => first(await tx.query<{
         event_id: string; state: LabImportResult["state"]; duplicate: boolean;
       }>("select * from clinical_core.record_lab_import_v2($1::jsonb)", [JSON.stringify(parsed.data)])), "clinical_state_refused");
       if (!UUID.test(row.event_id) || !["review_pending", "conflict", "accepted", "rejected"].includes(row.state)
@@ -198,7 +206,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       const parsed=labSpecimenTransferSchema.safeParse(input);
       if(!parsed.success)throw new ClinicalStateError("request_invalid");
       const payload=parsed.data,content=specimenContent(payload),hash=createHash("sha256").update(content).digest("hex");
-      const row=await run(database,context,async tx=>{
+      const row=await run(database,release,context,async tx=>{
         try{return first(await tx.query("select * from clinical_core.record_lab_specimen_context($1)",[content]));}
         catch(error){
           if(error instanceof ClinicalCoreDatabaseRejection){
@@ -219,7 +227,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
     async getLabSpecimenContext(context,eventId) {
       assertContext(context,boundary);
       if(!UUID.test(eventId))throw new ClinicalStateError("request_invalid");
-      return run(database,context,async tx=>{
+      return run(database,release,context,async tx=>{
         const rows=(await tx.query(`select id,lab_event_id,revision,context,received_at,payload_sha256,lab_payload_sha256
           from clinical_core.lab_specimen_context_versions where organization_id=$1 and lab_event_id=$2
           order by revision desc limit 1`,[clinicalUuid(context.organizationId),clinicalUuid(eventId)])).rows;
@@ -232,7 +240,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
           labPayloadSha256:row.lab_payload_sha256,receivedAt:specimenTimestamp(row.received_at),context:raw});
         if(!parsed.success||parsed.data.labEventId!==eventId)throw new ClinicalStateError("database_unavailable");
         return parsed.data;
-      },"clinical_state_refused");
+      },"clinical_state_refused","read");
     },
     async reviewLabResult(context, input) {
       assertContext(context, boundary, "workforce");
@@ -240,7 +248,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
         || (input.note !== undefined && (input.note.trim().length === 0 || input.note.length > 500))) {
         throw new ClinicalStateError("request_invalid");
       }
-      const row = await run(database, context, async (tx) => first(await tx.query<{
+      const row = await run(database, release, context, async (tx) => first(await tx.query<{
         event_id: string;
         state: "accepted" | "rejected";
         observation_id: string | null;
@@ -261,21 +269,21 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       if (!["review_pending", "conflict", "accepted", "rejected"].includes(state)) {
         throw new ClinicalStateError("request_invalid");
       }
-      return run(database, context, async (tx) => (await tx.query(
+      return run(database, release, context, async (tx) => (await tx.query(
         "select * from clinical_core.list_lab_imports($1)", [state],
-      )).rows, "clinical_state_refused");
+      )).rows, "clinical_state_refused", "read");
     },
 
     async listPatientLabObservations(context, patientRecordId) {
       assertContext(context, boundary);
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
-      return run(database, context, async (tx) => (await tx.query(
+      return run(database, release, context, async (tx) => (await tx.query(
         `select visible.*, observation.import_event_id
          from clinical_core.list_patient_lab_observations($1) visible
          join clinical_core.lab_observations observation on observation.id=visible.observation_id
          where observation.organization_id=$2 and observation.patient_record_id=$1`,
         [clinicalUuid(patientRecordId),clinicalUuid(context.organizationId)],
-      )).rows, "clinical_state_refused");
+      )).rows, "clinical_state_refused", "read");
     },
     async listDesktopPatients(context, patientRecordId) {
       assertContext(context, boundary, "workforce");
@@ -291,15 +299,15 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
            from clinical_core.patient_records
            where organization_id=$1 and deleted_at is null and ($2::uuid is null or id=$2)
            order by last_name, first_name, id limit 1000`;
-      return run(database, context, async (tx) => (await tx.query(
+      return run(database, release, context, async (tx) => (await tx.query(
         sql,
         [clinicalUuid(context.organizationId), patientRecordId ? clinicalUuid(patientRecordId) : null],
-      )).rows, "clinical_state_refused");
+      )).rows, "clinical_state_refused", "read");
     },
     async listDesktopLabDocuments(context, patientRecordId) {
       assertContext(context, boundary, "workforce");
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
-      return run(database, context, async (tx) => (await tx.query(
+      return run(database, release, context, async (tx) => (await tx.query(
         `select id, 'AI Longevity Pro import'::text as file_name,
            coalesce(source_label,'AI Longevity Pro') as lab_company,
            panel_name, collected_at::date as lab_date, received_at as created_at
@@ -307,7 +315,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
          where organization_id=$1 and patient_record_id=$2 and state='accepted'
          order by received_at desc, id limit 100`,
         [clinicalUuid(context.organizationId), clinicalUuid(patientRecordId)],
-      )).rows, "clinical_state_refused");
+      )).rows, "clinical_state_refused", "read");
     },
   };
 }
@@ -369,16 +377,30 @@ function assertContext(
 
 async function run<T>(
   database: ClinicalCoreDatabase,
+  release: "blocked" | "qualification",
   context: ClinicalRequestContext,
   work: (tx: ClinicalCoreTransaction) => Promise<T>,
   operationRefusal: ClinicalStateError["category"],
+  access: "read" | "write" = "write",
 ): Promise<T> {
+  // The ordinary-suspension window (BLOCKED): only a production workforce request carries token evidence. An operation
+  // not marked as a read is a write, so in a suspended clinic it is held.
+  const tokenWindow = "tokenWindow" in context ? context.tokenWindow : undefined;
+  const windowed = release === "qualification" && context.identityPool === "workforce" && context.environment === "production-clinical";
+  if (windowed && !tokenWindow) throw new ClinicalStateError("clinical_state_refused");
   try {
     return await database.transaction(async (tx) => {
-      await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)", [
+      const values = [
         clinicalUuid(context.actorPersonId), clinicalUuid(context.organizationId), context.identityPool,
         context.identitySubject, context.purpose, context.environment, context.dataClassification,
-      ]);
+      ];
+      if (windowed && tokenWindow) {
+        await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [
+          ...values, tokenWindow.issuedAt, tokenWindow.expiresAt, access,
+        ]);
+      } else {
+        await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)", values);
+      }
       return work(tx);
     });
   } catch (error) {

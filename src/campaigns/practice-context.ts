@@ -1,5 +1,6 @@
 import { CAMPAIGN_PROGRAMS, emptySettings, type Allowances, type CampaignProgram, type ContactState, type DomainStatus, type Entitlement, type ListCounts, type PracticeSettings, type RoleGrant } from './contract';
 import type { CampaignSesPort } from './ses';
+import type { StaffRevocationSignal } from './staff-revocation';
 import type { CampaignStore, PracticeStore, TransactOp } from './store';
 import type { CampaignKeys } from './tokens';
 
@@ -19,6 +20,8 @@ export type EngineConfig = {
 };
 export type EngineDeps = {
   store: CampaignStore; ses: CampaignSesPort; keys: CampaignKeys; config: EngineConfig;
+  /** Read before every staff operation. Absent, the staff route refuses (503); the public routes never read it. */
+  staffRevocation?: StaffRevocationSignal;
   now?: () => Date; newId?: () => string; pause?: (ms: number) => Promise<void>;
 };
 

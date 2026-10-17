@@ -53,6 +53,11 @@ export type ProductionClinicalRequestContext = {
   containsPhi: true;
   realPatientData: true;
   productionBound: true;
+  /**
+   * The verified ID token's `iat` and `exp`, from the JWT authorizer's verified claims only (ordinary-suspension-window.ts).
+   * Sent to the database only under the BLOCKED ordinary-suspension window; absent, nothing changes.
+   */
+  tokenWindow?: { issuedAt: number; expiresAt: number };
 };
 
 export type ClinicalRequestContext = SyntheticRequestContext | ProductionClinicalRequestContext;

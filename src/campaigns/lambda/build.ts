@@ -7,6 +7,7 @@ import { createDynamoCampaignStore } from '../dynamo-store';
 import type { EngineDeps } from '../practice-context';
 import type { CampaignRuntime } from '../runtime';
 import { createAwsCampaignSes } from '../ses';
+import { createDynamoStaffRevocationSignal } from '../staff-revocation';
 import { deriveCampaignKeys } from '../tokens';
 
 /**
@@ -18,8 +19,10 @@ export async function buildEngineDeps(runtime: Extract<CampaignRuntime, { enable
   const secret = await new SecretsManagerClient({ region: runtime.region }).send(new GetSecretValueCommand({ SecretId: runtime.keySecretArn }));
   if (!secret.SecretString || secret.SecretString.length < 48) throw new Error('campaign_key_secret_invalid');
   const master = createHash('sha256').update(secret.SecretString, 'utf8').digest();
+  const documents = DynamoDBDocumentClient.from(new DynamoDBClient({ region: runtime.region }), { marshallOptions: { removeUndefinedValues: true } });
   return {
-    store: createDynamoCampaignStore({ client: DynamoDBDocumentClient.from(new DynamoDBClient({ region: runtime.region }), { marshallOptions: { removeUndefinedValues: true } }), tableName: runtime.tableName }),
+    store: createDynamoCampaignStore({ client: documents, tableName: runtime.tableName }),
+    ...(runtime.staffRevocationTable ? { staffRevocation: createDynamoStaffRevocationSignal({ client: documents, tableName: runtime.staffRevocationTable }) } : {}),
     ses: createAwsCampaignSes({ client: new SESv2Client({ region: runtime.region }), region: runtime.region, accountId: runtime.accountId }),
     keys: deriveCampaignKeys(master), config: runtime.engine,
   };

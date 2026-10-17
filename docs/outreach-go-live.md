@@ -76,6 +76,11 @@ Each switch reads as on only when it is exactly `true` (trimmed). Unset, `TRUE`,
 10. **The campaign engine.** Apply `infra/campaigns/campaign-engine.json` with `CampaignEngineEnabled=true` (keep
     `SendScheduleState=DISABLED` for now), then set `CAMPAIGN_ENGINE_ENABLED=true` and `CAMPAIGN_API_ORIGIN` (the
     stack's API origin) on the Desktop service. *Check:* row 10 reads On ("the campaign engine answered").
+    The stack also declares the staff revocation signal (`alp-campaign-staff-revocations`): the staff route reads it
+    before every staff operation and answers 503 while it cannot. Wherever the emergency revocation runs, its operator
+    host must publish to that table (PutItem on it alone, and the BLOCKED `workforce-revocation-campaign-signal.sql`
+    applied), or a revoked login keeps campaign access until its token expires
+    (`docs/campaign-staff-revocation-2026-10-17.md`).
 11. **A practice's marketing entitlement.** When the practice holds the Growth or Complete tier, or the add-on, the
     operator loads the tier allowances and grants the entitlement with its first marketing admin
     (`src/campaigns/operator.ts`). *Check:* that practice's row 11 reads On.

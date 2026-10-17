@@ -1,0 +1,151 @@
+{
+  "contract": "ordinary-suspension-window-native/1",
+  "sourceCommit": "e28a3c9e69b37f5cdd36f757ab84c73e4af36efa",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "on-the-parent-a-token-refreshed-after-the-suspension-reads-and-writes",
+      "checks": [
+        {
+          "detail": "DEFECT on the parent: the suspended clinic's patient is read",
+          "passed": true
+        },
+        {
+          "detail": "DEFECT on the parent: a new patient is written into the suspended clinic",
+          "passed": true
+        },
+        {
+          "detail": "the parent has no entry that could carry a token time",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-request-waiting-on-a-suspension-in-flight-re-reads-it",
+      "checks": [
+        {
+          "detail": "both requests wait on the clinic row the suspension holds",
+          "passed": true
+        },
+        {
+          "detail": "the token issued before the suspension is admitted, read-only (f,1,on)",
+          "passed": true
+        },
+        {
+          "detail": "the token issued while the suspension was in flight is refused (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "an-admitted-request-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the admitted write is made in the active clinic",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the row the admitted request holds",
+          "passed": true
+        },
+        {
+          "detail": "the suspension commits after the request commits",
+          "passed": true
+        },
+        {
+          "detail": "the write committed before the suspension did",
+          "passed": true
+        },
+        {
+          "detail": "a request with a token issued after the suspension is refused (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-token-that-expires-while-waiting-on-the-suspension-is-refused",
+      "checks": [
+        {
+          "detail": "the request waits on the suspension in flight",
+          "passed": true
+        },
+        {
+          "detail": "when it is let through, its token has expired and it is refused (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-lock-wait-inside-the-window-ends-at-the-expiry",
+      "checks": [
+        {
+          "detail": "the session issued before the suspension is admitted",
+          "passed": true
+        },
+        {
+          "detail": "its read, waiting on another session's lock, is cancelled at the window's end after 3428 ms (ERROR:  canceling statement due to statement timeout)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "in-the-window-nothing-is-written",
+      "checks": [
+        {
+          "detail": "a declared write is held (ERROR:  ordinary_suspension_write_held)",
+          "passed": true
+        },
+        {
+          "detail": "a write sent as a read is refused by the read-only transaction (ERROR:  cannot execute INSERT in a read-only transaction)",
+          "passed": true
+        },
+        {
+          "detail": "nothing was written",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "an-emergency-revocation-ends-the-window-at-once",
+      "checks": [
+        {
+          "detail": "within the window the session reads",
+          "passed": true
+        },
+        {
+          "detail": "a request arriving during the pending revocation waits on the identity row",
+          "passed": true
+        },
+        {
+          "detail": "then it is refused, though its window has not ended (ERROR:  request_context_refused)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "the-sibling-clinic-is-not-held-back",
+      "checks": [
+        {
+          "detail": "a write in clinic B runs while A's suspension is in flight",
+          "passed": true
+        },
+        {
+          "detail": "and a fresh token reads in B after A is suspended",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidate and its parents are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "Token times are fictional NumericDate values the sessions pass as the services would from verified claims; no token is signed, verified or issued, and Cognito, the authorizer and the Data API are not exercised.",
+    "The database clock and the clock that computes the fictional token times are the same host clock here; in AWS they are Cognito's and Aurora's."
+  ],
+  "entries": {
+    "alp": "359837b0d0f46046fae4ea842ddef0b02d9cb284294ac76b30bc442c126370d1",
+    "alp_parent": "3ee98d29830ee366a1c670c236cbf018b710eb7dbbc48d3ee090e7d66c36097b"
+  },
+  "passed": true
+}

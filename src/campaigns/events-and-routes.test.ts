@@ -11,7 +11,8 @@ import { addressHash } from './tokens';
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
 const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const event = (message: unknown, topic = TOPIC) => ({ Records: [{ EventSource: 'aws:sns', Sns: { TopicArn: topic, Message: JSON.stringify(message) } }] });
-const jwt = (claims: Record<string, unknown> = {}) => ({ authorizer: { jwt: { claims: { 'custom:organization_id': PRACTICE, 'custom:person_id': ADMIN.personId, email: ADMIN.email, exp: Date.now() / 1000 + 60, ...claims } } } });
+const ADMIN_SUBJECT = 'fictional-workforce-admin-0001';
+const jwt = (claims: Record<string, unknown> = {}) => ({ authorizer: { jwt: { claims: { sub: ADMIN_SUBJECT, 'custom:organization_id': PRACTICE, 'custom:person_id': ADMIN.personId, email: ADMIN.email, exp: Date.now() / 1000 + 60, ...claims } } } });
 
 async function onLists(programs: ('longevity-program' | 'diabetes-program')[]) {
   const e = fictionalEngine();
@@ -93,19 +94,6 @@ describe('the campaign API', () => {
     const ok = await e.http({ routeKey: 'POST /campaigns/workforce', body: '{"action":"overview"}', requestContext: jwt() });
     expect(ok.statusCode).toBe(200);
     expect(JSON.parse(ok.body).data).toMatchObject({ action: 'overview', role: 'marketing_admin' });
-  });
-  it('GAP pinned: a practitioner login revoked in the clinical database keeps staff access here until its token expires', async () => {
-    // The emergency revocation disables the workforce identity row; this engine never reads it. It decides from the
-    // authorizer's claims and its own role grant, so the same already-issued token answers until `exp` (and a refreshed
-    // one after that, until Cognito disables the user). docs/clinic-continuity-emergency-revocation-2026-10-16.md.
-    const { e } = await onLists([]);
-    const revokedButUnexpired = await e.http({ routeKey: 'POST /campaigns/workforce', body: '{"action":"overview"}', requestContext: jwt() });
-    expect(revokedButUnexpired.statusCode).toBe(200);
-    const { readdirSync, readFileSync } = await import('node:fs');
-    const sources = readdirSync('src/campaigns', { recursive: true, withFileTypes: true })
-      .filter(entry => entry.isFile() && /\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name))
-      .map(entry => readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8')).join('\n');
-    expect(sources).not.toMatch(/clinical_core\.identities|set_request_context|set_current_workforce_context|AdminGetUser|identity_revocation/);
   });
   it('switched off, every route answers 503', async () => {
     const e = fictionalEngine({ config: { enabled: false } });

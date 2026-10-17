@@ -59,10 +59,10 @@ describe('two practices on one deployment', () => {
   it('a staff member of one practice cannot act as another: the practice comes from the token, never the request', async () => {
     const { e } = await twoPractices();
     const reply = await e.http({ routeKey: 'POST /campaigns/workforce', body: JSON.stringify({ action: 'overview', practiceId: B }),
-      requestContext: { authorizer: { jwt: { claims: { 'custom:organization_id': A, 'custom:person_id': adminA.personId, exp: Date.now() / 1000 + 60 } } } } });
+      requestContext: { authorizer: { jwt: { claims: { sub: 'fictional-workforce-admin-a', 'custom:organization_id': A, 'custom:person_id': adminA.personId, exp: Date.now() / 1000 + 60 } } } } });
     expect(reply.statusCode).toBe(400);
     const own = await e.http({ routeKey: 'POST /campaigns/workforce', body: JSON.stringify({ action: 'overview' }),
-      requestContext: { authorizer: { jwt: { claims: { 'custom:organization_id': A, 'custom:person_id': adminA.personId, exp: Date.now() / 1000 + 60 } } } } });
+      requestContext: { authorizer: { jwt: { claims: { sub: 'fictional-workforce-admin-a', 'custom:organization_id': A, 'custom:person_id': adminA.personId, exp: Date.now() / 1000 + 60 } } } } });
     expect(JSON.parse(own.body).data.settings.practiceId).toBe(A);
   });
   it('a token made for one practice changes nothing in the other', async () => {
