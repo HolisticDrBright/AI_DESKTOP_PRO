@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { buildProductionFoundation } from "./build-aws-production-foundation.mjs";
 
 export const PRODUCTION_COGNITO_TARGET = Object.freeze({
   account: "173535830222",
@@ -115,6 +116,12 @@ export function assessSourceTemplate(localTemplate, deployedTemplate) {
   return { localSha256, deployedSha256, status: localSha256 === deployedSha256 ? "matches" : "drift" };
 }
 
+/** Compare what the production generator would actually deploy, not its
+ * synthetic base input. A match is only template parity, never write approval. */
+export function assessGeneratedProductionSource(sourceBase, deployedTemplate) {
+  return assessSourceTemplate(buildProductionFoundation(sourceBase), deployedTemplate);
+}
+
 function observe(profile) {
   const aws = (...args) => JSON.parse(execFileSync("aws", [...args, "--profile", profile,
     "--region", PRODUCTION_COGNITO_TARGET.region, "--output", "json"], {
@@ -125,8 +132,8 @@ function observe(profile) {
   const templateResponse = aws("cloudformation", "get-template", "--stack-name", PRODUCTION_COGNITO_TARGET.stack);
   const template = typeof templateResponse.TemplateBody === "string"
     ? JSON.parse(templateResponse.TemplateBody) : templateResponse.TemplateBody;
-  const localTemplate = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
-  const sourceTemplate = assessSourceTemplate(localTemplate, template);
+  const sourceBase = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
+  const sourceTemplate = assessGeneratedProductionSource(sourceBase, template);
   const pools = PRODUCTION_COGNITO_TARGET.resources.map(resourceName => {
     const stackResource = aws("cloudformation", "describe-stack-resource", "--stack-name",
       PRODUCTION_COGNITO_TARGET.stack, "--logical-resource-id", resourceName);
@@ -137,7 +144,7 @@ function observe(profile) {
     const pool = aws("cognito-idp", "describe-user-pool", "--user-pool-id", physicalId).UserPool;
     return assessPoolEmailVerification(template, stackResource, pool, resourceName);
   });
-  return { contract: "production-email-verification-observation/4", account: PRODUCTION_COGNITO_TARGET.account,
+  return { contract: "production-email-verification-observation/5", account: PRODUCTION_COGNITO_TARGET.account,
     region: PRODUCTION_COGNITO_TARGET.region, stack: PRODUCTION_COGNITO_TARGET.stack,
     status: summarizePoolObservations(pools) === "matches" && sourceTemplate.status === "drift"
       ? "review_required" : summarizePoolObservations(pools), pools, sourceTemplate,

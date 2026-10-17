@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { assertProductionObserver, assessPoolEmailVerification,
-  assessSourceTemplate, summarizePoolObservations } from "./check-aws-production-cognito-live.mjs";
+  assessGeneratedProductionSource, assessSourceTemplate, summarizePoolObservations } from "./check-aws-production-cognito-live.mjs";
+import { buildProductionFoundation } from "./build-aws-production-foundation.mjs";
 
 const template = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
 const consumerResource = { StackResourceDetail: {
@@ -89,6 +90,15 @@ test("the older repository template cannot be mistaken for the deployed template
   assert.match(result.localSha256, /^[a-f0-9]{64}$/);
   assert.notEqual(result.localSha256, result.deployedSha256);
   assert.throws(() => assessSourceTemplate({}, deployed), /pool_template_missing/);
+});
+
+test("live comparison uses the generated production candidate, not the synthetic base", () => {
+  const candidate = buildProductionFoundation(template);
+  assert.equal(assessGeneratedProductionSource(template, candidate).status, "matches");
+  assert.equal(assessSourceTemplate(template, candidate).status, "drift");
+  const stale = structuredClone(candidate);
+  delete stale.Resources.ConsumerUserPool.Properties.Policies.SignInPolicy;
+  assert.equal(assessGeneratedProductionSource(template, stale).status, "drift");
 });
 
 test("live missing auto-verification is drift, never a registration pass", () => {

@@ -12,6 +12,7 @@ The production source generator already modeled email verification, SES, reviewe
 
 - The new test failed before the source repair because the generated workforce pool lacked `UserPoolTier`. It passes afterward and rejects deletion of the tier, sign-in factor policy, one-day password window or introduction of the conflicting legacy field for either pool.
 - `npm run test:aws-production-foundation`, `npm run build:aws-production-foundation` and `npm run check:aws-production-foundation` pass. AWS `ValidateTemplate` accepted the generated 40,819-byte template as syntax, not as a safe live update. Its SHA-256 is `dd3efc28f1b60b3c67bd3b560dc5bbfa674557b1a93ca82a6e4d3e90669e6cc7` over the generated file's exact bytes.
+- The read-only drift tool now compares the deployed template with the **generated production candidate**, not the synthetic base input. Its credential-free regression failed before this fix and passes now. The live observation remains `drift`; canonical candidate-template SHA-256 `dffff865bc4690277d64f9d2283023b601afd13d0d07eddf8b05a3a5c075a4bb` differs from deployed-template SHA-256 `f5b21f2cca76db6b8012c7268277b848eb66c936fbde5695eb324b65d5f77978`. The read-only report contract is now `production-email-verification-observation/5`.
 - The read-only checker still reports live drift. No production registration, resend or reset was attempted, so delivery remains unverified.
 
 ## Next reviewed operator step
