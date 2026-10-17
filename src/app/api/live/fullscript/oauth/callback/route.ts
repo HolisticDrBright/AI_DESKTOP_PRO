@@ -30,8 +30,10 @@ import type { FullscriptCallbackOutcome } from "@/lib/fullscript-presentation";
  */
 type IssuedReason = Extract<FullscriptRevocationReason, "install_refused" | "practitioner_connected_elsewhere" | "install_unconfirmed">;
 async function queueIssued(installation: StoredFullscriptConnection, reason: IssuedReason, revokeNow: (token: string) => Promise<void>) {
-  const outbox = createAwsFullscriptRevocationOutbox();
-  const item = outbox ? await outbox.queue(installation, reason).catch(() => null) : null;
+  let outbox: ReturnType<typeof createAwsFullscriptRevocationOutbox> = null;
+  let item: Awaited<ReturnType<NonNullable<typeof outbox>["queue"]>> | null = null;
+  // Recording it can fail in any way; that never changes what the practitioner is told, only what is logged.
+  try { outbox = createAwsFullscriptRevocationOutbox(); item = outbox ? await outbox.queue(installation, reason) : null; } catch { item = null; }
   // A lost install reply may still have saved this token: the reconciler revokes it only if no saved connection holds it.
   if (reason === "install_unconfirmed") {
     if (!item) console.error("[fullscript.oauth.callback] issued token not queued", { reason });
@@ -39,7 +41,7 @@ async function queueIssued(installation: StoredFullscriptConnection, reason: Iss
   }
   try {
     await revokeNow(installation.accessToken);
-    if (item) await outbox!.discard(item).catch(() => undefined); // revoked: nothing left to retry
+    if (item) { try { await outbox!.discard(item); } catch { /* left pending: the reconciler asks Fullscript again */ } } // revoked: nothing left to retry
   } catch {
     // Revocation unconfirmed: the pending item is the reconciler's. With no item, nothing records this token.
     if (!item) console.error("[fullscript.oauth.callback] issued token neither queued nor revoked", { reason });

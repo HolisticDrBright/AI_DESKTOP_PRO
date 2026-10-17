@@ -29,7 +29,7 @@ const ORIGIN = "https://abcdefghij.execute-api.us-east-2.amazonaws.com";
 const TOKENS = "fictional-token-table", FENCES = "fictional-fence-table";
 const PRACTITIONER = "fictional-practitioner-0001";
 type Person = { clinic: string; subject: string; idToken: string; email: string };
-const person = (label: string, clinic = randomUUID()): Person => {
+const person = (label: string, clinic: string = randomUUID()): Person => {
   const subject = randomUUID(), email = `fictional.${label}@example.test`;
   const idToken = ['{"alg":"RS256","kid":"fictional"}', JSON.stringify({ sub: subject, email, token_use: "id" })]
     .map((part) => Buffer.from(part).toString("base64url")).join(".") + ".fictional-signature";

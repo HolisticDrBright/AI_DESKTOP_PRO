@@ -25,7 +25,7 @@ const env = { FULLSCRIPT_TOKEN_TABLE: TOKENS, FULLSCRIPT_MEMBERSHIP_FENCE_TABLE:
 const PRACTITIONER = "fictional-practitioner-0001";
 
 type Account = { session: RequestSession; actor: { actorKey: string; organizationId: string }; subject: string };
-function account(organizationId = randomUUID()): Account {
+function account(organizationId: string = randomUUID()): Account {
   const subject = randomUUID();
   const token = [{ alg: "RS256" }, { sub: subject, token_use: "id" }]
     .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url")).join(".") + ".fictional-signature";

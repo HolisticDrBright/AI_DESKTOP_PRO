@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { describe, expect, it, vi } from "vitest";
 import { membershipFenceKey, MEMBERSHIP_FENCE_PROTOCOL } from "@/server/clinical-core/membership-fence";
 import {
@@ -23,7 +23,7 @@ function fictionalTables() {
   const id = (key: { pk: unknown; sk: unknown }) => `${String(key.pk)}|${String(key.sk)}`;
   const table = (name: unknown) => tables[name as keyof typeof tables];
   const cancel = () => Object.assign(new Error("cancelled"), { name: "TransactionCanceledException" });
-  const send = vi.fn(async (command: GetCommand | QueryCommand | TransactWriteCommand | UpdateCommand) => {
+  const send = vi.fn(async (command: GetCommand | QueryCommand | TransactWriteCommand | UpdateCommand | DeleteCommand | PutCommand) => {
     if (command instanceof GetCommand) return { Item: table(command.input.TableName).get(id(command.input.Key as never)) };
     if (command instanceof QueryCommand) {
       const values = command.input.ExpressionAttributeValues as Record<string, string>;

@@ -132,8 +132,12 @@ export interface FullscriptRevocationOutbox {
 }
 export const fingerprintOf = (pk: string, sk: string) => createHash("sha256").update(`fullscript-key/1\u0000${pk}\u0000${sk}`).digest("hex").slice(0, 16);
 
-export function createAwsFullscriptRevocationOutbox(env: NodeJS.ProcessEnv = process.env, supplied?: Send): FullscriptRevocationOutbox | null {
-  const settings = configured(env);
+/**
+ * The outbox over the token table. Hosted, it is built only where the fence table is configured too (without it no
+ * connection is used at all). `reconciler: true` is the BLOCKED reconciler's own build, which never reads a fence.
+ */
+export function createAwsFullscriptRevocationOutbox(env: NodeJS.ProcessEnv = process.env, supplied?: Send, options: { reconciler?: boolean } = {}): FullscriptRevocationOutbox | null {
+  const settings = options.reconciler ? configured({ ...env, FULLSCRIPT_MEMBERSHIP_FENCE_TABLE: "not-read-by-the-reconciler" }) : configured(env);
   if (!settings) return null;
   const send = sender(settings.region, supplied);
   const tokenKey = tokenRowKeyOf;
