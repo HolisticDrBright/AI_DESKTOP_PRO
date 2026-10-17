@@ -1,8 +1,9 @@
 if (typeof window !== "undefined") throw new Error("Fullscript token storage is server-only.");
 
-import { DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand, TransactWriteItemsCommand } from "@aws-sdk/client-dynamodb";
 import { z } from "zod";
 import { FullscriptUnavailableError, type FullscriptToken } from "./client";
+import { ownershipKeyOf, RELEASE_CONDITION, releaseValues } from "./practitioner-reservation";
 
 export type StoredFullscriptConnection = FullscriptToken & {
   actorKey: string;
@@ -138,10 +139,30 @@ export function createAwsFullscriptTokenStore(env: NodeJS.ProcessEnv = process.e
         raw = current.Item.payload.S;
         if (JSON.stringify(parseStoredFullscriptConnection(JSON.parse(raw), expectedKey)) !== JSON.stringify(before)) return false;
       } catch { throw new FullscriptUnavailableError(); }
+      const rowDelete = {TableName: tableName, Key,
+        ConditionExpression: "payload = :previous", ExpressionAttributeValues: {":previous": {S: raw}}};
+      // The practitioner's reservation goes in the same transaction, and only if it names exactly this connection
+      // (practitioner-reservation.ts): absent, it is nothing to release; naming another connection (an older duplicate,
+      // or a reviewed transfer), it is not this row's to release.
+      const ownership = ownershipKeyOf(before), release = releaseValues(before);
       try {
-        await client.send(new DeleteItemCommand({TableName: tableName, Key,
-          ConditionExpression: "payload = :previous", ExpressionAttributeValues: {":previous": {S: raw}},
-        }));
+        await client.send(new TransactWriteItemsCommand({TransactItems: [
+          {Delete: rowDelete},
+          {Delete: {TableName: tableName, Key: {pk: {S: ownership.pk}, sk: {S: ownership.sk}},
+            ConditionExpression: `attribute_not_exists(pk) OR (${RELEASE_CONDITION})`,
+            ExpressionAttributeValues: Object.fromEntries(Object.entries(release).map(([name, value]) => [name, {S: value}]))}},
+        ]}));
+        return true;
+      } catch (error) {
+        const name = (error as {name?: string}).name;
+        if (name === "ConditionalCheckFailedException") return false;
+        if (name !== "TransactionCanceledException") throw error;
+        const reasons = (error as {CancellationReasons?: Array<{Code?: string}>}).CancellationReasons ?? [];
+        if (reasons[0]?.Code === "ConditionalCheckFailed" || reasons[1]?.Code !== "ConditionalCheckFailed") return false;
+      }
+      // The reservation belongs to another connection: delete this row alone, exactly as before reservations existed.
+      try {
+        await client.send(new DeleteItemCommand(rowDelete));
         return true;
       } catch (error) {
         if ((error as {name?: string}).name === "ConditionalCheckFailedException") return false;

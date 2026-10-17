@@ -1,5 +1,6 @@
 if (typeof window !== "undefined") throw new Error("Fullscript connection admission is server-only.");
 
+import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 import { tokenSubject } from "@/adapters/selected-clinic.server";
@@ -11,7 +12,10 @@ import {
 import type { RequestSession } from "@/server/session";
 import { FullscriptUnavailableError } from "./client";
 import { parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
-import { generationFromFences, sameGeneration } from "./membership-generation";
+import { generationFromFences, revocationOutboxItem, revocationOutboxKey, sameGeneration } from "./membership-generation";
+import {
+  FullscriptInstallUnconfirmedError, FullscriptPractitionerConnectedElsewhereError, RESERVE_CONDITION, reservationFor, tokenRowKeyOf,
+} from "./practitioner-reservation";
 
 type Send = (command: GetCommand | TransactWriteCommand) => Promise<unknown>;
 type Admission = {
@@ -37,6 +41,8 @@ export class FullscriptAlreadyConnectedError extends FullscriptUnavailableError 
 }
 
 const TABLE_NAME = /^[A-Za-z0-9_.-]{3,255}$/;
+const DEFINITE_REFUSALS = new Set(["ValidationException", "AccessDeniedException", "ResourceNotFoundException", "TransactionConflictException",
+  "ProvisionedThroughputExceededException", "ThrottlingException", "RequestLimitExceeded", "IdempotentParameterMismatchException"]);
 const REGION = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
 
 /**
@@ -85,13 +91,22 @@ export function createAwsFullscriptConnectionAdmission(
     },
 
     /**
-     * Linearization point: the token Put and both settled-fence version checks are one DynamoDB transaction.
+     * Linearization point: the token Put, the practitioner's ownership reservation and both settled-fence version checks
+     * are one DynamoDB transaction.
      *
      * Over a saved connection:
      *   - a live one (made under the current generation) is never replaced: FullscriptAlreadyConnectedError;
      *   - a superseded one (made under an earlier generation, or before generations) is moved into the revocation
      *     outbox in the same transaction, exactly as a read would move it, so its token is queued for revocation
      *     rather than overwritten and forgotten.
+     *
+     * The Fullscript practitioner the token names may be connected to one Desktop account only
+     * (practitioner-reservation.ts): a reservation held by another account cancels the whole transaction, so this
+     * account's token is never saved and the other connection is untouched (FullscriptPractitionerConnectedElsewhereError).
+     *
+     * A reply lost in transit is retried once with the same client request token, which DynamoDB applies at most once.
+     * If that is not conclusive either, the row is read back: this exact installation saved is a success, anything else
+     * is FullscriptInstallUnconfirmedError, never a guess.
      */
     async install(connection: StoredFullscriptConnection, admission: Admission): Promise<void> {
       const parsed = parseStoredFullscriptConnection(connection,
@@ -101,26 +116,53 @@ export function createAwsFullscriptConnectionAdmission(
       if (admission.previousPayload !== null && admission.previousCurrent !== false) throw new FullscriptAlreadyConnectedError();
       // The generation this installation is admitted under: exactly the fence versions the transaction below holds.
       const stored = { ...parsed, membershipGeneration: generationFromFences(admission.fences) };
-      const key = { pk: `ORG#${parsed.organizationId}`, sk: `FULLSCRIPT#${parsed.actorKey}` };
+      const key = tokenRowKeyOf(parsed);
+      const at = new Date().toISOString();
       let superseded: NonNullable<TransactWriteCommandInput["TransactItems"]>[number] | null = null;
       if (admission.previousPayload !== null) {
         const previous = parseStoredFullscriptConnection(JSON.parse(admission.previousPayload),
           { actorKey: admission.actorKey, organizationId: admission.organizationId });
-        superseded = { Put: { TableName: tokenTable, ConditionExpression: "attribute_not_exists(pk)", Item: {
-          pk: key.pk, sk: `FULLSCRIPT_REVOCATION#${previous.actorKey}#${previous.connectedAt}`, protocol: "fullscript-revocation/1",
-          state: "pending", reason: "membership_changed", attempts: 0, createdAt: new Date().toISOString(), payload: admission.previousPayload } } };
+        superseded = { Put: { TableName: tokenTable, ConditionExpression: "attribute_not_exists(pk)",
+          Item: revocationOutboxItem(revocationOutboxKey(previous), "membership_changed", admission.previousPayload, at) } };
       }
-      try {
-        await send(new TransactWriteCommand({ TransactItems: [
-          ...admission.fences.map((fence) => membershipFenceCondition(fenceTable, fence)),
-          ...(superseded ? [superseded] : []),
-          { Put: { TableName: tokenTable,
-            Item: { ...key, payload: JSON.stringify(stored) },
-            ConditionExpression: admission.previousPayload === null ? "attribute_not_exists(pk)" : "payload = :previous",
-            ...(admission.previousPayload === null ? {} : { ExpressionAttributeValues: { ":previous": admission.previousPayload } }),
-          } },
-        ] }));
-      } catch { throw new FullscriptUnavailableError(); }
+      const items: NonNullable<TransactWriteCommandInput["TransactItems"]> = [
+        ...admission.fences.map((fence) => membershipFenceCondition(fenceTable, fence)),
+        ...(superseded ? [superseded] : []),
+        { Put: { TableName: tokenTable, Item: reservationFor(stored, at), ConditionExpression: RESERVE_CONDITION,
+          ExpressionAttributeValues: { ":ownerPk": key.pk, ":ownerSk": key.sk } } },
+        { Put: { TableName: tokenTable,
+          Item: { ...key, payload: JSON.stringify(stored) },
+          ConditionExpression: admission.previousPayload === null ? "attribute_not_exists(pk)" : "payload = :previous",
+          ...(admission.previousPayload === null ? {} : { ExpressionAttributeValues: { ":previous": admission.previousPayload } }),
+        } },
+      ];
+      const reservationIndex = items.length - 2, rowIndex = items.length - 1;
+      /**
+       * A cancellation, or a request DynamoDB refused outright, is definite: nothing was written. A cancellation's
+       * reasons say which condition refused. Anything else (a timeout, a dropped connection, a server error, a
+       * transaction still in progress) may have committed.
+       */
+      const refusal = (error: unknown): Error | null => {
+        const name = (error as { name?: unknown } | null)?.name;
+        if (typeof name === "string" && DEFINITE_REFUSALS.has(name)) return new FullscriptUnavailableError();
+        if (name !== "TransactionCanceledException") return null;
+        const reasons = (error as { CancellationReasons?: Array<{ Code?: string }> }).CancellationReasons ?? [];
+        if (reasons[reservationIndex]?.Code === "ConditionalCheckFailed") return new FullscriptPractitionerConnectedElsewhereError();
+        if (reasons[rowIndex]?.Code === "ConditionalCheckFailed") return new FullscriptAlreadyConnectedError();
+        return new FullscriptUnavailableError();
+      };
+      const command = new TransactWriteCommand({ ClientRequestToken: stored.installationId ?? randomUUID(), TransactItems: items });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { await send(command); return; } catch (error) {
+          const definite = refusal(error);
+          if (definite) throw definite;
+        }
+      }
+      let saved: Record<string, unknown> | undefined;
+      try { saved = (await send(new GetCommand({ TableName: tokenTable, Key: key, ConsistentRead: true })) as { Item?: Record<string, unknown> } | undefined)?.Item; }
+      catch { throw new FullscriptInstallUnconfirmedError(); }
+      if (saved?.payload === JSON.stringify(stored)) return;
+      throw new FullscriptInstallUnconfirmedError();
     },
   };
 }

@@ -197,8 +197,25 @@ export async function refreshFullscriptToken(input: {
   }, input.fetcher);
 }
 
+/**
+ * What revoking a token needs, and nothing more: the environment's API origin and this OAuth client. For the BLOCKED
+ * revocation reconciler (revocation-reconciler.ts), which never starts an authorization and so holds no state secret
+ * or callback. Production needs the same approvals as everywhere else.
+ */
+export type FullscriptRevocationConfiguration = Pick<FullscriptConfiguration, "environment" | "apiOrigin" | "clientId" | "clientSecret">;
+export function readFullscriptRevocationConfiguration(env: NodeJS.ProcessEnv = process.env): FullscriptRevocationConfiguration {
+  const environment = env.FULLSCRIPT_ENVIRONMENT === "production_us" ? "production_us" : env.FULLSCRIPT_ENVIRONMENT === "sandbox_us" ? "sandbox_us" : null;
+  if (!environment) throw new FullscriptUnavailableError();
+  if (environment === "production_us" && (env.FULLSCRIPT_PRODUCTION_APPROVED !== "true" || env.PHI_ALLOWED !== "true")) {
+    throw new FullscriptUnavailableError("Fullscript production use is not approved.");
+  }
+  const clientId = env.FULLSCRIPT_CLIENT_ID?.trim() ?? "", clientSecret = env.FULLSCRIPT_CLIENT_SECRET?.trim() ?? "";
+  if (!OPAQUE.test(clientId) || !OPAQUE.test(clientSecret)) throw new FullscriptUnavailableError();
+  return { environment, apiOrigin: ENVIRONMENTS[environment].apiOrigin, clientId, clientSecret };
+}
+
 export async function revokeFullscriptToken(input: {
-  configuration: FullscriptConfiguration;
+  configuration: Pick<FullscriptConfiguration, "apiOrigin" | "clientId" | "clientSecret">;
   token: string;
   fetcher?: typeof fetch;
 }): Promise<void> {

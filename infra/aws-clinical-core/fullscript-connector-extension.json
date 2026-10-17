@@ -35,10 +35,17 @@
     "ClinicalCoreKeyArn": {
       "Type": "String",
       "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$"
+    },
+    "RevocationQueueIndex": {
+      "Type": "String",
+      "Default": "disabled",
+      "AllowedValues": ["disabled", "enabled"],
+      "Description": "The revocation outbox's queue index (RevocationQueue, KEYS_ONLY, no token) that the BLOCKED reconciler reads. Enabled only together with fullscript-revocation-reconciler.json."
     }
   },
   "Conditions": {
-    "IsProduction": { "Fn::Equals": [{ "Ref": "FullscriptEnvironment" }, "production_us"] }
+    "IsProduction": { "Fn::Equals": [{ "Ref": "FullscriptEnvironment" }, "production_us"] },
+    "RevocationQueueIndexEnabled": { "Fn::Equals": [{ "Ref": "RevocationQueueIndex" }, "enabled"] }
   },
   "Rules": {
     "ProductionRequiresProductionEnvironment": {
@@ -103,14 +110,27 @@
       "Properties": {
         "TableName": { "Fn::Sub": "${EnvironmentName}-fullscript-oauth" },
         "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
+        "AttributeDefinitions": { "Fn::If": ["RevocationQueueIndexEnabled", [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" },
+          { "AttributeName": "revocationQueue", "AttributeType": "S" },
+          { "AttributeName": "nextAttemptAt", "AttributeType": "S" }
+        ], [
           { "AttributeName": "pk", "AttributeType": "S" },
           { "AttributeName": "sk", "AttributeType": "S" }
-        ],
+        ]] },
         "KeySchema": [
           { "AttributeName": "pk", "KeyType": "HASH" },
           { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
+        "GlobalSecondaryIndexes": { "Fn::If": ["RevocationQueueIndexEnabled", [{
+          "IndexName": "RevocationQueue",
+          "KeySchema": [
+            { "AttributeName": "revocationQueue", "KeyType": "HASH" },
+            { "AttributeName": "nextAttemptAt", "KeyType": "RANGE" }
+          ],
+          "Projection": { "ProjectionType": "KEYS_ONLY" }
+        }], { "Ref": "AWS::NoValue" }] },
         "SSESpecification": {
           "SSEEnabled": true,
           "SSEType": "KMS",

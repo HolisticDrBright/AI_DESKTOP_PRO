@@ -1,0 +1,197 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "BLOCKED Fullscript revocation-outbox reconciler: a scheduled Lambda with its own least-privilege role. Deploys nothing while ReconcilerRelease is BLOCKED; sandbox only; no PHI activation.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "fullscript-revocation-reconciler/1",
+      "Activation": "blocked",
+      "PhiAllowed": false,
+      "Source": "src/server/fullscript/lambda/revocation-reconciler.ts",
+      "ReleaseUnit": "This template, the token table's RevocationQueueIndex (fullscript-connector-extension.json), FULLSCRIPT_REVOCATION_RECONCILER_RELEASE in source, and Fullscript itself enabled. One reviewed change, never separately.",
+      "DeploymentGate": "BLOCKED: ReconcilerRelease accepts only BLOCKED, so every resource's condition is false. Releasing it is a reviewed edit of this template's AllowedValues, after the fictional sandbox qualification Codex owns."
+    }
+  },
+  "Parameters": {
+    "ReconcilerRelease": {
+      "Type": "String",
+      "Default": "BLOCKED",
+      "AllowedValues": ["BLOCKED"],
+      "Description": "BLOCKED. While it is, no resource in this template exists."
+    },
+    "ScheduleState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": ["DISABLED"]
+    },
+    "FullscriptEnvironment": {
+      "Type": "String",
+      "Default": "sandbox_us",
+      "AllowedValues": ["sandbox_us"]
+    },
+    "TokenTableName": {
+      "Type": "String",
+      "AllowedPattern": "^[A-Za-z0-9_.-]{3,255}$"
+    },
+    "ClientIdSecretArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$"
+    },
+    "ClientSecretArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$"
+    },
+    "ClinicalCoreKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$"
+    },
+    "LambdaCodeBucket": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z0-9.-]{3,63}$"
+    },
+    "ReconcilerCodeKey": {
+      "Type": "String",
+      "AllowedPattern": "^[A-Za-z0-9/_.-]{1,512}\\.zip$"
+    }
+  },
+  "Conditions": {
+    "ReconcilerReleased": { "Fn::Equals": [{ "Ref": "ReconcilerRelease" }, "RELEASED"] }
+  },
+  "Resources": {
+    "ReconcilerLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Condition": "ReconcilerReleased",
+      "Properties": { "LogGroupName": "/aws/lambda/alp-fullscript-revocation-reconciler", "RetentionInDays": 90 }
+    },
+    "ReconcilerRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "Logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["ReconcilerLogs", "Arn"] } }]
+            }
+          },
+          {
+            "PolicyName": "RevocationOutbox",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ReadTheQueueIndexOnly",
+                  "Effect": "Allow",
+                  "Action": ["dynamodb:Query"],
+                  "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TokenTableName}/index/RevocationQueue" }
+                },
+                {
+                  "Sid": "ReadSettleAndReleaseItems",
+                  "Effect": "Allow",
+                  "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+                  "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TokenTableName}" }
+                },
+                {
+                  "Sid": "ThisOAuthClientOnly",
+                  "Effect": "Allow",
+                  "Action": ["secretsmanager:GetSecretValue"],
+                  "Resource": [{ "Ref": "ClientIdSecretArn" }, { "Ref": "ClientSecretArn" }]
+                },
+                {
+                  "Sid": "DecryptTheTableAndSecrets",
+                  "Effect": "Allow",
+                  "Action": ["kms:Decrypt"],
+                  "Resource": { "Ref": "ClinicalCoreKeyArn" }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Provider", "Value": "Fullscript" },
+          { "Key": "RealPatientDataAllowed", "Value": "false" }
+        ]
+      }
+    },
+    "ReconcilerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "FunctionName": "alp-fullscript-revocation-reconciler",
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Architectures": ["arm64"],
+        "MemorySize": 256,
+        "Timeout": 120,
+        "ReservedConcurrentExecutions": 1,
+        "Role": { "Fn::GetAtt": ["ReconcilerRole", "Arn"] },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ReconcilerCodeKey" } },
+        "LoggingConfig": { "LogGroup": { "Ref": "ReconcilerLogs" } },
+        "Environment": {
+          "Variables": {
+            "FULLSCRIPT_REVOCATION_RECONCILER_RELEASE": "blocked",
+            "FULLSCRIPT_ENVIRONMENT": { "Ref": "FullscriptEnvironment" },
+            "FULLSCRIPT_TOKEN_TABLE": { "Ref": "TokenTableName" },
+            "FULLSCRIPT_CLIENT_ID_SECRET_ARN": { "Ref": "ClientIdSecretArn" },
+            "FULLSCRIPT_CLIENT_SECRET_SECRET_ARN": { "Ref": "ClientSecretArn" },
+            "FULLSCRIPT_PRODUCTION_APPROVED": "false",
+            "PHI_ALLOWED": "false"
+          }
+        }
+      }
+    },
+    "ReconcilerScheduleRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "scheduler.amazonaws.com" }, "Action": "sts:AssumeRole",
+            "Condition": { "StringEquals": { "aws:SourceAccount": { "Ref": "AWS::AccountId" } } } }]
+        },
+        "Policies": [{
+          "PolicyName": "InvokeReconciler",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{ "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": { "Fn::GetAtt": ["ReconcilerFunction", "Arn"] } }]
+          }
+        }]
+      }
+    },
+    "ReconcilerSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "Name": "alp-fullscript-revocation-reconciler",
+        "Description": "Every 15 minutes: ask Fullscript to revoke due outbox tokens; settle only on confirmation. Idempotent per item.",
+        "ScheduleExpression": "rate(15 minutes)",
+        "State": { "Ref": "ScheduleState" },
+        "FlexibleTimeWindow": { "Mode": "OFF" },
+        "Target": { "Arn": { "Fn::GetAtt": ["ReconcilerFunction", "Arn"] }, "RoleArn": { "Fn::GetAtt": ["ReconcilerScheduleRole", "Arn"] },
+          "RetryPolicy": { "MaximumRetryAttempts": 0 } }
+      }
+    },
+    "ReconcilerErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AlarmName": "alp-fullscript-revocation-reconciler-errors",
+        "AlarmDescription": "A reconciler run failed, or found an outbox token Fullscript has refused to revoke 8 times (stuck). The run's log line has fingerprints, never a token.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ReconcilerFunction" } }],
+        "Statistic": "Sum",
+        "Period": 900,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  }
+}

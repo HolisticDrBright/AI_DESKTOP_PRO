@@ -6,7 +6,9 @@ import { exchangeFullscriptAuthorizationCode, fullscriptIntegrationReturnUrl, Fu
 import { createAwsFullscriptTokenStore } from "@/server/fullscript/token-store";
 import { currentFullscriptSession } from "@/server/fullscript/clinic-authority";
 import { createAwsFullscriptConnectionAdmission } from "@/server/fullscript/connection-admission";
+import { createAwsFullscriptRevocationOutbox, type FullscriptRevocationReason } from "@/server/fullscript/membership-generation";
 import { fullscriptActor } from "@/server/fullscript/runtime";
+import type { StoredFullscriptConnection } from "@/server/fullscript/token-store";
 import { getRequestSession } from "@/server/session";
 import type { FullscriptCallbackOutcome } from "@/lib/fullscript-presentation";
 
@@ -19,7 +21,32 @@ import type { FullscriptCallbackOutcome } from "@/lib/fullscript-presentation";
  * The practitioner is told which of a closed set of outcomes happened, and each is true: a link already used is not
  * "Fullscript refused you", an outage is not "check your account", and a second connection over a live one is refused
  * before any code is exchanged, so nothing is replaced and no token is left behind.
+ *
+ * Which Fullscript practitioner a token belongs to is known only once the code is exchanged, so a practitioner already
+ * connected to another Desktop account is refused by the install itself (`practitioner_connected_elsewhere`). Then a
+ * token exists that nothing saved. It is queued in the revocation outbox BEFORE it is revoked: a failed revocation
+ * leaves a pending item for the reconciler, never an orphan. Only if the outbox write itself fails is the revocation
+ * best effort, and that is logged (without the token) as the one remaining way to orphan it.
  */
+type IssuedReason = Extract<FullscriptRevocationReason, "install_refused" | "practitioner_connected_elsewhere" | "install_unconfirmed">;
+async function queueIssued(installation: StoredFullscriptConnection, reason: IssuedReason, revokeNow: (token: string) => Promise<void>) {
+  let outbox: ReturnType<typeof createAwsFullscriptRevocationOutbox> = null;
+  let item: Awaited<ReturnType<NonNullable<typeof outbox>["queue"]>> | null = null;
+  // Recording it can fail in any way; that never changes what the practitioner is told, only what is logged.
+  try { outbox = createAwsFullscriptRevocationOutbox(); item = outbox ? await outbox.queue(installation, reason) : null; } catch { item = null; }
+  // A lost install reply may still have saved this token: the reconciler revokes it only if no saved connection holds it.
+  if (reason === "install_unconfirmed") {
+    if (!item) console.error("[fullscript.oauth.callback] issued token not queued", { reason });
+    return;
+  }
+  try {
+    await revokeNow(installation.accessToken);
+    if (item) { try { await outbox!.discard(item); } catch { /* left pending: the reconciler asks Fullscript again */ } } // revoked: nothing left to retry
+  } catch {
+    // Revocation unconfirmed: the pending item is the reconciler's. With no item, nothing records this token.
+    if (!item) console.error("[fullscript.oauth.callback] issued token neither queued nor revoked", { reason });
+  }
+}
 class Outcome extends Error {
   constructor(readonly outcome: Exclude<FullscriptCallbackOutcome, "connected">) { super(outcome); }
 }
@@ -56,23 +83,30 @@ export async function GET(request: NextRequest) {
     const token = await exchangeFullscriptAuthorizationCode({ configuration, code }).catch((error: unknown) => {
       throw error instanceof FullscriptGrantRefusedError ? new Outcome("not_authorized") : error;
     });
+    const installation: StoredFullscriptConnection = {
+      ...token,
+      actorKey: verified.actorKey,
+      organizationId: verified.organizationId,
+      environment: configuration.environment,
+      connectedAt: new Date().toISOString(),
+      installationId: randomUUID(),
+      oauthClientId: configuration.clientId,
+      oauthRedirectUri: configuration.redirectUri,
+    };
     try {
-      await admissionStore.install({
-        ...token,
-        actorKey: verified.actorKey,
-        organizationId: verified.organizationId,
-        environment: configuration.environment,
-        connectedAt: new Date().toISOString(),
-        installationId: randomUUID(),
-        oauthClientId: configuration.clientId,
-        oauthRedirectUri: configuration.redirectUri,
-      }, admission);
+      await admissionStore.install(installation, admission);
     } catch (error) {
-      // The provider already issued a token. Do not retain it if our authority-fenced install fails.
-      // Revocation is best effort; provider-side reconciliation remains a hosted/operational requirement.
-      try { await revokeFullscriptToken({ configuration, token: token.accessToken }); } catch { /* no token in logs */ }
-      // FullscriptAlreadyConnectedError, by name: the install's own refusal of a live connection (connection-admission.ts).
-      if ((error as { name?: unknown } | null)?.name === "FullscriptAlreadyConnectedError") throw new Outcome("already_connected");
+      // The provider already issued a token. It is never retained when our authority-fenced install refuses it.
+      // Each refusal is matched by name (connection-admission.ts, practitioner-reservation.ts).
+      const name = (error as { name?: unknown } | null)?.name;
+      const revokeNow = (accessToken: string) => revokeFullscriptToken({ configuration, token: accessToken });
+      if (name === "FullscriptInstallUnconfirmedError") {
+        await queueIssued(installation, "install_unconfirmed", revokeNow);
+        throw new Outcome("unconfirmed");
+      }
+      await queueIssued(installation, name === "FullscriptPractitionerConnectedElsewhereError" ? "practitioner_connected_elsewhere" : "install_refused", revokeNow);
+      if (name === "FullscriptAlreadyConnectedError") throw new Outcome("already_connected");
+      if (name === "FullscriptPractitionerConnectedElsewhereError") throw new Outcome("practitioner_connected_elsewhere");
       // A fence that moved during the exchange is usually this account's own access changing: say so if it did.
       await gate(session);
       throw error;
