@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
-import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy-export';
+import {createOwnedPrivacyExport,deployedRecordExceedsPage,PERSONAL_EXPORT_COVERAGE,PRIVACY_EXPORT_SEGMENTED_READ_RELEASE} from './owned-privacy-export';
 import {CROSS_STORE_CONSISTENCY,type CrossStoreExportReader,type CrossStoreExportSection} from './aws-cross-store-export-reader';
 
 /** Large personal-storage exports packaged server-side in owner-authorized,
@@ -68,6 +68,11 @@ type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTrans
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const STATUSES:PrivacyExportJobStatus[]=['requested','running','ready','failed','cancelled','expired'];
 export const PRIVACY_EXPORT_PART_BYTES=5*1024*1024, PRIVACY_EXPORT_MAX_BYTES=2*1024*1024*1024, PRIVACY_EXPORT_DOWNLOAD_SECONDS=300, PRIVACY_EXPORT_FRESH_AUTH_MS=5*60_000;
+/** The job's terminal reason when the deployed records reader cannot return the next record at all, because that record
+ * alone exceeds its page bound (docs/privacy-export-oversized-records-2026-10-17.md). Permanent for the job's snapshot: a
+ * later pass would meet the same record, so the job ends now instead of staying `running` until `deadline_passed`. It
+ * cannot occur with the segmented read released, which pages every stored record. */
+export const PRIVACY_EXPORT_RECORD_TOO_LARGE='record_exceeds_export_page';
 const sha256=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex');
 /** S3's composite checksum for a multipart object: base64(sha256(concat(raw part digests)))-partCount. The recorded
  * part digests therefore fix exactly one acceptable object checksum. */
@@ -201,12 +206,15 @@ async function runReconcile(run:Run,authority:CleanupAuthority,store:PrivacyExpo
 }
 const summary=<T extends {outcome:string}>(items:T[])=>Object.fromEntries(['deleted','pending','deferred','confirmed','reopened'].map(k=>[k,items.filter(i=>i.outcome===k).length])) as Record<'deleted'|'pending'|'deferred'|'confirmed'|'reopened',number>;
 
-export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number;crossStore?:CrossStoreExportReader}){
+export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number;crossStore?:CrossStoreExportReader;
+  /** Tests only; production takes PRIVACY_EXPORT_SEGMENTED_READ_RELEASE. */
+  segmentedRead?:'blocked'|'qualification'}){
   const crossStore=delivery.crossStore,coverage=privacyExportCoverage(crossStore);
   const view=(raw:unknown)=>viewWith(raw,coverage);
   const now=()=>delivery.now?.()??Date.now(), partBytes=delivery.partBytes??PRIVACY_EXPORT_PART_BYTES, {store,storage}=delivery;
   if(!Number.isSafeInteger(partBytes)||partBytes<1024||partBytes>PRIVACY_EXPORT_PART_BYTES)throw new Error('privacy_export_part_bytes_invalid');
-  const reader=createOwnedPrivacyExport(run);
+  const segmentedRead=delivery.segmentedRead??PRIVACY_EXPORT_SEGMENTED_READ_RELEASE;
+  const reader=createOwnedPrivacyExport(run,{segmentedRead});
   const jobInput=(input:unknown):string=>{if(!input||typeof input!=='object'||Object.keys(input).join(',')!=='jobId'||!UUID.test((input as {jobId:string}).jobId))invalid();return (input as {jobId:string}).jobId;};
   const complete=(context:ProductionClinicalRequestContext,jobId:string,version:number,objectVersion:string,checksum:string)=>
     run(context,tx=>call(tx,'select clinical_core.complete_owned_privacy_export_job($1,$2::bigint,$3,$4) as result',[clinicalUuid(jobId),version,objectVersion,checksum])).then(view);
@@ -323,7 +331,18 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
             if(page.nextCursor){cursor=page.nextCursor;continue;}
             const next=following(section);section=next;cursor=null;open(next);continue;
           }
-          const page=await reader.readPrivacyExport(context,{exportId:state.exportId,section,limit:100,...(cursor?{cursor}:{})});
+          let page:Awaited<ReturnType<typeof reader.readPrivacyExport>>;
+          try{page=await reader.readPrivacyExport(context,{exportId:state.exportId,section,limit:100,...(cursor?{cursor}:{})});}
+          catch(error){
+            // The deployed reader refuses, as request_invalid, a page whose first record alone exceeds its bound, and does so
+            // on every later pass of this snapshot. That is permanent, not transient: end the job with that reason now rather
+            // than leave it `running` until its 48-hour deadline. Every other refusal is rethrown exactly as before.
+            if(segmentedRead==='blocked'&&section==='records'&&error instanceof OwnedStorageError&&error.code==='request_invalid'
+              &&await deployedRecordExceedsPage(run,context,{exportId:state.exportId,cursor})){
+              await fail(PRIVACY_EXPORT_RECORD_TOO_LARGE);return this.getPrivacyExportJob(context,input);
+            }
+            throw error;
+          }
           for(const item of page.items){
             const seen=section==='records'?records:consents;
             push((seen>0?',':'')+JSON.stringify(item));
