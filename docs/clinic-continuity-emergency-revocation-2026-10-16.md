@@ -44,7 +44,7 @@ All merges keep both histories (merge commits, nothing rewritten).
 | --- | --- | --- | --- |
 | `f599a8a2`, the qualification line (12 commits past the merge base `e08df97f`, including `51a7317d`, `62207e4b`, the operator-pool verifier `6ad788ff`, the operator identity and reader-policy candidates, and the fictional program preflight `c24c5e87`, `9eb40908`, `f599a8a2`) | 38971310243 success. `9eb40908` alone failed; its successor `f599a8a2` passed. | `package.json` only, in disjoint hunks. | None. |
 | `eeb4223e`, the event-order successor | 38974061201 success, observed **before** the merge. The packet's hold was respected. | None. | None. The candidate is unchanged and stays **separate and BLOCKED**: hashes `a03d96ed…`, rollback `c7b4ba07…`, listing parent `5a7af23d…`. Bootstrap DB test 24/24. |
-| `0beb5d52`, Codex's latest integration (the audit-review line `48ffc284`..`4dc8213e`, merged with the earlier Claude head `93816f99`) | Recorded in §11. Merged only after its exact-head CI. | `.github/workflows/ci.yml`: both sides appended to the same step list, resolved as their union. `package.json` merged cleanly. | None. It adds only audit-review scripts, their tests and two docs. |
+| `0beb5d52`, Codex's latest integration (the audit-review line `48ffc284`..`4dc8213e`, merged with the earlier Claude head `93816f99`) | 38982940346 success, observed before the merge (at `b43e1b32`). It lacks `f599a8a2` and `eeb4223e`, which this branch carries, so the result is the union. | `.github/workflows/ci.yml`: both sides appended to the same step list, resolved as their union. `package.json` merged cleanly. | None. It adds only audit-review scripts, their tests and two docs. |
 
 `e08df97f` (Codex's Fullscript callback fence) is included. It is an ancestor of `93816f99` and was merged at `b56e3bb0`.
 
@@ -62,7 +62,7 @@ Codex's review items:
 | --- | --- | --- |
 | `bb80340a`, the source-qualification line (merge base `ac621a1c`; 17 ahead, 1 behind) | 38968790739 success | Clean. It does not overlap `a7139981`. |
 | `be1b9e5`, the Fly synthetic source provenance (on neither line) | 38942696055 success | Only source-pair metadata conflicted (`index.json`, `manifest.json`, `launch-acceptance.test.mjs`), resolved to Codex's binding. The Fly branch index is kept as `index-2026-10-16-fly-source-provenance-branch.json` (SHA-256 `810a7aed97c1e311387b8e73fc80121deb51653047226a31109e342e8f818b65`). Both predecessors were identical (`dfd11e98…`). |
-| `488c9003`, Codex's latest integration (the same `a7139981` merge, test-setup stabilization, a kit rebind) | Recorded in §11 | Recorded in §11. |
+| `488c9003`, Codex's latest integration (the same `a7139981` merge, test-setup stabilization, a kit rebind) | 38983004253 success, observed before the merge. Its parent `befc989` failed CI on the preflight source pair, and `488c9003` repaired that. | Clean merge at `b365d02`. Then launch 22/22, preflight 10/10, and the five affected test files 17/17. |
 
 Retained:
 
@@ -426,9 +426,13 @@ The 9 hosted, device and human cases and the 51 preflight values stay withheld.
 
 ### V2 launch kit
 
-Rebound to the reconciled pair (§11). The predecessor is preserved at its LF-byte digest. All 6 mirrors and 25 candidate
-digests were re-verified against the Desktop head: 31/31 match. The new Desktop candidates are not V2 dependencies and
-were not added to the kit.
+The kit is bound to Desktop `b43e1b32` / V2 `b365d02` (V2 commit `daf5bf2`). The immediate predecessor is Codex's binding
+to `0beb5d52` / `607234b`, kept as `index-2026-10-16-continuity-integration-predecessor.json` at LF SHA-256
+`e06f76a6ff45d9b300b7061c1e0877e4f6392f7eac42e27f62f57b1e798f76d5`. Every earlier predecessor and the Fly branch index
+are unchanged.
+
+All 6 mirrors and 25 candidate digests were re-verified against Desktop `b43e1b32`: 31/31 match. The new Desktop
+candidates are not V2 dependencies and were not added to the kit.
 
 ## 8. Decisions, findings and what stays open
 
@@ -512,25 +516,83 @@ were not added to the kit.
 
 ## 10. Desktop local gates
 
-See §11 for the final-head CI. The local gates ran at `66f81ff8`. Later commits change only `docs/`, `CLAUDE.md`, the
-Codex audit-review scripts, `package.json` script entries and `ci.yml`. No `src/` file changed after `66f81ff8`.
+The local gates ran at `66f81ff8`, with `NODE_OPTIONS=--max-old-space-size=8192`. Between `66f81ff8` and the final head,
+no `src/` or `infra/` file changed. Only these changed:
+
+- `docs/` and `CLAUDE.md`;
+- `.github/workflows/ci.yml` and `package.json` script entries;
+- Codex's six audit-review scripts and tests.
+
+Those were tested after the merge.
 
 | Gate | Result |
 | --- | --- |
 | `tsc --noEmit` | exit 0 |
-| `npm run lint` | exit 0 |
-| `npm run test:unit` | *(recorded in §11)* |
-| `build:clinical` (with `NODE_OPTIONS=--max-old-space-size=8192`) | *(recorded in §11)* |
-| `check:clinical-bundle` | *(recorded in §11)* |
+| `npm run lint` | exit 0, 0 warnings. The base's unused-import warning is gone with Codex's `ca77e342`. |
+| `npm run test:unit` | **662 files passed; 10,281 tests passed, 11 skipped** (the same 11 skips as before) |
+| `build:clinical` | exit 0 |
+| `check:clinical-bundle`, on that build | PASS: 353 client chunks, no synthetic identity, no demo-only copy, none of the 21 server-only markers |
+| `qualify:emergency-revocation-native` | passed at `938ce20f`, clean tree: 8 scenarios, 33 checks, PostgreSQL 16.15 |
+
+After the `0beb5d52` merge, the affected node tests all passed:
+
+| Test | Passed |
+| --- | --- |
+| update-preflight | 2 |
+| data-API audit review | 3 |
+| audit live parent | 5 |
+| audit retention review | 3 |
+| operator identity | 3 |
+| hosted verifier | 3 |
+| reader policy | 2 |
+| native-session registry | 2 |
 
 ## 11. Final heads, CI and verification
 
-*(Filled in last.)*
+### Failing-before and passing-after
+
+| Repair | Failing before | Passing after |
+| --- | --- | --- |
+| WP2: a compromised login stopped | As deployed: the issued sole-owner session reads, writes and records consent, and nothing can stop it (3 PGlite cases). Native `alp_unlocked`: a revocation's receipt precedes an admitted write. | PGlite 24/24; native 8 scenarios, 33 checks |
+| WP3: recovery without regaining authority | No recovery route existed: only a direct table-owner update could restore a login, which would reuse the compromised subject. | PGlite 11/11; unit 2/2 |
+| WP4: suspension versus revocation | (A finding, not a repair) | 30/30, pinning the MISSING CONTRACT |
+| WP5: a removed member's Fullscript connection | Removed, then re-added: the old connection, saved with no generation, was used again (route 200). | Route 9/9; module 8/8; Fullscript and inventory 1,107/1,107 |
+| WP6: the release channel | The old build check passed channel `"Production"` (exit 0). The app mapped it to development. | Build-env test passes; app 4/4 |
+| WP6: expired Core | A `core_subscription_required` 403 became `reauth_required` ("sign in again"). | 3/3 V2; Desktop service pin 1/1 (19/19 in its file) |
+| Route inventory | No `compromised_identity` case existed. | 195/195; the campaigns gap is pinned by its own test |
+
+### Heads
+
+| Repo | Branch | Code head | Final head |
+| --- | --- | --- | --- |
+| Desktop | `claude/desktop-continuity-integration-20261016` | `b43e1b32b2b240f8b26e1cda546f5bca0e528b66` | This document's commit. It touches `docs/` only; see the hand-back message. |
+| V2 | `claude/v2-continuity-integration-20261016` | `b365d02674bf6d41370c9af6209ec40fc44fb217` | `daf5bf243044b5933324b87928345d6306980b9e` (the kit rebind: release metadata and one test path) |
+
+**Ancestry.** Desktop contains `93816f99`, `f599a8a2`, `eeb4223e`, `e08df97f`, `62207e4b` and `0beb5d52`. V2 contains
+`a7139981`, `bb80340a`, `be1b9e5`, `ac621a1c` and `488c9003`. No Codex head named in the packet or pushed during it is
+left out.
+
+**Clean tree and remote.** Both working trees are clean, and each local head equals `origin`. This is checked again in
+the hand-back message.
+
+### Exact-head CI
+
+| Head | Run | Result |
+| --- | --- | --- |
+| Desktop `da3b351a` (WP5) | 38981488685 | success |
+| Desktop `23adaf7f` (first return document) | 38983613554 | success |
+| Desktop `b43e1b32` (code head) | 38984998115 | success |
+| V2 `dc696f6` (WP6) | 38982870322 | success |
+| V2 `b365d02` (code head) | 38984064409 | success |
+| V2 `daf5bf2` (final head) | 38985189840 | success |
+
+The Desktop final head's own run is reported in the hand-back message, because a document cannot carry the CI of its
+own commit.
 
 ## Graphify append text (not applied; the shared map was not reachable from here)
 
 ```
-2026-10-16 Claude continuity + Core release safety. Desktop claude/desktop-continuity-integration-20261016; V2 claude/v2-continuity-integration-20261016.
+2026-10-16 Claude continuity + Core release safety. Desktop claude/desktop-continuity-integration-20261016 (code b43e1b32); V2 claude/v2-continuity-integration-20261016 (daf5bf2, kit bound to Desktop b43e1b32 / V2 b365d02).
 - WP1: merged Codex f599a8a2 (CI 38971310243), eeb4223e (CI 38974061201; event-order stays BLOCKED, separate), 0beb5d52; V2 bb80340a, be1b9e5, 488c9003. No pinned candidate changed.
 - WP2 BLOCKED workforce-identity-emergency-revocation.sql (8d059be1): identity-level, operator-only, two approval modes, entry FOR SHARE (36d00be9 -> 3ee98d29); refuses the clinic-status successor as parent. Failing-before: issued sole-owner session reads/writes/consents. PGlite 24/24; native 8 scenarios / 33 checks; Cognito adapter not called.
 - WP3 BLOCKED workforce-identity-recovery.sql (30cadec0): retired subject never rebinds; custodial read one patient, time-bounded, logged. Release decisions unset. 11/11 + 2/2.
