@@ -124,7 +124,7 @@ clinic at once, which is stricter than the rule allows.
 | **Failing before**, on the parent, PGlite (`ordinary-suspension-window.database.test.ts`) | After a suspension, the seven values read and write: one test. No ten-argument entry and no transition table exist. |
 | **Failing before**, native scenario 1 | The same, on PostgreSQL 16: three DEFECT checks. |
 | PGlite, the candidate | 21/21. Covers: pin, transitions, the active clinic, malformed and expired evidence (expired refused for any purpose, consent management included), the window (read-only, timeouts), a held write, a disguised write, refresh and skew, expiry, missing evidence, unrecorded suspension, re-suspension, archived, sibling clinic, emergency revocation, consent management, the read set against the schema, the production adapter over the database (blocked and qualification), guards, rollback ordering. |
-| Native (`scripts/qualify-ordinary-suspension-window-native.mjs`) | 8 scenarios, 23 checks, all passing (`docs/evidence/2026-10-17-ordinary-suspension-window-native-*.json`). |
+| Native (`scripts/qualify-ordinary-suspension-window-native.mjs`) | 8 scenarios, 23 checks, all passing (`docs/evidence/2026-10-17-ordinary-suspension-window-native-e28a3c9e.json`, on the candidate with the any-purpose expiry rule; the earlier `…-1dc1da19.json` predates it). |
 | Unit (`ordinary-suspension-window.test.ts`) | 9/9: evidence from claims only, entry SQL per switch, access classification, refusal before the database. |
 | Existing suites touched | 175/175 (identity API, clinical state, production adapter, current-identity, membership discovery, emergency revocation); route inventory and continuity matrix 225/225. |
 

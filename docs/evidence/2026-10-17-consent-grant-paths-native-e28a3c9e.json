@@ -1,0 +1,82 @@
+{
+  "contract": "consent-grant-paths-native/1",
+  "sourceCommit": "e28a3c9e69b37f5cdd36f757ab84c73e4af36efa",
+  "sourceClean": true,
+  "postgres": "postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "scenarios": [
+    {
+      "id": "on-the-parent-new-grants-are-recorded-in-a-suspended-clinic",
+      "checks": [
+        {
+          "detail": "DEFECT on the parent: the sync screen records a new grant in the suspended clinic",
+          "passed": true
+        },
+        {
+          "detail": "DEFECT on the parent: a new recording consent is recorded in the suspended clinic",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "an-admitted-grant-holds-off-the-suspension",
+      "checks": [
+        {
+          "detail": "the grant is made in the active clinic and still open",
+          "passed": true
+        },
+        {
+          "detail": "the suspension waits on the clinic row the grant holds",
+          "passed": true
+        },
+        {
+          "detail": "the grant committed before the suspension did",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-grant-waiting-on-a-suspension-in-flight-is-refused",
+      "checks": [
+        {
+          "detail": "both new grants wait on the suspension",
+          "passed": true
+        },
+        {
+          "detail": "the sync-screen grant is refused (ERROR:  consent_actor_refused)",
+          "passed": true
+        },
+        {
+          "detail": "the recording consent is refused (ERROR:  consent_actor_refused)",
+          "passed": true
+        },
+        {
+          "detail": "nothing was written",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "a-withdrawal-lands-in-both-orders",
+      "checks": [
+        {
+          "detail": "during the suspension in flight the withdrawal lands without waiting",
+          "passed": true
+        },
+        {
+          "detail": "after the suspension committed, a withdrawal of a later grant lands",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "A local disposable PostgreSQL cluster with fictional rows; not Aurora, the RDS Data API, a deployed Lambda or a hosted run.",
+    "The candidate and its parents are loaded into this throwaway cluster only; nothing is registered, applied or deployed.",
+    "The sessions call the SQL the services call (set_request_context, then the operation); tokens, Cognito and the Data API are not exercised here."
+  ],
+  "entries": {
+    "alp": "6dc59bb3337cd6135a901444b14fddf701adb5b33513c332b87bf3d62270f723",
+    "alp_parent": "ebbd09fd16dcf44d8b8c7aac7a3ee0a75fa4a1a3f75011e82006e1da53d202ad"
+  },
+  "passed": true
+}
