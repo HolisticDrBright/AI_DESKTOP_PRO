@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { assertProductionObserver, assessPoolEmailVerification,
-  summarizePoolObservations } from "./check-aws-production-cognito-live.mjs";
+  assessSourceTemplate, summarizePoolObservations } from "./check-aws-production-cognito-live.mjs";
 
 const template = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
 const consumerResource = { StackResourceDetail: {
@@ -26,10 +26,10 @@ test("only the pinned production assumed-role account can observe", () => {
 
 test("matching live auto-verification is a narrow configuration observation", () => {
   assert.deepEqual(assessPoolEmailVerification(template, consumerResource, consumer, "ConsumerUserPool"), {
-    contract: "production-pool-email-verification-observation/2", account: "173535830222",
+    contract: "production-pool-email-verification-observation/3", account: "173535830222",
     region: "us-east-2", stack: "ai-longevity-production-clinical-foundation",
     resourceName: "ConsumerUserPool", poolId: "us-east-2_kl37QO1DJ", declared: ["email"], actual: ["email"],
-    status: "matches", unmodeledLiveSettings: [], templateReapplyApproved: false,
+    status: "matches", unmodeledLiveSettings: [], mismatchedLiveSettings: [], templateReapplyApproved: false,
     hostedRegistrationVerified: false, mutations: false,
   });
 });
@@ -42,12 +42,31 @@ test("restoring email verification alone cannot green an unsafe older template",
   }, "ConsumerUserPool");
   assert.equal(report.status, "review_required");
   assert.deepEqual(report.unmodeledLiveSettings, ["EmailConfiguration", "UserPoolTier"]);
+  assert.deepEqual(report.mismatchedLiveSettings, []);
   assert.equal(report.templateReapplyApproved, false);
   assert.equal(report.hostedRegistrationVerified, false);
   assert.equal(summarizePoolObservations([
     report,
     { ...report, resourceName: "WorkforceUserPool" },
   ]), "review_required");
+});
+
+test("approved live copy and enforced advanced security also require preserving review", () => {
+  const live = { ...consumer, VerificationMessageTemplate: {
+    EmailMessage: "Your approved code is {####}.", DefaultEmailOption: "CONFIRM_WITH_CODE",
+  }, AdminCreateUserConfig: { AllowAdminCreateUserOnly: false, UnusedAccountValidityDays: 1 },
+  UserPoolAddOns: { AdvancedSecurityMode: "ENFORCED" },
+  Policies: { SignInPolicy: { AllowedFirstAuthFactors: ["PASSWORD"] } } };
+  const missing = assessPoolEmailVerification(template, consumerResource, live, "ConsumerUserPool");
+  assert.equal(missing.status, "review_required");
+  assert.deepEqual(missing.unmodeledLiveSettings,
+    ["VerificationMessageTemplate", "AdminCreateUserConfig", "UserPoolAddOns", "Policies.SignInPolicy"]);
+  const wrong = structuredClone(template);
+  wrong.Resources.ConsumerUserPool.Properties.VerificationMessageTemplate = { EmailMessage: "Changed code" };
+  wrong.Resources.ConsumerUserPool.Properties.UserPoolAddOns = { AdvancedSecurityMode: "OFF" };
+  const mismatched = assessPoolEmailVerification(wrong, consumerResource, live, "ConsumerUserPool");
+  assert.equal(mismatched.status, "review_required");
+  assert.deepEqual(mismatched.mismatchedLiveSettings, ["VerificationMessageTemplate", "UserPoolAddOns"]);
 });
 
 test("overall observer refuses incomplete evidence and preserves the strongest hold", () => {
@@ -57,6 +76,19 @@ test("overall observer refuses incomplete evidence and preserves the strongest h
   assert.equal(summarizePoolObservations([{ ...consumerReport, status: "drift" }, workforceReport]), "drift");
   assert.throws(() => summarizePoolObservations([consumerReport]), /pool_observation_invalid/);
   assert.throws(() => summarizePoolObservations([workforceReport, consumerReport]), /pool_observation_invalid/);
+});
+
+test("the older repository template cannot be mistaken for the deployed template", () => {
+  const equivalent = structuredClone(template);
+  equivalent.Resources = Object.fromEntries(Object.entries(equivalent.Resources).reverse());
+  assert.equal(assessSourceTemplate(template, equivalent).status, "matches");
+  const deployed = structuredClone(template);
+  deployed.Resources.ConsumerUserPool.Properties.UserPoolAddOns = { AdvancedSecurityMode: "ENFORCED" };
+  const result = assessSourceTemplate(template, deployed);
+  assert.equal(result.status, "drift");
+  assert.match(result.localSha256, /^[a-f0-9]{64}$/);
+  assert.notEqual(result.localSha256, result.deployedSha256);
+  assert.throws(() => assessSourceTemplate({}, deployed), /pool_template_missing/);
 });
 
 test("live missing auto-verification is drift, never a registration pass", () => {

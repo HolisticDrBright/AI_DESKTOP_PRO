@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const PRODUCTION_COGNITO_TARGET = Object.freeze({
@@ -16,8 +18,9 @@ export function assertProductionObserver(identity) {
   }
 }
 
-/** A narrow, read-only check of the deployed template's consumer email-verification promise.
- * Do not mistake this for a full Cognito drift scan or a registration-delivery test. */
+/** A narrow, read-only check of the deployed template's email-verification promise
+ * and known live settings a repair must preserve. This is not a full Cognito drift
+ * scan, a safe-to-reapply verdict or a registration-delivery test. */
 export function assessPoolEmailVerification(template, stackResource, pool, resourceName) {
   if (!PRODUCTION_COGNITO_TARGET.resources.includes(resourceName)) throw new Error("pool_resource_unreviewed");
   const resource = template?.Resources?.[resourceName];
@@ -37,17 +40,37 @@ export function assessPoolEmailVerification(template, stackResource, pool, resou
   // This is not a general CloudFormation drift check. In particular, do not return
   // an overall green observation while the deployed template omits intentional
   // live email delivery or pool-tier settings that a repair must preserve.
-  const unmodeledLiveSettings = [];
-  if (pool.EmailConfiguration?.EmailSendingAccount === "DEVELOPER"
-    && resource.Properties?.EmailConfiguration === undefined) {
-    unmodeledLiveSettings.push("EmailConfiguration");
-  }
-  if (pool.UserPoolTier === "PLUS" && resource.Properties?.UserPoolTier === undefined) {
-    unmodeledLiveSettings.push("UserPoolTier");
-  }
+  const unmodeledLiveSettings = [], mismatchedLiveSettings = [];
+  const review = (name, liveIsMaterial, modeled, matches) => {
+    if (!liveIsMaterial) return;
+    if (modeled === undefined) unmodeledLiveSettings.push(name);
+    else if (!matches(modeled)) mismatchedLiveSettings.push(name);
+  };
+  review("EmailConfiguration", pool.EmailConfiguration?.EmailSendingAccount === "DEVELOPER",
+    resource.Properties?.EmailConfiguration,
+    value => value.EmailSendingAccount === pool.EmailConfiguration.EmailSendingAccount
+      && value.SourceArn === pool.EmailConfiguration.SourceArn
+      && value.From === pool.EmailConfiguration.From);
+  review("UserPoolTier", pool.UserPoolTier === "PLUS", resource.Properties?.UserPoolTier,
+    value => value === pool.UserPoolTier);
+  review("VerificationMessageTemplate", typeof pool.VerificationMessageTemplate?.EmailMessage === "string",
+    resource.Properties?.VerificationMessageTemplate,
+    value => value.EmailMessage === pool.VerificationMessageTemplate.EmailMessage
+      && value.DefaultEmailOption === pool.VerificationMessageTemplate.DefaultEmailOption);
+  review("AdminCreateUserConfig", !!pool.AdminCreateUserConfig,
+    resource.Properties?.AdminCreateUserConfig,
+    value => value.AllowAdminCreateUserOnly === pool.AdminCreateUserConfig.AllowAdminCreateUserOnly
+      && value.UnusedAccountValidityDays === pool.AdminCreateUserConfig.UnusedAccountValidityDays
+      && value.InviteMessageTemplate?.EmailMessage === pool.AdminCreateUserConfig.InviteMessageTemplate?.EmailMessage);
+  review("UserPoolAddOns", pool.UserPoolAddOns?.AdvancedSecurityMode === "ENFORCED",
+    resource.Properties?.UserPoolAddOns,
+    value => value.AdvancedSecurityMode === "ENFORCED");
+  review("Policies.SignInPolicy", Array.isArray(pool.Policies?.SignInPolicy?.AllowedFirstAuthFactors),
+    resource.Properties?.Policies?.SignInPolicy,
+    value => JSON.stringify(value.AllowedFirstAuthFactors) === JSON.stringify(pool.Policies.SignInPolicy.AllowedFirstAuthFactors));
   const emailVerificationMatches = actual.length === 1 && actual[0] === "email";
   return {
-    contract: "production-pool-email-verification-observation/2",
+    contract: "production-pool-email-verification-observation/3",
     account: PRODUCTION_COGNITO_TARGET.account,
     region: PRODUCTION_COGNITO_TARGET.region,
     stack: PRODUCTION_COGNITO_TARGET.stack,
@@ -56,8 +79,9 @@ export function assessPoolEmailVerification(template, stackResource, pool, resou
     declared: ["email"],
     actual,
     status: !emailVerificationMatches ? "drift"
-      : unmodeledLiveSettings.length > 0 ? "review_required" : "matches",
+      : unmodeledLiveSettings.length > 0 || mismatchedLiveSettings.length > 0 ? "review_required" : "matches",
     unmodeledLiveSettings,
+    mismatchedLiveSettings,
     templateReapplyApproved: false,
     hostedRegistrationVerified: false,
     mutations: false,
@@ -74,6 +98,23 @@ export function summarizePoolObservations(pools) {
     : pools.some(pool => pool.status === "review_required") ? "review_required" : "matches";
 }
 
+const canonical = value => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+
+/** A source template is not the deployed template merely because their resource names match. */
+export function assessSourceTemplate(localTemplate, deployedTemplate) {
+  for (const name of PRODUCTION_COGNITO_TARGET.resources) {
+    if (localTemplate?.Resources?.[name]?.Type !== "AWS::Cognito::UserPool"
+      || deployedTemplate?.Resources?.[name]?.Type !== "AWS::Cognito::UserPool") {
+      throw new Error("pool_template_missing");
+    }
+  }
+  const sha = template => createHash("sha256").update(JSON.stringify(canonical(template))).digest("hex");
+  const localSha256 = sha(localTemplate), deployedSha256 = sha(deployedTemplate);
+  return { localSha256, deployedSha256, status: localSha256 === deployedSha256 ? "matches" : "drift" };
+}
+
 function observe(profile) {
   const aws = (...args) => JSON.parse(execFileSync("aws", [...args, "--profile", profile,
     "--region", PRODUCTION_COGNITO_TARGET.region, "--output", "json"], {
@@ -84,6 +125,8 @@ function observe(profile) {
   const templateResponse = aws("cloudformation", "get-template", "--stack-name", PRODUCTION_COGNITO_TARGET.stack);
   const template = typeof templateResponse.TemplateBody === "string"
     ? JSON.parse(templateResponse.TemplateBody) : templateResponse.TemplateBody;
+  const localTemplate = JSON.parse(readFileSync(new URL("../infra/aws-clinical-core/template.json", import.meta.url), "utf8"));
+  const sourceTemplate = assessSourceTemplate(localTemplate, template);
   const pools = PRODUCTION_COGNITO_TARGET.resources.map(resourceName => {
     const stackResource = aws("cloudformation", "describe-stack-resource", "--stack-name",
       PRODUCTION_COGNITO_TARGET.stack, "--logical-resource-id", resourceName);
@@ -94,9 +137,10 @@ function observe(profile) {
     const pool = aws("cognito-idp", "describe-user-pool", "--user-pool-id", physicalId).UserPool;
     return assessPoolEmailVerification(template, stackResource, pool, resourceName);
   });
-  return { contract: "production-email-verification-observation/3", account: PRODUCTION_COGNITO_TARGET.account,
+  return { contract: "production-email-verification-observation/4", account: PRODUCTION_COGNITO_TARGET.account,
     region: PRODUCTION_COGNITO_TARGET.region, stack: PRODUCTION_COGNITO_TARGET.stack,
-    status: summarizePoolObservations(pools), pools,
+    status: summarizePoolObservations(pools) === "matches" && sourceTemplate.status === "drift"
+      ? "review_required" : summarizePoolObservations(pools), pools, sourceTemplate,
     templateReapplyApproved: false,
     hostedRegistrationVerified: false, mutations: false };
 }
