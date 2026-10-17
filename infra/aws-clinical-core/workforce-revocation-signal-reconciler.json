@@ -1,0 +1,225 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "BLOCKED campaign-signal reconciler for the emergency practitioner-login revocation: a scheduled Lambda with its own least-privilege role that republishes unconfirmed staff revocation signals from the clinical revocation records, with no operator. Deploys nothing while ReconcilerRelease is BLOCKED; no PHI activation.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "workforce-revocation-signal-reconciler/1",
+      "Activation": "blocked",
+      "PhiAllowed": false,
+      "Source": "src/server/clinical-core/revocation-signal-reconciler-lambda.ts",
+      "SqlCandidate": "infra/aws-clinical-core/source-candidates/workforce-revocation-signal-reconciler.sql",
+      "ReleaseUnit": "This template, the SQL candidate and its role granted to the reconciler's own database login, a role-scoped Aurora adapter for that login, WORKFORCE_REVOCATION_SIGNAL_RECONCILER_RELEASE in source, and the emergency revocation itself released. One reviewed change, never separately.",
+      "DeploymentGate": "BLOCKED: ReconcilerRelease accepts only BLOCKED, so every resource's condition is false, and ScheduleState accepts only DISABLED. Releasing either is a reviewed edit of this template's AllowedValues, after the fictional qualification Codex owns."
+    }
+  },
+  "Parameters": {
+    "ReconcilerRelease": {
+      "Type": "String",
+      "Default": "BLOCKED",
+      "AllowedValues": ["BLOCKED"],
+      "Description": "BLOCKED. While it is, no resource in this template exists."
+    },
+    "ScheduleState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": ["DISABLED"]
+    },
+    "StaffRevocationSignalTableName": {
+      "Type": "String",
+      "Default": "alp-campaign-staff-revocations",
+      "AllowedPattern": "^alp-campaign-staff-revocations$",
+      "Description": "The staff revocation signal table the campaign stack declares (staff-revocation-signal/2). The reconciler may only put items in it."
+    },
+    "ClinicalClusterArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$"
+    },
+    "ClinicalDatabaseName": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z][a-z0-9_]{0,62}$"
+    },
+    "ReconcilerDatabaseSecretArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:alp-revocation-signal-reconciler-db-[A-Za-z0-9/_+=.@-]+$",
+      "Description": "The reconciler's own database login, a member of clinical_revocation_signal_reconciler and nothing else. Never the cluster master's secret."
+    },
+    "ClinicalCoreKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$"
+    },
+    "LambdaCodeBucket": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z0-9.-]{3,63}$"
+    },
+    "ReconcilerCodeKey": {
+      "Type": "String",
+      "AllowedPattern": "^[A-Za-z0-9/_.-]{1,512}\\.zip$"
+    },
+    "AlarmTopicArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$",
+      "Description": "Where both alarms page. The on-call path, so an overdue revocation never waits on an operator noticing."
+    }
+  },
+  "Conditions": {
+    "ReconcilerReleased": { "Fn::Equals": [{ "Ref": "ReconcilerRelease" }, "RELEASED"] }
+  },
+  "Resources": {
+    "ReconcilerLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Condition": "ReconcilerReleased",
+      "Properties": { "LogGroupName": "/aws/lambda/alp-revocation-signal-reconciler", "RetentionInDays": 90 }
+    },
+    "ReconcilerRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "Logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["ReconcilerLogs", "Arn"] } }]
+            }
+          },
+          {
+            "PolicyName": "RevocationSignalReconciler",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "PublishAndRenewOnlyNeverDelete",
+                  "Effect": "Allow",
+                  "Action": ["dynamodb:PutItem"],
+                  "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${StaffRevocationSignalTableName}" }
+                },
+                {
+                  "Sid": "ItsOwnRoleScopedLoginOnly",
+                  "Effect": "Allow",
+                  "Action": ["secretsmanager:GetSecretValue"],
+                  "Resource": { "Ref": "ReconcilerDatabaseSecretArn" }
+                },
+                {
+                  "Sid": "DataApiOnTheClinicalCluster",
+                  "Effect": "Allow",
+                  "Action": ["rds-data:BeginTransaction", "rds-data:CommitTransaction", "rds-data:ExecuteStatement", "rds-data:RollbackTransaction"],
+                  "Resource": { "Ref": "ClinicalClusterArn" }
+                },
+                {
+                  "Sid": "DecryptTheSecret",
+                  "Effect": "Allow",
+                  "Action": ["kms:Decrypt"],
+                  "Resource": { "Ref": "ClinicalCoreKeyArn" }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Purpose", "Value": "emergency-revocation-signal-reconciler" },
+          { "Key": "RealPatientDataAllowed", "Value": "false" }
+        ]
+      }
+    },
+    "ReconcilerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "FunctionName": "alp-revocation-signal-reconciler",
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Architectures": ["arm64"],
+        "MemorySize": 256,
+        "Timeout": 45,
+        "ReservedConcurrentExecutions": 1,
+        "Role": { "Fn::GetAtt": ["ReconcilerRole", "Arn"] },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ReconcilerCodeKey" } },
+        "LoggingConfig": { "LogGroup": { "Ref": "ReconcilerLogs" } },
+        "Environment": {
+          "Variables": {
+            "WORKFORCE_REVOCATION_SIGNAL_RECONCILER_RELEASE": "blocked",
+            "WORKFORCE_REVOCATION_SIGNAL_TABLE": { "Ref": "StaffRevocationSignalTableName" },
+            "CLINICAL_CLUSTER_ARN": { "Ref": "ClinicalClusterArn" },
+            "CLINICAL_DATABASE_NAME": { "Ref": "ClinicalDatabaseName" },
+            "RECONCILER_DATABASE_SECRET_ARN": { "Ref": "ReconcilerDatabaseSecretArn" },
+            "PHI_ALLOWED": "false"
+          }
+        }
+      }
+    },
+    "ReconcilerScheduleRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "scheduler.amazonaws.com" }, "Action": "sts:AssumeRole",
+            "Condition": { "StringEquals": { "aws:SourceAccount": { "Ref": "AWS::AccountId" } } } }]
+        },
+        "Policies": [{
+          "PolicyName": "InvokeReconciler",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{ "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": { "Fn::GetAtt": ["ReconcilerFunction", "Arn"] } }]
+          }
+        }]
+      }
+    },
+    "ReconcilerSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "Name": "alp-revocation-signal-reconciler",
+        "Description": "Every minute: republish unconfirmed staff revocation signals from the clinical revocation records, under the reconciler's lease. Idempotent per revocation; never deletes.",
+        "ScheduleExpression": "rate(1 minute)",
+        "State": { "Ref": "ScheduleState" },
+        "FlexibleTimeWindow": { "Mode": "OFF" },
+        "Target": { "Arn": { "Fn::GetAtt": ["ReconcilerFunction", "Arn"] }, "RoleArn": { "Fn::GetAtt": ["ReconcilerScheduleRole", "Arn"] },
+          "RetryPolicy": { "MaximumRetryAttempts": 0 } }
+      }
+    },
+    "ReconcilerErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AlarmName": "alp-revocation-signal-reconciler-errors",
+        "AlarmDescription": "A reconciler sweep failed or raised an alarm: a revocation unpublished for more than 5 minutes (overdue), a table outage, a lost lease, an unrecordable outcome, or a refused record. The sweep's log line names revocation ids, never a subject.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ReconcilerFunction" } }],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [{ "Ref": "AlarmTopicArn" }],
+        "OKActions": [{ "Ref": "AlarmTopicArn" }]
+      }
+    },
+    "ReconcilerSilenceAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ReconcilerReleased",
+      "Properties": {
+        "AlarmName": "alp-revocation-signal-reconciler-silent",
+        "AlarmDescription": "The reconciler has not run for 5 minutes. Nothing then retries an unpublished revocation signal; missing data is breaching.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Invocations",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ReconcilerFunction" } }],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 5,
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching",
+        "AlarmActions": [{ "Ref": "AlarmTopicArn" }],
+        "OKActions": [{ "Ref": "AlarmTopicArn" }]
+      }
+    }
+  }
+}
