@@ -70,7 +70,7 @@ export function createCampaignHttpHandler(deps: EngineDeps) {
           if (!deps.staffRevocation) throw new CampaignError('unavailable', 'staff_revocation_unconfigured');
           if (await deps.staffRevocation.revoked(subject)) throw new CampaignError('forbidden', 'identity_refused');
           const email = typeof claims.email === 'string' && claims.email_verified !== false && claims.email_verified !== 'false' ? claims.email.toLowerCase() : null;
-          return json(200, { data: await staff.handle({ practiceId: practiceId.toLowerCase(), personId: personId.toLowerCase(), email }, body(event, 262_144)) });
+          return json(200, { data: await staff.handle({ practiceId: practiceId.toLowerCase(), personId: personId.toLowerCase(), subject, email }, body(event, 262_144)) });
         }
         default:
           return json(404, { error: 'not_found' });

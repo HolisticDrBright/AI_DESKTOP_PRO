@@ -13,8 +13,8 @@ import { unsubscribeToken } from './workforce';
  * clinical credential and imports nothing clinical. Fictional practices only.
  */
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
-const adminA = { practiceId: A, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@clinic-a.example', name: 'Admin Alpha' };
-const adminB = { practiceId: B, personId: '32222222-2222-4222-8222-222222222222', email: 'admin@clinic-b.example', name: 'Admin Bravo' };
+const adminA = { practiceId: A, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@clinic-a.example', name: 'Admin Alpha' };
+const adminB = { practiceId: B, personId: '32222222-2222-4222-8222-222222222222', subject: 'fictional-subject-32222222-2222-4222-8222-222222222222', email: 'admin@clinic-b.example', name: 'Admin Bravo' };
 
 async function twoPractices() {
   const e = fictionalEngine();

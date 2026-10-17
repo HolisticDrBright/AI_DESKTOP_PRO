@@ -38,7 +38,7 @@ const HOST = 'clinic.fictional.example';
 const CAMPAIGN_API = 'https://abcdefghij.execute-api.us-east-2.amazonaws.com';
 const CLINICAL_PUBLIC_API = 'https://klmnopqrst.execute-api.us-east-2.amazonaws.com';
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const VISITOR = 'avery.fictional@example.test';
 const ENV = {
   CAMPAIGN_ENGINE_ENABLED: 'true', CAMPAIGN_API_ORIGIN: CAMPAIGN_API, FUNNEL_PRACTICE_SLUG: 'fictional-clinic', NEXT_PUBLIC_SITE_ORIGIN: SITE,

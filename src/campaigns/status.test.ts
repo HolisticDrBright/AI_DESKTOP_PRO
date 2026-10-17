@@ -10,8 +10,8 @@ import { fictionalEngine } from './testing';
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
-const STAFF = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', email: 'front-desk@fictional-clinic.example' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const STAFF = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', subject: 'fictional-subject-31111111-1111-4111-8111-111111111111', email: 'front-desk@fictional-clinic.example' };
 const status = (r: WorkforceResponse) => { if (r.action !== 'status') throw new Error(r.action); return engineStatus.parse(r); };
 const done = (r: WorkforceResponse) => { if (r.action !== 'done') throw new Error(r.action); return r.refreshed; };
 
@@ -61,7 +61,7 @@ describe('the engine status read', () => {
   it('is one practice\'s answer: another practice\'s staff see their own, empty, practice', async () => {
     const e = fictionalEngine();
     await e.readyPractice({ practiceId: PRACTICE, slug: 'fictional-clinic', name: 'Fictional Clinic', domain: 'mail.fictional-clinic.example', admin: ADMIN });
-    const s = status(await e.staff.handle({ practiceId: OTHER, personId: '41111111-1111-4111-8111-111111111111', email: null }, { action: 'status' }));
+    const s = status(await e.staff.handle({ practiceId: OTHER, personId: '41111111-1111-4111-8111-111111111111', subject: 'fictional-subject-41111111-1111-4111-8111-111111111111', email: null }, { action: 'status' }));
     expect(s).toMatchObject({ marketing: false, domain: null, activeSequences: [], approvedTemplates: 0 });
   });
 

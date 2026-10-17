@@ -11,7 +11,7 @@ import { fictionalEngine } from './testing';
  * reviewable file. Fictional only.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const done = (r: WorkforceResponse) => { if (r.action !== 'done') throw new Error(r.action); return r.refreshed; };
 const draft = (text: string, extra: { subject?: string; button?: boolean } = {}) => ({
   subject: extra.subject ?? 'About the program', blocks: [{ type: 'paragraph' as const, text }, ...(extra.button === false ? [] : [{ type: 'button' as const, label: 'Read about the program' }])],
@@ -85,7 +85,7 @@ describe('approval', () => {
   });
   it('needs the marketing role; counts are visible to any staff member, addresses are not', async () => {
     const { e, ask } = await practice(false);
-    const staff = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', email: 'staff@fictional-clinic.example' };
+    const staff = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', subject: 'fictional-subject-31111111-1111-4111-8111-111111111111', email: 'staff@fictional-clinic.example' };
     const o = await e.staff.handle(staff, { action: 'overview' });
     expect(o).toMatchObject({ action: 'overview', role: 'none' });
     await expect(e.staff.handle(staff, { action: 'contacts', programKey: 'longevity-program' })).rejects.toMatchObject({ category: 'forbidden' });

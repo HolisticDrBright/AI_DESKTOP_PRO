@@ -1,4 +1,5 @@
 import { GetCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { WORKFORCE_SUBJECT } from './contract';
 import { CampaignError } from './practice-context';
 
 /**
@@ -20,7 +21,7 @@ import { CampaignError } from './practice-context';
  */
 export const STAFF_REVOCATION_SIGNAL_CONTRACT = 'staff-revocation-signal/1';
 /** The workforce subject (the ID token's `sub`), in the form the revocation records it. */
-export const WORKFORCE_SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
+export { WORKFORCE_SUBJECT };
 
 export interface StaffRevocationSignal {
   /** true when the subject's login is revoked. Throws when that cannot be read: never answers "not revoked" instead. */

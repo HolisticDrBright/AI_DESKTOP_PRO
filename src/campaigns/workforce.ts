@@ -1,7 +1,8 @@
-import { CAMPAIGN_ENGINE_CONTRACT, CAMPAIGN_PROGRAMS, emailTemplate, workforceRequest, type Broadcast, type CampaignOverview, type CampaignProgram, type EmailSequence, type EmailTemplate, type EngineStatus,
-  type PracticeSettings, type RoleGrant, type WorkforceResponse } from './contract';
+import { CAMPAIGN_ENGINE_CONTRACT, CAMPAIGN_PROGRAMS, emailTemplate, SEND_REVIEW_CONTRACT, WORKFORCE_SUBJECT, workforceRequest, type Broadcast, type CampaignOverview, type CampaignProgram, type EmailSequence,
+  type EmailTemplate, type EngineStatus, type PracticeSettings, type RoleGrant, type SendAuthority, type SendReview, type WorkforceResponse } from './contract';
 import { renderEmail, templateProblems } from './content';
 import { CampaignError, listCounts, loadPractice, roleOf, type ContactBody, type EngineDeps, type PracticeContext } from './practice-context';
+import { checkSendAuthority, withAuthority } from './send-authority';
 import { tenantNameFor } from './ses';
 import { STARTER_SEQUENCES, starterTemplate, starterWaits } from './starter-content';
 import { seal } from './tokens';
@@ -19,8 +20,22 @@ import { seal } from './tokens';
  * - **Approval** is by a named staff member, for an exact template version, and is blocked by the content check, by a
  *   missing sender name or mailing address, and (for a program the practice marks so) by a missing attorney sign-off
  *   for that version. Any edit makes a new version, back in draft.
+ * - **Send authority** (send-authority/1, contract.ts). Approving, scheduling, starting and editing record the acting
+ *   login (`subject`, the verified token's `sub`) on the record. A send held because one of those logins was revoked is
+ *   resumed only by `resume_held_send`: a staff member the hold does not name, whose own login is read again first and
+ *   must not be revoked, with every email approved by a login that is not revoked. The review is an audit item.
  */
-export type WorkforceIdentity = { practiceId: string; personId: string; email: string | null };
+export type WorkforceIdentity = { practiceId: string; personId: string; subject: string; email: string | null };
+
+/** What the Campaigns screen is sent: who acted and when, never the login subjects send authority records. */
+function templateForStaff(t: EmailTemplate): CampaignOverview['templates'][number] {
+  if (!t.approval) return { ...t, approval: null };
+  const { subject: _subject, ...by } = t.approval.by;
+  return { ...t, approval: { ...t.approval, by } };
+}
+function queuedForStaff<T extends Broadcast | EmailSequence>(r: T) {
+  return r.authorizedBy ? { ...r, authorizedBy: r.authorizedBy.map(({ subject: _subject, ...entry }) => entry) } : r;
+}
 
 export function createWorkforceCampaigns(deps: EngineDeps) {
   const now = () => deps.now?.() ?? new Date();
@@ -37,7 +52,7 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
       contract: CAMPAIGN_ENGINE_CONTRACT,
       entitlement: { marketing: !!ctx.entitlement?.marketing, tier: ctx.entitlement?.tier ?? null, contactAllowance: ctx.allowance?.contacts ?? null, confirmedContacts: Math.max(0, contacts?.body.confirmed ?? 0) },
       role: role?.role ?? 'none', settings: ctx.settings, domain: ctx.domain, readiness: ctx.readiness, lists,
-      templates: templates.items.map(t => t.body), sequences: sequences.map(s => s.body), broadcasts: broadcasts.items.map(b => b.body),
+      templates: templates.items.map(t => templateForStaff(t.body)), sequences: sequences.map(s => queuedForStaff(s.body)), broadcasts: broadcasts.items.map(b => queuedForStaff(b.body)),
       results: results.items.map(r => ({ templateId: r.id, sent: r.body.sent ?? 0, delivered: r.body.delivered ?? 0, bounced: r.body.bounced ?? 0, complained: r.body.complained ?? 0,
         unsubscribed: r.body.unsubscribed ?? 0, opened: tracked ? r.body.opened ?? 0 : null, clicked: tracked ? r.body.clicked ?? 0 : null })),
     };
@@ -77,6 +92,7 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
       const parsed = workforceRequest.safeParse(raw);
       if (!parsed.success) throw new CampaignError('invalid', 'request_invalid');
       const request = parsed.data;
+      if (!WORKFORCE_SUBJECT.test(identity.subject)) throw new CampaignError('forbidden', 'identity_refused');
       const ctx = await loadPractice(deps, identity.practiceId);
       const role = await roleOf(ctx.store, identity.personId);
       if (request.action === 'overview') return { action: 'overview', ...await overview(ctx, role) };
@@ -85,6 +101,7 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
       if (!role) throw new CampaignError('forbidden', 'marketing_role_required');
       const done = async (): Promise<WorkforceResponse> => ({ action: 'done', refreshed: await overview(await loadPractice(deps, identity.practiceId), await roleOf(ctx.store, identity.personId)) });
       const at = now().toISOString();
+      const acting = (action: SendAuthority['action']): SendAuthority => ({ subject: identity.subject, personId: identity.personId, at, action });
 
       switch (request.action) {
         case 'contacts': {
@@ -148,7 +165,7 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
           const needsAttorney = ctx.settings.attorneySignoffPrograms.includes(t.body.programKey);
           if (needsAttorney && t.body.attorneySignoff?.version !== t.body.version) throw new CampaignError('not_ready', 'attorney_signoff_required');
           ok(await ctx.store.put('template', t.body.templateId, { ...t.body, status: 'approved',
-            approval: { version: t.body.version, at, by: { personId: identity.personId, name: role.name }, attorney: needsAttorney ? { name: t.body.attorneySignoff!.name, at: t.body.attorneySignoff!.at } : null } }, { expected: t.version }));
+            approval: { version: t.body.version, at, by: { personId: identity.personId, name: role.name, subject: identity.subject }, attorney: needsAttorney ? { name: t.body.attorneySignoff!.name, at: t.body.attorneySignoff!.at } : null } }, { expected: t.version }));
           return done();
         }
         case 'save_sequence': {
@@ -162,18 +179,24 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
           const known = new Set(current.body.steps.map(s => s.stepId));
           const steps = request.steps.map(s => ({ stepId: s.stepId && known.has(s.stepId) ? s.stepId : newId(), templateId: s.templateId, waitDays: s.waitDays }));
           if (new Set(steps.map(s => s.stepId)).size !== steps.length) throw new CampaignError('invalid', 'duplicate_step');
-          ok(await ctx.store.put('sequence', request.programKey, { ...current.body, version: current.body.version + 1, steps, updatedAt: at }, { expected: current.version || null }));
+          ok(await ctx.store.put('sequence', request.programKey, withAuthority({ ...current.body, version: current.body.version + 1, steps, updatedAt: at }, acting('edited'),
+            { queued: current.body.status === 'active' }), { expected: current.version || null }));
           return done();
         }
         case 'set_sequence_status': {
           const current = await sequenceOf(ctx, request.programKey);
           if (current.body.version !== request.expectedVersion) throw new CampaignError('conflict');
           if (request.status === 'active') {
+            // Starting again is not a review: a held sequence stays held until someone resumes it.
+            if (current.body.hold) throw new CampaignError('not_ready', 'held_for_review');
             if (!ctx.readiness.canSend) throw new CampaignError('not_ready', ctx.readiness.missing[0]);
             if (!current.body.steps.length) throw new CampaignError('not_ready', 'no_steps');
             for (const step of current.body.steps) if (!isApproved((await template(ctx, step.templateId)).body)) throw new CampaignError('not_ready', 'every_step_must_be_approved');
           }
-          ok(await ctx.store.put('sequence', request.programKey, { ...current.body, status: request.status, version: current.body.version + 1, updatedAt: at }, { expected: current.version || null }));
+          const next = { ...current.body, status: request.status, version: current.body.version + 1, updatedAt: at };
+          // Pausing sends less, so it needs no authority; starting records whoever started it.
+          ok(await ctx.store.put('sequence', request.programKey, request.status === 'active' ? withAuthority(next, acting('activated'), { queued: current.body.status === 'active' }) : next,
+            { expected: current.version || null }));
           return done();
         }
         case 'save_broadcast': {
@@ -182,8 +205,9 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
           const current = request.broadcastId ? await ctx.store.get<Broadcast>('broadcast', request.broadcastId) : null;
           if (request.broadcastId && !current) throw new CampaignError('not_found', 'broadcast');
           if (current && current.body.status !== 'draft') throw new CampaignError('conflict', 'broadcast_not_draft');
-          const body: Broadcast = { broadcastId: current?.body.broadcastId ?? newId(), programKey: request.programKey, templateId: request.templateId,
-            status: 'draft', sendAt: null, testSent: current?.body.templateId === request.templateId ? current.body.testSent : null, createdAt: current?.body.createdAt ?? at };
+          const body: Broadcast = withAuthority({ broadcastId: current?.body.broadcastId ?? newId(), programKey: request.programKey, templateId: request.templateId,
+            status: 'draft', sendAt: null, testSent: current?.body.templateId === request.templateId ? current.body.testSent : null, createdAt: current?.body.createdAt ?? at,
+            ...(current?.body.authorizedBy ? { authorizedBy: current.body.authorizedBy } : {}) }, acting('edited'), { queued: false });
           ok(await ctx.store.put('broadcast', body.broadcastId, body, { expected: current?.version ?? null }));
           return done();
         }
@@ -213,7 +237,8 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
           if (!isApproved(t)) throw new CampaignError('not_ready', 'template_not_approved');
           if (b.body.testSent?.templateVersion !== t.version) throw new CampaignError('not_ready', 'test_send_required');
           if (Date.parse(request.sendAt) < now().getTime() - 60_000) throw new CampaignError('invalid', 'send_time_past');
-          ok(await ctx.store.put('broadcast', b.body.broadcastId, { ...b.body, status: 'scheduled', sendAt: new Date(request.sendAt).toISOString() }, { expected: b.version }));
+          ok(await ctx.store.put('broadcast', b.body.broadcastId, withAuthority({ ...b.body, status: 'scheduled', sendAt: new Date(request.sendAt).toISOString() }, acting('scheduled'), { queued: false }),
+            { expected: b.version }));
           return done();
         }
         case 'cancel_broadcast': {
@@ -221,6 +246,38 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
           if (!b) throw new CampaignError('not_found', 'broadcast');
           if (b.body.status !== 'scheduled' && b.body.status !== 'sending' && b.body.status !== 'draft') throw new CampaignError('conflict', 'broadcast_finished');
           ok(await ctx.store.put('broadcast', b.body.broadcastId, { ...b.body, status: 'cancelled' }, { expected: b.version }));
+          return done();
+        }
+        case 'resume_held_send': {
+          const target = request.target;
+          const kind = target.kind, id = target.kind === 'broadcast' ? target.broadcastId : target.programKey;
+          const item = await ctx.store.get<Broadcast | EmailSequence>(kind, id);
+          if (!item) throw new CampaignError('not_found', kind);
+          const record = item.body;
+          if (!record.hold) {
+            // The same review sent again after its reply was lost: it is done, and recorded once.
+            const only = record.authorizedBy?.length === 1 ? record.authorizedBy[0]! : null;
+            if (only?.action === 'reviewed' && only.subject === identity.subject) return done();
+            throw new CampaignError('conflict', 'not_held');
+          }
+          // A revoked login cannot vouch for its own queued work, and neither can the same person on a new login.
+          if (record.hold.persons.includes(identity.personId)) throw new CampaignError('forbidden', 'independent_reviewer_required');
+          if (!deps.staffRevocation) throw new CampaignError('unavailable', 'staff_revocation_unconfigured');
+          let reviewerRevoked: boolean;
+          try { reviewerRevoked = await deps.staffRevocation.revoked(identity.subject); } catch { throw new CampaignError('unavailable', 'staff_revocation_unavailable'); }
+          if (reviewerRevoked) throw new CampaignError('forbidden', 'identity_refused');
+          // Every approved email it would send must rest on an approval by a recorded login that is not revoked. An email
+          // still in draft is held by the sending job until someone approves it, which records them.
+          const templateIds = [...new Set('steps' in record ? record.steps.map(s => s.templateId) : [record.templateId])];
+          const approved = (await Promise.all(templateIds.map(t => template(ctx, t)))).map(t => t.body).filter(isApproved);
+          const reviewed = { ...record, authorizedBy: [acting('reviewed')], hold: null };
+          const check = await checkSendAuthority(deps, reviewed, approved, at);
+          if (check.state === 'unavailable') throw new CampaignError('unavailable', 'staff_revocation_unavailable');
+          if (check.state === 'held') throw new CampaignError('not_ready', 'template_reapproval_required');
+          const audit: SendReview = { contract: SEND_REVIEW_CONTRACT, target, reviewer: { personId: identity.personId, subject: identity.subject }, previousHold: record.hold,
+            replaced: [...new Set((record.authorizedBy ?? []).map(a => a.personId))], at };
+          if (!await ctx.store.transact([{ op: 'put', kind, id, body: reviewed, expected: item.version },
+            { op: 'put', kind: 'audit', id: `review:${kind}:${id}:${record.hold.at}`, body: audit, expected: null }])) throw new CampaignError('conflict');
           return done();
         }
         case 'install_starter': {
@@ -235,8 +292,8 @@ export function createWorkforceCampaigns(deps: EngineDeps) {
             ok(await ctx.store.put('template', body.templateId, body, { expected: null }));
             if (email.kind === 'welcome') ids.push(body.templateId);
           }
-          ok(await ctx.store.put('sequence', request.programKey, { programKey: request.programKey, version: current.body.version + 1, status: 'draft',
-            steps: ids.map((templateId, i) => ({ stepId: newId(), templateId, waitDays: waits[i]! })), updatedAt: at }, { expected: current.version || null }));
+          ok(await ctx.store.put('sequence', request.programKey, withAuthority({ ...current.body, version: current.body.version + 1, status: 'draft',
+            steps: ids.map((templateId, i) => ({ stepId: newId(), templateId, waitDays: waits[i]! })), updatedAt: at }, acting('edited'), { queued: false }), { expected: current.version || null }));
           return done();
         }
         case 'grant_role': {

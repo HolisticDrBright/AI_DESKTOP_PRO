@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CAMPAIGN_PROGRAM_LABEL, CAMPAIGN_PROGRAMS, workforceResponse, type CampaignOverview, type CampaignProgram, type EmailBlock, type EmailTemplate,
-  type WorkforceRequest, type WorkforceResponse } from "@/campaigns/contract";
+  type SendHold, type SendReviewTarget, type WorkforceRequest, type WorkforceResponse } from "@/campaigns/contract";
 import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 /**
@@ -12,7 +12,8 @@ import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
  * States that say different things look different:
  * - switched off (CAMPAIGN_ENGINE_ENABLED), loading, a failed read, and a refused one;
  * - "no subscribers yet" (a successful read of zero) against "can't read the campaign data" (a failure);
- * - a practice without the marketing package sees what the package does, and nothing it can edit or send.
+ * - a practice without the marketing package sees what the package does, and nothing it can edit or send;
+ * - a send held for review (send-authority/1) says why it is held and what resumes it, beside its status.
  */
 export type CampaignsState = { status: "off" } | { status: "loading" } | { status: "failed" } | { status: "refused" } | { status: "loaded"; overview: CampaignOverview };
 type Act = (request: WorkforceRequest) => Promise<WorkforceResponse | null>;
@@ -59,6 +60,22 @@ export function CampaignsScreen({ enabled }: { enabled: boolean }) {
     finally { setBusy(false); }
   };
   return <CampaignsView state={state} busy={busy} message={message} act={act} onRetry={() => void load()} />;
+}
+
+/** What each hold says. Every one says nothing more is sent until a review, and who may do it. */
+export const SEND_HOLD_COPY: Record<SendHold["reason"], string> = {
+  authority_revoked: "Held for review: the login of someone who scheduled, started or edited this was revoked. Nothing more is sent until a different staff member reviews it.",
+  authority_unrecorded: "Held for review: this was queued before the Campaigns screen recorded who queued it. Nothing more is sent until a staff member reviews it.",
+  approval_revoked: "Held for review: the login that approved its email was revoked. Nothing more is sent until the email is approved again and a different staff member reviews it.",
+  approval_unattributed: "Held for review: its email was approved before approvals recorded who approved them. Nothing more is sent until the email is approved again and it is reviewed.",
+};
+function HeldNotice({ hold, target, act, busy }: { hold: SendHold | null | undefined; target: SendReviewTarget; act: Act; busy: boolean }) {
+  if (!hold) return null;
+  const id = target.kind === "broadcast" ? target.broadcastId : target.programKey;
+  return (
+    <p role="alert" className="mt-1 text-[13px]" data-testid={`campaigns-held-${id}`}>{SEND_HOLD_COPY[hold.reason]} You cannot review a send your own login is named in.{" "}
+      <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "resume_held_send", target })}>Review and resume</button></p>
+  );
 }
 
 const box = "rounded-lg border border-line bg-card p-4";
@@ -230,7 +247,8 @@ function SequenceEditor({ overview, programKey, act, busy }: { overview: Campaig
   const options = overview.templates.filter(t => t.programKey === programKey && t.kind === "sequence");
   return (
     <div className="mt-3 border-t pt-2 text-[13px]" data-testid={`campaigns-sequence-${programKey}`}>
-      <p className="font-semibold">{CAMPAIGN_PROGRAM_LABEL[programKey]} · {seq.status}</p>
+      <p className="font-semibold">{CAMPAIGN_PROGRAM_LABEL[programKey]} · {seq.hold ? `${seq.status}, held for review` : seq.status}</p>
+      <HeldNotice hold={seq.hold} target={{ kind: "sequence", programKey }} act={act} busy={busy} />
       {seq.steps.length === 0 ? <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "install_starter", programKey })}>Install the starter drafts (three welcome emails and a broadcast)</button> : null}
       {steps.map((s, i) => <div key={i} className="mt-1 flex items-center gap-2">
         <span>Step {i + 1}: wait</span><input type="number" min={0} max={60} className="w-16 rounded border px-1" value={s.waitDays} onChange={e => setSteps(steps.map((x, j) => j === i ? { ...x, waitDays: Number(e.target.value) } : x))} /><span>days, then</span>
@@ -240,7 +258,7 @@ function SequenceEditor({ overview, programKey, act, busy }: { overview: Campaig
         {options.length ? <button type="button" className={button} onClick={() => setSteps([...steps, { stepId: null, templateId: options[0]!.templateId, waitDays: 3 }])}>Add step</button> : null}
         <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "save_sequence", programKey, expectedVersion: seq.version, steps })}>Save steps</button>
         {seq.status === "active" ? <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "set_sequence_status", programKey, expectedVersion: seq.version, status: "paused" })}>Pause</button>
-          : seq.steps.length ? <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "set_sequence_status", programKey, expectedVersion: seq.version, status: "active" })}>Start (every step must be approved)</button> : null}
+          : seq.steps.length && !seq.hold ? <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "set_sequence_status", programKey, expectedVersion: seq.version, status: "active" })}>Start (every step must be approved)</button> : null}
       </div>
     </div>
   );
@@ -262,7 +280,8 @@ function Broadcasts({ overview, act, busy }: { overview: CampaignOverview; act: 
             <button type="button" className={button} disabled={busy} onClick={() => void act({ action: "test_send", templateId: t.templateId, broadcastId: b.broadcastId })}>Send a test to me</button>
             <input type="datetime-local" className="rounded border px-1" value={when[b.broadcastId] ?? ""} onChange={e => setWhen({ ...when, [b.broadcastId]: e.target.value })} />
             <button type="button" className={button} disabled={busy || !when[b.broadcastId]} onClick={() => void act({ action: "schedule_broadcast", broadcastId: b.broadcastId, sendAt: new Date(when[b.broadcastId]!).toISOString() })}>Schedule</button></span> : null}
-          {b.status === "scheduled" || b.status === "sending" ? <button type="button" className={`${button} ml-2`} disabled={busy} onClick={() => void act({ action: "cancel_broadcast", broadcastId: b.broadcastId })}>Cancel</button> : null}</li>;
+          {b.status === "scheduled" || b.status === "sending" ? <button type="button" className={`${button} ml-2`} disabled={busy} onClick={() => void act({ action: "cancel_broadcast", broadcastId: b.broadcastId })}>Cancel</button> : null}
+          {b.status === "scheduled" || b.status === "sending" ? <HeldNotice hold={b.hold} target={{ kind: "broadcast", broadcastId: b.broadcastId }} act={act} busy={busy} /> : null}</li>;
       })}</ul>
       {options.length ? <div className="mt-2 flex gap-2 text-[13px]"><select className="rounded border px-1" value={templateId} onChange={e => setTemplateId(e.target.value)}><option value="">Choose a broadcast email…</option>{options.map(t => <option key={t.templateId} value={t.templateId}>{t.name} ({CAMPAIGN_PROGRAM_LABEL[t.programKey]})</option>)}</select>
         <button type="button" className={button} disabled={busy || !templateId} onClick={() => { const t = options.find(x => x.templateId === templateId); if (t) void act({ action: "save_broadcast", broadcastId: null, programKey: t.programKey, templateId: t.templateId }); }}>New broadcast</button></div> : null}

@@ -164,13 +164,11 @@ emergency revocation's own rollback, which removes both functions.
 ## 6. Held, explicit
 
 1. **Owner decision, 2026-10-16: pause sends already queued by a revoked login for another authorized staff member's
-   review. Not implemented.** The scheduled send job reads no signal, so a broadcast the login scheduled, or a sequence
-   it activated, still sends today. The broadcast records a person while the signal is keyed by subject. Before release,
-   persist the authorizing workforce subject on each schedule/activation, bind it to the revocation signal at send time,
-   hold legacy records with no subject, and require an independently authorized review to resume. Test a revocation
-   during pagination and immediately before SES admission; a signal outage must pause, not send. Separately close the
-   interval between the clinical database revocation commit and signal publication, during which the staff route can
-   still admit an old token. None of those cases is proved by the current post-publication route tests.
+   review. Now in source:** `docs/campaign-send-authority-2026-10-17.md` (send-authority/1). The sending job re-reads
+   every recorded login before each SES call; legacy records are held; a different, unrevoked staff member resumes a
+   held send through an audited review. One race remains: an email already handed to SES. The interval between the
+   clinical database revocation commit and signal publication is `docs/revocation-signal-timing-2026-10-17.md`. No
+   post-publication route test here proves immediate revocation.
 2. **The writer must be configured wherever campaigns run, and only with the successor applied.** Configured on the
    parent alone, a publication still happens but is not recorded (the failing-before). Not configured under the
    successor, revocations never read `complete`. That case is visible on the work list, never silent.
@@ -186,8 +184,8 @@ emergency revocation's own rollback, which removes both functions.
    Until then nothing changes: the engine ships off.
 2. In a fictional qualification account, apply the campaign template and confirm:
    - the table's properties;
-   - the API role's single `GetItem`;
-   - nothing for the sender or events roles;
+   - the API role's single `GetItem`, and the sender role's (send-authority/1);
+   - nothing for the events role;
    - the staff route answers 503 when the table is unreadable.
 3. With the emergency revocation on isolated fictional qualification Aurora:
    - apply this successor;

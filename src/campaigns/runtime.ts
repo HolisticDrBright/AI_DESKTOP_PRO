@@ -8,8 +8,9 @@ import type { EngineConfig } from './practice-context';
  * the wrong place. There are no defaults: the table, the key, the public origin, the two marketing configuration sets,
  * the sending local part and the account are each named explicitly in the template parameters.
  *
- * CAMPAIGN_STAFF_REVOCATION_TABLE is set on the API function only, the one function that serves staff. Where it is not
- * set, the staff route refuses every request (503) and the public routes are unaffected.
+ * CAMPAIGN_STAFF_REVOCATION_TABLE is set on the API function, which serves staff, and the sending job, which checks each
+ * send's authority against it (send-authority/1). Where it is not set, the staff route refuses every request (503), the
+ * sending job sends nothing (`staff_revocation_unconfigured`), and the public routes are unaffected.
  */
 export type CampaignRuntime =
   | { enabled: false }

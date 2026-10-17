@@ -81,8 +81,11 @@ describe('the campaign code path holds no clinical credential and reads no clini
         for (const action of [s.Action].flat()) expect(action, `${name} ${action}`).toMatch(/^(?:logs|dynamodb|kms|secretsmanager|ses|sqs|lambda):/);
         if ([s.Action].flat().some(a => a.startsWith('secretsmanager:'))) expect(JSON.stringify(s.Resource), name).toMatch(/CampaignKeySecret/);
         if ([s.Action].flat().some(a => a.startsWith('dynamodb:'))) expect(JSON.stringify(s.Resource), name).toMatch(/CampaignTable|CampaignStaffRevocationTable/);
-        // The staff revocation signal is read-only here, and only for the API function that serves staff.
-        if (JSON.stringify(s.Resource).includes('CampaignStaffRevocationTable')) expect([name, [s.Action].flat()]).toEqual(['CampaignApiRole', ['dynamodb:GetItem']]);
+        // The staff revocation signal is read-only here: by the API that serves staff, and the sender that checks each send.
+        if (JSON.stringify(s.Resource).includes('CampaignStaffRevocationTable')) {
+          expect(['CampaignApiRole', 'CampaignSenderRole'], name).toContain(name);
+          expect([name, [s.Action].flat()]).toEqual([name, ['dynamodb:GetItem']]);
+        }
       }
     }
     expect(JSON.stringify(template)).not.toMatch(/rds-data|clinical_core|ClinicalApi|CLINICAL_|cognito-idp:Admin/);
@@ -97,8 +100,8 @@ describe('the campaign code path holds no clinical credential and reads no clini
 /* ------------------------------------------------------------------------------------- two practices, one Desktop */
 const API = 'https://abcdefghij.execute-api.us-east-2.amazonaws.com';
 const HOST = 'clinic.fictional.example';
-const A = { practiceId: '11111111-1111-4111-8111-111111111111', personId: '21111111-1111-4111-8111-111111111111', email: 'admin@clinic-a.fictional.example', name: 'Fictional Admin A' };
-const B = { practiceId: '22222222-2222-4222-8222-222222222222', personId: '32222222-2222-4222-8222-222222222222', email: 'admin@clinic-b.fictional.example', name: 'Fictional Admin B' };
+const A = { practiceId: '11111111-1111-4111-8111-111111111111', personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@clinic-a.fictional.example', name: 'Fictional Admin A' };
+const B = { practiceId: '22222222-2222-4222-8222-222222222222', personId: '32222222-2222-4222-8222-222222222222', subject: 'fictional-subject-32222222-2222-4222-8222-222222222222', email: 'admin@clinic-b.fictional.example', name: 'Fictional Admin B' };
 const TOKENS: Record<string, typeof A> = { 'fictional-token-a': A, 'fictional-token-b': B };
 
 describe('one practice\'s lists, emails and results are invisible to another, through the Desktop', () => {

@@ -14,8 +14,8 @@ import { fictionalEngine, tokenFrom } from './testing';
  * cannot. Fictional practices, people, subjects and addresses only.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
-const COLLEAGUE = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', email: 'colleague@fictional-clinic.example', name: 'Fictional Colleague' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const COLLEAGUE = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', subject: 'fictional-subject-31111111-1111-4111-8111-111111111111', email: 'colleague@fictional-clinic.example', name: 'Fictional Colleague' };
 const SUBJECT = { admin: 'fictional-workforce-admin-0001', colleague: 'fictional-workforce-colleague-0002' };
 type Who = typeof ADMIN;
 const claims = (who: Who, subject: unknown, extra: Record<string, unknown> = {}) => ({ authorizer: { jwt: { claims: {
@@ -229,10 +229,15 @@ describe('configuration and the template', () => {
     // Its own AWS-managed key, never the campaign key: the revocation's writer is granted this table alone.
     expect(JSON.stringify(table.Properties)).not.toContain('CampaignKey');
     const mentions = Object.entries(template.Resources).filter(([name, r]) => name !== 'CampaignStaffRevocationTable' && JSON.stringify(r).includes('CampaignStaffRevocationTable'));
-    expect(mentions.map(([name]) => name).sort()).toEqual(['CampaignApiFunction', 'CampaignApiRole']);
-    const statements = JSON.stringify(template.Resources.CampaignApiRole!.Properties.Policies);
-    expect(statements).toContain('{"Sid":"ReadStaffRevocationSignal","Effect":"Allow","Action":"dynamodb:GetItem","Resource":{"Fn::GetAtt":["CampaignStaffRevocationTable","Arn"]}}');
-    expect(((template.Resources.CampaignApiFunction!.Properties.Environment as { Variables: Record<string, unknown> }).Variables).CAMPAIGN_STAFF_REVOCATION_TABLE).toEqual({ Ref: 'CampaignStaffRevocationTable' });
+    // Read by the API (every staff operation) and the sender (every send, send-authority/1); the SES events function never.
+    expect(mentions.map(([name]) => name).sort()).toEqual(['CampaignApiFunction', 'CampaignApiRole', 'CampaignSenderFunction', 'CampaignSenderRole']);
+    for (const role of ['CampaignApiRole', 'CampaignSenderRole']) {
+      const statements = JSON.stringify(template.Resources[role]!.Properties.Policies);
+      expect(statements).toContain('{"Sid":"ReadStaffRevocationSignal","Effect":"Allow","Action":"dynamodb:GetItem","Resource":{"Fn::GetAtt":["CampaignStaffRevocationTable","Arn"]}}');
+    }
+    for (const fn of ['CampaignApiFunction', 'CampaignSenderFunction']) {
+      expect(((template.Resources[fn]!.Properties.Environment as { Variables: Record<string, unknown> }).Variables).CAMPAIGN_STAFF_REVOCATION_TABLE).toEqual({ Ref: 'CampaignStaffRevocationTable' });
+    }
     expect(template.Outputs.CampaignStaffRevocationTableArn).toMatchObject({ Value: { 'Fn::GetAtt': ['CampaignStaffRevocationTable', 'Arn'] } });
   });
 });

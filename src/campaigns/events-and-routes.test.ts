@@ -9,7 +9,7 @@ import { addressHash } from './tokens';
  * Fictional practices and addresses only.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const event = (message: unknown, topic = TOPIC) => ({ Records: [{ EventSource: 'aws:sns', Sns: { TopicArn: topic, Message: JSON.stringify(message) } }] });
 const ADMIN_SUBJECT = 'fictional-workforce-admin-0001';
 const jwt = (claims: Record<string, unknown> = {}) => ({ authorizer: { jwt: { claims: { sub: ADMIN_SUBJECT, 'custom:organization_id': PRACTICE, 'custom:person_id': ADMIN.personId, email: ADMIN.email, exp: Date.now() / 1000 + 60, ...claims } } } });

@@ -11,7 +11,7 @@ import { STAFF_REVOCATION_SIGNAL_CONTRACT as WRITER_CONTRACT, createDynamoStaffR
  */
 const TABLE = 'alp-campaign-staff-revocations';
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const SUBJECT = 'fictional-workforce-admin-0001';
 
 /** One fictional DynamoDB table, as the document client sees it: Put with attribute_not_exists, and Get. */

@@ -1,6 +1,7 @@
-import type { Broadcast, CampaignProgram, EmailSequence, EmailTemplate } from './contract';
+import type { Broadcast, CampaignProgram, EmailSequence, EmailTemplate, SendHold } from './contract';
 import { renderEmail } from './content';
 import { contactId, DAY_MS, loadPractice, nextSendWindow, withinSendHours, type ContactBody, type EngineDeps, type PracticeContext } from './practice-context';
+import { checkSendAuthority, type AuthorityCheck } from './send-authority';
 import { tenantNameFor, type SendReply } from './ses';
 import { unsubscribeToken } from './workforce';
 
@@ -23,6 +24,15 @@ import { unsubscribeToken } from './workforce';
  * allowance. Nothing is sent outside 08:00 to 20:00 in the subscriber's time zone: a contact's own zone is not
  * collected at sign-up, so the practice's zone is the inferred one. A send that falls outside the window waits for the
  * next 08:00 there.
+ *
+ * **Send authority** (send-authority/1, contract.ts). A queued send rests on the logins that scheduled, started or
+ * edited it and approved its email. Each one is re-read from the emergency revocation's signal before a broadcast
+ * starts, at each page of it, and for every email after its claim is written and immediately before SES is called. A
+ * revoked one holds the send and records the hold on it; the claim and the month's count are given back. An unreadable
+ * signal holds the email for this pass only, and a sender with no signal configured sends nothing at all.
+ *
+ * What this cannot do: an email already handed to SES when the revocation lands is not recalled. Sends are one at a
+ * time, so that is at most one email per practice per pass, and every later one is held.
  */
 export type PassSummary = { practices: number; sent: number; deferred: number; held: number; unknown: number; failed: number; skipped: { practiceId: string; reason: string }[] };
 const SENDS_PER_PRACTICE_PER_PASS = 500;
@@ -45,6 +55,8 @@ export function createSendJob(deps: EngineDeps) {
         summary.practices++;
         const ctx = await loadPractice(deps, practiceId);
         if (!ctx.readiness.canSend) { summary.skipped.push({ practiceId, reason: ctx.readiness.missing[0] ?? 'not_ready' }); continue; }
+        // Without the signal no send's authority can be checked: nothing is sent, never "not revoked".
+        if (!deps.staffRevocation) { summary.skipped.push({ practiceId, reason: 'staff_revocation_unconfigured' }); continue; }
         const budget = { left: SENDS_PER_PRACTICE_PER_PASS };
         await sequences(ctx, budget, summary, gap);
         await broadcasts(ctx, budget, summary, gap);
@@ -53,12 +65,40 @@ export function createSendJob(deps: EngineDeps) {
     return summary;
   };
 
-  async function sendOne(ctx: PracticeContext, claimId: string, contact: ContactBody, template: EmailTemplate, kind: 'sequence' | 'broadcast', summary: PassSummary, gap: number): Promise<'sent' | 'already' | 'retry' | 'unknown' | 'failed' | 'cap'> {
+  /** Records a hold on the sequence or broadcast. If that write fails or races, the email is held anyway and the next pass records it. */
+  async function persistHold(ctx: PracticeContext, kind: 'sequence' | 'broadcast', id: string, hold: SendHold) {
+    try {
+      const item = await ctx.store.get<Broadcast | EmailSequence>(kind, id);
+      if (item && !item.body.hold) await ctx.store.put(kind, id, { ...item.body, hold }, { expected: item.version });
+    } catch { /* held either way */ }
+  }
+  /** The authority check for one queued record, read fresh from the store each time it is called. */
+  function authorityOf(ctx: PracticeContext, kind: 'sequence' | 'broadcast', id: string, template: EmailTemplate) {
+    return async (): Promise<AuthorityCheck> => {
+      const item = await ctx.store.get<Broadcast | EmailSequence>(kind, id);
+      if (!item) return { state: 'unavailable' };
+      const check = await checkSendAuthority(deps, item.body, [template], now().toISOString());
+      if (check.state === 'held' && !item.body.hold) await persistHold(ctx, kind, id, check.hold);
+      return check;
+    };
+  }
+
+  async function sendOne(ctx: PracticeContext, claimId: string, contact: ContactBody, template: EmailTemplate, kind: 'sequence' | 'broadcast', summary: PassSummary, gap: number,
+    authorize: () => Promise<AuthorityCheck>): Promise<'sent' | 'already' | 'retry' | 'unknown' | 'failed' | 'cap' | 'held' | 'unavailable'> {
     const month = now().toISOString().slice(0, 7).replace('-', '');
     if (!await ctx.store.increment('counter', `emails-${month}`, 'sent', 1, ctx.allowance!.emailsPerMonth)) return 'cap';
     if (await ctx.store.put('send', claimId, { state: 'claimed', at: now().toISOString() }, { expected: null }) === 'conflict') {
       await ctx.store.increment('counter', `emails-${month}`, 'sent', -1);
       return 'already';
+    }
+    // The last check before SES, after the claim: a revocation from here on is the race this job cannot close.
+    const authority = await authorize();
+    if (authority.state !== 'clear') {
+      const claimed = await ctx.store.get('send', claimId);
+      if (claimed) await ctx.store.delete('send', claimId, claimed.version);
+      await ctx.store.increment('counter', `emails-${month}`, 'sent', -1);
+      summary.held++;
+      return authority.state === 'held' ? 'held' : 'unavailable';
     }
     const origin = new URL(deps.config.siteOrigin).origin;
     const token = unsubscribeToken(deps, ctx.store.practiceId, contact.programKey, contact.emailHash, template.templateId);
@@ -103,6 +143,7 @@ export function createSendJob(deps: EngineDeps) {
       const sequence = sequenceCache.get(contact.programKey);
       if (!sequence || sequence.status === 'draft') { await reschedule(null); continue; }
       if (sequence.status === 'paused') { await reschedule(new Date(at.getTime() + DAY_MS).toISOString()); summary.held++; continue; }
+      if (sequence.hold) { await reschedule(new Date(at.getTime() + 3_600_000).toISOString()); summary.held++; continue; }
       const enrollment = contact.enrollment;
       // The position after the last step this person received, in the sequence as it is now. A step added before it
       // is never sent to them; an edit to a step they have not reached is what they receive.
@@ -116,9 +157,13 @@ export function createSendJob(deps: EngineDeps) {
       const template = (await ctx.store.get<EmailTemplate>('template', next.templateId))?.body;
       if (!template || template.status !== 'approved' || template.approval?.version !== template.version) { await reschedule(new Date(at.getTime() + 3_600_000).toISOString()); summary.held++; continue; }
       budget.left--;
-      const outcome = await sendOne(ctx, `seq:${item.id}:${next.stepId}`, contact, template, 'sequence', summary, gap);
+      const outcome = await sendOne(ctx, `seq:${item.id}:${next.stepId}`, contact, template, 'sequence', summary, gap, authorityOf(ctx, 'sequence', contact.programKey, template));
       if (outcome === 'cap') { await reschedule(new Date(at.getTime() + DAY_MS).toISOString()); summary.skipped.push({ practiceId: ctx.store.practiceId, reason: 'monthly_email_allowance_reached' }); return; }
       if (outcome === 'retry') { await reschedule(new Date(at.getTime() + 900_000).toISOString()); continue; }
+      // Held: everyone else on this sequence waits for the review, so read it again for them.
+      if (outcome === 'held') { sequenceCache.delete(contact.programKey); await reschedule(new Date(at.getTime() + 3_600_000).toISOString()); continue; }
+      // The signal could not be read: nobody else's authority can be checked this pass either.
+      if (outcome === 'unavailable') { await reschedule(new Date(at.getTime() + 900_000).toISOString()); return; }
       // Sent, already sent, unknown or refused as invalid: the step is done for this person, never repeated.
       const position = sequence.steps.findIndex(s => s.stepId === next.stepId);
       const advanced: ContactBody = { ...contact, enrollment: { ...enrollment, sentStepIds: [...enrollment.sentStepIds, next.stepId], lastSentStepId: next.stepId, lastSentPosition: position, lastSentAt: at.toISOString() } };
@@ -135,9 +180,13 @@ export function createSendJob(deps: EngineDeps) {
     for (const item of list.items) {
       let b = item.body, version = item.version;
       if ((b.status !== 'scheduled' && b.status !== 'sending') || !b.sendAt || Date.parse(b.sendAt) > at.getTime()) continue;
+      if (b.hold) { summary.held++; continue; }
       const template = (await ctx.store.get<EmailTemplate>('template', b.templateId))?.body;
       if (!template || template.status !== 'approved' || template.approval?.version !== template.version) { summary.held++; continue; }
       if (!withinSendHours(at, zone)) { summary.deferred++; continue; }
+      const authorize = authorityOf(ctx, 'broadcast', b.broadcastId, template);
+      // Before it starts: a broadcast whose authority is revoked never moves to "sending".
+      if ((await authorize()).state !== 'clear') { summary.held++; continue; }
       if (b.status === 'scheduled') {
         if (await ctx.store.put('broadcast', b.broadcastId, { ...b, status: 'sending' }, { expected: version }) === 'conflict') continue;
         b = { ...b, status: 'sending' }; version++;
@@ -148,16 +197,21 @@ export function createSendJob(deps: EngineDeps) {
         after = page.after;
         // A broadcast cancelled while it is going out stops at the next page.
         if ((await ctx.store.get<Broadcast>('broadcast', b.broadcastId))?.body.status !== 'sending') return;
+        // So does one whose authority is revoked, or cannot be read, while it is going out.
+        if ((await authorize()).state !== 'clear') { summary.held++; finished = false; break; }
+        let stopped = false;
         for (const contact of page.items) {
           // Only people on the list when the broadcast was due; the claim makes each of them receive it once.
           if (contact.body.state !== 'confirmed' || !contact.body.confirmedAt || contact.body.confirmedAt > b.sendAt!) continue;
           if (await ctx.store.get('send', `bc:${b.broadcastId}:${contact.body.emailHash}`)) continue;
           if (budget.left <= 0) { finished = false; break; }
           budget.left--;
-          const outcome = await sendOne(ctx, `bc:${b.broadcastId}:${contact.body.emailHash}`, contact.body, template, 'broadcast', summary, gap);
+          const outcome = await sendOne(ctx, `bc:${b.broadcastId}:${contact.body.emailHash}`, contact.body, template, 'broadcast', summary, gap, authorize);
           if (outcome === 'cap') { summary.skipped.push({ practiceId: ctx.store.practiceId, reason: 'monthly_email_allowance_reached' }); return; }
           if (outcome === 'retry') finished = false;
+          if (outcome === 'held' || outcome === 'unavailable') { finished = false; stopped = true; break; }
         }
+        if (stopped) break;
       } while (after && finished);
       if (finished) {
         const current = await ctx.store.get<Broadcast>('broadcast', b.broadcastId);
