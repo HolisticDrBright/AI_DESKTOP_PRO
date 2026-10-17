@@ -1,6 +1,10 @@
 # Clinical-private function grants: source review and blocked repair
 
-This is a source-only security review, not production authorization. No SQL was registered or applied to AWS. The proposed repair is `infra/aws-clinical-core/source-candidates/clinical-private-public-execute-closure.sql`, SHA-256 `c11cae9fd13521840c7859c4ae47cba45fabc75db6bf7ad34bbc4f507d26b45f`. It is intentionally **BLOCKED**.
+This is a source and read-only live-catalog security review, not production authorization. No SQL was registered or applied to AWS. The full-source-artifact repair is `infra/aws-clinical-core/source-candidates/clinical-private-public-execute-closure.sql`, SHA-256 `c11cae9fd13521840c7859c4ae47cba45fabc75db6bf7ad34bbc4f507d26b45f`. It is intentionally **BLOCKED**.
+
+**Live production differs from the full source artifact.** A read-only RDS Data API catalog query in account `173535830222`, with foundation `PhiAllowed=false`, observed `clinical_core` at 46 migrations ending `20260904090000`. All 46 live ledger versions and SHA-256 values match the first 46 repository migrations. The live catalog has **18**, not 20, public-executable `clinical_private` functions (nine security-definer). It lacks the two `owned_record_regime_is_*` functions introduced later. It confirms `clinical_core_api` has both schema USAGE and EXECUTE on `move_entitlement`. No patient row or function body was read, and no production SQL write was made. The 20-function candidate above must **not** be applied to this live shape; its guard refuses it.
+
+An independent, still-BLOCKED candidate for exactly that observed 46-migration state is `infra/aws-clinical-core/source-candidates/clinical-private-public-execute-closure-live-46.sql`, SHA-256 `4c73b9df14a72659b9af72e5a9db3d30465df185e954c22a910af99e62d106a3`. It pins the ledger count, final version and aggregate hash of all 46 version/file hashes, then requires exactly the 18 observed public grants before revoking. A PGlite test builds those first 46 migrations and their ledger, proves ledger drift and use of the 20-function candidate are refused, then proves the 18 grants are removed and the API role loses the direct balance-mutator permission. This is local rehearsal only, not permission to execute the candidate in production.
 
 ## Finding and evidence
 
@@ -12,7 +16,7 @@ The candidate revokes `PUBLIC EXECUTE` on all functions in `clinical_private` on
 
 ## Required before any hosted application
 
-1. Inspect the live target's `pg_proc` ACLs and schema USAGE under a read-only catalog query. A different set must stop the candidate, not be waived by changing the expected list blindly. Review any direct callers of these functions, particularly the sync worker and clinical knowledge paths, against their actual runtime roles.
+1. Repeat the read-only live ledger, `pg_proc` ACL and schema-USAGE observation immediately before any proposed application. The 46-row ledger and 18-function ACL were observed once; drift must stop the candidate. Review any direct callers of these functions, particularly the sync worker and clinical knowledge paths, against their actual runtime roles.
 2. Rehearse the exact candidate and its reversal on an isolated fictional copy of the matched production schema with role sessions. Exercise entitlement reserve/settle, sync delivery, knowledge import and clinical pathway operations, plus denials under `clinical_core_api` and cross-organization identities. PGlite's single-session test does not replace this.
 3. Capture the pre-change per-function ACLs as the rollback artifact. An emergency reversal would restore **only** the captured grants and would reopen the documented exposure; it must be a reviewed security decision, not an automatic blanket `GRANT`.
 4. Check the public API and RDS Data API command surfaces for any path that accepts caller-controlled SQL or function names. This determines actual reachability from a user; the present source review does not establish it.
