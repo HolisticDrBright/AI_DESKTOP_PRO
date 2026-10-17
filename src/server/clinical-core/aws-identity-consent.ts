@@ -357,8 +357,7 @@ function createCurrentMembershipIdentityConsent(database: ClinicalCoreDatabase):
     },
     async revokeConsent(principal, input) {
       assertRevocation(input);
-      return runCurrent(database, principal, "consent_management",
-        (tx) => insertConsentRevocation(tx, input), "consent_precondition_failed");
+      return runCurrentWithdrawal(database, principal, input);
     },
   };
 }
@@ -585,6 +584,36 @@ async function runCurrent<T>(
     if (error instanceof ClinicalCoreAdapterError) throw error;
     if (error instanceof ClinicalCoreDatabaseRejection) {
       throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "production_boundary_refused" : operationRefusal);
+    }
+    throw new ClinicalCoreAdapterError("database_unavailable");
+  }
+}
+
+/**
+ * One exact consent withdrawal under current membership. The BLOCKED SQL
+ * candidate validates and locks the subject, clinic, membership and exact
+ * connection, then clears its transaction-local claims before returning.
+ * The general current-membership setter stays closed for suspended clinics.
+ */
+async function runCurrentWithdrawal(
+  database: ClinicalCoreDatabase,
+  principal: CurrentWorkforcePrincipal,
+  input: ConsentRevocationInput,
+): Promise<ConsentResult> {
+  if (!UUID_PATTERN.test(principal.subject) || !UUID_PATTERN.test(principal.selectedOrganizationId)) {
+    throw new ClinicalCoreAdapterError("production_boundary_refused");
+  }
+  try {
+    return await database.transaction(async tx => toConsent(firstConsent(await tx.query(
+      "select * from clinical_private.revoke_current_workforce_consent($1,$2,$3,$4,$5)",
+      [principal.subject, clinicalUuid(principal.selectedOrganizationId),
+        clinicalUuid(input.connectionId), input.scope, input.reasonCode],
+    ))));
+  } catch (error) {
+    if (error instanceof ClinicalCoreAdapterError) throw error;
+    if (error instanceof ClinicalCoreDatabaseRejection) {
+      throw new ClinicalCoreAdapterError(error.category === "identity_refused"
+        ? "production_boundary_refused" : "consent_precondition_failed");
     }
     throw new ClinicalCoreAdapterError("database_unavailable");
   }

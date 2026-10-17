@@ -23,7 +23,7 @@ The grant function's successor prosrc remains `89ebfcfc7dbf9cb5443fec121ebac0b4e
 ## Still required before any activation
 
 1. Resolve D1, D3, D4 and D5 in `docs/suspended-clinic-custody-2026-10-16.md`: lawful file continuity, recording cleanup and holds, and patient copies in a closed clinic. This narrow D2 fix does not approve the whole clinic-status release.
-2. Design the same withdrawal-only authority for the unreleased `database_current` context path. That setter currently refuses workforce `consent_management` for a closed clinic before the decision function runs. A dedicated, exact withdrawal purpose or equivalent narrowly reviewed path needs negative tests for new grants, stale or removed membership, wrong clinic, compromised credentials, and both race orders. Do not relax the general consent-management gate.
+2. The unreleased `database_current` path now has a separate **blocked, unregistered** one-operation source candidate and adapter in `docs/current-membership-withdrawal-only-2026-10-16.md`. It has local negatives but still needs exact-source review, two-session lock races, fictional hosted qualification, rollback and separate activation approval. Do not relax the general consent-management gate.
 3. Re-run the revised two-session script on disposable PostgreSQL 16, then on isolated fictional qualification Aurora after fresh parent hashes, ledger, rollback and row-custody checks. Do not substitute the old native report.
 4. Review the exact candidate and rollback hashes above, operator authority and any legal/retention implications. Keep the candidate BLOCKED, PHI off and production activation off until separate approval.
 
