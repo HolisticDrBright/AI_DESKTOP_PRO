@@ -1,0 +1,11 @@
+# Desktop continuity and withdrawal-only source integration
+
+This source branch combines Codex Desktop `b64cdad16026c5fc280aecbde685fdf829bc00fc` with Claude Desktop `7ddcf1462b1879c894567199ebb4562302fc0d97`. Neither parent has been merged to `main` or deployed from this branch. The merge had no overlapping changed files. The emergency login-revocation, recovery, Fullscript generation, consent-decision, and current-membership withdrawal SQL candidates remain **BLOCKED and unregistered**.
+
+The first combined continuity run exposed a stale policy assertion: the Claude matrix expected a practitioner withdrawal to be refused in a suspended clinic, but Brandon subsequently chose **new grants refused, withdrawals allowed**. Two of 89 focused cases failed for that reason. The corrected matrix checks a new grant is refused and withdrawal of a previously active grant is admitted; it does not attempt to withdraw the same consent twice. The two relevant suites then passed 40/40. The other four focused emergency-revocation, recovery, and Fullscript suites passed in the first combined run.
+
+The narrow current-membership withdrawal operation checks an active workforce identity and membership on the exact connection and leaves no reusable request context. Claude's separate emergency candidate changes the legacy `set_request_context` entry and holds the workforce identity row; it does not change the current-membership setter pinned by the withdrawal candidate. Current-membership access already locks and checks the same identity row. This is source compatibility, not a hosted race proof or authorization to apply either candidate.
+
+Typecheck and lint pass on the combined tree. The full suite, production build, bundle scan and exact-head CI must be reported separately before source qualification is claimed. No AWS write, SQL registration, provider call, PHI activation or paid mobile build occurred.
+
+Open release decisions and evidence: the emergency approval mode and operator roster; the ordinary-suspension session-time contract; custodial patient-file recovery; closed-clinic recording cleanup, legal holds and patient copies; hosted Aurora/Cognito/Fullscript tests; and V2 source-pair acceptance. The current branch does not close any of those gates.

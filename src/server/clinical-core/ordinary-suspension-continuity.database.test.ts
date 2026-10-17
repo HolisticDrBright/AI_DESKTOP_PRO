@@ -10,7 +10,7 @@ import { classifyDatabaseRejection } from './rds-data-database';
 /**
  * Ordinary clinic suspension versus emergency login revocation, stage by stage, on the real 106-migration schema. The
  * owner's policy: an ordinary suspension MAY leave an already-valid practitioner session usable until it expires, a
- * refresh must not extend it, new practitioner consent decisions are blocked, and a suspected compromise is a different
+ * refresh must not extend it, new practitioner consent grants are blocked while withdrawals remain available, and a suspected compromise is a different
  * event, revoked at once.
  *
  * The stages are every combination of BLOCKED candidates that can exist: as deployed; the clinic-status successor
@@ -159,7 +159,7 @@ describe.each(STAGES)('$name', stage => {
     await expect(withdraw(consumer, 'consumer')).resolves.toHaveLength(1);
   });
 
-  it(`a practitioner-recorded new grant and withdrawal in a suspended clinic: ${stage.decision ? 'both refused (D2 undecided)' : 'both admitted'}`, async () => {
+  it(`a practitioner-recorded new grant and withdrawal in a suspended clinic: ${stage.decision ? 'new grant refused, withdrawal allowed (D2)' : 'both admitted'}`, async () => {
     await suspend();
     expect(await outcome(grant())).toBe(stage.decision ? DECISION_CLOSED : 'admitted');
     if (!stage.decision) {
@@ -168,8 +168,7 @@ describe.each(STAGES)('$name', stage => {
       await db.query("update clinical_core.organizations set status='active' where id=$1", [clinic]);
       await grant();
       await suspend();
-      expect(await outcome(withdraw())).toBe(DECISION_CLOSED);
-      await expect(withdraw(consumer, 'consumer')).resolves.toHaveLength(1);
+      expect(await outcome(withdraw())).toBe('admitted');
     }
   });
 

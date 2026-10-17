@@ -272,7 +272,7 @@ clinic-status successor and the revocation never stack.
 | The entry takes a token time; the clinic records when it was suspended | **No / no** | **No / no** | **No / no** | **No / no** | **No / no** |
 | A suspected compromised identity | No writer exists; only a table-owner update refuses it | Same | Same | One operator decision refuses the next request; the clinic stays `active` | Same |
 | The patient's own grant and withdrawal in a suspended clinic | Run | Run | Run | Run | Run |
-| A practitioner-recorded grant and withdrawal in a suspended clinic | Admitted | Admitted | Refused (D2 undecided) | Admitted | Refused (D2 undecided) |
+| A practitioner-recorded grant and withdrawal in a suspended clinic | Both admitted | Both admitted | New grant refused; existing grant withdrawal admitted | Both admitted | New grant refused; existing grant withdrawal admitted |
 | Retention, recording cleanup and legal hold in a suspended clinic | Retention runs; cleanup and hold refused (D3, D4) | Same | Same | Same | Same |
 
 **MISSING CONTRACT: no continuity successor was built.** The owner's rule is "until its expiry, no refresh extension,
@@ -441,7 +441,7 @@ candidates are not V2 dependencies and were not added to the kit.
 | Decision | Status |
 | --- | --- |
 | **D1** (a session already open in a suspended clinic) | The owner's policy **permits** an already-valid session to continue until its expiry, rules out the successor that ends every session, and treats a suspected compromise as a separate event (WP2). The permitted bound **cannot be enforced yet**: the WP4 missing contract. Until that exists, the clinic-status successor stays unactivated and ordinary suspension changes nothing for an open session. |
-| **D2** (a practitioner-recorded withdrawal in a suspended clinic) | Undecided. The consent-decision successor refuses it as written; the patient's own withdrawal stays open. The owner's "blocks new practitioner consent decisions" does not settle whether a withdrawal is "new". |
+| **D2** (a practitioner-recorded withdrawal in a suspended clinic) | Brandon chose withdrawals only. The integrated BLOCKED consent-decision candidate refuses new workforce grants while admitting an authorized withdrawal of an existing grant; the patient's own withdrawal remains available. The separate BLOCKED current-membership operation provides the same narrow action without opening reusable closed-clinic context. Neither candidate is registered, applied or hosted-qualified. |
 | **D3** (recording cleanup) | Undecided. Deployed SQL refuses it in a suspended clinic. |
 | **D4** (who may place a legal hold on a closed clinic) | Undecided. Nobody can today. |
 | **D5** (patient copies while the clinic is closed) | Undecided. WP3's custodial route is a candidate path, but it is not the decision. |
