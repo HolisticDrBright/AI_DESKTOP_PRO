@@ -79,6 +79,13 @@ exactly these):
 - `scripts/synthetic-care-release.mjs` `buildCareIdentityBundle`, esbuild, unminified.
 - It is built from `8bfe2349`, with the builder at the same commit.
 - Result: 1,980,414 bytes, SHA-256 `24a65189e2351e7d0b4911944e271f5c09849689e23ca67be05650375979ff8f`.
+- **Correction (later the same day): this value is not a valid pin.**
+  - The unminified bundle keeps one `// <path>` comment per module, relative to the build root.
+  - I built it through a symlinked `node_modules` from a deep scratch directory. The same source built from
+    `/home/user/<dir>` gives `546d962f…` (1,950,986 bytes).
+  - The reviewed digest must come from a clean `npm ci` build of the reviewed commit.
+  - `scripts/hosted-program-acceptance.mjs` refuses `reviewed_bundle_unpinned` until that digest is recorded
+    (`docs/hosted-program-evidence-observation-2026-10-17.md` F4).
 
 No SQL file changed between the kit's previous Desktop commit `666fc96f` and `8bfe2349`.
 
@@ -87,7 +94,7 @@ No SQL file changed between the kit's previous Desktop commit `666fc96f` and `8b
 | Target | What source pins or reports | Status for the pair |
 | --- | --- | --- |
 | Fly `expo-sunlit-resonance-4543` (the V2 API every hosted and device case reaches) | Reported: `/health` answers `release: null`. The running machine predates the exact-source control (`expo/docs/fly-synthetic-source-provenance-2026-10-16.md`). | **Refused.** `release_missing`. The source half of the defect is fixed on V2 (§6); the deployment half is §7 steps 1 to 4. |
-| `wxv734oi12`, stack `ai-clinical-core-synthetic-staging-authenticated-api` (account `588966314750`), the Desktop clinical API the Fly env names (`expo/fly.toml` `CLINICAL_AWS_API_ORIGIN`) | Pinned in source: Desktop `5b6f8aa45347d33757ac9bfb34658e2e09daefd3` and mobile `11197e52…`, ZIP `644967ee…`, key `clinical-core/authenticated-api/care-release/<desktop>/<zip>.zip` (`scripts/verify-deployed-synthetic-care.mjs:13-17`) | **Stale.** `5b6f8aa4` (2026-10-07) is an ancestor of the pair, and the identity bundle its source builds (`93dd1c70d494f41938b0bf772eae4a3cfa1361726d12747b71049b9625e91ec5`, 1,878,599 bytes) differs from the pair's (§2). The stack already advertises its source in `LambdaCodeKey`, so the source contract is present. Only the deployment is stale. |
+| `wxv734oi12`, stack `ai-clinical-core-synthetic-staging-authenticated-api` (account `588966314750`), the Desktop clinical API the Fly env names (`expo/fly.toml` `CLINICAL_AWS_API_ORIGIN`) | Pinned in source: Desktop `5b6f8aa45347d33757ac9bfb34658e2e09daefd3` and mobile `11197e52…`, ZIP `644967ee…`, key `clinical-core/authenticated-api/care-release/<desktop>/<zip>.zip` (`scripts/verify-deployed-synthetic-care.mjs:13-17`) | **Stale.** `5b6f8aa4` (2026-10-07) is an ancestor of the pair, and the identity bundle its source builds (`93dd1c70d494f41938b0bf772eae4a3cfa1361726d12747b71049b9625e91ec5`, 1,878,599 bytes) differs from the pair's (§2; both were built from the same scratch layout, so the comparison holds, but neither digest is a pin). The stack already advertises its source in `LambdaCodeKey`, so the source contract is present. Only the deployment is stale. |
 | The 12 qualification candidate stacks (`src/server/clinical-core/qualification-target-manifest.ts:60-67`) | Each publishes Output and Parameter `SourceCommit`. The manifest's `sourceCommit` must equal HEAD. | Unobserved by me. Reported as advertising older commits. `observeQualificationTarget` refuses each stack whose `SourceCommit` differs from the manifest (`qualification-target-manifest.ts:215,222`; `qualification-target-observation.ts:36-37,59`). |
 | Production patient API (root `Dockerfile` image) | `/health` reports `patient-api-release/1`, and CI checks the image against itself. | Not part of the synthetic qualification. Verify it with `--kind=patient-api` before any claim about it. |
 
@@ -270,7 +277,8 @@ Stop at any step whose precondition fails. **Each checkpoint names what to recor
      release is a reviewed source change of those pins, not a hand edit at deploy time.
    - The template lacks six routes (`CARE_RELEASE.absentRoutes`) that a code-only update cannot add. Decide first
      whether the hosted cases need them.
-   - Its identity bundle must be `24a65189…` (§2).
+   - Its identity bundle digest is the one a clean `npm ci` build of the reviewed commit produces, recorded first in a
+     reviewed change. It is not `24a65189…` (§2 correction).
    - **This step needs Brandon's approval; it is an AWS write.**
 7. **Checkpoint Q0, if the qualification target is used.**
    - Record each candidate stack's `SourceCommit` and template hash.

@@ -78,6 +78,8 @@ The five Desktop files above, run together on the pair: 75 passed, 3 expected fa
 - The Fly API was reported answering `release:null`.
 - The Desktop synthetic API it calls (`wxv734oi12`) is pinned in source to Desktop `5b6f8aa4`. The identity bundle
   `5b6f8aa4`'s source builds (`93dd1c70…`) differs from the pair's (`24a65189…`), built here without credentials.
+  **Correction:** both digests depend on the build root through a symlinked `node_modules`. The comparison holds,
+  since both came from the same layout, but neither digest is a pin (packet §2).
 - That stack already advertises its source in `LambdaCodeKey`, so there is no source change there, only the hand-back.
 
 Details: `expo/docs/claude-release-identity-2026-10-17.md` and the packet §3.
@@ -157,6 +159,7 @@ Packet: `docs/codex-hosted-qualification-packet-2026-10-17.md`.
 - **The identity bundle builds:**
   - `8bfe2349`: `24a65189…`, 1,980,414 bytes.
   - `5b6f8aa4`: `93dd1c70…`, 1,878,599 bytes.
+  - Both were built from the same scratch layout; they are layout-dependent and not pins (packet §2 correction).
 
 **V2 at `dd704abf`** (the code pair):
 
