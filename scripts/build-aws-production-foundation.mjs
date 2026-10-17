@@ -157,6 +157,11 @@ export function buildProductionFoundation(source) {
       Required: false,
       StringAttributeConstraints: { MinLength: "4", MaxLength: "4" },
     });
+    // Preserve the observed production tier and first-factor policy when
+    // constructing a review candidate. This artifact is not itself approved
+    // for reapplication to the drifted live pools.
+    pool.UserPoolTier = "PLUS";
+    pool.Policies.SignInPolicy = { AllowedFirstAuthFactors: ["PASSWORD"] };
     pool.UserPoolAddOns = { AdvancedSecurityMode: "ENFORCED" };
     pool.EmailConfiguration = {
       EmailSendingAccount: "DEVELOPER",

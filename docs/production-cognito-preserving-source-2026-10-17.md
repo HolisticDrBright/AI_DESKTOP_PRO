@@ -1,0 +1,19 @@
+# Production Cognito preserving-source candidate — review only
+
+This increment advances production registration readiness without touching AWS. It does **not** repair either live pool, authorize a change set, verify email delivery, enable PHI or make the apps commercial-ready.
+
+## Read-only observation
+
+On 2026-10-17, an assumed-role read in account `173535830222`, region `us-east-2`, confirmed that both production pools still report `AutoVerifiedAttributes` absent although their deployed CloudFormation template declares `email`. The existing read-only checker returned `status: drift`. Both live pools use the Plus tier, password-only first sign-in, a one-day temporary-password period, the reviewed SES sender/code copy and enforced threat protection. The consumer pool has optional MFA; the workforce pool has MFA on. Neither setting was changed.
+
+The production source generator already modeled email verification, SES, reviewed code and invitation copy, threat protection, MFA and the one-day password policy. It omitted `UserPoolTier=PLUS` and `Policies.SignInPolicy.AllowedFirstAuthFactors=[PASSWORD]`. Applying a generated template without reviewing those omissions could lose intentional live settings. This source increment adds them to the generated candidate and makes its validator refuse absent or altered values. It also rejects adding the obsolete `AdminCreateUserConfig.UnusedAccountValidityDays` alongside `PasswordPolicy.TemporaryPasswordValidityDays=1`: the [CloudFormation password-policy reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-cognito-userpool-passwordpolicy.html) says those two fields cannot be set together. The live API's legacy `UnusedAccountValidityDays=1` observation is recorded, not copied into the candidate.
+
+## Evidence and boundaries
+
+- The new test failed before the source repair because the generated workforce pool lacked `UserPoolTier`. It passes afterward and rejects deletion of the tier, sign-in factor policy, one-day password window or introduction of the conflicting legacy field for either pool.
+- `npm run test:aws-production-foundation`, `npm run build:aws-production-foundation` and `npm run check:aws-production-foundation` pass. AWS `ValidateTemplate` accepted the generated 40,819-byte template as syntax, not as a safe live update. Its SHA-256 is `dd3efc28f1b60b3c67bd3b560dc5bbfa674557b1a93ca82a6e4d3e90669e6cc7` over the generated file's exact bytes.
+- The read-only checker still reports live drift. No production registration, resend or reset was attempted, so delivery remains unverified.
+
+## Next reviewed operator step
+
+Follow `handoffs/production-cognito-preservation-review-2026-10-17.md` in the Codex workspace. Freshly inspect the exact deployed template, both live pools and app clients. Compare **the generated production candidate**, not only the repository's synthetic base template, against the deployed template and every intentional live setting. An ordinary no-op CloudFormation change cannot prove repair because the deployed template already declares email verification. [AWS warns](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPool.html) that omitted `UpdateUserPool` options reset to defaults. Choose and review a preserving write method and rollback; obtain separate owner approval for that exact production write. After an approved repair, read both pools again and run fictional registration, resend and reset to the owner-controlled inbox before calling the hosted registration case passed. Keep PHI and real patient data off throughout.

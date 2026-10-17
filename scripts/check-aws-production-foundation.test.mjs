@@ -28,6 +28,13 @@ const approvedCode = "Your AI Longevity Pro code is {####}. Enter it in the app 
 const approvedInvite = "Your sign-in username is {username} and your temporary password is {####}. Sign in and change the password when prompted.";
 for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
   const pool = production.Resources[poolName].Properties;
+  assert.equal(pool.UserPoolTier, "PLUS", `${poolName} must preserve its observed Plus tier`);
+  assert.deepEqual(pool.Policies?.SignInPolicy?.AllowedFirstAuthFactors, ["PASSWORD"],
+    `${poolName} must preserve password-first sign-in`);
+  assert.equal(pool.Policies?.PasswordPolicy?.TemporaryPasswordValidityDays, 1,
+    `${poolName} must preserve the one-day temporary password window`);
+  assert.equal(pool.AdminCreateUserConfig?.UnusedAccountValidityDays, undefined,
+    `${poolName} must not combine the obsolete validity field with the password policy`);
   assert.equal(pool.EmailConfiguration?.EmailSendingAccount, "DEVELOPER");
   assert.equal(pool.EmailConfiguration?.SourceArn?.["Fn::Sub"],
     "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/ailongevitypro.app");
@@ -40,6 +47,16 @@ for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
   const stale = structuredClone(production);
   stale.Resources[poolName].Properties.VerificationMessageTemplate.EmailMessage = "Outdated {####}";
   assert(validateProductionFoundation(stale).some((error) => error.includes(`${poolName} approved code message`)));
+  for (const [change, expected] of [
+    [draft => { delete draft.Resources[poolName].Properties.UserPoolTier; }, "Plus tier"],
+    [draft => { delete draft.Resources[poolName].Properties.Policies.SignInPolicy; }, "password-first sign-in"],
+    [draft => { draft.Resources[poolName].Properties.Policies.PasswordPolicy.TemporaryPasswordValidityDays = 7; }, "one-day temporary password"],
+    [draft => { draft.Resources[poolName].Properties.AdminCreateUserConfig.UnusedAccountValidityDays = 1; }, "obsolete validity field"],
+  ]) {
+    const changed = structuredClone(production);
+    change(changed);
+    assert(validateProductionFoundation(changed).some(error => error.includes(`${poolName} ${expected}`)));
+  }
 }
 assert.equal(production.Resources.WorkforceUserPool.Properties.AdminCreateUserConfig.InviteMessageTemplate.EmailMessage, approvedInvite);
 const staleInvite = structuredClone(production);

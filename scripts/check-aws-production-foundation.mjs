@@ -125,6 +125,13 @@ export function validateProductionFoundation(template) {
   for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
     const pool = resources[poolName]?.Properties;
     assert(errors, pool?.DeletionProtection === "ACTIVE", `${poolName} deletion protection is required`);
+    assert(errors, pool?.UserPoolTier === "PLUS", `${poolName} Plus tier must be preserved`);
+    assert(errors, JSON.stringify(pool?.Policies?.SignInPolicy?.AllowedFirstAuthFactors) === JSON.stringify(["PASSWORD"]),
+      `${poolName} password-first sign-in must be preserved`);
+    assert(errors, pool?.Policies?.PasswordPolicy?.TemporaryPasswordValidityDays === 1,
+      `${poolName} one-day temporary password window must be preserved`);
+    assert(errors, pool?.AdminCreateUserConfig?.UnusedAccountValidityDays === undefined,
+      `${poolName} obsolete validity field must not be combined with TemporaryPasswordValidityDays`);
     assert(errors, pool?.UserPoolAddOns?.AdvancedSecurityMode === "ENFORCED", `${poolName} threat protection must be enforced`);
     assert(errors, !pool?.Schema?.some((attribute) => attribute.Name === "synthetic_attested"), `${poolName} must not contain a synthetic-only claim`);
     const schemaNames = Array.isArray(pool?.Schema) ? pool.Schema.map((attribute) => attribute.Name) : [];
