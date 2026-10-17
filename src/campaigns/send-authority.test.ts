@@ -219,6 +219,30 @@ describe('an outage or a missing signal holds, and never reads as "not revoked"'
     expect(campaignMail(e)).toHaveLength(1);
   });
 
+  it('a revocation still being decided (pending) holds for the pass and records nothing: declined, the sequence just resumes', async () => {
+    const { e, ask } = await setUp();
+    await subscribe(e, 'avery@fictional.example');
+    e.revocations.pend(ADMIN.subject);
+    expect((await e.pass()).held).toBe(1);
+    expect(campaignMail(e)).toHaveLength(0);
+    expect((await sequenceOf(ask)).hold ?? null).toBeNull();
+    // The decision was declined, or lapsed: nothing to review, and the next pass sends.
+    e.revocations.lapse(ADMIN.subject);
+    e.advance(20 * 60_000); await e.pass();
+    expect(campaignMail(e)).toHaveLength(1);
+  });
+
+  it('a pending decision that takes effect becomes a recorded hold at the next check', async () => {
+    const { e, ask } = await setUp();
+    await subscribe(e, 'avery@fictional.example');
+    e.revocations.pend(ADMIN.subject);
+    await e.pass();
+    e.revocations.revoke(ADMIN.subject);
+    e.advance(20 * 60_000); await e.pass();
+    expect(campaignMail(e)).toHaveLength(0);
+    expect((await sequenceOf(ask)).hold).toMatchObject({ reason: 'authority_revoked' });
+  });
+
   it('no signal configured for the sender: no practice sends, and the pass says why', async () => {
     const e = fictionalEngine({ staffRevocation: 'unconfigured' });
     const { ask, seq } = await practice(e, ADMIN, 'fictional-clinic', 'mail.fictional-clinic.example');

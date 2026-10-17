@@ -26,6 +26,18 @@ import { IDENTITY_REVOCATION_REASONS, identityRevocationDecisionRequest, identit
  *      the work list until it is confirmed). The campaign API refuses every staff operation for a published subject.
  * A provider outage therefore never delays the refusal, and a database refusal never depends on the provider.
  *
+ * The campaign signal's timing (staff-revocation-signal/2). The campaign engine never reads the clinical database, so
+ * between the commit in step 2 and the publication in step 3 an old campaign token would still be admitted there. So a
+ * decision that can take effect (a proposal, an approval) also starts a PENDING signal for the subject as it begins:
+ *   - it is started before the database call and never awaited by it, so a DynamoDB outage never delays the clinical
+ *     refusal; on a healthy table it lands before the commit, and the campaign engine refuses from that moment;
+ *   - took effect: step 3 publishes the final item over it;
+ *   - definitely did not take effect (awaiting a second operator, declined, a named database refusal): it is released;
+ *   - unknown (the database did not answer): it is left to lapse at its deadline, refusing until then.
+ * What this cannot close, stated and reproduced in revocation-signal-timing.database.test.ts: a pending signal that
+ * lands after the commit, or not at all, leaves the gap open until the final publication; and a final publication that
+ * keeps failing past the pending deadline reopens it until a reconciliation succeeds.
+ *
  * Nothing here logs, stores or returns a token, a password, an email or a patient datum. The provider username is the
  * workforce subject (an identifier), and provider errors are reduced to a closed code.
  */
@@ -67,9 +79,17 @@ export class WorkforceProviderFailure extends Error {
 }
 /** The workforce identity provider, one step at a time. A step that cannot be confirmed throws WorkforceProviderFailure. */
 export interface WorkforceIdentityProvider { revoke(step: ProviderStep, username: string): Promise<void> }
-/** The campaign staff revocation signal's writer: one never-overwritten item per revoked workforce subject. A
- * publication that cannot be confirmed throws WorkforceProviderFailure. */
-export interface StaffRevocationSignalPublisher { publish(subject: string, revocationId: string): Promise<void> }
+/** The campaign staff revocation signal's writer (staff-revocation-signal/2): a pending item while a decision is being
+ * made, then one never-overwritten revoked item per subject. A write that cannot be confirmed throws
+ * WorkforceProviderFailure. */
+export interface StaffRevocationSignalPublisher {
+  /** The decision has taken effect: the final item. Never overwrites or removes a revoked one. */
+  publish(subject: string, revocationId: string): Promise<void>;
+  /** A decision that can take effect is starting: a pending item that lapses by itself. Never replaces a revoked one. */
+  hold(subject: string, decisionId: string): Promise<void>;
+  /** The decision definitely did not take effect: remove this decision's pending item, and nothing else. */
+  release(subject: string, decisionId: string): Promise<void>;
+}
 
 /** The Cognito adapter, scoped to the ONE workforce pool it was built for: the pool never comes from a caller. It refuses
  * to be built for a pool it is told belongs to someone else (the operator pool, the consumer pool). Both calls are
@@ -182,6 +202,17 @@ export function createWorkforceIdentityRevocation(input: {
     }
     return { summary, provider: attempts };
   };
+  /** The pending signal for a decision that can take effect. Started, never awaited by the decision itself. */
+  const beginPending = (subject: string, decisionId: string): Promise<void> | null =>
+    input.signal ? input.signal.hold(subject, decisionId).catch(() => undefined) : null;
+  /** After the decision. Waits for the pending write to settle first, so a release can never land before it. */
+  const endPending = async (pending: Promise<void> | null, subject: string, decisionId: string, outcome: 'took_effect' | 'did_not' | 'unknown') => {
+    if (!pending || !input.signal) return;
+    await pending;
+    if (outcome === 'did_not') await input.signal.release(subject, decisionId).catch(() => undefined);
+  };
+  /** A database answer that names a refusal is definite: nothing was decided. No answer at all is unknown. */
+  const outcomeOf = (error: unknown) => error instanceof WorkforceIdentityRevocationError && error.code !== 'service_unavailable' ? 'did_not' as const : 'unknown' as const;
   const fenced = async <T>(subject: string, work: (acknowledgement?: string) => Promise<T>): Promise<T> => {
     if (!input.fence) return work();
     let begun: Awaited<ReturnType<RevocationFence['begin']>>;
@@ -210,8 +241,13 @@ export function createWorkforceIdentityRevocation(input: {
       const request = revocationRequest.safeParse(body);
       if (!request.success) throw new WorkforceIdentityRevocationError('request_invalid');
       const { requestId, identitySubject, reason } = request.data;
-      const summary = await fenced(identitySubject, acknowledgement => call(
-        'select clinical_private.propose_workforce_identity_revocation($1,$2,$3,$4) as r', [operator, requestId, identitySubject, reason], acknowledgement));
+      const pending = beginPending(identitySubject, requestId);
+      let summary: RevocationSummary;
+      try {
+        summary = await fenced(identitySubject, acknowledgement => call(
+          'select clinical_private.propose_workforce_identity_revocation($1,$2,$3,$4) as r', [operator, requestId, identitySubject, reason], acknowledgement));
+      } catch (error) { await endPending(pending, identitySubject, requestId, outcomeOf(error)); throw error; }
+      await endPending(pending, identitySubject, requestId, summary.state === 'revoked' ? 'took_effect' : 'did_not');
       if (summary.state !== 'revoked' || !summary.revocationId || summary.provider === 'complete') return { summary, provider: [] };
       return signOut(operator, summary.revocationId, identitySubject, summary);
     },
@@ -223,9 +259,17 @@ export function createWorkforceIdentityRevocation(input: {
       const pending = request.data.decision === 'approve' ? await current(operator, request.data.proposalId) : undefined;
       const run = (acknowledgement?: string) => call('select clinical_private.decide_workforce_identity_revocation($1,$2,$3) as r',
         [operator, request.data.proposalId, request.data.decision], acknowledgement);
-      // An approval disables the identity, so it is fenced like the proposal; the subject comes from the work list.
+      // An approval disables the identity, so it is fenced like the proposal, and holds the campaign signal pending
+      // while it is decided; the subject comes from the work list.
       const subject = pending?.providerUsername ?? null;
-      const summary = request.data.decision === 'approve' && subject ? await fenced(subject, run) : await run();
+      const approving = request.data.decision === 'approve' && subject ? subject : null;
+      const holding = approving ? beginPending(approving, request.data.proposalId) : null;
+      let summary: RevocationSummary;
+      try { summary = approving ? await fenced(approving, run) : await run(); } catch (error) {
+        if (approving) await endPending(holding, approving, request.data.proposalId, outcomeOf(error));
+        throw error;
+      }
+      if (approving) await endPending(holding, approving, request.data.proposalId, summary.state === 'revoked' ? 'took_effect' : 'did_not');
       if (summary.state !== 'revoked' || !summary.revocationId || summary.provider === 'complete') return { summary, provider: [] };
       const username = subject ?? (await current(operator, summary.proposalId))?.providerUsername;
       if (!username) return { summary, provider: [] };

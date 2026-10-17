@@ -102,7 +102,7 @@ function parts() {
     calls.push(`${SIGNAL_STEP}:${subject}`);
     if (!up.signal) throw new WorkforceProviderFailure('unavailable');
     if (!published.has(subject)) published.set(subject, revocationId);
-  } };
+  }, hold: async () => {}, release: async () => {} };
   return { calls, up, published, provider, signal };
 }
 const practitioner = async () => {

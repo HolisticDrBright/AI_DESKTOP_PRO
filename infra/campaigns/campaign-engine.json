@@ -234,6 +234,10 @@
         "TableName": "alp-campaign-staff-revocations",
         "BillingMode": "PAY_PER_REQUEST",
         "DeletionProtectionEnabled": true,
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        },
         "AttributeDefinitions": [
           {
             "AttributeName": "subject",

@@ -80,6 +80,10 @@ holds no token, email or name. It is written with `attribute_not_exists`:
 The two code paths share no module. An integration test runs the writer and the reader against one fictional table:
 `src/integration/staff-revocation-signal.test.ts`.
 
+**Superseded in part (2026-10-17): staff-revocation-signal/2.** The revocation item above is unchanged. A second,
+pending item under `pending#<subject>` is now written as the decision starts, so an old token is refused from before
+the commit. See `docs/revocation-signal-timing-2026-10-17.md`, which also states what still cannot be closed.
+
 ### The successor: the signal becomes a recorded step
 
 `infra/aws-clinical-core/source-candidates/workforce-revocation-campaign-signal.sql` (BLOCKED), with a preserving

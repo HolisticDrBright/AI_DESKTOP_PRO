@@ -28,7 +28,8 @@ export type AuthorityCheck = { state: 'clear' } | { state: 'unavailable' } | { s
 /**
  * Whether a queued send may go to SES now. Every recorded login (the record's and each email's approver) is re-read
  * from the revocation signal; nothing is cached between calls. A held record stays held whatever the signal says.
- * An unconfigured or unreadable signal is `unavailable`: the caller sends nothing and records nothing.
+ * An unconfigured or unreadable signal, or a revocation still being decided (`pending`), is `unavailable`: the caller
+ * sends nothing and records nothing.
  */
 export async function checkSendAuthority(deps: Pick<EngineDeps, 'staffRevocation'>, record: Queued, templates: EmailTemplate[], at: string): Promise<AuthorityCheck> {
   if (record.hold) return { state: 'held', hold: record.hold };
@@ -38,15 +39,18 @@ export async function checkSendAuthority(deps: Pick<EngineDeps, 'staffRevocation
   if (!deps.staffRevocation) return { state: 'unavailable' };
   const signal = deps.staffRevocation;
   const subjects = unique([...record.authorizedBy.map(a => a.subject), ...templates.map(t => t.approval!.by.subject!)]);
-  let revoked: Set<string>;
+  let revoked: Set<string>, pending: boolean;
   try {
-    const answers = await Promise.all(subjects.map(async subject => [subject, await signal.revoked(subject)] as const));
-    revoked = new Set(answers.filter(([, r]) => r).map(([s]) => s));
+    const answers = await Promise.all(subjects.map(async subject => [subject, await signal.status(subject)] as const));
+    revoked = new Set(answers.filter(([, s]) => s === 'revoked').map(([s]) => s));
+    pending = answers.some(([, s]) => s === 'pending');
   } catch { return { state: 'unavailable' }; }
   const authorities = record.authorizedBy.filter(a => revoked.has(a.subject));
   if (authorities.length) return { state: 'held', hold: { reason: 'authority_revoked', at, persons: unique(authorities.map(a => a.personId)) } };
   const approvals = templates.filter(t => revoked.has(t.approval!.by.subject!));
   if (approvals.length) return { state: 'held', hold: { reason: 'approval_revoked', at, persons: unique(approvals.map(t => t.approval!.by.personId)) } };
+  // A revocation being decided right now: nothing is sent, and nothing is recorded, so a declined one leaves no trace.
+  if (pending) return { state: 'unavailable' };
   return { state: 'clear' };
 }
 
