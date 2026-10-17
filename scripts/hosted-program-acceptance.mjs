@@ -30,13 +30,19 @@ import {PROGRAM_TARGET, HostedObservationError, createAwsCliReader, createWriteL
   classifyWrite} from './hosted-program-acceptance-observation.mjs';
 
 /** The reviewed Desktop half of the selected code pair (docs/codex-hosted-qualification-packet-2026-10-17.md §1-2).
- * The bundle digest is the packet's build at that commit; a new pair is a reviewed source change of these values. */
+ * A new pair is a reviewed source change of these values.
+ *
+ * The identity bundle digest is deliberately unpinned. The unminified bundle keeps a `// <path>` comment per module,
+ * relative to the build root, so its bytes depend on where `node_modules` sits: the same `8bfe2349` source gave
+ * `24a65189…` (1,980,414 bytes) from a deep scratch root and `546d962f…` (1,950,986 bytes) from `/home/user/<dir>`,
+ * both through a symlinked `node_modules`. Neither is the digest of a reviewed build. Until a clean `npm ci` build
+ * of the reviewed commit records it here in a reviewed change, every artifact refuses `reviewed_bundle_unpinned`. */
 export const REVIEWED_SOURCE_PAIR = Object.freeze({
   contract: 'desktop-reviewed-source-pair/1',
   desktopCommit: '8bfe2349af869cbc0d93712fe6050300bb4ce4ab',
   v2Commit: 'dd704abf820de5556c5e6da9dcb39495c138fa87',
-  identityBundleSha256: '24a65189e2351e7d0b4911944e271f5c09849689e23ca67be05650375979ff8f',
-  identityBundleBytes: 1980414,
+  identityBundleSha256: null,
+  identityBundleBytes: null,
 });
 
 export class AcceptanceRefusedError extends Error {
@@ -73,7 +79,8 @@ export function verifyReviewedArtifact(zip, pair = REVIEWED_SOURCE_PAIR) {
   const entries = storedEntries(zip, fail);
   if (entries.length !== 2 || entries[0].name !== 'index.js' || entries[1].name !== 'release.json') fail('reviewed_artifact_invalid');
   const bundle = Buffer.from(entries[0].data);
-  if (bundle.length !== pair?.identityBundleBytes || sha256(bundle) !== pair?.identityBundleSha256) fail('reviewed_bundle_mismatch');
+  if (!HEX64.test(pair?.identityBundleSha256 ?? '') || !Number.isInteger(pair?.identityBundleBytes)) fail('reviewed_bundle_unpinned');
+  if (bundle.length !== pair.identityBundleBytes || sha256(bundle) !== pair.identityBundleSha256) fail('reviewed_bundle_mismatch');
   let release;
   try {release = JSON.parse(entries[1].data.toString('utf8'));} catch {fail('reviewed_artifact_invalid');}
   if (release?.desktop?.commit !== pair.desktopCommit) fail('reviewed_artifact_source_mismatch');

@@ -153,11 +153,12 @@ test('the reviewed source pair is the packet code pair, and a substituted pair i
   const m = need();
   assert.equal(m.REVIEWED_SOURCE_PAIR.desktopCommit, '8bfe2349af869cbc0d93712fe6050300bb4ce4ab');
   assert.equal(m.REVIEWED_SOURCE_PAIR.v2Commit, 'dd704abf820de5556c5e6da9dcb39495c138fa87');
-  assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleSha256, '24a65189e2351e7d0b4911944e271f5c09849689e23ca67be05650375979ff8f');
-  assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleBytes, 1980414);
+  // Unpinned until a clean `npm ci` build of the reviewed commit records it: a layout-dependent local build is no pin.
+  assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleSha256, null);
+  assert.equal(m.REVIEWED_SOURCE_PAIR.identityBundleBytes, null);
   assert.ok(Object.isFrozen(m.REVIEWED_SOURCE_PAIR));
   const {binding} = await bind({}, {pair: m.REVIEWED_SOURCE_PAIR});
-  assert.ok(binding.refusals.includes('reviewed_bundle_mismatch'), 'a fictional artifact is not the pair bundle');
+  assert.ok(binding.refusals.includes('reviewed_bundle_unpinned'), 'no artifact binds while the pair bundle is unpinned');
 });
 
 test('only fixed read operations reach the AWS reader; any other operation is refused', async () => {
