@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import type { NoticeEmitter } from "../notifications/notification-dispatcher";
+import { tokenWindowFromClaims } from "./ordinary-suspension-window";
 import type { NotificationSettingsService } from "../notifications/notification-settings-service";
 import { PatientNotificationError } from "../notifications/patient-notification-ledger";
 import { createHash } from "node:crypto";
@@ -1324,9 +1325,13 @@ function contextFromClaims(
     identitySubject: subject,
     purpose: route.purpose,
   };
-  return boundary === "synthetic"
-    ? { ...base, environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false, realPatientData: false }
-    : { ...base, environment: "production-clinical", dataClassification: "clinical_phi", containsPhi: true, realPatientData: true, productionBound: true };
+  if (boundary === "synthetic") {
+    return { ...base, environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false, realPatientData: false };
+  }
+  // The verified token's own iat/exp, carried only for the BLOCKED ordinary-suspension window; never a header or body value.
+  const tokenWindow = tokenWindowFromClaims(claims as Record<string, unknown>);
+  return { ...base, environment: "production-clinical", dataClassification: "clinical_phi", containsPhi: true, realPatientData: true,
+    productionBound: true, ...(tokenWindow ? { tokenWindow } : {}) };
 }
 
 function parseBody(event: ApiGatewayV2Event): Record<string, unknown> {

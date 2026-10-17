@@ -41,6 +41,7 @@
     "qualify:synthetic-invitation-native": "node scripts/qualify-synthetic-invitation-native.mjs",
     "qualify:consent-decision-native": "node scripts/qualify-consent-decision-native.mjs",
     "qualify:emergency-revocation-native": "node scripts/qualify-emergency-revocation-native.mjs",
+    "qualify:ordinary-suspension-window-native": "node scripts/qualify-ordinary-suspension-window-native.mjs",
     "qualify:care-messaging-current-native": "node scripts/qualify-care-messaging-current-native.mjs",
     "qualify:workforce-onboarding-native": "node scripts/qualify-workforce-onboarding-native.mjs",
     "build:clinic-preserving-transition": "node scripts/build-clinic-preserving-transition.mjs",

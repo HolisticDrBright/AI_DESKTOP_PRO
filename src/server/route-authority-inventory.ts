@@ -134,9 +134,12 @@ const SUSPENDED_DECISION = 'Brandon with Codex: under legacy claims the clinical
   + '(set_request_context). It admits workforce consent management and every consumer request at that entry. Of the workforce '
   + 'consent-management paths, the retention service and assigned privacy operators run in a closed clinic; recording cleanup refuses '
   + 'itself there (its own operator check); and a practitioner\'s own consent decision is refused only by the separate BLOCKED '
-  + 'workforce-consent-decision-clinic-status.sql. Apply them, or require database_current before any clinic can be suspended; whether an '
-  + 'existing session should outlive a suspension is an open owner decision. docs/desktop-onboarding-authority-2026-10-16.md, '
-  + 'docs/suspended-clinic-custody-2026-10-16.md';
+  + 'workforce-consent-decision-clinic-status.sql. The owner ruled that successor out for ordinary suspension (it ends every existing '
+  + 'session at once) and chose: an already-valid session continues read-only until its own token expires, a refreshed token does not. '
+  + 'The BLOCKED workforce-ordinary-suspension-window.sql (on the emergency revocation) enforces that for the callers that send the '
+  + 'verified token\'s iat/exp (the production Desktop RPC, behind its own release switch) and refuses every caller that does not; '
+  + 'until it is applied, or database_current is required, this cell stays a gap. docs/desktop-onboarding-authority-2026-10-16.md, '
+  + 'docs/suspended-clinic-custody-2026-10-16.md, docs/ordinary-suspension-window-2026-10-17.md';
 const SYNTHETIC_SUSPENDED_DECISION = 'Brandon with Codex: the synthetic-staging boundary (fictional rows, no PHI) reads no clinic status, so a '
   + 'session already in a suspended or archived synthetic clinic still issues patient invitations, and one issued before the suspension is '
   + 'still claimed into a verified connection. The production successor does not reach this schema. The separate BLOCKED successor '

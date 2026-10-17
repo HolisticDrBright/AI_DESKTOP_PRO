@@ -357,6 +357,9 @@ const ONBOARDING_REJECTION_CATEGORY: Readonly<Record<string, ClinicalCoreDatabas
   workforce_custodial_access_refused: "identity_refused",
   // The BLOCKED membership-fence guard: an identity or membership change that did not begin the fence.
   membership_fence_required: "operation_refused",
+  // The BLOCKED ordinary-suspension window (workforce-ordinary-suspension-window.sql): a declared write by a session
+  // admitted read-only into a suspended clinic. Held, not failed.
+  ordinary_suspension_write_held: "operation_refused",
 };
 const ONBOARDING_REJECTION_TOKEN = new RegExp(`(?:^|\\bERROR:\\s*)(${Object.keys(ONBOARDING_REJECTION_CATEGORY).join("|")})\\b`);
 

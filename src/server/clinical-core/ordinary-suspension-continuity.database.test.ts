@@ -23,6 +23,8 @@ import { classifyDatabaseRejection } from './rds-data-database';
  * clinic, pool, subject, purpose, environment, classification), none of them a time, and an ordinary clinic records no
  * time it was suspended. So "until its expiry" and "a refresh must not extend it" cannot be enforced from current
  * authority data, and no continuity successor is built (docs/clinic-continuity-emergency-revocation-2026-10-16.md §4).
+ * These five stages still have no such contract. The BLOCKED workforce-ordinary-suspension-window.sql (17 October) adds it
+ * on the emergency revocation, and ordinary-suspension-window.database.test.ts tests it; it is not one of these stages.
  */
 const read = (path: string) => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 const STATUS = 'infra/aws-clinical-core/source-candidates/legacy-claims-clinic-status.sql';

@@ -12,6 +12,7 @@ import {
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import type { MembershipFenceChange, MembershipFenceWriter } from "./membership-fence";
+import { ORDINARY_SUSPENSION_WINDOW_RELEASE, productionDesktopAccess } from "./ordinary-suspension-window";
 
 export type ProductionRequestContext = ProductionClinicalRequestContext;
 
@@ -31,6 +32,13 @@ export type ProductionDesktopOptions = {
    * `membership_fence_unavailable` without it. The legacy path uses it when present and is otherwise unchanged.
    */
   membershipFence?: MembershipFenceWriter;
+  /**
+   * The ordinary-suspension window (`ordinary-suspension-window.ts`, BLOCKED). `blocked`: the seven-argument entry, as
+   * deployed. `qualification`: the ten-argument entry with the verified token's `iat`/`exp` and the operation's access,
+   * which exists only once workforce-ordinary-suspension-window.sql is applied. A request without token evidence is then
+   * refused before the database.
+   */
+  suspensionWindow?: "blocked" | "qualification";
 };
 
 /** The RPCs that change an existing membership's role or status: each runs only under a begun membership fence. */
@@ -383,21 +391,24 @@ export function createAwsProductionDesktopAdapter(
     },
     async execute(context, request) {
       assertContext(context);
+      const release = options.suspensionWindow ?? ORDINARY_SUSPENSION_WINDOW_RELEASE;
+      if (release === "qualification" && !context.tokenWindow) throw new ProductionDesktopError("identity_refused");
+      const entry = (r: DesktopCompatibilityRequest): RequestEntry => ({ release, access: productionDesktopAccess(r) });
       if (request.kind === "rpc" && CORE_RPCS.has(request.functionName)) {
         const writer = MEMBERSHIP_FENCED_RPCS.has(request.functionName) ? options.membershipFence : undefined;
-        if (!writer) return run(database, context, (tx) => executeCoreRpc(tx, context, request.functionName, request.args));
+        if (!writer) return run(database, context, (tx) => executeCoreRpc(tx, context, request.functionName, request.args), entry(request));
         const fenced: { change: MembershipFenceChange | null } = { change: null };
         try {
           return await run(database, context, async (tx) => {
             await beginMembershipChange(tx, request.args, writer, fenced);
             return executeCoreRpc(tx, context, request.functionName, request.args);
-          });
+          }, entry(request));
         } finally {
           if (fenced.change) await writer.settle(fenced.change);
         }
       }
       if (request.kind === "select" && CORE_SELECTS.has(request.table)) {
-        return run(database, context, (tx) => executeCoreSelect(tx, context, request.table, request.query));
+        return run(database, context, (tx) => executeCoreSelect(tx, context, request.table, request.query), entry(request));
       }
       try {
         return await fallback.execute(context, request);
@@ -1610,18 +1621,29 @@ async function executeCoreSelect(
   throw new ProductionDesktopError("operation_refused");
 }
 
+/** How a request enters the database: as deployed, or with the window's evidence (ordinary-suspension-window.ts). */
+type RequestEntry = { release: "blocked" | "qualification"; access: "read" | "write" };
+
 async function run<T>(
   database: ClinicalCoreDatabase,
   context: ProductionRequestContext,
   work: (tx: ClinicalCoreTransaction) => Promise<T>,
+  entry: RequestEntry,
 ): Promise<T> {
   try {
     return await database.transaction(async (tx) => {
-      await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)", [
+      const values = [
         clinicalUuid(context.actorPersonId), clinicalUuid(context.organizationId),
         context.identityPool, context.identitySubject, context.purpose,
         context.environment, context.dataClassification,
-      ]);
+      ];
+      if (entry.release === "qualification" && context.tokenWindow) {
+        await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [
+          ...values, context.tokenWindow.issuedAt, context.tokenWindow.expiresAt, entry.access,
+        ]);
+      } else {
+        await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)", values);
+      }
       return work(tx);
     });
   } catch (error) {
@@ -2045,3 +2067,6 @@ function decodeJson(value: unknown): unknown {
 function invalid(): ProductionDesktopError {
   return new ProductionDesktopError("request_invalid");
 }
+
+/** The dispatch lists, for the ordinary-suspension window's read-set pin (ordinary-suspension-window.database.test.ts). */
+export { CORE_RPCS as PRODUCTION_DESKTOP_CORE_RPCS, CORE_SELECTS as PRODUCTION_DESKTOP_CORE_SELECTS };
