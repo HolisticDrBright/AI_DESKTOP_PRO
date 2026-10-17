@@ -163,10 +163,14 @@ emergency revocation's own rollback, which removes both functions.
 
 ## 6. Held, explicit
 
-1. **Sends a revoked login already set up keep going.** The scheduled send job reads no signal, so a broadcast it
-   scheduled, or a sequence it activated, still sends. Pausing them is a decision about the practice's mail, not about
-   the login. The broadcast records a person while the signal is keyed by subject, so the mapping is part of that
-   decision.
+1. **Owner decision, 2026-10-16: pause sends already queued by a revoked login for another authorized staff member's
+   review. Not implemented.** The scheduled send job reads no signal, so a broadcast the login scheduled, or a sequence
+   it activated, still sends today. The broadcast records a person while the signal is keyed by subject. Before release,
+   persist the authorizing workforce subject on each schedule/activation, bind it to the revocation signal at send time,
+   hold legacy records with no subject, and require an independently authorized review to resume. Test a revocation
+   during pagination and immediately before SES admission; a signal outage must pause, not send. Separately close the
+   interval between the clinical database revocation commit and signal publication, during which the staff route can
+   still admit an old token. None of those cases is proved by the current post-publication route tests.
 2. **The writer must be configured wherever campaigns run, and only with the successor applied.** Configured on the
    parent alone, a publication still happens but is not recorded (the failing-before). Not configured under the
    successor, revocations never read `complete`. That case is visible on the work list, never silent.

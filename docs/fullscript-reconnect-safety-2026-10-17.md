@@ -120,8 +120,11 @@ or saved:
    of §4's reconciler.
 2. **Email-keyed rows' tokens are not revoked** until §4 runs.
 3. **There is no outbox reconciler, job or IAM.** Superseded tokens are queued, not revoked, until that ships.
-4. **Two Desktop accounts can connect the same Fullscript practitioner.** There is no uniqueness on
-   `resourceOwner.id`. Whether that is allowed is a decision.
+4. **Owner decision, 2026-10-16: one Desktop account per Fullscript practitioner. Not implemented.** There is no
+   uniqueness on `resourceOwner.id`, so two Desktop accounts can still connect the same practitioner. A safe release
+   needs an atomic ownership reservation keyed by Fullscript practitioner ID, with a refusal before installation,
+   a lost-reply/retry path, and a reviewed reconciliation for any existing duplicates. The current per-account
+   reconnect repair does not enforce this cross-account rule.
 5. **Whether the Cognito pool allows two accounts with one verified email is unread.** That is Codex's (the
    subject-binding doc).
 6. **The status never asks Fullscript.** A token revoked at Fullscript by someone else still reads as "Connected" until
