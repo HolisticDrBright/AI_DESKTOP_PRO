@@ -21,6 +21,11 @@ import { WorkforceProviderFailure, type ProviderFailure, type StaffRevocationSig
  *     this decision's. It never touches `<subject>`, and the writer's role must not be able to (see the IAM statement
  *     in docs/revocation-signal-timing-2026-10-17.md): a revoked login is never restored.
  * Every item holds a key derived from the subject (an identifier, never a token, email or name), an id and the contract.
+ *
+ * The scheduled campaign-signal reconciler (revocation-signal-reconciler.ts, BLOCKED) uses this writer too, with no
+ * operator: `publish` for every revocation whose publication is not confirmed, and, when that fails for a revocation
+ * that took effect, `hold` again under the revocation's own id so the login stays pending past the first deadline. It
+ * is never handed `release`, and its role holds PutItem only.
  */
 export const STAFF_REVOCATION_SIGNAL_CONTRACT = 'staff-revocation-signal/2';
 /** How long a pending decision holds a login at the campaign engine if nobody publishes or releases it. */

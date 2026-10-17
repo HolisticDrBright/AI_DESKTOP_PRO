@@ -1522,7 +1522,7 @@
           "Arn"
         ]
       },
-      "Description": "The staff revocation signal (staff-revocation-signal/1). The campaign API may only read it; the emergency revocation's operator host is granted PutItem on it alone, outside this template."
+      "Description": "The staff revocation signal (staff-revocation-signal/2). The campaign API and the sender may only read it. Outside this template: the emergency revocation's operator host is granted PutItem, and DeleteItem on pending# keys only; the BLOCKED campaign-signal reconciler is granted PutItem only, never a delete."
     }
   }
 }
