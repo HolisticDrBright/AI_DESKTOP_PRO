@@ -11,7 +11,7 @@
  */
 export type ItemKind =
   | 'settings' | 'entitlement' | 'domain' | 'grant' | 'template' | 'sequence' | 'broadcast'
-  | 'contact' | 'address' | 'send' | 'suppression' | 'result' | 'counter' | 'rate';
+  | 'contact' | 'address' | 'send' | 'suppression' | 'result' | 'counter' | 'rate' | 'audit';
 export type GlobalKind = 'slug' | 'allowances' | 'marketing_practice';
 
 export type StoredItem<T = unknown> = { id: string; version: number; body: T; dueAt?: string | null; expiresAt?: number | null };

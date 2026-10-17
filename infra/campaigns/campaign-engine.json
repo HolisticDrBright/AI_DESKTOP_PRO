@@ -234,6 +234,10 @@
         "TableName": "alp-campaign-staff-revocations",
         "BillingMode": "PAY_PER_REQUEST",
         "DeletionProtectionEnabled": true,
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        },
         "AttributeDefinitions": [
           {
             "AttributeName": "subject",
@@ -847,6 +851,25 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "StaffRevocationSignal",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ReadStaffRevocationSignal",
+                  "Effect": "Allow",
+                  "Action": "dynamodb:GetItem",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CampaignStaffRevocationTable",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
           }
         ],
         "Tags": [
@@ -1108,6 +1131,9 @@
             },
             "CAMPAIGN_ACCOUNT_ID": {
               "Ref": "AWS::AccountId"
+            },
+            "CAMPAIGN_STAFF_REVOCATION_TABLE": {
+              "Ref": "CampaignStaffRevocationTable"
             }
           }
         },

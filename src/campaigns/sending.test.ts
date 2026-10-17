@@ -9,7 +9,7 @@ import { fictionalEngine, tokenFrom } from './testing';
  * send. Fictional practices and addresses only. 17:00Z on 2026-10-15 is 10:00 in Los Angeles.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const DAY = 86_400_000;
 type Engine = ReturnType<typeof fictionalEngine>;
 const done = (r: WorkforceResponse) => { if (r.action !== 'done') throw new Error(r.action); return r.refreshed; };

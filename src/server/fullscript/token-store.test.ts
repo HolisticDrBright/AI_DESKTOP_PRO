@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand} from '@aws-sdk/client-dynamodb';
+import {DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand, TransactWriteItemsCommand} from '@aws-sdk/client-dynamodb';
 import {createAwsFullscriptTokenStore, parseStoredFullscriptConnection, type StoredFullscriptConnection} from './token-store';
 
 const key={actorKey:'a'.repeat(64),organizationId:'a1234567-1234-4123-8123-123456789012'};
@@ -85,12 +85,27 @@ describe('Fullscript saved connection custody',()=>{
     const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValue({} as never);
     await expect(store().replace(before,after)).rejects.toMatchObject({code:'fullscript_unavailable'});expect(send).not.toHaveBeenCalled();
   });
-  it('deletes only the exact installation whose token was revoked',async()=>{
+  it('deletes only the exact installation whose token was revoked, releasing its practitioner reservation in the same transaction',async()=>{
     const before=fixture(),raw=JSON.stringify(before);
     const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValueOnce({Item:{payload:{S:raw}}} as never)
       .mockResolvedValueOnce({} as never);
     expect(await store().delete(before)).toBe(true);
-    const command=send.mock.calls[1][0];expect(command).toBeInstanceOf(DeleteItemCommand);
+    const command=send.mock.calls[1][0];expect(command).toBeInstanceOf(TransactWriteItemsCommand);
+    const [row,reservation]=(command as TransactWriteItemsCommand).input.TransactItems!;
+    expect(row!.Delete).toMatchObject({Key:{pk:{S:'ORG#'+key.organizationId},sk:{S:'FULLSCRIPT#'+key.actorKey}},
+      ConditionExpression:'payload = :previous',ExpressionAttributeValues:{':previous':{S:raw}}});
+    // Only the reservation naming exactly this connection; an absent one is nothing to release.
+    expect(reservation!.Delete).toMatchObject({Key:{pk:{S:expect.stringMatching(/^FULLSCRIPT_OWNER#[a-f0-9]{64}$/)},sk:{S:'OWNER'}},
+      ConditionExpression:'attribute_not_exists(pk) OR (ownerPk = :ownerPk AND ownerSk = :ownerSk AND connectedAt = :connectedAt)',
+      ExpressionAttributeValues:{':ownerPk':{S:'ORG#'+key.organizationId},':ownerSk':{S:'FULLSCRIPT#'+key.actorKey},':connectedAt':{S:before.connectedAt}}});
+  });
+  it('a reservation naming another connection is never released: the row alone is deleted, still on its exact bytes',async()=>{
+    const before=fixture(),raw=JSON.stringify(before);
+    const send=vi.spyOn(DynamoDBClient.prototype,'send').mockResolvedValueOnce({Item:{payload:{S:raw}}} as never)
+      .mockRejectedValueOnce(Object.assign(new Error('fictional'),{name:'TransactionCanceledException',CancellationReasons:[{Code:'None'},{Code:'ConditionalCheckFailed'}]}))
+      .mockResolvedValueOnce({} as never);
+    expect(await store().delete(before)).toBe(true);
+    const command=send.mock.calls[2][0];expect(command).toBeInstanceOf(DeleteItemCommand);
     expect(command.input).toMatchObject({ConditionExpression:'payload = :previous',ExpressionAttributeValues:{':previous':{S:raw}}});
   });
   it.each(['already-absent','reconnected','race'])('disconnect cannot delete new custody after %s',async mode=>{

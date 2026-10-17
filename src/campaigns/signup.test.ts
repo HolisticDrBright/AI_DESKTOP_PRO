@@ -9,7 +9,7 @@ import { addressHash } from './tokens';
  * entitlement gate, and unsubscribe by link and by one-click POST. Fictional practices and addresses only.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
 const ready = (e: ReturnType<typeof fictionalEngine>, extra: Partial<Parameters<typeof e.readyPractice>[0]> = {}) =>
   e.readyPractice({ practiceId: PRACTICE, slug: 'fictional-clinic', name: 'Fictional Clinic', domain: 'mail.fictional-clinic.example', admin: ADMIN, ...extra });
 async function signUp(e: ReturnType<typeof fictionalEngine>, email: string, extra: Record<string, unknown> = {}) {

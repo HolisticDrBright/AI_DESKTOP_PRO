@@ -42,6 +42,9 @@ export const timeZone = z.string().min(3).max(64).refine(value => { try { new In
 const isoTime = z.string().datetime({ offset: true });
 const domainName = z.string().trim().toLowerCase().max(200).regex(/^(?=.{4,200}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/);
 const personName = z.string().trim().min(2).max(80).regex(/^[\p{L}][\p{L} .'’-]*$/u);
+/** A workforce login: the verified ID token's `sub`, as the emergency revocation records it (staff-revocation.ts). */
+export const WORKFORCE_SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
+export const workforceSubject = z.string().regex(WORKFORCE_SUBJECT);
 
 /* ------------------------------------------------------------------------------------------ templates */
 
@@ -62,11 +65,18 @@ export const templateDraft = z.object({
   blocks: z.array(emailBlock).min(1).max(30),
 }).strict();
 export type TemplateDraft = z.infer<typeof templateDraft>;
+/**
+ * Who approved a template version. `subject` is the approving login, recorded since send authority existed: a send
+ * whose email has no recorded approving login is held (`approval_unattributed`) until someone approves it again. The
+ * Campaigns screen is never sent the subject (`approvalView`).
+ */
+const approver = z.object({ personId: uuid, name: personName }).strict();
 export const approvalRecord = z.object({
   version: z.number().int().min(1), at: isoTime,
-  by: z.object({ personId: uuid, name: personName }).strict(),
+  by: approver.extend({ subject: workforceSubject.optional() }).strict(),
   attorney: z.object({ name: personName, at: isoTime }).strict().nullable(),
 }).strict();
+const approvalView = approvalRecord.extend({ by: approver }).strict();
 export const emailTemplate = templateDraft.extend({
   templateId: uuid, version: z.number().int().min(1),
   status: z.enum(['draft', 'approved']),
@@ -76,8 +86,34 @@ export const emailTemplate = templateDraft.extend({
   approval: approvalRecord.nullable(),
 }).strict();
 export type EmailTemplate = z.infer<typeof emailTemplate>;
+const templateView = emailTemplate.extend({ approval: approvalView.nullable() }).strict();
 
 /* ------------------------------------------------------------------------------------------ sequences and broadcasts */
+
+/**
+ * Send authority (send-authority/1). A queued send rests on the logins of everyone who scheduled, started or edited it
+ * since its last review, and on the login that approved each of its emails. The sending job re-reads every one of them
+ * against the emergency revocation's signal immediately before each SES call:
+ *   - one revoked: the send is held (`hold`), with the people it names, until a different staff member reviews it;
+ *   - the signal unreadable or not configured: nothing is sent that pass, and nothing is recorded;
+ *   - no recorded login at all (a record made before this existed): held as `authority_unrecorded`, never assumed.
+ * An edit, a pause or a start by another staff member adds them; it never removes anyone. Only `resume_held_send`, an
+ * explicit review by someone the hold does not name, replaces the list, and it is recorded as an audit item.
+ */
+export const SEND_AUTHORITY_CONTRACT = 'send-authority/1' as const;
+export const SEND_REVIEW_CONTRACT = 'send-review/1' as const;
+export const SEND_HOLD_REASONS = ['authority_revoked', 'authority_unrecorded', 'approval_revoked', 'approval_unattributed'] as const;
+export const MAX_SEND_AUTHORITIES = 20;
+const authorityEntry = z.object({ personId: uuid, at: isoTime, action: z.enum(['scheduled', 'activated', 'edited', 'reviewed']) }).strict();
+export const sendAuthority = authorityEntry.extend({ subject: workforceSubject }).strict();
+export type SendAuthority = z.infer<typeof sendAuthority>;
+export const sendHold = z.object({ reason: z.enum(SEND_HOLD_REASONS), at: isoTime,
+  /** The people whose revoked login holds the send; empty when no login was recorded. Never a subject. */
+  persons: z.array(uuid).max(MAX_SEND_AUTHORITIES + 10) }).strict();
+export type SendHold = z.infer<typeof sendHold>;
+/** Optional only so that records written before send authority existed still read: they are held, never trusted. */
+const authority = { authorizedBy: z.array(sendAuthority).max(MAX_SEND_AUTHORITIES).optional(), hold: sendHold.nullable().optional() };
+const authorityView = { authorizedBy: z.array(authorityEntry).max(MAX_SEND_AUTHORITIES).optional(), hold: sendHold.nullable().optional() };
 
 export const sequenceStep = z.object({ stepId: uuid, templateId: uuid, waitDays: z.number().int().min(0).max(60) }).strict();
 export const emailSequence = z.object({
@@ -85,6 +121,7 @@ export const emailSequence = z.object({
   status: z.enum(['draft', 'active', 'paused']),
   steps: z.array(sequenceStep).max(10),
   updatedAt: isoTime.nullable(),
+  ...authority,
 }).strict();
 export type EmailSequence = z.infer<typeof emailSequence>;
 export const broadcast = z.object({
@@ -94,8 +131,20 @@ export const broadcast = z.object({
   /** The test send the staff member received first, for the template version it names. */
   testSent: z.object({ at: isoTime, templateVersion: z.number().int().min(1) }).strict().nullable(),
   createdAt: isoTime,
+  ...authority,
 }).strict();
 export type Broadcast = z.infer<typeof broadcast>;
+const sequenceView = emailSequence.extend(authorityView).strict();
+const broadcastView = broadcast.extend(authorityView).strict();
+export const sendReviewTarget = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('broadcast'), broadcastId: uuid }).strict(),
+  z.object({ kind: z.literal('sequence'), programKey: campaignProgram }).strict(),
+]);
+export type SendReviewTarget = z.infer<typeof sendReviewTarget>;
+/** The audit item a review writes, create-only: the reviewer, what the hold said, and whose authority it replaced. */
+export const sendReview = z.object({ contract: z.literal(SEND_REVIEW_CONTRACT), target: sendReviewTarget,
+  reviewer: z.object({ personId: uuid, subject: workforceSubject }).strict(), previousHold: sendHold, replaced: z.array(uuid).max(MAX_SEND_AUTHORITIES), at: isoTime }).strict();
+export type SendReview = z.infer<typeof sendReview>;
 
 /* ------------------------------------------------------------------------------------------ the practice */
 
@@ -166,9 +215,9 @@ export const overview = z.object({
   domain: domainStatus.nullable(),
   readiness,
   lists: z.array(z.object({ programKey: campaignProgram, counts: listCounts }).strict()),
-  templates: z.array(emailTemplate).max(200),
-  sequences: z.array(emailSequence),
-  broadcasts: z.array(broadcast).max(200),
+  templates: z.array(templateView).max(200),
+  sequences: z.array(sequenceView),
+  broadcasts: z.array(broadcastView).max(200),
   results: z.array(templateResults).max(200),
 }).strict();
 export type CampaignOverview = z.infer<typeof overview>;
@@ -211,6 +260,7 @@ export const workforceRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('test_send'), templateId: uuid, broadcastId: uuid.nullable() }).strict(),
   z.object({ action: z.literal('schedule_broadcast'), broadcastId: uuid, sendAt: isoTime }).strict(),
   z.object({ action: z.literal('cancel_broadcast'), broadcastId: uuid }).strict(),
+  z.object({ action: z.literal('resume_held_send'), target: sendReviewTarget }).strict(),
   z.object({ action: z.literal('install_starter'), programKey: campaignProgram }).strict(),
   z.object({ action: z.literal('grant_role'), personId: uuid, role: z.enum(MARKETING_ROLES), name: personName }).strict(),
   z.object({ action: z.literal('revoke_role'), personId: uuid }).strict(),

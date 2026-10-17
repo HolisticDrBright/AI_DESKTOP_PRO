@@ -1,8 +1,8 @@
 import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToMarkup, renderToText } from '@/test-support/renderToText';
-import { emptySettings, type CampaignOverview, type JoinPageInfo } from '@/campaigns/contract';
-import { CampaignsView, type CampaignsState } from './CampaignsScreen';
+import { emptySettings, SEND_HOLD_REASONS, type CampaignOverview, type JoinPageInfo } from '@/campaigns/contract';
+import { CampaignsView, SEND_HOLD_COPY, type CampaignsState } from './CampaignsScreen';
 import { JoinConfirm, JoinForm, JoinUnsubscribed } from './JoinPages';
 
 /**
@@ -56,6 +56,23 @@ describe('the Campaigns screen', () => {
     expect(text).toContain('No sender name is set.');
     expect(text).toContain('Contacts: 0 of Unknown allowed.');
     expect(text).toContain('Opens and clicks are not counted for this practice.');
+  });
+  it('a send held for review says why and offers the review, and a held sequence offers no "Start"', () => {
+    const hold = { reason: 'authority_revoked' as const, at: '2026-10-17T10:00:00.000Z', persons: ['21111111-1111-4111-8111-111111111111'] };
+    const broadcastId = '0e000000-0000-4000-8000-000000000099';
+    const held = overview({
+      sequences: [{ programKey: 'longevity-program', version: 3, status: 'paused', steps: [{ stepId: '0e000000-0000-4000-8000-000000000001', templateId: '0e000000-0000-4000-8000-000000000002', waitDays: 0 }], updatedAt: null, hold }],
+      broadcasts: [{ broadcastId, programKey: 'longevity-program', templateId: '0e000000-0000-4000-8000-000000000003', status: 'sending', sendAt: '2026-10-17T09:00:00.000Z', testSent: null, createdAt: '2026-10-16T09:00:00.000Z', hold }],
+    });
+    const markup = renderToMarkup(view({ status: 'loaded', overview: held }));
+    expect(markup).toContain('data-testid="campaigns-held-longevity-program"');
+    expect(markup).toContain(`data-testid="campaigns-held-${broadcastId}"`);
+    const text = renderToText(view({ status: 'loaded', overview: held }));
+    expect(text).toContain('paused, held for review');
+    expect(text).toContain('Review and resume');
+    expect(text).not.toContain('Start (every step must be approved)');
+    // Never a login subject on screen: the overview carries none, and the copy names none.
+    for (const reason of SEND_HOLD_REASONS) expect(SEND_HOLD_COPY[reason]).toMatch(/^Held for review: .*Nothing more is sent until/);
   });
 });
 

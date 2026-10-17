@@ -115,16 +115,17 @@ or saved:
 
 ## 5. Held, explicit
 
-1. **A failed install after the provider issued a token is revoked best effort and not recorded.** If that revocation
-   also fails, the token is orphaned at Fullscript. Recording it needs an outbox write that can itself fail; it is part
-   of §4's reconciler.
+1. **Superseded (2026-10-17): a failed install after the provider issued a token** is now queued in the outbox before
+   it is revoked (`docs/fullscript-practitioner-ownership-2026-10-17.md` §3). Only an outbox write that itself fails
+   leaves the revocation best effort; that is logged without the token.
 2. **Email-keyed rows' tokens are not revoked** until §4 runs.
-3. **There is no outbox reconciler, job or IAM.** Superseded tokens are queued, not revoked, until that ships.
-4. **Owner decision, 2026-10-16: one Desktop account per Fullscript practitioner. Not implemented.** There is no
-   uniqueness on `resourceOwner.id`, so two Desktop accounts can still connect the same practitioner. A safe release
-   needs an atomic ownership reservation keyed by Fullscript practitioner ID, with a refusal before installation,
-   a lost-reply/retry path, and a reviewed reconciliation for any existing duplicates. The current per-account
-   reconnect repair does not enforce this cross-account rule.
+3. **Superseded (2026-10-17): the outbox reconciler, its least-privilege role and schedule exist in source, BLOCKED**
+   (`docs/fullscript-practitioner-ownership-2026-10-17.md` §5). Until they are released, superseded tokens are still
+   queued, not revoked.
+4. **Owner decision, 2026-10-16: one Desktop account per Fullscript practitioner. Implemented in source, 2026-10-17**
+   (`docs/fullscript-practitioner-ownership-2026-10-17.md`): an ownership reservation in the install transaction,
+   the `practitioner_connected_elsewhere` refusal, the lost-reply path, the reviewed duplicate reconciliation and a
+   BLOCKED transfer. Connections saved before reservations hold none until that reviewed plan runs.
 5. **Whether the Cognito pool allows two accounts with one verified email is unread.** That is Codex's (the
    subject-binding doc).
 6. **The status never asks Fullscript.** A token revoked at Fullscript by someone else still reads as "Connected" until

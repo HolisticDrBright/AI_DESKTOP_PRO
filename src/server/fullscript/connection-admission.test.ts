@@ -32,6 +32,8 @@ function fictionalStore() {
   });
   const tokenKey = key(`ORG#${clinic}`, `FULLSCRIPT#${actorKey}`);
   const transactions: TransactWriteCommand[] = [];
+  // DynamoDB names a cancelled transaction; anything unnamed would read as a lost reply.
+  const cancelled = () => Object.assign(new Error("TransactionCanceledException"), { name: "TransactionCanceledException" });
   const send = vi.fn(async (command: GetCommand | TransactWriteCommand) => {
     if (command instanceof GetCommand) {
       const lookup = command.input.Key as { pk: string; sk: string };
@@ -47,20 +49,20 @@ function fictionalStore() {
         const present = records.get(key(lookup.pk, lookup.sk));
         const expected = write.ConditionCheck.ExpressionAttributeValues;
         if (write.ConditionCheck.ConditionExpression === "attribute_not_exists(pk)") {
-          if (present) throw new Error("TransactionCanceledException");
+          if (present) throw cancelled();
         } else if (!present || present.fenceProtocol !== expected?.[":fenceProtocol"]
           || present.fenceVersion !== expected?.[":fenceVersion"] || present.pendingChanges !== undefined) {
-          throw new Error("TransactionCanceledException");
+          throw cancelled();
         }
       }
       if (write.Put) {
         const present = records.get(tokenKey);
-        if (write.Put.ConditionExpression === "attribute_not_exists(pk)" && present) throw new Error("TransactionCanceledException");
+        if (write.Put.ConditionExpression === "attribute_not_exists(pk)" && present) throw cancelled();
         if (write.Put.ConditionExpression === "payload = :previous"
-          && present?.payload !== write.Put.ExpressionAttributeValues?.[":previous"]) throw new Error("TransactionCanceledException");
+          && present?.payload !== write.Put.ExpressionAttributeValues?.[":previous"]) throw cancelled();
       }
     }
-    const put = writes.find((write) => write.Put)?.Put;
+    const put = writes.find((write) => String((write.Put?.Item as { sk?: unknown } | undefined)?.sk ?? "").startsWith("FULLSCRIPT#"))?.Put;
     if (!put) throw new Error("token_put_missing");
     records.set(tokenKey, put.Item as Record<string, unknown>);
     return {};
@@ -76,9 +78,11 @@ describe("Fullscript OAuth installation is admitted at the token write", () => {
     await fixture.guard.install(connection(), observed);
     expect(fixture.transactions).toHaveLength(1);
     const writes = fixture.transactions[0]!.input.TransactItems!;
-    expect(writes).toHaveLength(3);
+    // Both fences, the practitioner's ownership reservation, and the token row last.
+    expect(writes).toHaveLength(4);
     expect(writes.filter((write) => write.ConditionCheck)).toHaveLength(2);
-    expect(writes[2]!.Put?.ConditionExpression).toBe("attribute_not_exists(pk)");
+    expect(writes[2]!.Put?.Item).toMatchObject({ protocol: "fullscript-owner/1", ownerPk: `ORG#${clinic}`, ownerSk: `FULLSCRIPT#${actorKey}` });
+    expect(writes[3]!.Put?.ConditionExpression).toBe("attribute_not_exists(pk)");
     expect(JSON.parse(String(fixture.records.get(fixture.tokenKey)?.payload))).toMatchObject(actor);
   });
 

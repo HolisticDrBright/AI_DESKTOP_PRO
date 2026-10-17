@@ -14,8 +14,8 @@ import { fictionalEngine, tokenFrom } from './testing';
  * cannot. Fictional practices, people, subjects and addresses only.
  */
 const PRACTICE = '11111111-1111-4111-8111-111111111111';
-const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
-const COLLEAGUE = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', email: 'colleague@fictional-clinic.example', name: 'Fictional Colleague' };
+const ADMIN = { practiceId: PRACTICE, personId: '21111111-1111-4111-8111-111111111111', subject: 'fictional-subject-21111111-1111-4111-8111-111111111111', email: 'admin@fictional-clinic.example', name: 'Fictional Admin' };
+const COLLEAGUE = { practiceId: PRACTICE, personId: '31111111-1111-4111-8111-111111111111', subject: 'fictional-subject-31111111-1111-4111-8111-111111111111', email: 'colleague@fictional-clinic.example', name: 'Fictional Colleague' };
 const SUBJECT = { admin: 'fictional-workforce-admin-0001', colleague: 'fictional-workforce-colleague-0002' };
 type Who = typeof ADMIN;
 const claims = (who: Who, subject: unknown, extra: Record<string, unknown> = {}) => ({ authorizer: { jwt: { claims: {
@@ -144,7 +144,7 @@ describe('an outage never reads as "not revoked"', () => {
 
   it('a signal that throws anything else is still 503, never an answer', async () => {
     const p = await practice();
-    p.e.deps.staffRevocation = { revoked: async () => { throw new TypeError('fictional fault'); } };
+    p.e.deps.staffRevocation = { revoked: async () => { throw new TypeError('fictional fault'); }, status: async () => { throw new TypeError('fictional fault'); } };
     expect(await p.staff(ADMIN, SUBJECT.admin, { action: 'overview' })).toEqual({ status: 503, body: { error: 'unavailable' } });
   });
 
@@ -188,12 +188,36 @@ describe('the DynamoDB signal, at its SDK boundary', () => {
       return reply;
     } };
   };
-  it('reads one item by subject, strongly consistent, from its own table only; any item at all is a revocation', async () => {
-    for (const [reply, revoked] of [[{}, false], [{ Item: { subject: SUBJECT.admin } }, true], [{ Item: {} }, true], [{ Item: { subject: 'other', contract: 'unknown' } }, true]] as const) {
-      const c = client(reply);
-      expect(await createDynamoStaffRevocationSignal({ client: c as never, tableName: 'alp-campaign-staff-revocations' }).revoked(SUBJECT.admin)).toBe(revoked);
-      expect(c.calls).toEqual([{ name: 'GetCommand', input: { TableName: 'alp-campaign-staff-revocations', Key: { subject: SUBJECT.admin }, ConsistentRead: true,
-        ProjectionExpression: '#s', ExpressionAttributeNames: { '#s': 'subject' } } }]);
+  it('reads the subject\'s two keys, strongly consistent, from its own table only; any revocation item wins, and only a lapsed pending one is clear', async () => {
+    const NOW = Date.parse('2026-10-17T12:00:00Z');
+    const later = new Date(NOW + 60_000).toISOString(), earlier = new Date(NOW - 1).toISOString(), farAhead = new Date(NOW + 24 * 3_600_000).toISOString();
+    const pendingKey = `pending#${SUBJECT.admin}`;
+    for (const [revokedItem, pendingItem, status] of [
+      [undefined, undefined, 'clear'],
+      [{ subject: SUBJECT.admin }, undefined, 'revoked'],                                    // the /1 item
+      [{}, undefined, 'revoked'],
+      [{ subject: 'other', contract: 'unknown' }, undefined, 'revoked'],
+      [{ subject: SUBJECT.admin }, { subject: pendingKey, pendingUntil: earlier }, 'revoked'], // a revocation always wins
+      [undefined, { subject: pendingKey, pendingUntil: later }, 'pending'],
+      [undefined, { subject: pendingKey, pendingUntil: earlier }, 'clear'],                 // a decision that lapsed
+      [undefined, { subject: pendingKey }, 'pending'],                                      // no deadline: never lapses
+      [undefined, { subject: pendingKey, pendingUntil: 'soon' }, 'pending'],
+      [undefined, { subject: pendingKey, pendingUntil: farAhead }, 'pending'],
+    ] as const) {
+      const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+      const c = { send: async (command: { constructor: { name: string }; input: { Key: { subject: string } } & Record<string, unknown> }) => {
+        calls.push({ name: command.constructor.name, input: command.input });
+        const item = command.input.Key.subject === pendingKey ? pendingItem : revokedItem;
+        return item ? { Item: item } : {};
+      } };
+      const signal = createDynamoStaffRevocationSignal({ client: c as never, tableName: 'alp-campaign-staff-revocations', now: () => NOW });
+      expect([revokedItem, pendingItem, await signal.status(SUBJECT.admin)]).toEqual([revokedItem, pendingItem, status]);
+      expect(await signal.revoked(SUBJECT.admin)).toBe(status !== 'clear');
+      expect(calls.slice(0, 2)).toEqual([
+        { name: 'GetCommand', input: { TableName: 'alp-campaign-staff-revocations', Key: { subject: SUBJECT.admin }, ConsistentRead: true, ProjectionExpression: '#s', ExpressionAttributeNames: { '#s': 'subject' } } },
+        { name: 'GetCommand', input: { TableName: 'alp-campaign-staff-revocations', Key: { subject: pendingKey }, ConsistentRead: true, ProjectionExpression: '#s, #u',
+          ExpressionAttributeNames: { '#s': 'subject', '#u': 'pendingUntil' } } },
+      ]);
     }
   });
   it('a failed or timed-out read is unavailable, never "not revoked"; a malformed subject is refused without a read', async () => {
@@ -207,7 +231,7 @@ describe('the DynamoDB signal, at its SDK boundary', () => {
     const slow = { send: (_c: unknown, options: { abortSignal: AbortSignal }) => new Promise((_, reject) => options.abortSignal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))) };
     await expect(createDynamoStaffRevocationSignal({ client: slow as never, tableName: 't-1', timeoutMs: 20 }).revoked(SUBJECT.admin)).rejects.toMatchObject({ category: 'unavailable' });
   });
-  it('names its contract', () => { expect(STAFF_REVOCATION_SIGNAL_CONTRACT).toBe('staff-revocation-signal/1'); });
+  it('names its contract', () => { expect(STAFF_REVOCATION_SIGNAL_CONTRACT).toBe('staff-revocation-signal/2'); });
 });
 
 describe('configuration and the template', () => {
@@ -225,14 +249,21 @@ describe('configuration and the template', () => {
     const table = template.Resources.CampaignStaffRevocationTable!;
     expect(table.DeletionPolicy).toBe('Retain');
     expect(table.Properties).toMatchObject({ TableName: 'alp-campaign-staff-revocations', KeySchema: [{ AttributeName: 'subject', KeyType: 'HASH' }], DeletionProtectionEnabled: true,
-      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }, SSESpecification: { SSEEnabled: true, SSEType: 'KMS' } });
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }, SSESpecification: { SSEEnabled: true, SSEType: 'KMS' },
+      // Removes lapsed pending items (staff-revocation-signal/2) in the background; a revoked item never carries the attribute.
+      TimeToLiveSpecification: { AttributeName: 'expiresAt', Enabled: true } });
     // Its own AWS-managed key, never the campaign key: the revocation's writer is granted this table alone.
     expect(JSON.stringify(table.Properties)).not.toContain('CampaignKey');
     const mentions = Object.entries(template.Resources).filter(([name, r]) => name !== 'CampaignStaffRevocationTable' && JSON.stringify(r).includes('CampaignStaffRevocationTable'));
-    expect(mentions.map(([name]) => name).sort()).toEqual(['CampaignApiFunction', 'CampaignApiRole']);
-    const statements = JSON.stringify(template.Resources.CampaignApiRole!.Properties.Policies);
-    expect(statements).toContain('{"Sid":"ReadStaffRevocationSignal","Effect":"Allow","Action":"dynamodb:GetItem","Resource":{"Fn::GetAtt":["CampaignStaffRevocationTable","Arn"]}}');
-    expect(((template.Resources.CampaignApiFunction!.Properties.Environment as { Variables: Record<string, unknown> }).Variables).CAMPAIGN_STAFF_REVOCATION_TABLE).toEqual({ Ref: 'CampaignStaffRevocationTable' });
+    // Read by the API (every staff operation) and the sender (every send, send-authority/1); the SES events function never.
+    expect(mentions.map(([name]) => name).sort()).toEqual(['CampaignApiFunction', 'CampaignApiRole', 'CampaignSenderFunction', 'CampaignSenderRole']);
+    for (const role of ['CampaignApiRole', 'CampaignSenderRole']) {
+      const statements = JSON.stringify(template.Resources[role]!.Properties.Policies);
+      expect(statements).toContain('{"Sid":"ReadStaffRevocationSignal","Effect":"Allow","Action":"dynamodb:GetItem","Resource":{"Fn::GetAtt":["CampaignStaffRevocationTable","Arn"]}}');
+    }
+    for (const fn of ['CampaignApiFunction', 'CampaignSenderFunction']) {
+      expect(((template.Resources[fn]!.Properties.Environment as { Variables: Record<string, unknown> }).Variables).CAMPAIGN_STAFF_REVOCATION_TABLE).toEqual({ Ref: 'CampaignStaffRevocationTable' });
+    }
     expect(template.Outputs.CampaignStaffRevocationTableArn).toMatchObject({ Value: { 'Fn::GetAtt': ['CampaignStaffRevocationTable', 'Arn'] } });
   });
 });
