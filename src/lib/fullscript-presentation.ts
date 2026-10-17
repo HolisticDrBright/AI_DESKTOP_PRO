@@ -25,7 +25,8 @@ export function fullscriptConnectionCopy(environment: FullscriptEnvironment) {
 }
 
 /** Where the OAuth callback sends the practitioner back: a closed set, each a true statement about what happened. */
-export const FULLSCRIPT_CALLBACK_OUTCOMES = ['connected', 'already_connected', 'link_used', 'not_authorized', 'session_changed', 'unavailable'] as const;
+export const FULLSCRIPT_CALLBACK_OUTCOMES = ['connected', 'already_connected', 'practitioner_connected_elsewhere', 'link_used', 'not_authorized',
+  'session_changed', 'unavailable', 'unconfirmed'] as const;
 export type FullscriptCallbackOutcome = typeof FULLSCRIPT_CALLBACK_OUTCOMES[number];
 
 /** The value in `?fullscript=`, or null. `connection_failed` is what earlier deployments sent for every failure. */
@@ -72,10 +73,12 @@ export function fullscriptPanelState(input: {
       : posture.connected ? 'Connected' : posture.reconnectRequired ? 'Reconnect needed' : posture.configured ? 'Ready to connect' : 'Not configured';
   const notice = outcome === null || outcome === 'connected' ? null : {
     already_connected: 'This account is already connected to Fullscript in this clinic, so nothing was changed. To use a different Fullscript account, disconnect first.',
+    practitioner_connected_elsewhere: 'That Fullscript account is already connected to another Desktop account, so nothing was saved here and that connection was not changed. A Fullscript account connects to one Desktop account: disconnect it there first, or ask support to move it.',
     link_used: 'That Fullscript sign-in link was already used or has expired, so nothing was changed. Start again from Connect if you still need to connect.',
     not_authorized: copy.failure,
     session_changed: 'That Fullscript sign-in was started from a different account, clinic or session, so nothing was saved. Start again from Connect.',
     unavailable: 'Fullscript couldn’t be connected right now, so nothing was saved. Try again in a moment.',
+    unconfirmed: 'Fullscript’s answer was lost on the way back, so we can’t yet say whether this connected. Refresh in a moment: if it shows Connected, it worked; if not, nothing was saved.',
     connection_failed: 'Fullscript wasn’t connected, so nothing was saved. Try again.',
   }[outcome];
   return {
