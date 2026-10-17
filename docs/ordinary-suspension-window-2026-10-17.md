@@ -144,10 +144,12 @@ clinic at once, which is stricter than the rule allows.
   clinic-status successor refuses it.
 - Roll it back first: the emergency revocation's rollback refuses while this is applied (PGlite).
 
-## 7. Decisions this does not take (held, explicit)
+## 7. Owner decision and remaining holds
 
-1. **New clinical writes in a suspended clinic** stay held: the window is read-only. Whether any write may continue
-   is the owner's open question.
+1. **New clinical writes in a suspended clinic** stay held. Brandon chose read-only access until an already-valid
+   session expires for ordinary suspension; this resolves the earlier write-access question. It does not authorize
+   activation of this BLOCKED candidate. A suspected compromised login is revoked immediately through the separate
+   emergency path, with lawful file access preserved through separately verified recovery.
 2. **Practitioner withdrawal** arrives as `consent_management`, which is not windowed. A withdrawal by an active
    clinical member is admitted after the token has been refreshed too. This is the consent-decision candidate's
    behaviour (D2, withdrawals only); whether it should be time-bounded is a decision for the owner.
