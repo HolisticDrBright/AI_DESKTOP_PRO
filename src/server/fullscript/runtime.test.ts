@@ -2,7 +2,11 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import type {RequestSession} from '../session';
 import type {StoredFullscriptConnection} from './token-store';
 import {readFullscriptConfiguration, type FullscriptToken} from './client';
-import {connectedFullscriptClient, disconnectFullscript, fullscriptActor, fullscriptPosture} from './runtime';
+import {connectedFullscriptClient, disconnectFullscript, fullscriptActionError, fullscriptActor, fullscriptPosture, FULLSCRIPT_ACTION_UNAVAILABLE, FULLSCRIPT_DISCONNECT_CHANGED,
+  FULLSCRIPT_DISCONNECT_UNCONFIRMED, FULLSCRIPT_NOT_CONNECTED, FULLSCRIPT_RECONNECT_REQUIRED, FULLSCRIPT_STATUS_UNAVAILABLE} from './runtime';
+import {FullscriptUnavailableError} from './client';
+import {FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE} from './membership-generation';
+import type {AdapterError} from '@/adapters/errors';
 import {FULLSCRIPT_DRAFT_SCOPES} from './draft-scopes';
 
 const mocks=vi.hoisted(()=>({get:vi.fn(),put:vi.fn(),replace:vi.fn(),remove:vi.fn(),refresh:vi.fn(),configuration:vi.fn(),revoke:vi.fn()}));
@@ -52,11 +56,11 @@ describe('Fullscript refresh retains installation authority',()=>{
   });
   it('never reports a different-environment saved connection as connected',async()=>{
     mocks.get.mockResolvedValue({...fixture(),environment:'production_us'});
-    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'unavailable'});
+    await expect(fullscriptPosture(session)).rejects.toMatchObject({code:'unavailable',message:FULLSCRIPT_STATUS_UNAVAILABLE});
   });
   it('validates posture against actor custody even when a substituted port returns a wrong key',async()=>{
     mocks.get.mockResolvedValue({...fixture(),actorKey:'b'.repeat(64)});
-    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'unavailable'});
+    await expect(fullscriptPosture(session)).rejects.toMatchObject({code:'unavailable',message:FULLSCRIPT_STATUS_UNAVAILABLE});
   });
   it('rotates credentials while preserving exact owner and scope set; does not require scope order',async()=>{
     const saved=fixture(),next=refreshed(saved);mocks.get.mockResolvedValue(saved);mocks.refresh.mockResolvedValue(next);
@@ -110,9 +114,11 @@ describe('Fullscript refresh retains installation authority',()=>{
     mocks.get.mockResolvedValue({...fixture(),environment:'production_us'});
     await expect(disconnectFullscript(session)).rejects.toThrow();expect(mocks.revoke).not.toHaveBeenCalled();
   });
-  it('returns only a fixed unavailable code, never an AWS/provider error or secret',async()=>{
+  it('answers a failed read with a fixed unavailable code, never an AWS/provider error or secret, and never "not configured"',async()=>{
     mocks.get.mockRejectedValue(new Error('fictional-access-token-abcdefghijklmnopqrstuvwxyz raw private provider details'));
-    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'unavailable'});
+    const failure=await fullscriptPosture(session).then(()=>null,(error:unknown)=>error) as AdapterError;
+    expect(failure).toMatchObject({code:'unavailable',message:FULLSCRIPT_STATUS_UNAVAILABLE});
+    expect(JSON.stringify(failure.toJSON())).not.toMatch(/fictional-access-token|raw private|configured/);
   });
   it('revokes the observed token then conditionally removes only that connection',async()=>{
     const saved=fixture();mocks.get.mockResolvedValue(saved);
@@ -122,6 +128,35 @@ describe('Fullscript refresh retains installation authority',()=>{
   });
   it('does not report a new connection disconnected if custody changed during revocation',async()=>{
     mocks.get.mockResolvedValue(fixture());mocks.remove.mockResolvedValue(false);
-    await expect(disconnectFullscript(session)).rejects.toMatchObject({code:'fullscript_unavailable'});
+    await expect(disconnectFullscript(session)).rejects.toMatchObject({code:'conflict',message:FULLSCRIPT_DISCONNECT_CHANGED});
+  });
+});
+
+describe('the status and the disconnect say only what is known',()=>{
+  it('a deployment without Fullscript is "not configured", and reads nothing',async()=>{
+    mocks.configuration.mockImplementation(()=>{throw new FullscriptUnavailableError();});
+    expect(await fullscriptPosture(session)).toEqual({configured:false,connected:false,environment:null,reason:'not_configured'});
+    expect(mocks.get).not.toHaveBeenCalled();
+  });
+  it('a live connection reads as connected; one made before the clinic access changed asks for a reconnect, saying why',async()=>{
+    mocks.get.mockResolvedValue(fixture());
+    expect(await fullscriptPosture(session)).toMatchObject({configured:true,connected:true});
+    mocks.get.mockResolvedValue({...fixture(),membershipGeneration:{...generation.value,subjectFence:2}});
+    expect(await fullscriptPosture(session)).toMatchObject({configured:true,connected:false,reconnectRequired:true,reconnectReason:'membership_changed'});
+  });
+  it('a revocation Fullscript does not confirm keeps the connection, and says it is still active (failing before: a bare 500, no test)',async()=>{
+    const saved=fixture();mocks.get.mockResolvedValue(saved);mocks.revoke.mockRejectedValue(new FullscriptUnavailableError('Fullscript disconnect failed.'));
+    await expect(disconnectFullscript(session)).rejects.toMatchObject({code:'unavailable',message:FULLSCRIPT_DISCONNECT_UNCONFIRMED});
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+  it('a provider action that needs a reconnect says so (409, in its own words); anything else is unavailable, never "Something went wrong"',()=>{
+    for(const message of [FULLSCRIPT_RECONNECT_REQUIRED,FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE,FULLSCRIPT_NOT_CONNECTED]){
+      expect(fullscriptActionError(new FullscriptUnavailableError(message))).toMatchObject({code:'conflict',message});
+    }
+    for(const error of [new FullscriptUnavailableError(),new Error('fictional-access-token-abcdefghijklmnopqrstuvwxyz raw')]){
+      const mapped=fullscriptActionError(error);
+      expect(mapped).toMatchObject({code:'unavailable',message:FULLSCRIPT_ACTION_UNAVAILABLE});
+      expect(JSON.stringify(mapped.toJSON())).not.toContain('fictional-access-token');
+    }
   });
 });

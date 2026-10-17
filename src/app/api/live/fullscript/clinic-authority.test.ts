@@ -264,7 +264,7 @@ describe("the Fullscript authorization callback completes only for the account a
     ];
     for (const [name, setup] of cases) {
       setup();
-      expect(outcome(await callback(returned(startedBy(subA, clinicA)))), name).toBe("connection_failed");
+      expect(outcome(await callback(returned(startedBy(subA, clinicA)))), name).toBe("session_changed");
     }
     expect(store.consumeNonce).not.toHaveBeenCalled();
     expect(provider.exchange).not.toHaveBeenCalled();
@@ -290,7 +290,7 @@ describe("the Fullscript authorization callback completes only for the account a
       };
     });
 
-    expect(outcome(await callback(returned(state)))).toBe("connection_failed");
+    expect(outcome(await callback(returned(state)))).toBe("session_changed");
     expect(admissionStore.install).toHaveBeenCalledOnce();
     expect(provider.revoke).toHaveBeenCalledOnce();
     expect(store.put).not.toHaveBeenCalled();
@@ -302,7 +302,7 @@ describe("the Fullscript authorization callback completes only for the account a
     const state = startedBy(subA, clinicA);
     current[subB] = [clinicA];
     signedIn(subB, clinicA); // Same email claim and clinic, but a different Cognito subject.
-    expect(outcome(await callback(returned(state)))).toBe("connection_failed");
+    expect(outcome(await callback(returned(state)))).toBe("session_changed");
     expect(provider.exchange).not.toHaveBeenCalled();
     expect(admissionStore.install).not.toHaveBeenCalled();
   });

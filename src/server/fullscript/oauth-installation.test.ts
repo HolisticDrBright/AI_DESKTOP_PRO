@@ -77,7 +77,7 @@ describe('OAuth callback persists a new independent installation identity',()=>{
     vi.spyOn(console,'error').mockImplementation(()=>undefined);
     rejectNonceOnce=true;
     const result=await GET(request('fictional-first-nonce-abcdefghijklmnopqrstuvwxyz'));
-    expect(new URL(result.headers.get('location')!).searchParams.get('fullscript')).toBe('connection_failed');
+    expect(new URL(result.headers.get('location')!).searchParams.get('fullscript')).toBe('link_used');
     expect(connections).toEqual([]);expect(tokenExchanges()).toEqual([]);
   });
 });
