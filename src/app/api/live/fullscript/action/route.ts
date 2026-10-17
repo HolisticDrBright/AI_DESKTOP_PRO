@@ -1,7 +1,7 @@
 import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { currentFullscriptSession } from "@/server/fullscript/clinic-authority";
-import { connectedFullscriptClient } from "@/server/fullscript/runtime";
+import { connectedFullscriptClient, fullscriptActionError } from "@/server/fullscript/runtime";
 import { liveGuard, runLive } from "../../route-helpers";
 
 export async function POST(request: Request) {
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     // membership or clinic change, and nothing undoes it, so it is held before any token is read, refreshed or sent,
     // whatever FULLSCRIPT_LAB_ORDERING_ENABLED says (docs/fullscript-subject-binding-2026-10-16.md).
     if (body.action === "create_lab_checkout") throw new AdapterError("forbidden", FULLSCRIPT_LAB_CHECKOUT_HELD, "fullscript_lab_checkout_held");
-    const { client, connection } = await connectedFullscriptClient(session);
+    const { client, connection } = await connectedFullscriptClient(session).catch((error: unknown) => { throw fullscriptActionError(error); });
     const result = await perform(body, client, connection.environment);
     // Fullscript answered under the authority read at the start of this request. Read it again before the answer
     // reaches the practitioner, so a membership removed or a clinic suspended while Fullscript was answering withholds

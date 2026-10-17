@@ -1,7 +1,7 @@
 if (typeof window !== "undefined") throw new Error("Fullscript connection admission is server-only.");
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 import { tokenSubject } from "@/adapters/selected-clinic.server";
 import {
   membershipFenceCondition,
@@ -11,7 +11,7 @@ import {
 import type { RequestSession } from "@/server/session";
 import { FullscriptUnavailableError } from "./client";
 import { parseStoredFullscriptConnection, type StoredFullscriptConnection } from "./token-store";
-import { generationFromFences } from "./membership-generation";
+import { generationFromFences, sameGeneration } from "./membership-generation";
 
 type Send = (command: GetCommand | TransactWriteCommand) => Promise<unknown>;
 type Admission = {
@@ -20,7 +20,21 @@ type Admission = {
   actorKey: string;
   fences: readonly [ObservedMembershipFence, ObservedMembershipFence];
   previousPayload: string | null;
+  /** Whether the saved connection was made under the generation these fences hold: a live connection. Null with none. */
+  previousCurrent: boolean | null;
 };
+
+/**
+ * This account already holds a live Fullscript connection in this clinic. A new authorization never replaces it
+ * silently: the replaced token would stay valid at Fullscript with no row left to revoke it from, and a different
+ * Fullscript account would take over without anyone choosing that. The practitioner disconnects first, which revokes it.
+ */
+export class FullscriptAlreadyConnectedError extends FullscriptUnavailableError {
+  constructor() {
+    super("This account already has a Fullscript connection in this clinic.");
+    this.name = "FullscriptAlreadyConnectedError";
+  }
+}
 
 const TABLE_NAME = /^[A-Za-z0-9_.-]{3,255}$/;
 const REGION = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
@@ -61,27 +75,47 @@ export function createAwsFullscriptConnectionAdmission(
         const payload = previous?.Item?.payload;
         if (previous?.Item && (previous.Item.pk !== key.pk || previous.Item.sk !== key.sk || typeof payload !== "string"))
           throw new FullscriptUnavailableError();
-        if (typeof payload === "string") parseStoredFullscriptConnection(JSON.parse(payload), actor);
+        const observed = fences as [ObservedMembershipFence, ObservedMembershipFence];
+        const previousCurrent = typeof payload === "string"
+          ? sameGeneration(parseStoredFullscriptConnection(JSON.parse(payload), actor).membershipGeneration, generationFromFences(observed))
+          : null;
         const previousPayload = typeof payload === "string" ? payload : null;
-        return { subject, organizationId: actor.organizationId, actorKey: actor.actorKey,
-          fences: fences as [ObservedMembershipFence, ObservedMembershipFence], previousPayload };
+        return { subject, organizationId: actor.organizationId, actorKey: actor.actorKey, fences: observed, previousPayload, previousCurrent };
       } catch { throw new FullscriptUnavailableError(); }
     },
 
-    /** Linearization point: the token Put and both settled-fence version checks are one DynamoDB transaction. */
+    /**
+     * Linearization point: the token Put and both settled-fence version checks are one DynamoDB transaction.
+     *
+     * Over a saved connection:
+     *   - a live one (made under the current generation) is never replaced: FullscriptAlreadyConnectedError;
+     *   - a superseded one (made under an earlier generation, or before generations) is moved into the revocation
+     *     outbox in the same transaction, exactly as a read would move it, so its token is queued for revocation
+     *     rather than overwritten and forgotten.
+     */
     async install(connection: StoredFullscriptConnection, admission: Admission): Promise<void> {
       const parsed = parseStoredFullscriptConnection(connection,
         { actorKey: admission.actorKey, organizationId: admission.organizationId });
       if (parsed.organizationId !== admission.organizationId || parsed.actorKey !== admission.actorKey
         || admission.fences.length !== 2) throw new FullscriptUnavailableError();
+      if (admission.previousPayload !== null && admission.previousCurrent !== false) throw new FullscriptAlreadyConnectedError();
       // The generation this installation is admitted under: exactly the fence versions the transaction below holds.
       const stored = { ...parsed, membershipGeneration: generationFromFences(admission.fences) };
+      const key = { pk: `ORG#${parsed.organizationId}`, sk: `FULLSCRIPT#${parsed.actorKey}` };
+      let superseded: NonNullable<TransactWriteCommandInput["TransactItems"]>[number] | null = null;
+      if (admission.previousPayload !== null) {
+        const previous = parseStoredFullscriptConnection(JSON.parse(admission.previousPayload),
+          { actorKey: admission.actorKey, organizationId: admission.organizationId });
+        superseded = { Put: { TableName: tokenTable, ConditionExpression: "attribute_not_exists(pk)", Item: {
+          pk: key.pk, sk: `FULLSCRIPT_REVOCATION#${previous.actorKey}#${previous.connectedAt}`, protocol: "fullscript-revocation/1",
+          state: "pending", reason: "membership_changed", attempts: 0, createdAt: new Date().toISOString(), payload: admission.previousPayload } } };
+      }
       try {
         await send(new TransactWriteCommand({ TransactItems: [
           ...admission.fences.map((fence) => membershipFenceCondition(fenceTable, fence)),
+          ...(superseded ? [superseded] : []),
           { Put: { TableName: tokenTable,
-            Item: { pk: `ORG#${parsed.organizationId}`, sk: `FULLSCRIPT#${parsed.actorKey}`,
-              payload: JSON.stringify(stored) },
+            Item: { ...key, payload: JSON.stringify(stored) },
             ConditionExpression: admission.previousPayload === null ? "attribute_not_exists(pk)" : "payload = :previous",
             ...(admission.previousPayload === null ? {} : { ExpressionAttributeValues: { ":previous": admission.previousPayload } }),
           } },

@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("Fullscript runtime is server-only.");
 
 import { createHash, randomBytes } from "node:crypto";
+import { AdapterError, isAdapterError } from "@/adapters/errors";
 import { tokenSubject } from "@/adapters/selected-clinic.server";
 import type { RequestSession } from "@/server/session";
 import {
@@ -39,6 +40,12 @@ export function fullscriptActor(session: RequestSession): { actorKey: string; or
   };
 }
 
+/** Clinician-safe answers that say only what is known. None names a clinic, account, token or provider error. */
+export const FULLSCRIPT_STATUS_UNAVAILABLE = "Fullscript's status couldn't be read right now. Nothing about your connection has changed. Try again in a moment.";
+export const FULLSCRIPT_DISCONNECT_UNCONFIRMED = "Fullscript couldn't confirm the disconnect, so your connection is still active. Try again in a moment.";
+export const FULLSCRIPT_DISCONNECT_CHANGED = "Your Fullscript connection changed while it was being disconnected. Refresh to see it.";
+export const FULLSCRIPT_NOT_CONNECTED = "Connect Fullscript first.";
+export const FULLSCRIPT_ACTION_UNAVAILABLE = "Fullscript is unavailable right now. Try again in a moment.";
 export const FULLSCRIPT_RECONNECT_REQUIRED = "Reconnect Fullscript: the earlier connection was saved before connections were tied to your account, so it isn't used.";
 
 /**
@@ -76,22 +83,50 @@ export async function disconnectFullscript(session: RequestSession): Promise<voi
   if (!connection) return;
   if (parseStoredFullscriptConnection(connection, actor).environment !== configuration.environment)
     throw new FullscriptUnavailableError();
-  await revokeFullscriptToken({ configuration, token: connection.accessToken });
-  if (!(await store.delete(connection))) throw new FullscriptUnavailableError();
+  // Fullscript must confirm the revocation before the row goes: deleting it on a failed revoke would leave a token
+  // valid at Fullscript that nothing here could revoke again. So the connection stays, and the answer says so.
+  try { await revokeFullscriptToken({ configuration, token: connection.accessToken }); } catch {
+    throw new AdapterError("unavailable", FULLSCRIPT_DISCONNECT_UNCONFIRMED, "fullscript_revocation_unconfirmed");
+  }
+  if (!(await store.delete(connection))) throw new AdapterError("conflict", FULLSCRIPT_DISCONNECT_CHANGED, "fullscript_disconnect_raced");
 }
 
+/** A Fullscript failure from a provider action, as the practitioner should read it: a reconnect is asked for in its own
+ * words (a 409, with the reason), never a generic "Something went wrong"; anything else is unavailable. */
+export function fullscriptActionError(error: unknown): AdapterError {
+  if (isAdapterError(error)) return error;
+  const message = error instanceof FullscriptUnavailableError ? error.message : "";
+  if (message === FULLSCRIPT_RECONNECT_REQUIRED || message === FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE || message === FULLSCRIPT_NOT_CONNECTED) {
+    return new AdapterError("conflict", message, "fullscript_reconnect_required");
+  }
+  return new AdapterError("unavailable", FULLSCRIPT_ACTION_UNAVAILABLE, "fullscript_action_unavailable");
+}
+
+/**
+ * The Integrations card's status. Three different answers, never confused:
+ *   - not configured (this deployment has no Fullscript): `configured: false`, with a reason;
+ *   - configured, with what is saved for this account (connected, ready, or a saved connection needing reconnect);
+ *   - the status could not be read (a table, fence or generation read failing, a membership change in flight, a
+ *     malformed row): a 503 with FULLSCRIPT_STATUS_UNAVAILABLE. Nobody is in a position to say "not configured" then,
+ *     and saying it would offer the setup steps to a practitioner whose connection is fine.
+ */
 export async function fullscriptPosture(session: RequestSession) {
+  let configuration: ReturnType<typeof readFullscriptConfiguration>;
+  try { configuration = readFullscriptConfiguration(); } catch {
+    return { configured: false, connected: false, environment: null, reason: "not_configured" } as const;
+  }
   try {
-    const configuration = readFullscriptConfiguration();
     const store = createAwsFullscriptTokenStore();
     if (!store) return { configured: false, connected: false, environment: configuration.environment, reason: "token_store_missing" } as const;
     const actor = fullscriptActor(session);
     const saved = await store.get(actor.actorKey, actor.organizationId);
     const connection = saved ? parseStoredFullscriptConnection(saved, actor) : null;
     if (connection && connection.environment !== configuration.environment) throw new FullscriptUnavailableError();
-    if ((connection && !(await connectionIsCurrent(session, connection, process.env)))
-      || (!connection && await emailKeyedConnectionExists(store, session))) {
-      return { configured: true, connected: false, reconnectRequired: true, environment: configuration.environment,
+    const reconnectReason = connection
+      ? (await connectionIsCurrent(session, connection, process.env) ? null : "membership_changed" as const)
+      : (await emailKeyedConnectionExists(store, session) ? "account_binding" as const : null);
+    if (reconnectReason) {
+      return { configured: true, connected: false, reconnectRequired: true, reconnectReason, environment: configuration.environment,
         resourceOwnerType: null, scopes: [], connectedAt: null, productionApproved: configuration.environment === "production_us" } as const;
     }
     return {
@@ -104,7 +139,7 @@ export async function fullscriptPosture(session: RequestSession) {
       productionApproved: configuration.environment === "production_us",
     } as const;
   } catch {
-    return { configured: false, connected: false, environment: null, reason: "unavailable" } as const;
+    throw new AdapterError("unavailable", FULLSCRIPT_STATUS_UNAVAILABLE, "fullscript_status_unread");
   }
 }
 
@@ -133,7 +168,7 @@ export async function connectedFullscriptClient(session: RequestSession, require
   const actor = fullscriptActor(session);
   let connection = await store.get(actor.actorKey, actor.organizationId);
   if (!connection && await emailKeyedConnectionExists(store, session)) throw new FullscriptUnavailableError(FULLSCRIPT_RECONNECT_REQUIRED);
-  if (!connection || connection.environment !== configuration.environment) throw new FullscriptUnavailableError("Connect Fullscript first.");
+  if (!connection || connection.environment !== configuration.environment) throw new FullscriptUnavailableError(FULLSCRIPT_NOT_CONNECTED);
   connection = parseStoredFullscriptConnection(connection, actor);
   // Before any use or refresh: a connection made under authority that has since been reduced is never used again.
   if (!(await connectionIsCurrent(session, connection, env))) throw new FullscriptUnavailableError(FULLSCRIPT_RECONNECT_AFTER_MEMBERSHIP_CHANGE);

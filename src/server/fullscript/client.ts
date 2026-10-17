@@ -34,6 +34,16 @@ export class FullscriptUnavailableError extends Error {
   }
 }
 
+/** Fullscript answered and refused the grant (HTTP 400, OAuth `invalid_grant` and its kin): the authorization itself was
+ * not accepted. Distinct from an outage, a timeout or our own client being refused (401), which say nothing about the
+ * practitioner's account. Still a FullscriptUnavailableError for every caller that does not need the difference. */
+export class FullscriptGrantRefusedError extends FullscriptUnavailableError {
+  constructor() {
+    super("Fullscript refused the authorization grant.");
+    this.name = "FullscriptGrantRefusedError";
+  }
+}
+
 const ENVIRONMENTS: Record<FullscriptEnvironment, { apiOrigin: string; authorizeUrl: string }> = {
   sandbox_us: {
     apiOrigin: "https://api-us-snd.fullscript.io/api",
@@ -226,6 +236,7 @@ async function tokenRequest(
   }).catch(() => null);
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
     void response?.body?.cancel().catch(() => undefined);
+    if (response?.status === 400) throw new FullscriptGrantRefusedError();
     throw new FullscriptUnavailableError("Fullscript token exchange failed.");
   }
   const raw = await boundedFullscriptBody(response, 64_000, signal);
