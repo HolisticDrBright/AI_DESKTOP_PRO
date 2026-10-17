@@ -14,12 +14,12 @@ import { classifyDatabaseRejection } from './rds-data-database';
  *
  * WP1, a practitioner session that existed before the suspension: the deployed schema lets it keep reading, writing
  * and deciding consent; the status successor ends its reads and writes but not its consent decisions; with both,
- * nothing it does in the closed clinic is admitted. Records, consent history and audit survive every stage, and the
+ * new grants are refused while withdrawals remain available to active clinical members. Records, consent history and audit survive every stage, and the
  * patient's own requests are never refused by either candidate.
  *
  * WP2, consent decisions versus withdrawal cleanup: the status successor admits every workforce consent_management
  * request, because the retention service, privacy operators and recording cleanup share that purpose. The practitioner's
- * own decision is refused only by the second candidate, inside the decision functions, which tell the actors apart.
+ * own new grant is refused only by the second candidate, inside the decision functions, which tell the actors apart.
  * The cleanup cases record what each path actually does in a closed clinic. Recording cleanup is refused by its own
  * deployed operator check, before and after both candidates. That is the finding in
  * docs/suspended-clinic-custody-2026-10-16.md.
@@ -50,6 +50,8 @@ beforeAll(() => {
   // The status successor and its rollback are the reviewed bytes, unchanged by this work.
   expect(sha(readFileSync('infra/aws-clinical-core/source-candidates/legacy-claims-clinic-status.sql', 'utf8'))).toBe('c3788dc20bed9fe6aae40cc939a08a69773d45d56dc297dea21ae99ed6c7cc66');
   expect(sha(readFileSync('infra/aws-clinical-core/source-candidates/legacy-claims-clinic-status-rollback.sql', 'utf8'))).toBe('4c311c01148367b82d58e2143c2cce6f21f391fa04d50f1f21e27935224b29a0');
+  expect(sha(DECISION)).toBe('e3ac5c117165afffb37c9357ba3fa2240410dd3bd41a73bc206d99a3c69a31fd');
+  expect(sha(DECISION_ROLLBACK)).toBe('5a863a36011561c63c5013a9457ba9429a9707f6707ca350dbde5c243f5ee2c5');
 });
 
 describe.each(STAGES)('suspended-clinic custody, legacy claims: %s', stage => {
