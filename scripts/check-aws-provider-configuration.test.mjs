@@ -24,6 +24,15 @@ const clean = fixture();
 assert.equal(clean.status, 0, clean.stderr);
 assert.match(clean.stdout, /check passed/);
 
+const missingPoolInspection = fixture((d) => edit(d, "infra/aws-clinical-core/consumer-account-extension.json", (t) => {
+  const policy = t.Resources.ConsumerAccountRole.Properties.Policies.find(
+    entry => entry["Fn::If"]?.[1]?.PolicyName === "ConfirmedUserLookupOnly",
+  )["Fn::If"][1];
+  policy.PolicyDocument.Statement.find(statement => Array.isArray(statement.Action)).Action = ["cognito-idp:DescribeUserPoolClient"];
+}));
+assert.equal(missingPoolInspection.status, 1);
+assert.match(missingPoolInspection.stderr, /consumer registration must inspect the exact pool before SignUp/);
+
 const zoom = fixture((d) => edit(d, "infra/aws-clinical-core/telehealth-requests-extension.json", (t) => { t.Parameters.ZoomEnabled.Default = "true"; }));
 assert.equal(zoom.status, 1); assert.match(zoom.stderr, /ZoomEnabled must default to false/);
 

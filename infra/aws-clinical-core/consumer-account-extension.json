@@ -59,7 +59,7 @@
           ] } }, { "Ref": "AWS::NoValue" }] },
           { "Fn::If": ["AccountAccessAllowed", { "PolicyName": "ConfirmedUserLookupOnly", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
             { "Effect": "Allow", "Action": "cognito-idp:AdminGetUser", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}" } },
-            { "Effect": "Allow", "Action": "cognito-idp:DescribeUserPoolClient", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}" } }
+            { "Effect": "Allow", "Action": ["cognito-idp:DescribeUserPool", "cognito-idp:DescribeUserPoolClient"], "Resource": { "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}" } }
           ] } }, { "Ref": "AWS::NoValue" }] },
           { "PolicyName": "BoundedRegistrationLogging", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["ConsumerAccountLogGroup", "Arn"] } }] } }
         ]

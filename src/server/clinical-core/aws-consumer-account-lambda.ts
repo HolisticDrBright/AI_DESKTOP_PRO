@@ -8,6 +8,7 @@ import {
   CognitoIdentityProviderClient,
   ConfirmForgotPasswordCommand,
   ConfirmSignUpCommand,
+  DescribeUserPoolCommand,
   DescribeUserPoolClientCommand,
   ForgotPasswordCommand,
   ResendConfirmationCodeCommand,
@@ -59,7 +60,15 @@ const provider: ConsumerAccountProvider = {
   },
   async register(input) {
     try {
-      await cognito.send(new SignUpCommand({
+      // A pool can drift away from auto-verified email while SignUp itself
+      // still accepts a user. Refuse before creating an account that cannot
+      // complete this code-based registration journey.
+      const observed = await cognito.send(new DescribeUserPoolCommand({ UserPoolId: poolId }));
+      if (observed.UserPool?.Id !== poolId
+        || !observed.UserPool.AutoVerifiedAttributes?.includes("email")) {
+        throw new ConsumerAccountProviderError("provider_unavailable");
+      }
+      const signup = await cognito.send(new SignUpCommand({
         ClientId: clientId,
         Username: input.email,
         SecretHash: await secretHash(input.email),
@@ -74,6 +83,11 @@ const provider: ConsumerAccountProvider = {
         ],
         ClientMetadata: { registration_contract: "consumer-account-registration/1" },
       }));
+      if (signup.UserConfirmed !== false || signup.CodeDeliveryDetails?.DeliveryMedium !== "EMAIL"
+        || (signup.CodeDeliveryDetails.AttributeName !== undefined
+          && signup.CodeDeliveryDetails.AttributeName !== "email")) {
+        throw new ConsumerAccountProviderError("provider_unavailable");
+      }
     } catch (error) {
       throw providerError(error);
     }

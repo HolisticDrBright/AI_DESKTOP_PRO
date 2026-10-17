@@ -116,6 +116,18 @@ if (calendar) {
 
 const account = json("infra/aws-clinical-core/consumer-account-extension.json");
 if (account) require(account.Parameters?.AccountActivation?.Default === "blocked", "consumer account activation must default to blocked");
+if (account) {
+  const lookup = account.Resources?.ConsumerAccountRole?.Properties?.Policies?.find(
+    policy => policy?.["Fn::If"]?.[1]?.PolicyName === "ConfirmedUserLookupOnly",
+  )?.["Fn::If"];
+  const poolArn = "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}";
+  require(lookup?.[0] === "AccountAccessAllowed"
+    && lookup?.[1]?.PolicyDocument?.Statement?.some(statement =>
+      statement.Effect === "Allow"
+      && JSON.stringify(statement.Action) === JSON.stringify(["cognito-idp:DescribeUserPool", "cognito-idp:DescribeUserPoolClient"])
+      && statement.Resource?.["Fn::Sub"] === poolArn),
+  "consumer registration must inspect the exact pool before SignUp");
+}
 
 for (const file of ["telehealth-requests-extension.json", "fullscript-connector-extension.json", "consumer-account-extension.json", "external-provider-readiness.json"]) {
   const text = read(`infra/aws-clinical-core/${file}`);
