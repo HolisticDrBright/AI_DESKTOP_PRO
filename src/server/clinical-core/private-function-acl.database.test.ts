@@ -101,6 +101,16 @@ describe('production private-function ACL audit', () => {
         await tx.exec('set local role clinical_core_api');
         await tx.query('select clinical_core.invoke_plan_operation(null,null)');
       })).rejects.toThrow(/plan_arguments_invalid/);
+      const rollback = readFileSync('infra/aws-clinical-core/source-candidates/clinical-private-public-execute-closure-live-46-rollback.sql', 'utf8');
+      await liveShape.query("update clinical_core.schema_migrations set sha256=repeat('f',64) where version='20260904090000'");
+      await expect(liveShape.exec(rollback)).rejects.toThrow(/private_function_acl_rollback_ledger_mismatch/);
+      expect(await publicCount()).toBe(0);
+      await liveShape.query('update clinical_core.schema_migrations set sha256=$1 where version=$2',
+        [createHash('sha256').update(artifact.files[last.file]!).digest('hex'), last.version]);
+      await liveShape.exec(rollback);
+      expect(await publicCount()).toBe(18);
+      await liveShape.exec(candidate);
+      expect(await publicCount()).toBe(0);
     } finally {
       await liveShape.close();
     }
