@@ -48,7 +48,10 @@ export type QualificationTargetManifest = {
 };
 
 export type QualificationTargetRefusal = "target_manifest_invalid" | "target_placeholder" | "target_account_refused" | "target_staging_refused" | "target_database_refused"
-  | "target_override_refused" | "target_source_mismatch" | "target_ledger_mismatch" | "target_stack_refused";
+  | "target_override_refused" | "target_source_mismatch" | "target_ledger_mismatch" | "target_stack_refused"
+  // The source boundary of an acceptance run (qualification-target-boundary.ts): a checkout that is not clean, and a
+  // deployment that changed between two commands of one run or between the observations before and after it.
+  | "target_source_dirty" | "target_changed_between_steps" | "target_changed_mid_run";
 export class QualificationTargetManifestError extends Error {
   constructor(readonly category: QualificationTargetRefusal, readonly field?: string) { super(category); this.name = "QualificationTargetManifestError"; }
 }

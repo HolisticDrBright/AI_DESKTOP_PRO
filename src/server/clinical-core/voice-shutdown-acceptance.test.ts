@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { runVoiceShutdownAcceptance, VoiceShutdownAcceptanceError, type VoiceInventoryObservation } from "./voice-shutdown-acceptance";
+import { observeAcceptanceBoundary } from "./qualification-target-observation";
+import { FictionalQualificationDeployment, fictionalQualificationManifest } from "./testing/qualification-target-fictional";
 
 // A fictional draining deployment: these cases pin what the run asks for and what it refuses to call completion.
 const token = (letter: string) => `eyJ${letter.repeat(12)}.${Buffer.from(JSON.stringify({ sub: letter })).toString("base64url")}.${letter.repeat(20)}`;
@@ -29,9 +31,31 @@ describe("hosted voice shutdown acceptance", () => {
     for (const status of [401, 403]) {
       const result = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance", inventories: [inventory(), inventory({ observedAt: "2026-09-21T11:00:00Z" })],
         fetch: drained([cleanup(), cleanup(), cleanup(), json(status, { message: "Unauthorized" })]) });
-      expect(result.ok).toBe(true);
-      expect(result.steps[3]).toMatchObject({status,detail:"workforce_denied_by_consumer_authorizer"});
+      // The denial is still recorded as the authorizer's, and still distinct from the drain refusal. But it is the step's
+      // only evidence, and an unmarked 401/403 cannot say which code refused or why (an expired or foreign token is
+      // refused the same way), so the step is unverified and the run is not a pass. This assertion read `toBe(true)`
+      // before 2026-10-17: it pinned the gap (docs/hosted-acceptance-source-boundary-2026-10-17.md).
+      expect(result.ok).toBe(false);
+      expect(result.unverified).toEqual(["drain refuses another identity the same way"]);
+      expect(result.steps[3]).toMatchObject({status,detail:"workforce_denied_by_consumer_authorizer",outcome:"passed",evidence:"unmarked_denial"});
     }
+  });
+  test("a drain refusal for the second identity is the function's own answer; the boundary around the run decides qualification", async () => {
+    const manifest = fictionalQualificationManifest(), d = new FictionalQualificationDeployment(manifest, ["owned-voice"]);
+    const observe = () => observeAcceptanceBoundary(manifest, ["owned-voice"], { runner: d.runner, posture: "drain" });
+    const inventories = [inventory(), inventory({ observedAt: "2026-09-21T11:00:00Z" })];
+    const kept = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance", inventories, fetch: drained(), sourceBoundary: { before: observe(), after: observe } });
+    expect(kept.steps[3]).toMatchObject({ outcome: "passed", evidence: "production" });
+    expect(kept.unverified).toEqual([]); expect(kept.ok).toBe(true); expect(kept.qualified).toBe(true);
+    expect(kept.sourceBoundary).toMatchObject({ state: "unchanged" });
+    // The drain stack updated while the probes ran: the report is kept, and it is not acceptance.
+    const before = observe();
+    const moved = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance", inventories, sourceBoundary: { before, after: observe },
+      fetch: async () => { d.redeploy("owned-voice"); return cleanup(); } });
+    expect(moved.sourceBoundary).toMatchObject({ state: "changed", changed: ["owned-voice"] });
+    expect(moved.ok).toBe(false); expect(moved.qualified).toBe(false);
+    const exploratory = await runVoiceShutdownAcceptance({ ...base, fetch: drained() });
+    expect(exploratory.ok).toBe(true); expect(exploratory.qualified).toBe(false);
   });
   test("a draining deployment refuses every public method, and the run records what the inventories still hold without certifying anything", async () => {
     const calls: Array<{ url: string; method: string; auth: string }> = [];

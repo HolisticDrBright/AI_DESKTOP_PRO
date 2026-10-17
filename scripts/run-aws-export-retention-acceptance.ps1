@@ -24,6 +24,7 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw "AWS CLI is re
 if (-not $env:CLINICAL_WORKFORCE_ID_TOKEN -or -not $env:CLINICAL_CONSUMER_ID_TOKEN) { throw "Fresh consumer and workforce Cognito ID tokens must be set in this PowerShell process only." }
 if ($Mode -eq 'acceptance' -and (-not $env:CLINICAL_FOREIGN_CONSUMER_ID_TOKEN -or -not $env:CLINICAL_STALE_CONSUMER_ID_TOKEN)) { throw "Acceptance mode needs a second consumer token and a legitimately issued stale consumer token as well; use -Mode exploratory for a partial run." }
 $sourceCommit = Assert-QualificationSourceCommit -Target $target
+if ($Mode -eq 'acceptance') { Assert-QualificationCleanCheckout }
 $account = Assert-QualificationAccount -Target $target
 Assert-QualificationFoundation -Target $target -Region $Region
 Assert-QualificationStacks -Target $target -Candidates @('personal-storage', 'privacy-operations') -Region $Region

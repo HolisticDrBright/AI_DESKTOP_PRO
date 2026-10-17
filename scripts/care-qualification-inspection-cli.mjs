@@ -15,21 +15,40 @@ const load=directory=>{
  return {manifest:JSON.parse(readFileSync(join(directory,'artifact-manifest.json'),'utf8')),
   code:readFileSync(join(directory,'index.js')),templateBytes:readFileSync(join(directory,'template.json')),zip:readFileSync(join(directory,'deployment.zip'))};
 };
+/** `--acceptance` is how an acceptance wrapper asks: it needs the reviewed binding (a deployed candidate cannot be
+ * inspected without one) and turns anything short of `deployment_bindings_verified` into a refusal. Without it the
+ * inspector stays the inventory tool it was, and a missing stack is still reported as `not_deployed` with exit 0. */
 export function careInspectionOptions(args,candidate){
  if(!['care-messaging','care-connections'].includes(candidate)||!Array.isArray(args))throw new CareObservationError('argument_refused');
- const options={};
- for(const arg of args){const match=/^--(artifact-dir|binding|release)=(.+)$/.exec(arg);
+ const options={};let acceptance=false;
+ for(const arg of args){
+  if(arg==='--acceptance'){if(acceptance)throw new CareObservationError('argument_refused');acceptance=true;continue;}
+  const match=/^--(artifact-dir|binding|release)=(.+)$/.exec(arg);
   if(!match||Object.hasOwn(options,match[1]))throw new CareObservationError('argument_refused');options[match[1]]=match[2];}
  const successor=options.release==='112';
  if(options.release!==undefined&&!successor)throw new CareObservationError('argument_refused');
- return {options,successor};
+ if(acceptance&&!options.binding)throw new CareObservationError('argument_refused');
+ return {options,successor,acceptance};
+}
+/** What the inspection prints and how it exits. Inventory: the report as it is, exit 0, `not_deployed` included.
+ * Acceptance: a precondition, never acceptance itself. A candidate that is not deployed, a report for another head, or
+ * one that claims a mutation, PHI or acceptance, is refused with exit 1; a verified deployment is printed with
+ * `acceptancePrecondition` and still `acceptance:false`, `humanReviewsVerified:false`. */
+const notCompleted=category=>({status:'not_completed',category,mutations:false,acceptance:false,phiAllowed:false});
+export function careInspectionOutcome(report,{acceptance},head){
+ if(!acceptance)return {exitCode:0,stream:'stdout',line:JSON.stringify(report)};
+ const refuse=category=>({exitCode:1,stream:'stderr',line:JSON.stringify(notCompleted(category))});
+ if(report?.status==='not_deployed')return refuse('candidate_not_deployed');
+ if(report?.status!=='deployment_bindings_verified'||report.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head??'')
+  ||report.mutations!==false||report.phiAllowed!==false||report.acceptance!==false||report.humanReviewsVerified!==false)return refuse('deployment_not_verified');
+ return {exitCode:0,stream:'stdout',line:JSON.stringify({...report,acceptancePrecondition:'deployment_bindings_verified',acceptance:false,humanReviewsVerified:false})};
 }
 export async function runCareInspection(candidate){
  if(!['care-messaging','care-connections'].includes(candidate))throw new CareObservationError('argument_refused');
  const inspector=candidate==='care-connections'?inspectCareConnectionsQualification:inspectCareMessagingQualification;
  let temporary;
 try{
- const {options,successor}=careInspectionOptions(process.argv.slice(2),candidate);
+ const {options,successor,acceptance}=careInspectionOptions(process.argv.slice(2),candidate);
  const first=source();if(first.dirty)throw new CareObservationError('dirty_source_refused');
  const expected=successor
   ? qualificationCare112Artifact(JSON.parse(local(process.execPath,['scripts/build-telehealth-consent-copy-candidate.mjs','--json'])))
@@ -49,10 +68,10 @@ try{
  const inspectLedger=inspectionLedgerReader(expected,undefined,successor?QUALIFICATION_CARE_112_LEDGER:undefined);
  const report=await inspector({artifact,head:first.head,binding,readAws,readCodeVersion:inspectionCodeReader(readAws),inspectLedger});
  const last=source();if(last.dirty||last.head!==first.head)throw new CareObservationError('source_changed');
- console.log(JSON.stringify(report));
+ const outcome=careInspectionOutcome(report,{acceptance},first.head);
+ (outcome.stream==='stdout'?console.log:console.error)(outcome.line);if(outcome.exitCode)process.exitCode=outcome.exitCode;
 }catch(error){
- console.error(JSON.stringify({status:'not_completed',category:error instanceof CareObservationError?error.category:'inspection_failed',
-  mutations:false,acceptance:false,phiAllowed:false}));process.exitCode=1;
+ console.error(JSON.stringify(notCompleted(error instanceof CareObservationError?error.category:'inspection_failed')));process.exitCode=1;
 }finally{
  if(temporary){
   try{for(const name of readdirSync(temporary)){

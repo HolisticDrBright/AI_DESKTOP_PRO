@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { fictionalWav, runRecordingAcceptance, RecordingAcceptanceError } from "./recording-acceptance";
+import { RECORDING_ACCEPTANCE_CANDIDATES, observeAcceptanceBoundary } from "./qualification-target-observation";
+import { FictionalQualificationDeployment, fictionalQualificationManifest } from "./testing/qualification-target-fictional";
 
 // The transport is a fictional router: these cases pin what the hosted run asks for and how it grades what comes back.
 const token = (letter: string) => `eyJ${letter.repeat(12)}.${Buffer.from(JSON.stringify({ sub: letter })).toString("base64url")}.${letter.repeat(20)}`;
@@ -138,5 +140,74 @@ describe("hosted recording, transcription and drafting acceptance", () => {
     expect(d.calls).toHaveLength(0);
     const wav = fictionalWav(1, 8000);
     expect(Buffer.from(wav.subarray(0, 4)).toString("latin1")).toBe("RIFF"); expect(wav.byteLength).toBe(44 + 8000 * 2);
+  });
+});
+
+describe("hosted recording acceptance: what counts as evidence, and the source boundary around the run", () => {
+  // Every candidate response is marked. A token the workforce JWT authorizer refuses never reaches a function, so its
+  // answers carry no marker, exactly as in a hosted run; `unmarkedFor` names the bearer whose answers stay unmarked.
+  const hosted = (unmarkedFor: string | null = token("c"), d = deployment()) => async (url: string, init?: RequestInit) => {
+    const r = await d.fetch(url, init), auth = String((init?.headers as Record<string, string>).authorization);
+    const marker: Record<string, string> = auth === `Bearer ${unmarkedFor}` ? {} : { "x-clinical-execution": "qualification" };
+    return new Response(await r.arrayBuffer(), { status: r.status, headers: { "content-type": "application/json", ...marker } });
+  };
+  const acceptance = { ...base, mode: "acceptance" as const, expectedExecution: "qualification" as const };
+  const boundary = () => {
+    const manifest = fictionalQualificationManifest(), d = new FictionalQualificationDeployment(manifest);
+    const observe = () => observeAcceptanceBoundary(manifest, RECORDING_ACCEPTANCE_CANDIDATES, { runner: d.runner });
+    return { d, before: observe(), observe };
+  };
+  test("a mandatory step whose only evidence is unmarked authorizer denials is unverified, so the run is not a pass", async () => {
+    const report = await runRecordingAcceptance({ ...acceptance, fetch: hosted() });
+    expect(report.execution).toBe("qualification"); expect(report.unmarkedDenials).toBe(true);
+    // The refusal itself is recorded as what it was; it is the evidence for it that is unverified.
+    expect(report.steps[1]).toMatchObject({ name: "consumer token refused on workforce recording routes", outcome: "passed", detail: "401,401,401", evidence: "unmarked_denial" });
+    expect(report.unverified).toEqual(["consumer token refused on workforce recording routes"]);
+    expect(report.verdict.unmet).toEqual([]);
+    expect(report.ok).toBe(false); expect(report.qualified).toBe(false);
+  });
+  test("a refusal the candidate marked is the candidate's own refusal and is evidence", async () => {
+    const report = await runRecordingAcceptance({ ...acceptance, fetch: hosted(null) });
+    expect(report.steps[1]).toMatchObject({ outcome: "passed", evidence: "qualification" });
+    expect(report.steps.every((s) => s.evidence === "qualification")).toBe(true);
+    expect(report.unverified).toEqual([]); expect(report.ok).toBe(true);
+    // Without an observed boundary the library cannot qualify a run: only a CLI that observed the deployment around it can.
+    expect(report.sourceBoundary).toMatchObject({ state: "not_observed" }); expect(report.qualified).toBe(false);
+  });
+  test("the same deployment observed before the first request and after the last one qualifies the run", async () => {
+    const { before, observe } = boundary();
+    const report = await runRecordingAcceptance({ ...acceptance, fetch: hosted(null), sourceBoundary: { before, after: observe } });
+    expect(report.sourceBoundary).toMatchObject({ state: "unchanged", source: "observed", changed: [] });
+    expect(report.sourceBoundary.before?.sha256).toBe(before.sha256); expect(report.sourceBoundary.after?.sha256).toBe(before.sha256);
+    expect(report.ok).toBe(true); expect(report.qualified).toBe(true);
+  });
+  test("a redeploy during the run invalidates the report, even when every step passed and SourceCommit did not change", async () => {
+    const { d, before, observe } = boundary();
+    let requests = 0;
+    const answer = hosted(null);
+    const report = await runRecordingAcceptance({ ...acceptance, sourceBoundary: { before, after: observe },
+      fetch: async (url, init) => { if (++requests === 5) d.redeploy("recording-capture", { parameters: { CodeVersion: "fictional-code-version-2" } }); return answer(url, init); } });
+    expect(report.steps.every((s) => s.outcome === "passed")).toBe(true);
+    expect(report.sourceBoundary).toMatchObject({ state: "changed", changed: ["recording-capture"], refusal: "target_changed_mid_run" });
+    expect(report.ok).toBe(false); expect(report.qualified).toBe(false);
+    // A stack still updating, or the checkout edited, when the run closes: refused, never qualified.
+    const mid = boundary();
+    const updating = await runRecordingAcceptance({ ...acceptance, fetch: hosted(null), sourceBoundary: { before: mid.before, after: () => { mid.d.redeploy("recording-drafting", { status: "UPDATE_IN_PROGRESS" }); return mid.observe(); } } });
+    expect(updating.sourceBoundary).toMatchObject({ state: "refused", refusal: "target_stack_refused:recording-drafting" }); expect(updating.ok).toBe(false);
+    const edited = boundary();
+    const dirty = await runRecordingAcceptance({ ...acceptance, fetch: hosted(null), sourceBoundary: { before: edited.before, after: () => { edited.d.status = " M x.ts\n"; return edited.observe(); } } });
+    expect(dirty.sourceBoundary).toMatchObject({ state: "refused", refusal: "target_source_dirty:checkout" }); expect(dirty.qualified).toBe(false);
+    // The boundary is part of the evidence: two otherwise identical runs with different boundaries hash differently.
+    expect(dirty.evidenceSha256).not.toBe(updating.evidenceSha256);
+  });
+  test("an early stop still closes the boundary after its last request; exploration is never qualified", async () => {
+    const { before, observe } = boundary();
+    let closed = 0;
+    const notActivated = deployment({ "authority:workspace": () => json(503, { error: "production_not_activated", phiAllowed: false }) });
+    const stopped = await runRecordingAcceptance({ ...acceptance, fetch: notActivated.fetch, sourceBoundary: { before, after: () => { closed++; return observe(); } } });
+    expect(closed).toBe(1); expect(stopped.sourceBoundary.state).toBe("unchanged"); expect(stopped.qualified).toBe(false);
+    const exploratory = await runRecordingAcceptance({ ...base, fetch: hosted(null) });
+    expect(exploratory.ok).toBe(true); expect(exploratory.qualified).toBe(false);
+    expect(exploratory.sourceBoundary).toMatchObject({ state: "not_observed", source: "asserted_by_caller" });
   });
 });

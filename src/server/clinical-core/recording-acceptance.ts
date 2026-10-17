@@ -1,6 +1,7 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/recording-acceptance is server-only.");
 import { createHash } from "node:crypto";
-import { observeExecution, summariseExecution, type ObservedExecution } from "./qualification-execution";
+import { observeExecution, summariseExecution, summariseStepEvidence, unverifiedSteps, type ObservedExecution, type StepEvidence } from "./qualification-execution";
+import { boundaryAllowsOk, closeAcceptanceBoundary, qualifiedVerdict, type AcceptanceBoundaryInput, type AcceptanceSourceBoundary } from "./qualification-target-boundary";
 
 /** Hosted synthetic acceptance for encounter recording, transcription and
  * review-only drafting (Desktop migrations 20260917070000 onward). Runs only
@@ -14,7 +15,9 @@ import { observeExecution, summariseExecution, type ObservedExecution } from "./
  * The audio this run stores stays under the reviewed retention deadline and is
  * reported under `retained`; the harness never deletes media itself. */
 export type RecordingAcceptanceOutcome = "passed" | "failed" | "not_configured" | "skipped";
-export type RecordingAcceptanceStep = { index: number; name: string; expected: string; outcome: RecordingAcceptanceOutcome; status?: number; detail?: string };
+/** `evidence` says what answered the step: an `unmarked_denial` step was answered only by 401/403s without the marker,
+ * which API Gateway's authorizer gives before any function runs; that is recorded, and never counted as a pass. */
+export type RecordingAcceptanceStep = { index: number; name: string; expected: string; outcome: RecordingAcceptanceOutcome; status?: number; detail?: string; evidence: StepEvidence };
 export type RecordingAcceptanceReport = {
   schemaVersion: "recording-acceptance/1"; environment: "synthetic-staging"; ok: boolean;
   sourceCommit: string; migrationReleaseHash: string; configurationSha256: string; awsAccountId: string; encounterId: string;
@@ -24,7 +27,14 @@ export type RecordingAcceptanceReport = {
   /** Which execution answered (docs/aws-qualification-target.md). Unmarked 401/403 responses are authorizer denials, counted apart. */
   execution: ObservedExecution; unmarkedDenials: boolean;
   /** The verdict: `ok` is true only when every mandatory case passed and the expected execution answered; partial runs are kept, never promoted. */
-  verdict: { mode: "exploratory" | "acceptance"; expectedExecution: ObservedExecution | null; mandatory: string[]; unmet: string[] }; evidenceSha256: string;
+  verdict: { mode: "exploratory" | "acceptance"; expectedExecution: ObservedExecution | null; mandatory: string[]; unmet: string[] };
+  /** Mandatory steps that passed on unmarked authorizer denials alone: unverified, so `ok` is false while any remain. */
+  unverified: string[];
+  /** The clean checkout and candidate stacks observed before the first request and after the last (qualification-target-boundary.ts). */
+  sourceBoundary: AcceptanceSourceBoundary;
+  /** The hosted verdict: acceptance mode, `ok`, and an observed, unchanged source boundary. Exploratory runs are never qualified. */
+  qualified: boolean;
+  evidenceSha256: string;
 };
 /** Every step of the recording flow; in acceptance mode all of them must pass (no skip, no not_configured). */
 export const RECORDING_ACCEPTANCE_STEPS = ["consent workspace", "consumer token refused on workforce recording routes", "participants and consents", "readiness", "start capture", "start replay is idempotent",
@@ -61,6 +71,9 @@ export async function runRecordingAcceptance(input: {
   audio?: { bytes: Uint8Array; source: "supplied_file" }; expectedAwsAccountId: string; observedAwsAccountId: string; sourceCommit: string; migrationReleaseHash: string;
   /** `acceptance` requires every step to pass and the expected execution to answer; `exploratory` (default) keeps partial results honest. */
   mode?: "exploratory" | "acceptance"; expectedExecution?: "qualification" | "production";
+  /** The CLI's observation before the run, and how to observe again after its last request. A changed or refused
+   * closing observation invalidates the report; without one the run is never qualified. */
+  sourceBoundary?: AcceptanceBoundaryInput;
   fetch?: FetchLike; now?: () => number; wait?: (ms: number) => Promise<void>; maxPasses?: number;
 }): Promise<RecordingAcceptanceReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, wait = input.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -71,10 +84,11 @@ export async function runRecordingAcceptance(input: {
   if (audioBytes.byteLength < 44 || audioBytes.byteLength > 64 * 1024 * 1024 || Buffer.from(audioBytes.subarray(0, 4)).toString("latin1") !== "RIFF") throw new RecordingAcceptanceError("configuration_invalid");
   const steps: RecordingAcceptanceStep[] = [];
   let index = 0;
+  let answered = new Set<string>(); // what answered the current step
   const step = async (name: string, expected: string, work: () => Promise<{ outcome: RecordingAcceptanceOutcome; status?: number; detail?: string }>) => {
-    index += 1;
-    try { const r = await work(); steps.push({ index, name, expected, ...r }); return r; }
-    catch (error) { const detail = error instanceof Error && /^[a-z_:0-9-]+$/.test(error.message) ? error.message : "step_failed"; steps.push({ index, name, expected, outcome: "failed", detail }); return { outcome: "failed" as const, detail }; }
+    index += 1; answered = new Set<string>();
+    try { const r = await work(); steps.push({ index, name, expected, ...r, evidence: summariseStepEvidence(answered) }); return r; }
+    catch (error) { const detail = error instanceof Error && /^[a-z_:0-9-]+$/.test(error.message) ? error.message : "step_failed"; steps.push({ index, name, expected, outcome: "failed", detail, evidence: summariseStepEvidence(answered) }); return { outcome: "failed" as const, detail }; }
   };
   const skip = async (names: string[], detail: string) => { for (const name of names) await step(name, "not run", async () => ({ outcome: "skipped", detail })); };
   const executions = new Set<string>();
@@ -85,7 +99,7 @@ export async function runRecordingAcceptance(input: {
       response = await fetcher(`${origin}${path}`, { method: "POST", headers: { authorization: `Bearer ${bearer}`, ...(json ? { "content-type": "application/json" } : {}), ...headers },
         body: json ? JSON.stringify(body) : (body as unknown as BodyInit), redirect: "manual", signal: AbortSignal.timeout(25_000) });
     } catch { return { status: 0, body: null as unknown }; }
-    observeExecution(executions, response.headers, response.status);
+    observeExecution(executions, response.headers, response.status); observeExecution(answered, response.headers, response.status);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 4 * 1024 * 1024) return { status: response.status, body: null as unknown };
     try { return { status: response.status, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }; } catch { return { status: response.status, body: null as unknown }; }
@@ -291,10 +305,13 @@ export async function runRecordingAcceptance(input: {
     const mandatory: string[] = mode === "acceptance" ? [...RECORDING_ACCEPTANCE_STEPS] : ["finish", "transcription completes", "transcript read", "proposed note read"];
     const unmet = mandatory.filter((name) => !passed(name));
     const executionOk = expectedExecution ? observed.execution === expectedExecution : observed.execution === "production" || observed.execution === "qualification";
-    const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk;
+    const unverified = unverifiedSteps(mandatory, steps);
+    // The closing observation comes after the last request, whichever step the run stopped at.
+    const sourceBoundary = closeAcceptanceBoundary(mode, input.sourceBoundary);
+    const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk && unverified.length === 0 && boundaryAllowsOk(sourceBoundary);
     const report: Omit<RecordingAcceptanceReport, "evidenceSha256"> = { schemaVersion: "recording-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit,
       migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, encounterId: input.encounterId, audio, startedAt, finishedAt, steps, retained, ...observed,
-      verdict: { mode, expectedExecution, mandatory, unmet } };
+      verdict: { mode, expectedExecution, mandatory, unmet }, unverified, sourceBoundary, qualified: qualifiedVerdict(mode, ok, sourceBoundary) };
     return { ...report, evidenceSha256: sha256(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })) };
   }
 }

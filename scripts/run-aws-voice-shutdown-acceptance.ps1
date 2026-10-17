@@ -24,6 +24,7 @@ if (-not $env:CLINICAL_WORKFORCE_ID_TOKEN -or -not $env:CLINICAL_CONSUMER_ID_TOK
 if ($Mode -eq 'acceptance' -and $InventoryPath) { throw "Acceptance mode reads both inventories from the reviewed AWS stack itself; caller-supplied inventories are exploratory only." }
 if ($InventoryPath -and -not (Test-Path -LiteralPath $InventoryPath)) { throw "InventoryPath does not exist." }
 $sourceCommit = Assert-QualificationSourceCommit -Target $target
+if ($Mode -eq 'acceptance') { Assert-QualificationCleanCheckout }
 $account = Assert-QualificationAccount -Target $target
 Assert-QualificationFoundation -Target $target -Region $Region
 Assert-QualificationStacks -Target $target -Candidates @('owned-voice') -Region $Region -Posture 'drain'

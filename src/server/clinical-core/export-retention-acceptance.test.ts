@@ -209,3 +209,47 @@ describe("hosted export and retention acceptance", () => {
     expect(report.steps.find((s) => s.name === "download and verify the delivered object")).toMatchObject({ outcome: "failed", detail: "document_manifest_mismatch" });
   });
 });
+
+describe("hosted export acceptance: a refusal is evidence only when the candidate itself answered it", () => {
+  const marked = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } });
+  const stale = token("s", Math.floor(1_800_000_000_000 / 1000) - 10 * 60);
+  const acceptance = { ...base, mode: "acceptance" as const, expectedExecution: "qualification" as const, staleConsumerIdToken: stale };
+  // A complete hosted-shaped run: the workforce token on a consumer route is refused by the consumer JWT authorizer
+  // (unmarked), the second consumer is admitted by the authorizer and refused by the candidate's owner check (marked),
+  // and the stale sign-in is refused by the candidate (marked 401 reauth_required).
+  const run = async (cross: Response[], staleAnswer: Response) => {
+    const consumer = [marked(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
+      ...cross, marked(200, view("ready")), staleAnswer,
+      marked(200, { data: { jobId: job, url: linkUrl, expiresInSeconds: 300, byteLength: exportObject.byteLength, objectChecksum: composite, parts } }),
+      marked(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 0, remaining: 1 } } }), marked(200, { data: { jobId: job, status: "cancelled", objectDeleted: false, retention: "cleanup_pending" } })];
+    const operator = [marked(200, { data: { scope: "assigned_owners", cleanupPending: 0, settling: 0 } }), marked(200, { data: { cleaned: 0, remaining: 0, deferred: 0, items: [] } }),
+      marked(200, { data: { confirmed: 0, reopened: 0, pending: 0, items: [] } })];
+    let clock = 1_800_000_000_000;
+    return runExportRetentionAcceptance({ ...acceptance, scheduledCleanupWaitMs: 20_000, observeScheduledRemoval: async () => true, now: () => (clock += 2_000),
+      fetch: async (url) => {
+        if (url.startsWith("https://fictional-export-bucket.s3.")) return object();
+        if (url.includes("/privacy-operations")) return operator.shift() ?? marked(500, {});
+        return consumer.shift() ?? marked(200, { data: { jobId: job, status: "cancelled", objectDeleted: true, retention: "removal_recorded" } });
+      } });
+  };
+  const ownerChecked = () => [json(401, { message: "Unauthorized" }), marked(403, { error: "owner_required" }), marked(403, { error: "owner_required" })];
+  test("the hosted-shaped run passes: the owner check answered the second consumer, and the candidate answered the stale sign-in", async () => {
+    const report = await run(ownerChecked(), marked(401, { error: "reauth_required" }));
+    expect(report.steps.find((s) => s.name === "cross-owner read refused")).toMatchObject({ outcome: "passed", evidence: "qualification" });
+    expect(report.unverified).toEqual([]); expect(report.ok).toBe(true);
+    expect(report.qualified).toBe(false); // no source boundary was observed around this library-level run
+  }, 30_000);
+  test("refusals of the second consumer that never reached the owner check prove nothing about owner isolation", async () => {
+    // An expired second-consumer token is refused by the authorizer exactly like this; the owner check never ran.
+    const report = await run([json(401, { message: "Unauthorized" }), json(401, { message: "Unauthorized" }), json(401, { message: "Unauthorized" })], marked(401, { error: "reauth_required" }));
+    expect(report.steps.find((s) => s.name === "cross-owner read refused")).toMatchObject({ outcome: "passed", evidence: "unmarked_denial" });
+    expect(report.unverified).toEqual(["cross-owner read refused"]); expect(report.verdict.unmet).toEqual([]);
+    expect(report.ok).toBe(false);
+  }, 30_000);
+  test("an unmarked 401 for the stale sign-in is the authorizer's, not the candidate's reauth_required", async () => {
+    const report = await run(ownerChecked(), json(401, { message: "Unauthorized" }));
+    expect(report.steps.find((s) => s.name === "stale sign-in download refused")).toMatchObject({ outcome: "passed", status: 401, evidence: "unmarked_denial" });
+    expect(report.unverified).toEqual(["stale sign-in download refused"]);
+    expect(report.ok).toBe(false);
+  }, 30_000);
+});

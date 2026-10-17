@@ -30,6 +30,7 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw "AWS CLI is re
 if (-not $env:CLINICAL_WORKFORCE_ID_TOKEN -or -not $env:CLINICAL_CONSUMER_ID_TOKEN) { throw "Fresh workforce and consumer Cognito ID tokens must be set in this PowerShell process only." }
 if ($AudioFile -and -not (Test-Path -LiteralPath $AudioFile)) { throw "AudioFile does not exist." }
 $sourceCommit = Assert-QualificationSourceCommit -Target $target
+if ($Mode -eq 'acceptance') { Assert-QualificationCleanCheckout }
 $account = Assert-QualificationAccount -Target $target
 Assert-QualificationFoundation -Target $target -Region $Region
 Assert-QualificationStacks -Target $target -Candidates @('recording-authority', 'recording-capture', 'recording-transcription', 'recording-drafting', 'recording-cleanup-review') -Region $Region
@@ -48,6 +49,11 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $fixture.ok) { throw "Acceptance encounter fixture refused or failed." }
     $EncounterId = $fixture.encounterId
     Write-Host "Acceptance encounter $EncounterId in $($fixture.database) (reused: $($fixture.reused))."
+    # The run must see the deployment the fixture saw: it refuses a stack that changed between the two commands.
+    if ($Mode -eq 'acceptance') {
+      if ("$($fixture.boundary)" -cnotmatch '^[a-f0-9]{64}$') { throw "Acceptance encounter fixture did not report its source boundary." }
+      $env:CLINICAL_RECORDING_FIXTURE_BOUNDARY = $fixture.boundary
+    }
   }
   $env:CLINICAL_RECORDING_ENCOUNTER_ID = $EncounterId
   $env:CLINICAL_RECORDING_JURISDICTION = $Jurisdiction
@@ -56,6 +62,6 @@ try {
   node dist/aws-clinical-core/deployment-tools/recordingAcceptance.js run
   if ($LASTEXITCODE -ne 0) { throw "Recording acceptance did not pass; read the report under dist/qualification." }
 } finally {
-  foreach ($name in 'CLINICAL_QUALIFICATION_TARGET','OBSERVED_AWS_ACCOUNT_ID','SOURCE_COMMIT','ACCEPTANCE_MODE','CLINICAL_SYNTHETIC_MANIFEST','CLINICAL_RECORDING_ENCOUNTER_ID','CLINICAL_RECORDING_JURISDICTION','CLINICAL_RECORDING_LOCALE','CLINICAL_RECORDING_AUDIO_FILE','CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+  foreach ($name in 'CLINICAL_QUALIFICATION_TARGET','OBSERVED_AWS_ACCOUNT_ID','SOURCE_COMMIT','ACCEPTANCE_MODE','CLINICAL_SYNTHETIC_MANIFEST','CLINICAL_RECORDING_FIXTURE_BOUNDARY','CLINICAL_RECORDING_ENCOUNTER_ID','CLINICAL_RECORDING_JURISDICTION','CLINICAL_RECORDING_LOCALE','CLINICAL_RECORDING_AUDIO_FILE','CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 }
 Write-Host "Recording acceptance completed ($Mode) against $($target.apiOrigin); tokens were not printed or written. The stored fictional audio stays until its retention deadline (see the report's retained list)."
